@@ -1,0 +1,9 @@
+.eunit
+doc
+ebin
+deps
+*.o
+*.beam
+*.bea#
+*~
+.DS_Store
