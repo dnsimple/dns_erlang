@@ -1,4 +1,4 @@
-gh-pages : TMPDIR := $(shell mktemp -d -t dns_erlang.gh-pages.xxxx)
+gh-pages : TMPDIR := $(shell mktemp -d -t dns_erlang.gh-pages.XXXX)
 gh-pages : BRANCH := $(shell git branch 2> /dev/null | sed -e '/^[^*]/d' -e 's/* \(.*\)/\1 /')
 gh-pages : STASH := $(shell (test -z "`git status --porcelain`" && echo false) || echo true)
 gh-pages : VERSION := $(shell sed -n 's/.*{vsn,.*"\(.*\)"}.*/\1/p' src/dns.app.src)
