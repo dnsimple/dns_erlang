@@ -1211,7 +1211,7 @@ encode_tsigerr(Int) when is_integer(Int) -> Int;
 encode_tsigerr(Atom) when is_atom(Atom) ->
     case tsigerr_to_int(Atom) of
 	Int when is_integer(Int) -> Int;
-	undefined -> error(badarg)
+	undefined -> erlang:error(badarg)
     end.
 
 %% @doc Returns the atom representation of a TSIG error code integer.
@@ -1365,7 +1365,7 @@ int_or_badarg(_Fun, Int) when is_integer(Int) -> Int;
 int_or_badarg(Fun, Arg) when is_function(Fun) ->
     case Fun(Arg) of
 	Int when is_integer(Int) -> Int;
-	_ -> error(badarg)
+	_ -> erlang:error(badarg)
     end.
 
 decode_txt(<<>>) -> [];
