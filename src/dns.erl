@@ -28,6 +28,7 @@
 
 -export([compare_dname/2]).
 -export([dname_to_upper/1, dname_to_lower/1]).
+-export([dname_to_labels/1]).
 -export([unix_time/0, unix_time/1]).
 -export([random_id/0]).
 
