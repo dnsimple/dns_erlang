@@ -1,7 +1,12 @@
 -ifndef('__dns_terms.hrl__').
 -define('__dns_terms.hrl__', ok).
 
--define(DNS_ALG_MD5, <<"hmac-md5.sig-alg.reg.int">>).
+-define(DNS_TSIG_ALG_MD5, <<"hmac-md5.sig-alg.reg.int">>).
+-define(DNS_TSIG_ALG_SHA1, <<"hmac-sha1">>).
+-define(DNS_TSIG_ALG_SHA224, <<"hmac-sha224">>).
+-define(DNS_TSIG_ALG_SHA256, <<"hmac-sha256">>).
+-define(DNS_TSIG_ALG_SHA384, <<"hmac-sha384">>).
+-define(DNS_TSIG_ALG_SHA512, <<"hmac-sha512">>).
 
 -define(DNS_CLASS_IN, ?DNS_CLASS_IN_NUMBER).
 -define(DNS_CLASS_IN_NUMBER, 1).

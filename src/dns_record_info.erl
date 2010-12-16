@@ -204,13 +204,13 @@ type_for_atom(_) -> undefined.
 -ifdef(TEST).
 
 type_rec_test_() ->
-    {ok, Cases} = file:consult("../priv/wire_samples.txt"),
+    {ok, Cases} = file:consult("../priv/rrdata_wire_samples.txt"),
     Types = sets:to_list(sets:from_list([T || {_,T,_} <- Cases, is_atom(T)])),
     [ ?_assertEqual(Type, type_for_atom(atom_for_type(Type)))
       || Type <- Types ].
 
 recinfo_test_() ->
-    {ok, Cases} = file:consult("../priv/wire_samples.txt"),
+    {ok, Cases} = file:consult("../priv/rrdata_wire_samples.txt"),
     Types = sets:to_list(sets:from_list([T || {_, T ,_} <- Cases, is_atom(T)])),
     Tags = [dns_rr|[ atom_for_type(Type) || Type <- Types ]],
     [ {atom_to_list(Tag),

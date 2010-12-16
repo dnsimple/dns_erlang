@@ -58,8 +58,8 @@ tsig_no_tsig_test() ->
 
 tsig_bad_key_test() ->
     MsgId = random_id(),
-    B64 = base64:encode(<<"abcdefgh">>),
-    TSIGData = #dns_rrdata_tsig{alg = ?DNS_ALG_MD5,
+    B64 = <<"abcdefgh">>,
+    TSIGData = #dns_rrdata_tsig{alg = ?DNS_TSIG_ALG_MD5,
 				time = unix_time(),
 				fudge = 0,
 				mac = B64,
@@ -75,24 +75,23 @@ tsig_bad_key_test() ->
     ?assertEqual({ok, bad_key}, Result).
 
 tsig_bad_alg_test() ->
-    MsgId = random_id(),
+    Id = random_id(),
     Name = <<"keyname">>,
-    B64 = base64:encode(<<"abcdefgh">>),
     Data = #dns_rrdata_tsig{alg = <<"null">>, time = unix_time(), fudge = 0,
-			    mac = B64, msgid = MsgId, err = 0, other = <<>>},
+			    mac = <<"MAC">>, msgid = Id, err = 0, other = <<>>},
     RR = #dns_rr{name = Name, class = in, type = tsig, ttl = 0, data = Data},
-    Msg = #dns_message{id = MsgId, adc = 1, additional = [RR]},
+    Msg = #dns_message{id = Id, adc = 1, additional = [RR]},
     MsgBin = encode_message(Msg),
-    Result = verify_tsig(MsgBin, Name, B64),     
+    Result = verify_tsig(MsgBin, Name, <<"secret">>),
     ?assertEqual({error, bad_alg}, Result).
 
 tsig_bad_sig_test() ->
     application:start(crypto),
     MsgId = random_id(),
     Name = <<"keyname">>,
-    Value = base64:encode(crypto:rand_bytes(20)),
+    Value = crypto:rand_bytes(20),
     Msg = #dns_message{id = MsgId},
-    SignedMsg = add_tsig(Msg, ?DNS_ALG_MD5, Name, Value, 0),
+    SignedMsg = add_tsig(Msg, ?DNS_TSIG_ALG_MD5, Name, Value, 0),
     [#dns_rr{data = TSIGData} = TSIG] = SignedMsg#dns_message.additional,
     BadTSIG = TSIG#dns_rr{data = TSIGData#dns_rrdata_tsig{mac = Value}},
     BadSignedMsg = Msg#dns_message{adc = 1, additional = [BadTSIG]},
@@ -104,10 +103,10 @@ tsig_bad_time_test_() ->
     application:start(crypto),
     MsgId = random_id(),
     Name = <<"keyname">>,
-    Secret = base64:encode(crypto:rand_bytes(20)),
+    Secret = crypto:rand_bytes(20),
     Msg = #dns_message{id=MsgId},
     Fudge = 30,
-    SignedMsg = add_tsig(Msg, ?DNS_ALG_MD5, Name, Secret, 0),
+    SignedMsg = add_tsig(Msg, ?DNS_TSIG_ALG_MD5, Name, Secret, 0),
     SignedMsgBin = encode_message(SignedMsg),
     Now = unix_time(),
     [ ?_test(
@@ -123,24 +122,47 @@ tsig_ok_test_() ->
     application:start(crypto),
     MsgId = random_id(),
     Name = <<"keyname">>,
-    Secret = base64:encode(crypto:rand_bytes(20)),
-    Alg = ?DNS_ALG_MD5,
+    Secret = crypto:rand_bytes(20),
+    Algs = [ ?DNS_TSIG_ALG_MD5, ?DNS_TSIG_ALG_SHA1, ?DNS_TSIG_ALG_SHA224,
+	     ?DNS_TSIG_ALG_SHA256, ?DNS_TSIG_ALG_SHA384, ?DNS_TSIG_ALG_SHA512 ],
     Msg = #dns_message{id=MsgId},
     Options = [{time, unix_time()}, {fudge, 30}],
-    SignedMsg = add_tsig(Msg, Alg, Name, Secret, 0),
-    SignedMsgBin = encode_message(SignedMsg),
-    Result = case verify_tsig(SignedMsgBin, Name, Secret, Options) of
-		 {ok, _MAC} -> ok;
-		 Error -> Error
-	     end,
-    ?_assertEqual(ok, Result).
+    [ {Alg,
+       ?_test(
+	  begin
+	      SignedMsg = add_tsig(Msg, Alg, Name, Secret, 0),
+	      SignedMsgBin = encode_message(SignedMsg),
+	      Result = case verify_tsig(SignedMsgBin, Name, Secret, Options) of
+			   {ok, _MAC} -> ok;
+			   Error -> Error
+		       end,
+	      ?assertEqual(ok, Result)
+	  end
+	 )} || Alg <- Algs ].
+
+tsig_wire_test_() ->
+    application:start(crypto),
+    Now = 1292459455,
+    Keyname = <<"key.name">>,
+    Secret = base64:decode(<<"8F1BRL+xp3gNW1GfbSnlUuvUtxQ=">>),
+    {ok, Cases} = file:consult("../priv/tsig_wire_samples.txt"),
+    [ {Alg,
+       ?_test(
+	  begin
+	      Result = case verify_tsig(Msg, Keyname, Secret, [{time, Now}]) of
+			   {ok, MAC} when is_binary(MAC) -> ok;
+			   X -> X
+		       end,
+	      ?assertEqual(ok, Result)
+	  end
+	 )} || {Alg, Msg} <- Cases ].
 
 %%%===================================================================
 %%% Record data functions
 %%%===================================================================
 
 decode_encode_rrdata_wire_samples_test_() ->
-    {ok, Cases} = file:consult("../priv/wire_samples.txt"),
+    {ok, Cases} = file:consult("../priv/rrdata_wire_samples.txt"),
     ToTestName = fun({Class, Type, Bin}) ->
 			 Fmt = "~p/~p/~n~p",
 			 Args = [Class, Type, Bin],
@@ -272,13 +294,13 @@ dname_to_lower_test_() ->
 %%% 
 
 class_terms_match_test_() ->
-    {ok, Cases} = file:consult("../priv/wire_samples.txt"),
+    {ok, Cases} = file:consult("../priv/rrdata_wire_samples.txt"),
     Classes = sets:to_list(sets:from_list([ C || {C,_,_} <- Cases ])),
     [ ?_assertEqual(Class, dns:class_to_atom(dns:class_to_int(Class)))
       || Class <- Classes ].
 
 type_terms_match_test_() ->
-    {ok, Cases} = file:consult("../priv/wire_samples.txt"),
+    {ok, Cases} = file:consult("../priv/rrdata_wire_samples.txt"),
     Types = sets:to_list(sets:from_list([ T || {_,T,_} <- Cases, is_atom(T) ])),
     [ {atom_to_list(Type),
        ?_assertEqual(Type,

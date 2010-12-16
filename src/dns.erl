@@ -242,14 +242,14 @@ verify_tsig(MsgBin, Name, Secret, Options) ->
     end.
 
 %% @doc Generates and then appends a TSIG RR to a message.
-%%      Currently only supports MD5 (hmac-md5.sig-alg.reg.int) signatures.
+%%      Supports MD5, SHA1, SHA224, SHA256, SHA384 and SHA512 algorithms.
 %% @spec add_tsig(Msg, Algorithim, Name, Secret, ErrCode) -> SignedMsg
 %% @equiv add_tsig(Msg, Alg, Name, Secret, ErrCode, [])
 add_tsig(Msg, Alg, Name, Secret, ErrCode) ->
     add_tsig(Msg, Alg, Name, Secret, ErrCode, []).
 
 %% @doc Generates and then appends a TSIG RR to a message.
-%%      Currently only supports MD5 (hmac-md5.sig-alg.reg.int).
+%%      Supports MD5, SHA1, SHA224, SHA256, SHA384 and SHA512 algorithms.
 %% @spec add_tsig(Msg, Algorithim, Name, Secret, ErrCode, [tsig_option()]) -> SignedMsg
 add_tsig(Msg, Alg, Name, Secret, ErrCode, Options) ->
     MsgId = Msg#dns_message.id,
@@ -303,8 +303,13 @@ gen_tsig_mac(Alg, MsgBin, Name, Secret, Time, Fudge, ErrorCode, Other, PMAC) ->
     MACData = [Base, MsgBin, NameBin, <<?DNS_CLASS_ANY:16>>, <<0:32>>, AlgBin,
 	       <<Time:48>>, <<Fudge:16>>, <<ErrorCodeInt:16>>, <<OtherLen:16>>,
 	       Other],
-    case dname_to_lower(iolist_to_binary(Alg)) of 
-	?DNS_ALG_MD5 -> {ok, crypto:md5_mac(Secret, MACData)};
+    case dname_to_lower(iolist_to_binary(Alg)) of
+	?DNS_TSIG_ALG_MD5 -> {ok, crypto:md5_mac(Secret, MACData)};
+	?DNS_TSIG_ALG_SHA1 -> {ok, crypto:sha_mac(Secret, MACData)};
+	?DNS_TSIG_ALG_SHA224 -> {ok, sha2:hmac_sha224(Secret, MACData)};
+	?DNS_TSIG_ALG_SHA256 -> {ok, sha2:hmac_sha256(Secret, MACData)};
+	?DNS_TSIG_ALG_SHA384 -> {ok, sha2:hmac_sha384(Secret, MACData)};
+	?DNS_TSIG_ALG_SHA512 -> {ok, sha2:hmac_sha512(Secret, MACData)};
 	_ -> {error, bad_alg}
     end.
 

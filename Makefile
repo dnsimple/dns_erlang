@@ -5,8 +5,13 @@ gh-pages : VERSION := $(shell sed -n 's/.*{vsn,.*"\(.*\)"}.*/\1/p' src/dns.app.s
 
 .PHONY: all doc clean test
 
-all:
+all: deps compile
+
+compile:
 	@./rebar compile
+
+deps:
+	@./rebar get-deps
 
 doc:	
 	@./rebar doc skip_deps=true
@@ -29,5 +34,5 @@ gh-pages: test doc
 	(${STASH} && git stash pop) || true
 	rm -fr ${TMPDIR}
 
-test:
-	@./rebar eunit
+test: all
+	@./rebar eunit skip_deps=true
