@@ -25,6 +25,7 @@ gh-pages: test doc
 	sed 's/{{VERSION}}/${VERSION}/g' priv/index.html > ${TMPDIR}/index.html
 	rsync -a --remove-source-files doc/ ${TMPDIR}/doc
 	rsync -a --remove-source-files .eunit/ ${TMPDIR}/coverage
+	@./rebar clean
 	(${STASH} && git stash save) || true
 	git checkout gh-pages
 	rsync -a --delete ${TMPDIR}/* .
