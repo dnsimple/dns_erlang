@@ -439,6 +439,10 @@ decode_rrdata(_Class, nxt, Bin, MsgBin) ->
     #dns_rrdata_nxt{dname = NxtDName, types = decode_nxt_bmp(BMP)};
 decode_rrdata(_Class, ptr, Bin, MsgBin) ->
     #dns_rrdata_ptr{dname = decode_dnameonly(Bin, MsgBin)};
+decode_rrdata(_Class, px, <<Pref:16, Bin/binary>>, MsgBin) ->
+    {Map822, Mapx400Bin} = decode_dname(Bin, MsgBin),
+    Mapx400 = decode_dnameonly(Mapx400Bin, MsgBin),
+    #dns_rrdata_px{preference = Pref, map822 = Map822, mapx400 = Mapx400};
 decode_rrdata(_Class, rp, Bin, MsgBin) ->
     {Mbox, TxtBin} = decode_dname(Bin, MsgBin),
     #dns_rrdata_rp{mbox = Mbox, txt = decode_dnameonly(TxtBin, MsgBin)};
@@ -641,6 +645,14 @@ encode_rrdata(Pos, _Class, #dns_rrdata_nxt{dname = NxtDName, types = Types},
     {<<NextDNameBin/binary, BMP/binary>>, NewCompMap};
 encode_rrdata(Pos, _Class, #dns_rrdata_ptr{dname = Name}, CompMap) ->
     encode_dname(CompMap, Pos, Name);
+encode_rrdata(Pos, _Class, #dns_rrdata_px{preference = Pref,
+					  map822 = Map822,
+					  mapx400 = Mapx400}, CompMap) ->
+    {Map822Bin, Map822CompMap} = encode_dname(CompMap, Pos + 2, Map822),
+    NewPos = Pos + byte_size(Map822Bin) + 2,
+    {DnameBin, NewMap} = encode_dname(Map822Bin, Map822CompMap,
+				      NewPos, Mapx400),
+    {<<Pref:16, DnameBin/binary>>, NewMap};
 encode_rrdata(_Pos, _Class, #dns_rrdata_rp{mbox=Mbox, txt=Txt}, CompMap) ->
     MboxBin = encode_dname(Mbox),
     TxtBin = encode_dname(Txt),

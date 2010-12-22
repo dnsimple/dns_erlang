@@ -260,6 +260,7 @@
 -record(dns_rrdata_nsec3param, {hash_alg, flags, iterations, salt}).
 -record(dns_rrdata_nxt, {dname, types}).
 -record(dns_rrdata_ptr, {dname}).
+-record(dns_rrdata_px, {preference, map822, mapx400}).
 -record(dns_rrdata_rp, {mbox, txt}).
 -record(dns_rrdata_rrsig, {type_covered,
 			   alg,
