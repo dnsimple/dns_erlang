@@ -926,9 +926,11 @@ encode_dname(Name) ->
     Labels = << <<(byte_size(L)), L/binary>> || L <- dname_to_labels(Name) >>,
     <<Labels/binary, 0>>.
 
-encode_dname(undefined, _Pos, Name) -> {encode_dname(Name), undefined};
 encode_dname(CompMap, Pos, Name) -> encode_dname(<<>>, CompMap, Pos, Name).
 
+encode_dname(Bin, undefined, _Pos, Name) ->
+    DnameBin = encode_dname(Name),
+    {<<Bin/binary, DnameBin/binary>>, undefined};
 encode_dname(Bin, CompMap, Pos, Name) ->
     Labels = dname_to_labels(Name),
     LwrLabels = dname_to_labels(dname_to_lower(Name)),
