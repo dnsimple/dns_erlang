@@ -748,6 +748,7 @@ decode_nsec_types(Num, <<0:1, Rest/bitstring>>, Types) ->
 decode_nsec_types(Num, <<1:1, Rest/bitstring>>, Types) ->
     decode_nsec_types(Num + 1, Rest, [Num|Types]).
 
+encode_nsec_types([]) -> <<>>;
 encode_nsec_types([FirstType|_]=UnsortedTypes) when is_list(UnsortedTypes) andalso is_integer(FirstType) ->
     Types = lists:sort(sets:to_list(sets:from_list(UnsortedTypes))),
     FirstWindowNum = FirstType div 256,
