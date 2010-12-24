@@ -427,7 +427,7 @@ decode_rrdata(_Class, nsec3, <<HashAlg:8, _FlagsZ:7, OptOut:1, Iterations:16,
 			       SaltLen:8/unsigned, Salt:SaltLen/binary-unit:8,
 			       HashLen:8/unsigned, Hash:HashLen/binary-unit:8,
 			       TypeBMP/binary>>, _MsgBin) ->
-    #dns_rrdata_nsec3{hash_alg = HashAlg, opt_out = OptOut,
+    #dns_rrdata_nsec3{hash_alg = HashAlg, opt_out = decode_bool(OptOut),
 		      iterations = Iterations, salt = Salt,
 		      hash = Hash, types = decode_nsec_types(TypeBMP)};
 decode_rrdata(_Class, nsec3param, <<Alg:8, Flags:8, Iterations:16, SaltLen:8,
@@ -625,9 +625,10 @@ encode_rrdata(_Pos, _Class, #dns_rrdata_nsec3{hash_alg = HashAlg,
 					      hash = Hash,
 					      types = Types}, CompMap) ->
     TypeBMP = encode_nsec_types(Types),
+    OptOutN = encode_bool(OptOut),
     SaltLength = byte_size(Salt),
     HashLength = byte_size(Hash),
-    {<<HashAlg:8, 0:7, OptOut:1, Iterations:16,
+    {<<HashAlg:8, 0:7, OptOutN:1, Iterations:16,
        SaltLength:8/unsigned, Salt:SaltLength/binary-unit:8,
        HashLength:8/unsigned, Hash:HashLength/binary-unit:8,
        TypeBMP/binary>>, CompMap};
@@ -749,7 +750,8 @@ encode_loc_size(Size, Exponent) ->
 decode_nsec_types(Bin) when is_binary(Bin) -> decode_nsec_types(Bin, []).
 
 decode_nsec_types(<<>>, Types) -> lists:reverse(Types);
-decode_nsec_types(<<WindowNum:8, BMPLength:8, BMP:BMPLength/binary, Rest/binary>>, Types) ->
+decode_nsec_types(<<WindowNum:8, BMPLength:8, BMP:BMPLength/binary,
+		    Rest/binary>>, Types) ->
     BaseNo = WindowNum * 256,
     NewTypes = decode_nsec_types(BaseNo, BMP, Types),
     decode_nsec_types(Rest, NewTypes).
@@ -758,11 +760,13 @@ decode_nsec_types(_Num, <<>>, Types) -> Types;
 decode_nsec_types(Num, <<0:1, Rest/bitstring>>, Types) ->
     decode_nsec_types(Num + 1, Rest, Types);
 decode_nsec_types(Num, <<1:1, Rest/bitstring>>, Types) ->
-    decode_nsec_types(Num + 1, Rest, [Num|Types]).
+    NewType = term_or_arg(fun type_to_atom/1, Num),
+    decode_nsec_types(Num + 1, Rest, [NewType|Types]).
 
 encode_nsec_types([]) -> <<>>;
-encode_nsec_types([FirstType|_]=UnsortedTypes) when is_list(UnsortedTypes) andalso is_integer(FirstType) ->
-    Types = lists:sort(sets:to_list(sets:from_list(UnsortedTypes))),
+encode_nsec_types([_|_]=UnsortedTypes) ->
+    [FirstType|_] = Types = unique_list([int_or_badarg(fun type_to_int/1, Type)
+				     || Type <- UnsortedTypes ]),
     FirstWindowNum = FirstType div 256,
     FirstLastType = FirstWindowNum * 256,
     encode_nsec_types(<<>>, <<>>, FirstWindowNum, FirstLastType, Types).
@@ -792,12 +796,14 @@ decode_nxt_bmp(BMP) -> decode_nxt_bmp(0, BMP, []).
 
 decode_nxt_bmp(_Offset, <<>>, Types) -> lists:reverse(Types);
 decode_nxt_bmp(Offset, <<1:1, Rest/bitstring>>, Types) ->
-    decode_nxt_bmp(Offset + 1, Rest, [Offset|Types]);
+    NewType = term_or_arg(fun type_to_atom/1, Offset),
+    decode_nxt_bmp(Offset + 1, Rest, [NewType|Types]);
 decode_nxt_bmp(Offset, <<0:1, Rest/bitstring>>, Types) ->
     decode_nxt_bmp(Offset + 1, Rest, Types).
 
 encode_nxt_bmp(UnsortedTypes) when is_list(UnsortedTypes) ->
-    Types = lists:sort(sets:to_list(sets:from_list(UnsortedTypes))),
+    Types = unique_list([int_or_badarg(fun type_to_int/1, Type)
+			 || Type <- UnsortedTypes]),
     encode_nxt_bmp(0, Types, <<>>).
 
 encode_nxt_bmp(_LastType, [], BMP) -> pad_bmp(BMP);
@@ -1423,3 +1429,6 @@ const_compare(<<C1:1, A/bitstring>>, <<C2:1, B/bitstring>>, Result) ->
     const_compare(A, B, Result bor (C1 bxor C2)).
 
 round_pow(N, E) -> round(math:pow(N, E)).
+
+unique_list(List) when is_list(List) ->
+    lists:sort(sets:to_list(sets:from_list(List))).
