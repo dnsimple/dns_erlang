@@ -451,8 +451,8 @@ decode_rrdata(_Class, rrsig, <<TypeN:16, Alg:8, Labels:8, TTL:32, Expire:32,
     {SigName, Sig} = decode_dname(Bin, MsgBin),
     Type = term_or_arg(fun type_to_atom/1, TypeN),
     #dns_rrdata_rrsig{type_covered = Type, alg = Alg, labels = Labels,
-		      original_ttl = TTL, signature_expiration = Expire,
-		      signature_inception = Inception, key_tag = KeyTag,
+		      original_ttl = TTL, expiration = Expire,
+		      inception = Inception, key_tag = KeyTag,
 		      signers_name = SigName, signature = Sig};
 decode_rrdata(_Class, rt, <<Pref:16, Bin/binary>>, MsgBin) ->
     #dns_rrdata_rt{preference = Pref, host = decode_dnameonly(Bin, MsgBin)};
@@ -661,8 +661,8 @@ encode_rrdata(_Pos, _Class, #dns_rrdata_rp{mbox=Mbox, txt=Txt}, CompMap) ->
 encode_rrdata(_Pos, _Class, #dns_rrdata_rrsig{type_covered = TypeCovered,
 					      alg = Alg, labels=Labels,
 					      original_ttl = OriginalTTL,
-					      signature_expiration = SigExpire,
-					      signature_inception = SigIncept,
+					      expiration = SigExpire,
+					      inception = SigIncept,
 					      key_tag = KeyTag,
 					      signers_name = SignersName,
 					      signature = Sig}, CompMap) ->

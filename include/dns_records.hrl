@@ -266,8 +266,8 @@
 			   alg,
 			   labels,
 			   original_ttl,
-			   signature_expiration,
-			   signature_inception,
+			   expiration,
+			   inception,
 			   key_tag,
 			   signers_name,
 			   signature}).
