@@ -291,7 +291,9 @@ dname_to_lower_test_() ->
     Cases = [ {"Y", "y"}, {"y", "y"}, {<<"Y">>, <<"y">>}, {<<"y">>, <<"y">>} ],
     [ ?_assertEqual(Expect, dname_to_lower(Arg)) || {Arg, Expect} <-  Cases ].
 
-%%% 
+%%%===================================================================
+%%% Term functions
+%%%===================================================================
 
 class_terms_match_test_() ->
     {ok, Cases} = file:consult("../priv/rrdata_wire_samples.txt"),
@@ -306,6 +308,14 @@ type_terms_match_test_() ->
        ?_assertEqual(Type,
 		     dns:type_to_atom(dns:type_to_int(Type)))
       } || Type <- Types ].
+
+alg_terms_match_test_() ->
+    Cases = [ ?DNS_ALG_DSA_ATOM, ?DNS_ALG_NSEC3DSA_ATOM, ?DNS_ALG_RSASHA1_ATOM,
+	      ?DNS_ALG_NSEC3RSASHA1_ATOM, ?DNS_ALG_RSASHA256_ATOM,
+	      ?DNS_ALG_RSASHA512_ATOM ],
+    [ {atom_to_list(Alg),
+       ?_assertEqual(Alg, dns:alg_to_atom(dns:alg_to_int(Alg)))
+      } || Alg <- Cases ].
 
 %%%===================================================================
 

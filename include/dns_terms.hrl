@@ -1,6 +1,30 @@
 -ifndef('__dns_terms.hrl__').
 -define('__dns_terms.hrl__', ok).
 
+-define(DNS_ALG_DSA, ?DNS_ALG_DSA_NUMBER).
+-define(DNS_ALG_DSA_NUMBER, 3).
+-define(DNS_ALG_DSA_ATOM, dsa).
+
+-define(DNS_ALG_NSEC3DSA, ?DNS_ALG_NSEC3DSA_NUMBER).
+-define(DNS_ALG_NSEC3DSA_NUMBER, 6).
+-define(DNS_ALG_NSEC3DSA_ATOM, nsec3dsa).
+
+-define(DNS_ALG_RSASHA1, ?DNS_ALG_RSASHA1_NUMBER).
+-define(DNS_ALG_RSASHA1_NUMBER, 5).
+-define(DNS_ALG_RSASHA1_ATOM, rsasha1).
+
+-define(DNS_ALG_NSEC3RSASHA1, ?DNS_ALG_NSEC3RSASHA1_NUMBER).
+-define(DNS_ALG_NSEC3RSASHA1_NUMBER, 7).
+-define(DNS_ALG_NSEC3RSASHA1_ATOM, nsec3rsasha1).
+
+-define(DNS_ALG_RSASHA256, ?DNS_ALG_RSASHA256_NUMBER).
+-define(DNS_ALG_RSASHA256_NUMBER, 8).
+-define(DNS_ALG_RSASHA256_ATOM, rsasha256).
+
+-define(DNS_ALG_RSASHA512, ?DNS_ALG_RSASHA512_NUMBER).
+-define(DNS_ALG_RSASHA512_NUMBER, 10).
+-define(DNS_ALG_RSASHA512_ATOM, rsasha512).
+
 -define(DNS_TSIG_ALG_MD5, <<"hmac-md5.sig-alg.reg.int">>).
 -define(DNS_TSIG_ALG_SHA1, <<"hmac-sha1">>).
 -define(DNS_TSIG_ALG_SHA224, <<"hmac-sha224">>).

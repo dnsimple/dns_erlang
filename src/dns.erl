@@ -41,6 +41,7 @@
 -export([eoptcode_to_atom/1, eoptcode_to_int/1]).
 -export([llqopcode_to_atom/1, llqopcode_to_int/1]).
 -export([llqerrcode_to_atom/1, llqerrcode_to_int/1]).
+-export([alg_to_atom/1, alg_to_int/1]).
 
 -export([const_compare/2]).
 
@@ -340,8 +341,41 @@ decode_rrdata(_Class, dlv, <<KeyTag:16, Alg:8, DigestType:8, Digest/binary>>,
     #dns_rrdata_dlv{keytag=KeyTag, alg=Alg, digest_type=DigestType, digest=Digest};
 decode_rrdata(_Class, dname, Bin, MsgBin) ->
     #dns_rrdata_dname{dname = decode_dnameonly(Bin, MsgBin)};
-decode_rrdata(_Class, dnskey, <<Flags:16, Protocol:8, Alg:8,
+decode_rrdata(_Class, dnskey, <<Flags:16, Protocol:8, AlgNum:8,
+				PublicKey/binary>> = Bin, _MsgBin)
+  when AlgNum =:= ?DNS_ALG_RSASHA1 orelse
+       AlgNum =:= ?DNS_ALG_NSEC3RSASHA1 orelse
+       AlgNum =:= ?DNS_ALG_RSASHA256 orelse
+       AlgNum =:= ?DNS_ALG_RSASHA512 ->
+    Alg = term_or_arg(fun alg_to_atom/1, AlgNum),
+    Key = case PublicKey of
+	      <<0, Len:16, Exp:Len/unit:8, ModBin/binary>> ->
+		  Mod = binary:decode_unsigned(ModBin),
+		  [crypto:mpint(Exp), crypto:mpint(Mod)];
+	      <<Len:8, Exp:Len/unit:8, ModBin/binary>> ->
+		  Mod = binary:decode_unsigned(ModBin),
+		  [crypto:mpint(Exp), crypto:mpint(Mod)]
+	  end,
+    KeyTag = bin_to_key_tag(Bin),
+    #dns_rrdata_dnskey{flags = Flags, protocol = Protocol, alg = Alg,
+		       public_key = Key, key_tag = KeyTag};
+decode_rrdata(_Class, dnskey, <<Flags:16, Protocol:8, AlgNum:8,
+				T, Q:20/unit:8, KeyBin/binary>> = Bin, _MsgBin)
+  when AlgNum =:= ?DNS_ALG_DSA orelse
+       AlgNum =:= ?DNS_ALG_NSEC3DSA ->
+    Alg = term_or_arg(fun alg_to_atom/1, AlgNum),
+    S = 64 + T * 8,
+    <<P:S/unit:8, G:S/unit:8, Y:S/unit:8>> = KeyBin,
+    Key = [crypto:mpint(P),
+	   crypto:mpint(Q),
+	   crypto:mpint(G),
+	   crypto:mpint(Y)],
+    KeyTag = bin_to_key_tag(Bin),
+    #dns_rrdata_dnskey{flags = Flags, protocol = Protocol, alg = Alg,
+		       public_key = Key, key_tag = KeyTag};    
+decode_rrdata(_Class, dnskey, <<Flags:16, Protocol:8, AlgNum:8,
 				PublicKey/binary>> = Bin, _MsgBin) ->
+    Alg = term_or_arg(fun alg_to_atom/1, AlgNum),
     #dns_rrdata_dnskey{flags = Flags, protocol = Protocol, alg = Alg,
 		       public_key = PublicKey, key_tag = bin_to_key_tag(Bin)};
 decode_rrdata(_Class, ds, <<KeyTag:16, Alg:8, DigestType:8, Digest/binary>>,
@@ -511,6 +545,39 @@ encode_rrdata(_Pos, _Class, #dns_rrdata_dlv{keytag = KeyTag, alg = Alg,
     {<<KeyTag:16, Alg:8, DigestType:8, Digest/binary>>, CompMap};
 encode_rrdata(Pos, _Class, #dns_rrdata_dname{dname = Name}, CompMap) ->
     encode_dname(CompMap, Pos, Name);
+encode_rrdata(Pos, Class, #dns_rrdata_dnskey{alg = Alg} = Data, CompMap)
+  when is_atom(Alg) ->
+    AlgNum = int_or_badarg(fun alg_to_int/1, Alg),
+    encode_rrdata(Pos, Class, Data#dns_rrdata_dnskey{alg = AlgNum}, CompMap);
+encode_rrdata(_Pos, _Class, #dns_rrdata_dnskey{flags = Flags,
+					       protocol = Protocol,
+					       alg = Alg,
+					       public_key = [E, M]}, CompMap)
+  when Alg =:= ?DNS_ALG_RSASHA1 orelse
+       Alg =:= ?DNS_ALG_NSEC3RSASHA1 orelse
+       Alg =:= ?DNS_ALG_RSASHA256 orelse
+       Alg =:= ?DNS_ALG_RSASHA512 ->
+    EBin = binary:encode_unsigned(crypto:erlint(E)),
+    MBin = binary:encode_unsigned(crypto:erlint(M)),
+    ESize = byte_size(EBin),
+    PKBin =  if ESize =< 16#FF ->
+		     <<ESize:8, EBin:ESize/binary, MBin/binary>>;
+		ESize =< 16#FFFF ->
+		     <<0, ESize:16, EBin:ESize/binary, MBin/binary>>;
+		true -> erlang:error(badarg)
+	     end,
+    {<<Flags:16, Protocol:8, Alg:8, PKBin/binary>>, CompMap};    
+encode_rrdata(_Pos, _Class, #dns_rrdata_dnskey{flags = Flags,
+					       protocol = Protocol,
+					       alg = Alg,
+					       public_key = PKM}, CompMap)
+  when Alg =:= ?DNS_ALG_DSA orelse
+       Alg =:= ?DNS_ALG_NSEC3DSA ->
+    PKI = [P, Q, G, Y] = [ crypto:erlint(Mpint) || Mpint <- PKM],
+    M = lists:max([byte_size(binary:encode_unsigned(I)) || I <- PKI ]),
+    T = (M - 64) div 8,
+    PKBin = <<T, Q:20/unit:8, P:M/unit:8, G:M/unit:8, Y:M/unit:8>>,
+    {<<Flags:16, Protocol:8, Alg:8, PKBin/binary>>, CompMap};
 encode_rrdata(_Pos, _Class, #dns_rrdata_dnskey{flags = Flags,
 					       protocol = Protocol,
 					       alg = Alg,
@@ -1352,6 +1419,33 @@ llqerrcode_to_int(Atom) when is_atom(Atom) ->
 	?DNS_LLQERRCODE_UNKNOWNERR_ATOM -> ?DNS_LLQERRCODE_UNKNOWNERR_NUMBER;
 	_ -> undefined
     end.
+
+%% @doc Returns the atom representation of a DNS algorithm integer.
+%% @spec alg_to_atom(Alg :: integer()) -> atom() | undefined
+alg_to_atom(Int) when is_integer(Int) ->
+    case Int of
+	?DNS_ALG_DSA_NUMBER -> ?DNS_ALG_DSA_ATOM;
+	?DNS_ALG_NSEC3DSA_NUMBER -> ?DNS_ALG_NSEC3DSA_ATOM;
+	?DNS_ALG_RSASHA1_NUMBER -> ?DNS_ALG_RSASHA1_ATOM;
+	?DNS_ALG_NSEC3RSASHA1_NUMBER -> ?DNS_ALG_NSEC3RSASHA1_ATOM;
+	?DNS_ALG_RSASHA256_NUMBER -> ?DNS_ALG_RSASHA256_ATOM;
+	?DNS_ALG_RSASHA512_NUMBER -> ?DNS_ALG_RSASHA512_ATOM;
+	_ -> undefined
+    end.
+
+%% @doc Returns the integer representation of a DNS algorithm atom.
+%% @spec alg_to_int(Alg :: atom()) -> integer() | undefined
+alg_to_int(Atom) when is_atom(Atom) ->
+    case Atom of
+	?DNS_ALG_DSA_ATOM -> ?DNS_ALG_DSA_NUMBER;
+	?DNS_ALG_NSEC3DSA_ATOM -> ?DNS_ALG_NSEC3DSA_NUMBER;
+	?DNS_ALG_RSASHA1_ATOM -> ?DNS_ALG_RSASHA1_NUMBER;
+	?DNS_ALG_NSEC3RSASHA1_ATOM -> ?DNS_ALG_NSEC3RSASHA1_NUMBER;
+	?DNS_ALG_RSASHA256_ATOM -> ?DNS_ALG_RSASHA256_NUMBER;
+	?DNS_ALG_RSASHA512_ATOM -> ?DNS_ALG_RSASHA512_NUMBER;
+	_ -> undefined
+    end.
+
 
 %%%===================================================================
 %%% Time functions
