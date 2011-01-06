@@ -361,8 +361,8 @@ decode_rrdata(_Class, dnskey, <<Flags:16, Protocol:8, AlgNum:8,
 		       public_key = Key, key_tag = KeyTag};
 decode_rrdata(_Class, dnskey, <<Flags:16, Protocol:8, AlgNum:8,
 				T, Q:20/unit:8, KeyBin/binary>> = Bin, _MsgBin)
-  when AlgNum =:= ?DNS_ALG_DSA orelse
-       AlgNum =:= ?DNS_ALG_NSEC3DSA ->
+  when (AlgNum =:= ?DNS_ALG_DSA orelse AlgNum =:= ?DNS_ALG_NSEC3DSA)
+       andalso T =< 8 ->
     Alg = term_or_arg(fun alg_to_atom/1, AlgNum),
     S = 64 + T * 8,
     <<P:S/unit:8, G:S/unit:8, Y:S/unit:8>> = KeyBin,
