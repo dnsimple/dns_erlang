@@ -573,8 +573,8 @@ encode_rrdata(_Pos, _Class, #dns_rrdata_dnskey{flags = Flags,
 					       public_key = PKM}, CompMap)
   when Alg =:= ?DNS_ALG_DSA orelse
        Alg =:= ?DNS_ALG_NSEC3DSA ->
-    PKI = [P, Q, G, Y] = [ crypto:erlint(Mpint) || Mpint <- PKM],
-    M = lists:max([byte_size(binary:encode_unsigned(I)) || I <- PKI ]),
+    [P, Q, G, Y] = [ crypto:erlint(Mpint) || Mpint <- PKM ],
+    M = byte_size(binary:encode_unsigned(P)),
     T = (M - 64) div 8,
     PKBin = <<T, Q:20/unit:8, P:M/unit:8, G:M/unit:8, Y:M/unit:8>>,
     {<<Flags:16, Protocol:8, Alg:8, PKBin/binary>>, CompMap};
