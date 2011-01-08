@@ -22,6 +22,7 @@
 
 -compile({inline, [term_or_arg/2, int_or_badarg/2]}).
 
+%% API
 -export([decode_message/1, encode_message/1]).
 -export([verify_tsig/3, verify_tsig/4]).
 -export([add_tsig/5, add_tsig/6]).
@@ -44,6 +45,13 @@
 -export([alg_to_atom/1, alg_to_int/1]).
 
 -export([const_compare/2]).
+
+%% Private
+-export([encode_rrdata/2, decode_rrdata/3]).
+-export([encode_dname/1]).
+-export([decode_class/1, encode_class/1]).
+-export([decode_type/1, encode_type/1]).
+-export([decode_alg/1, encode_alg/1]).
 
 -include("dns.hrl").
 -include("dns_tests.hrl").
@@ -320,6 +328,11 @@ gen_tsig_mac(Alg, MsgBin, Name, Secret, Time, Fudge, ErrorCode, Other, PMAC) ->
 
 -define(CLASS_IS_IN(Term), (Term =:= in orelse Term =:= none)).
 
+
+%% @private
+decode_rrdata(Class, Type, Data) ->
+    decode_rrdata(Class, Type, Data, <<>>).
+
 decode_rrdata(Class, a, <<A, B, C, D>>, _MsgBin) when ?CLASS_IS_IN(Class) ->
     IP = inet_parse:ntoa({A,B,C,D}),
     #dns_rrdata_a{ip = list_to_binary(IP)};
@@ -519,6 +532,12 @@ decode_rrdata(Class, wks, <<A, B, C, D, P, BMP/binary>>, _MsgBin)
 decode_rrdata(_Class, x25, Bin, _MsgBin) ->
     #dns_rrdata_x25{psdn_address = list_to_integer(binary_to_list(Bin))};
 decode_rrdata(_Class, _Type, Bin, _MsgBin) -> Bin.
+
+
+%% @private
+encode_rrdata(Class, Data) ->
+    {Bin, undefined} = encode_rrdata(0, Class, Data, undefined),
+    Bin.
 
 encode_rrdata(_Pos, Class, #dns_rrdata_a{ip = IP}, CompMap)
   when ?CLASS_IS_IN(Class) ->
@@ -1008,6 +1027,7 @@ decode_dnameonly(Bin, MsgBin) ->
 	_ -> throw(trailing_garbage)
     end.
 
+%% @private
 encode_dname(Name) ->
     Labels = << <<(byte_size(L)), L/binary>> || L <- dname_to_labels(Name) >>,
     <<Labels/binary, 0>>.
@@ -1075,6 +1095,17 @@ dname_to_lower(Int) when is_integer(Int) -> Int.
 %%% DNS terms
 %%%===================================================================
 
+
+%% @private
+decode_class(Int) when is_integer(Int) ->
+    term_or_arg(fun class_to_atom/1, Int);
+decode_class(Atom) when is_atom(Atom) -> Atom.
+
+%% @private
+encode_class(Int) when is_integer(Int) -> Int;
+encode_class(Atom) when is_atom(Atom) ->
+    int_or_badarg(fun class_to_int/1, Atom).
+
 %% @doc Return the atom representation of a class integer.
 %% @spec class_to_atom(Class :: integer()) -> atom() | undefined
 class_to_atom(Int) when is_integer(Int) ->
@@ -1100,6 +1131,16 @@ class_to_int(Atom) when is_atom(Atom) ->
 	?DNS_CLASS_ANY_ATOM -> ?DNS_CLASS_ANY_NUMBER;
 	_ -> undefined
     end.
+
+%% @private
+decode_type(Int) when is_integer(Int) ->
+    term_or_arg(fun type_to_atom/1, Int);
+decode_type(Atom) when is_atom(Atom) -> Atom.
+
+%% @private
+encode_type(Int) when is_integer(Int) -> Int;
+encode_type(Atom) when is_atom(Atom) ->
+    int_or_badarg(fun type_to_int/1, Atom).
 
 %% @doc Returns the atom representation of a type integer.
 %% @spec type_to_atom(Type :: integer()) -> atom() | undefined
@@ -1419,6 +1460,16 @@ llqerrcode_to_int(Atom) when is_atom(Atom) ->
 	?DNS_LLQERRCODE_UNKNOWNERR_ATOM -> ?DNS_LLQERRCODE_UNKNOWNERR_NUMBER;
 	_ -> undefined
     end.
+
+%% @private
+decode_alg(Int) when is_integer(Int) ->
+    term_or_arg(fun alg_to_atom/1, Int);
+decode_alg(Atom) when is_atom(Atom) -> Atom.
+
+%% @private
+encode_alg(Int) when is_integer(Int) -> Int;
+encode_alg(Atom) when is_atom(Atom) ->
+    int_or_badarg(fun alg_to_int/1, Atom).
 
 %% @doc Returns the atom representation of a DNS algorithm integer.
 %% @spec alg_to_atom(Alg :: integer()) -> atom() | undefined
