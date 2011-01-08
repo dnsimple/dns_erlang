@@ -745,13 +745,14 @@ encode_rrdata(_Pos, _Class, #dns_rrdata_rp{mbox=Mbox, txt=Txt}, CompMap) ->
     TxtBin = encode_dname(Txt),
     {<<MboxBin/binary, TxtBin/binary>>, CompMap};
 encode_rrdata(_Pos, _Class, #dns_rrdata_rrsig{type_covered = TypeCovered,
-					      alg = Alg, labels=Labels,
+					      alg = AlgN, labels=Labels,
 					      original_ttl = OriginalTTL,
 					      expiration = SigExpire,
 					      inception = SigIncept,
 					      key_tag = KeyTag,
 					      signers_name = SignersName,
 					      signature = Sig}, CompMap) ->
+    Alg = encode_alg(AlgN),
     TypeCoveredN = int_or_badarg(fun type_to_int/1, TypeCovered),
     SignersNameBin = encode_dname(SignersName),
     {<<TypeCoveredN:16, Alg:8, Labels:8, OriginalTTL:32, SigExpire:32,
