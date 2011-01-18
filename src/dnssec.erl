@@ -475,7 +475,7 @@ gen_name_ancestors(Name, ZoneName)
 		    [FirstLabel|Labels] = lists:reverse(Labels0),
 		    gen_name_ancestors(Labels, [<<FirstLabel/binary, $., ZoneName/binary>>])
 	    end;
-	_ -> error(name_mismatch)
+	_ -> erlang:error(name_mismatch)
     end;
 gen_name_ancestors([], Anc) -> Anc;
 gen_name_ancestors([Label|Labels], [Parent|_]=Asc) ->
