@@ -1571,7 +1571,7 @@ const_compare(A, B) when is_binary(A) andalso is_binary(B) ->
        true -> false end.
 
 const_compare(<<>>, <<>>, Result) -> 0 =:= Result;
-const_compare(<<C1:1, A/bitstring>>, <<C2:1, B/bitstring>>, Result) ->
+const_compare(<<C1, A/binary>>, <<C2, B/binary>>, Result) ->
     const_compare(A, B, Result bor (C1 bxor C2)).
 
 round_pow(N, E) -> round(math:pow(N, E)).
