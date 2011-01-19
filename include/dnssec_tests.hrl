@@ -16,6 +16,7 @@
 	 }).
 
 gen_nsec_test_() ->
+    {setup, fun() -> application:start(crypto) end,
     [ {ZoneName,
        ?_test(
 	  begin
@@ -34,13 +35,15 @@ gen_nsec_test_() ->
 	 )}
       || #dnssec_test_sample{zonename = ZoneName,
 			     nsec3 = undefined,
-			     rr_src = RRSrc} <- helper_test_samples() ].
+			     rr_src = RRSrc} <- helper_test_samples() ]}.
 
 verify_rrset_test_() ->
+    {setup, fun() -> application:start(crypto) end,
     [ {Name, ?_assert(verify_rrsig(RRSig, RRSet, DNSKeys, Opts))}
-      || {Name, RRSig, RRSet, DNSKeys, Opts} <- helper_verify_rrset_test_cases() ].
+      || {Name, RRSig, RRSet, DNSKeys, Opts} <- helper_verify_rrset_test_cases() ]}.
     
 zone_test_() ->
+    {setup, fun() -> application:start(crypto) end,
     [ {helper_fmt("Build Zone ~s", [ZoneName]),
        ?_test(
 	  begin
@@ -121,7 +124,7 @@ zone_test_() ->
 			     zsk_pl = ZSKPL,
 			     ksk_pl = KSKPL,
 			     rr_clean = RRClean,
-			     rr_src = RRSrc} <- helper_test_samples() ].
+			     rr_src = RRSrc} <- helper_test_samples() ]}.
 
 test_sample_keys_test_() ->
     Keys = lists:foldl(fun(#dnssec_test_sample{alg = Alg,
@@ -129,7 +132,7 @@ test_sample_keys_test_() ->
 					       ksk_pl = B}, Acc) ->
 			       [ {Alg, A}, {Alg, B} | Acc ]
 		       end, [], helper_test_samples()),
-    [ ?_assert(test_sample_key(Key)) || Key <- Keys ].
+    {setup, fun() -> application:start(crypto) end, [ ?_assert(test_sample_key(Key)) || Key <- Keys ]}.
 
 test_sample_key({Alg, Proplist}) ->
     PrivKey = helper_samplekeypl_to_privkey(Proplist),
@@ -309,7 +312,6 @@ helper_pubkey_to_dnskey_pubkey(dsa, [P, Q, G, Y] = Key) ->
     QI = crypto:erlint(Q),
     GI = crypto:erlint(G),
     YI = crypto:erlint(Y),
-    M = byte_size(binary:encode_unsigned(PI)),
     T = (M - 64) div 8,
     M = 64 + T * 8,
     <<T, QI:20/unit:8, PI:M/unit:8, GI:M/unit:8, YI:M/unit:8>>.
