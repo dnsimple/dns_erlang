@@ -28,6 +28,7 @@
 -export([add_keytag_to_dnskey/1]).
 
 -include("dns.hrl").
+-include("DNS-ASN1.hrl").
 -include("dnssec_tests.hrl").
 
 -define(RSASHA1_PREFIX, <<16#30, 16#21, 16#30, 16#09, 16#06, 16#05, 16#2B,
@@ -262,8 +263,7 @@ sign_rrset([#dns_rr{name = Name, class = Class, ttl = TTL}|_] = RRs,
 		    AlgNum when AlgNum =:= ?DNS_ALG_DSA orelse
 				AlgNum =:= ?DNS_ALG_NSEC3DSA ->
 			Asn1Sig = crypto:dss_sign(none, BaseSigInput, Key),
-			{'Dss-Sig-Value', R, S} = public_key:der_decode(
-						    'Dss-Sig-Value', Asn1Sig),
+			{R, S} = decode_asn1_dss_sig(Asn1Sig),
 			[ P, _Q, _G, _Y ] = Key,
 			T = (byte_size(P) - 64) div 8,
 			<<T, R:20/unit:8, S:20/unit:8>>;
@@ -314,11 +314,10 @@ verify_rrsig(#dns_rr{type = rrsig, data = Data}, RRs, RRDNSKey, Opts) ->
 		    when Alg =:= ?DNS_ALG_DSA orelse
 			 Alg =:= ?DNS_ALG_NSEC3DSA ->
 		      <<_T, R:20/unit:8, S:20/unit:8>> = Sig,
-		      AsnTuple =  {'Dss-Sig-Value', R, S},
-		      AsnSig = public_key:der_encode('Dss-Sig-Value', AsnTuple),
+		      AsnSig = encode_asn1_dss_sig(R, S),
 		      AsnSigSize = byte_size(AsnSig),
 		      AsnBin = <<AsnSigSize:32, AsnSig/binary>>,
-		      crypto:dss_verify(none, SigInput, AsnBin, Key);
+		      crypto:dss_verify(SigInput, AsnBin, Key);
 		 ({_, Alg, Key})
 		    when Alg =:= ?DNS_ALG_NSEC3RSASHA1 orelse
 			 Alg =:= ?DNS_ALG_RSASHA1 orelse
@@ -362,7 +361,9 @@ build_sig_input(SignersName, KeyTag, Alg, Incept, Expire,
     SigInput = case AlgNum of
 		   AlgNum when AlgNum =:= ?DNS_ALG_DSA orelse
 			       AlgNum =:= ?DNS_ALG_NSEC3DSA ->
-		       crypto:sha(SigInput0);
+		       SigInput1 = iolist_to_binary(SigInput0),
+		       SigInput1Size = byte_size(SigInput1),
+		       <<SigInput1Size:32, SigInput1/binary>>;
 		   AlgNum when AlgNum =:= ?DNS_ALG_RSASHA1 orelse
 			       AlgNum =:= ?DNS_ALG_NSEC3RSASHA1 ->
 		       Hash = crypto:sha(SigInput0),
@@ -506,3 +507,13 @@ do_count_labels(List) when is_list(List) -> length(List).
 normalise_dname(Name) -> dns:dname_to_lower(iolist_to_binary(Name)).
 
 normalise_dname_to_labels(Name) -> dns:dname_to_labels(normalise_dname(Name)).
+
+decode_asn1_dss_sig(Bin) when is_binary(Bin) ->
+    {ok, #'DSS-Sig'{r = R, s = S}} = 'DNS-ASN1':decode('DSS-Sig', Bin),
+    {R, S}.
+
+encode_asn1_dss_sig(R, S) when is_integer(R) andalso is_integer(S) ->
+    Rec = #'DSS-Sig'{r = R, s = S},
+    {ok, List} = asn1rt:encode('DNS-ASN1', 'DSS-Sig', Rec),
+    iolist_to_binary(List).
+
