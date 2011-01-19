@@ -7,3 +7,4 @@ deps
 *.bea#
 *~
 .DS_Store
+src/DNS-ASN1.*
