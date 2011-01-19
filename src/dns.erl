@@ -363,10 +363,12 @@ decode_rrdata(_Class, dnskey, <<Flags:16, Protocol:8, AlgNum:8,
     Alg = term_or_arg(fun alg_to_atom/1, AlgNum),
     Key = case PublicKey of
 	      <<0, Len:16, Exp:Len/unit:8, ModBin/binary>> ->
-		  Mod = binary:decode_unsigned(ModBin),
+		  ModSize = byte_size(ModBin),
+		  <<Mod:ModSize/unit:8>> = ModBin,
 		  [crypto:mpint(Exp), crypto:mpint(Mod)];
 	      <<Len:8, Exp:Len/unit:8, ModBin/binary>> ->
-		  Mod = binary:decode_unsigned(ModBin),
+		  ModSize = byte_size(ModBin),
+		  <<Mod:ModSize/unit:8>> = ModBin,
 		  [crypto:mpint(Exp), crypto:mpint(Mod)]
 	  end,
     KeyTag = bin_to_key_tag(Bin),
@@ -576,8 +578,10 @@ encode_rrdata(_Pos, _Class, #dns_rrdata_dnskey{flags = Flags,
        Alg =:= ?DNS_ALG_NSEC3RSASHA1 orelse
        Alg =:= ?DNS_ALG_RSASHA256 orelse
        Alg =:= ?DNS_ALG_RSASHA512 ->
-    EBin = binary:encode_unsigned(crypto:erlint(E)),
-    MBin = binary:encode_unsigned(crypto:erlint(M)),
+    <<_MSize:32, MBin0/binary>> = M,
+    MBin = strip_leading_zeros(MBin0),
+    <<_ESize:32, EBin0/binary>> = E,
+    EBin = strip_leading_zeros(EBin0),
     ESize = byte_size(EBin),
     PKBin =  if ESize =< 16#FF ->
 		     <<ESize:8, EBin:ESize/binary, MBin/binary>>;
@@ -592,8 +596,9 @@ encode_rrdata(_Pos, _Class, #dns_rrdata_dnskey{flags = Flags,
 					       public_key = PKM}, CompMap)
   when Alg =:= ?DNS_ALG_DSA orelse
        Alg =:= ?DNS_ALG_NSEC3DSA ->
+    [<<_MSize:32, MBin/binary>>, _, _, _] = PKM,
     [P, Q, G, Y] = [ crypto:erlint(Mpint) || Mpint <- PKM ],
-    M = byte_size(binary:encode_unsigned(P)),
+    M = byte_size(strip_leading_zeros(MBin)),
     T = (M - 64) div 8,
     PKBin = <<T, Q:20/unit:8, P:M/unit:8, G:M/unit:8, Y:M/unit:8>>,
     {<<Flags:16, Protocol:8, Alg:8, PKBin/binary>>, CompMap};
@@ -1578,3 +1583,7 @@ round_pow(N, E) -> round(math:pow(N, E)).
 
 unique_list(List) when is_list(List) ->
     lists:sort(sets:to_list(sets:from_list(List))).
+
+strip_leading_zeros(<<0, Rest/binary>>) ->
+    strip_leading_zeros(Rest);
+strip_leading_zeros(Binary) -> Binary.
