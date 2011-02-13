@@ -918,6 +918,7 @@ pad_bmp(BMP) when is_bitstring(BMP) ->
 %%% EDNS data functions
 %%%===================================================================
 
+decode_optrrdata(<<>>) -> [];
 decode_optrrdata(Bin) -> decode_optrrdata(Bin, []).
 
 decode_optrrdata(<<EOptNum:16, EOptLen:16, EOptBin:EOptLen/binary, Rest/binary>>, Opts) ->
