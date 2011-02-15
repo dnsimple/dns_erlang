@@ -333,6 +333,7 @@ gen_tsig_mac(Alg, MsgBin, Name, Secret, Time, Fudge, ErrorCode, Other, PMAC) ->
 decode_rrdata(Class, Type, Data) ->
     decode_rrdata(Class, Type, Data, <<>>).
 
+decode_rrdata(_Class, _Type, <<>>, _MsgBin) -> <<>>;
 decode_rrdata(Class, a, <<A, B, C, D>>, _MsgBin) when ?CLASS_IS_IN(Class) ->
     IP = inet_parse:ntoa({A,B,C,D}),
     #dns_rrdata_a{ip = list_to_binary(IP)};
