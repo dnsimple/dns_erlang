@@ -5,19 +5,19 @@
 %%% Message body functions
 %%%===================================================================
 
-message_empty_test_() ->
+message_empty_test() ->
     Msg = #dns_message{},
     Bin = encode_message(Msg),
-    ?_assertEqual(Msg, decode_message(Bin)).
+    ?assertEqual(Msg, decode_message(Bin)).
 
-message_query_test_() ->
+message_query_test() ->
     Qs = [#dns_query{name = <<"example">>, class=in, type=a}],
     QLen = length(Qs),
     Msg = #dns_message{qc=QLen, questions=Qs},
     Bin = encode_message(Msg),
-    ?_assertEqual(Msg, decode_message(Bin)).
+    ?assertEqual(Msg, decode_message(Bin)).
 
-message_other_test_() ->
+message_other_test() ->
     QName = <<"i            .txt.example.org">>,
     Qs = [#dns_query{name = QName, class = in, type = txt}],
     As = [#dns_rr{name = QName, class = in, type = txt, ttl = 0,
@@ -26,11 +26,10 @@ message_other_test_() ->
     ALen = length(As),
     Msg = #dns_message{qc = QLen, anc = ALen, questions = Qs, answers = As},
     Bin = encode_message(Msg),
-    ?_assertEqual(Msg, decode_message(Bin)).
+    ?assertEqual(Msg, decode_message(Bin)).
 
-message_edns_test_() ->
+message_edns_test() ->
     QName = <<"_http._tcp.example.org">>,
-    
     Qs = [#dns_query{name = QName, class = in, type = ptr}],
     Ans = [#dns_rr{name = QName, class = in, type = ptr, ttl = 42,
 		   data = #dns_rrdata_ptr{
@@ -48,13 +47,13 @@ message_edns_test_() ->
     Msg = #dns_message{qc = QLen, anc = AnsLen, adc = AdsLen,
 		       questions = Qs, answers = Ans, additional = Ads},
     Bin = encode_message(Msg),
-    ?_assertEqual(Msg, decode_message(Bin)).
-    
+    ?assertEqual(Msg, decode_message(Bin)).
+
 tsig_no_tsig_test() ->
     MsgBin = encode_message(#dns_message{}),
     Name = <<"name">>,
     Value = <<"value">>,
-    ?_assertException(error, no_tsig, verify_tsig(MsgBin, Name, Value)).
+    ?assertException(throw, no_tsig, verify_tsig(MsgBin, Name, Value)).
 
 tsig_bad_key_test() ->
     MsgId = random_id(),
@@ -197,7 +196,7 @@ decode_encode_rrdata_test_() ->
 	     {Encoded, _NewCompMap} = encode_rrdata(0, Class, Data,
 						    gb_trees:empty()),
 	     Decoded = decode_rrdata(Class, Type, Encoded, Encoded),
-	     ?_assertEqual(Data, Decoded)
+	     ?assertEqual(Data, Decoded)
 	 end
 	)
       || {Class, Type, Data} <- Cases ].
@@ -242,13 +241,13 @@ decode_dname_2_ptr_test_() ->
     [ ?_assertEqual({<<"example">>, <<>>}, decode_dname(DataBin, MsgBin))
       || {MsgBin, DataBin} <- Cases ].
 
-decode_dname_decode_loop_test_() ->
+decode_dname_decode_loop_test() ->
     Bin = <<3:2, 0:14>>,
-    ?_assertException(throw, decode_loop, decode_dname(Bin, Bin)).
+    ?assertException(throw, decode_loop, decode_dname(Bin, Bin)).
 
-decode_dname_bad_pointer_test_() ->
+decode_dname_bad_pointer_test() ->
     Case = <<3:2, 42:14>>,
-    ?_assertException(throw, bad_pointer, decode_dname(Case, Case)).
+    ?assertException(throw, bad_pointer, decode_dname(Case, Case)).
 
 encode_dname_1_test_() ->
     Cases = [ {"example", <<7,101,120,97,109,112,108,101,0>>},
@@ -271,7 +270,7 @@ encode_dname_4_test_() ->
 	      {Bin1, Bin2},
 	      {gb_trees:empty(), CM1}
 	    ],
-    [ ?_assertEqual(Expect, Result) || {Expect, Result} <- Cases ]. 
+    [ ?_assertEqual(Expect, Result) || {Expect, Result} <- Cases ].
 
 dname_to_labels_test_() ->
     Cases = [ {"", []}, {".", []}, {<<>>, []}, {<<".">>, []},
