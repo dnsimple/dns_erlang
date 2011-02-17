@@ -210,7 +210,7 @@ random_id() -> crypto:rand_uniform(0, 65535).
 
 %% @spec verify_tsig(binary(), dname(), binary()) ->
 %%       {ok, MAC :: binary()} |
-%%       {ok, bad_time | bad_sig | bad_key} |
+%%       {ok, badtime | badsig | badkey} |
 %%       {error, term()}
 %% @equiv verify_tsig(MsgBin, Name, Secret, [])
 %% @throws bad_pointer | decode_loop | formerr | trailing_garbage | no_tsig
@@ -220,7 +220,7 @@ verify_tsig(MsgBin, Name, Secret) ->
 %% @doc Verifies a TSIG message signature.
 %% @spec verify_tsig(binary(), dname(), binary(), [tsig_option()]) ->
 %%       {ok, MAC :: binary()} |
-%%       {ok, bad_time | bad_sig | bad_key} |
+%%       {ok, badtime | badsig | badkey} |
 %%       {error, term()}
 %% @throws bad_pointer | decode_loop | formerr | trailing_garbage | no_tsig
 %% @type tsig_option() = {time, unix_time()} | {fudge, integer()} |
@@ -239,15 +239,17 @@ verify_tsig(MsgBin, Name, Secret, Options) ->
 		{ok, SMAC} ->
 		    case const_compare(CMAC, SMAC) of
 			true ->
-			    if Now < (Time - Fudge) -> {ok, bad_time};
-			       Now > (Time + Fudge) -> {ok, bad_time};
+			    if Now < (Time - Fudge) ->
+				    {ok, ?DNS_TSIGERR_BADTIME_ATOM};
+			       Now > (Time + Fudge) ->
+				    {ok, ?DNS_TSIGERR_BADTIME_ATOM};
 			       true -> {ok, SMAC}
 			    end;
-			false -> {ok, bad_sig}
+			false -> {ok, ?DNS_TSIGERR_BADSIG_ATOM}
 		    end;
 		{error, Error} -> {error, Error}
 	    end;
-	false -> {ok, bad_key}
+	false -> {ok, ?DNS_TSIGERR_BADKEY_ATOM}
     end.
 
 %% @doc Generates and then appends a TSIG RR to a message.

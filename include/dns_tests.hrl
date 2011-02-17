@@ -71,8 +71,8 @@ tsig_bad_key_test() ->
 		   data = TSIGData},
     Msg = #dns_message{id=MsgId, adc = 1, additional=[TSIG]},
     MsgBin = encode_message(Msg),
-    Result = verify_tsig(MsgBin, <<"name_b">>, B64), 
-    ?assertEqual({ok, bad_key}, Result).
+    Result = verify_tsig(MsgBin, <<"name_b">>, B64),
+    ?assertEqual({ok, ?DNS_TSIGERR_BADKEY_ATOM}, Result).
 
 tsig_bad_alg_test() ->
     Id = random_id(),
@@ -97,9 +97,9 @@ tsig_bad_sig_test() ->
     BadSignedMsg = Msg#dns_message{adc = 1, additional = [BadTSIG]},
     BadSignedMsgBin = encode_message(BadSignedMsg),
     Result = verify_tsig(BadSignedMsgBin, Name, Value),
-    ?assertEqual({ok, bad_sig}, Result).
+    ?assertEqual({ok, ?DNS_TSIGERR_BADSIG_ATOM}, Result).
 
-tsig_bad_time_test_() ->
+tsig_badtime_test_() ->
     application:start(crypto),
     MsgId = random_id(),
     Name = <<"keyname">>,
@@ -114,9 +114,9 @@ tsig_bad_time_test_() ->
 	     BadNow = Now + (Throwoff * Fudge),
 	     Options = [{fudge, 30}, {time, BadNow}],
 	     Result = verify_tsig(SignedMsgBin, Name, Secret, Options),
-	     ?_assertEqual({ok, bad_time}, Result)
+	     ?assertEqual({ok, ?DNS_TSIGERR_BADTIME_ATOM}, Result)
 	 end
-	) || Throwoff <- [ -2, 2 ] ]. 
+	) || Throwoff <- [ -2, 2 ] ].
 
 tsig_ok_test_() ->
     application:start(crypto),
