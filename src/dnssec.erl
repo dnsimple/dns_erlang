@@ -46,7 +46,7 @@
 %%      zone name and TTL.
 %% @spec gen_nsec([#dns_rr{}]) -> [#dns_rr{type = nsec}]
 gen_nsec(RR) ->
-    case lists:keysearch(soa, #dns_rr.type, RR) of
+    case lists:keysearch(?DNS_TYPE_SOA, #dns_rr.type, RR) of
 	false -> erlang:error(badarg);
 	{value, #dns_rr{name = ZoneName,
 			data = #dns_rrdata_soa{minimum = TTL }}} ->
@@ -60,10 +60,11 @@ gen_nsec(ZoneName, RR, TTL) ->
 %% @doc Generate NSEC records.
 gen_nsec(ZoneNameM, RR, TTL, Opts) ->
     ZoneName = normalise_dname(ZoneNameM),
-    BaseTypes = proplists:get_value(base_types, Opts, [nsec, rrsig]),
+    BaseTypes = proplists:get_value(base_types, Opts, [?DNS_TYPE_NSEC,
+						       ?DNS_TYPE_RRSIG]),
     Map = build_rrmap(RR, BaseTypes),
-    Unsorted = [ #dns_rr{name = Name, class = Class, type = nsec, ttl = TTL,
-			 data = #dns_rrdata_nsec{types = Types}} 
+    Unsorted = [ #dns_rr{name = Name, class = Class, type = ?DNS_TYPE_NSEC,
+			 ttl = TTL, data = #dns_rrdata_nsec{types = Types}}
 		 || {{Name, Class}, Types} <- Map ],
     Sorted = lists:sort(fun name_order/2, Unsorted),
     add_next_dname(Sorted, ZoneName).
@@ -75,7 +76,8 @@ add_next_dname(Added, [#dns_rr{data = Data} = RR|
     NewRR = RR#dns_rr{data = Data#dns_rrdata_nsec{next_dname = Next}},
     NewAdded = [NewRR|Added],
     add_next_dname(NewAdded, ToAdd, ZoneName);
-add_next_dname(Added, [#dns_rr{type = nsec, data = Data}=RR], ZoneName) ->
+add_next_dname(Added, [#dns_rr{type = ?DNS_TYPE_NSEC, data = Data}=RR],
+	       ZoneName) ->
     NewRR = RR#dns_rr{data = Data#dns_rrdata_nsec{next_dname = ZoneName}},
     lists:reverse([NewRR|Added]).
 
@@ -85,11 +87,11 @@ add_next_dname(Added, [#dns_rr{type = nsec, data = Data}=RR], ZoneName) ->
 %%      hash algorithm, iterations and salt from.
 %% @spec gen_nsec3([#dns_rr{}]) -> [#dns_rr{type = nsec3}]
 gen_nsec3(RRs) ->
-    case lists:keysearch(soa, #dns_rr.type, RRs) of
+    case lists:keysearch(?DNS_TYPE_SOA, #dns_rr.type, RRs) of
 	false -> erlang:error(badarg);
 	{value, #dns_rr{name = ZoneName,
 			data = #dns_rrdata_soa{minimum = TTL}}} ->
-	    case lists:keysearch(nsec3param, #dns_rr.type, RRs) of
+	    case lists:keysearch(?DNS_TYPE_NSEC3PARAM, #dns_rr.type, RRs) of
 		false -> erlang:error(badarg);
 		{value, #dns_rr{class = Class,
 				data = #dns_rrdata_nsec3param{
@@ -102,7 +104,7 @@ gen_nsec3(RRs) ->
 
 %% @equiv gen_nsec3(RR, ZoneName, Alg, Salt, Iterations, TTL, in, [])
 gen_nsec3(RR, ZoneName, Alg, Salt, Iterations, TTL) ->
-    gen_nsec3(RR, ZoneName, Alg, Salt, Iterations, TTL, in, []). 
+    gen_nsec3(RR, ZoneName, Alg, Salt, Iterations, TTL, ?DNS_CLASS_IN, []).
 
 %% @equiv gen_nsec3(RRs, ZoneName, Alg, Salt, Iterations, TTL, Class, [])
 gen_nsec3(RRs, ZoneName, Alg, Salt, Iterations, TTL, Class) ->
@@ -110,7 +112,7 @@ gen_nsec3(RRs, ZoneName, Alg, Salt, Iterations, TTL, Class) ->
 
 %% @doc Generate NSEC3 records.
 gen_nsec3(RRs, ZoneName, Alg, Salt, Iterations, TTL, Class, Opts) ->
-    BaseTypes = proplists:get_value(base_types, Opts, [rrsig]),
+    BaseTypes = proplists:get_value(base_types, Opts, [?DNS_TYPE_RRSIG]),
     HashFun = case Alg of
 		  1 -> fun crypto:sha/1
 	      end,
@@ -128,7 +130,8 @@ gen_nsec3(RRs, ZoneName, Alg, Salt, Iterations, TTL, Class, Opts) ->
 						  hash = HashedName,
 						  types = Types},
 			 NewRR = #dns_rr{name = NewName, class = Class,
-					 type = nsec3, ttl = TTL, data = Data},
+					 type = ?DNS_TYPE_NSEC3, ttl = TTL,
+					 data = Data},
 			 [NewRR|Acc];
 		    (_, Acc) -> Acc
 		 end, [], Map),
@@ -150,18 +153,15 @@ add_next_hash([#dns_rr{data = Data} = RR|
     NewRR = RR#dns_rr{data = Data#dns_rrdata_nsec3{hash = NextHash}},
     add_next_hash(Hashes, [NewRR|RRs], FirstHash).
 
-normalise_rr(#dns_rr{name = NBin, class = CNum, type = TNum} = RR) 
-  when is_binary(NBin) andalso is_integer(CNum) andalso is_integer(TNum) ->
-    Name = normalise_dname(NBin),
-    Class = dns:decode_class(CNum),
-    Type = dns:decode_type(TNum),
-    RR#dns_rr{name = Name, class = Class, type = Type};
 normalise_rr(#dns_rr{name = Name} = RR) when not is_binary(Name) ->
     normalise_rr(RR#dns_rr{name = iolist_to_binary(Name)});
 normalise_rr(#dns_rr{class = Class} = RR) when is_atom(Class) ->
-    normalise_rr(RR#dns_rr{class = dns:encode_class(Class)});    
+    normalise_rr(RR#dns_rr{class = dns:encode_class(Class)});
 normalise_rr(#dns_rr{type = Type} = RR) when is_atom(Type) ->
-    normalise_rr(RR#dns_rr{type = dns:encode_type(Type)}).
+    normalise_rr(RR#dns_rr{type = dns:encode_type(Type)});%.
+normalise_rr(#dns_rr{name = NBin, class = CNum, type = TNum} = RR)
+  when is_binary(NBin) andalso is_integer(CNum) andalso is_integer(TNum) ->
+    RR.
 
 build_rrmap(RR, BaseTypes) ->
     Base = build_rrmap_gbt(RR, BaseTypes),
@@ -253,31 +253,36 @@ sign_rrset(RRSet, SignerName, KeyTag, Alg, Key) ->
 
 %% @doc Signs a list of #dns_rr{} of the same class and type.
 sign_rrset([#dns_rr{name = Name, class = Class, ttl = TTL}|_] = RRs,
-	   SignersName, KeyTag, Alg, Key, Opts) ->
+	   SignersName, KeyTag, Alg, Key, Opts) when is_integer(Alg) ->
     Now = dns:unix_time(),
     Incept = proplists:get_value(inception, Opts, Now),
     Expire = proplists:get_value(expiration, Opts, Now + (365 * 24 * 60 * 60)),
     {Data0, BaseSigInput} = build_sig_input(SignersName, KeyTag, Alg, Incept,
 					    Expire, RRs),
-    Signature = case dns:encode_alg(Alg) of
-		    AlgNum when AlgNum =:= ?DNS_ALG_DSA orelse
-				AlgNum =:= ?DNS_ALG_NSEC3DSA ->
+    Signature = case Alg of
+		    Alg when Alg =:= ?DNS_ALG_DSA orelse
+			     Alg =:= ?DNS_ALG_NSEC3DSA ->
 			Asn1Sig = crypto:dss_sign(none, BaseSigInput, Key),
 			{R, S} = decode_asn1_dss_sig(Asn1Sig),
 			[ P, _Q, _G, _Y ] = Key,
 			T = (byte_size(P) - 64) div 8,
 			<<T, R:20/unit:8, S:20/unit:8>>;
-		    AlgNum when AlgNum =:= ?DNS_ALG_NSEC3RSASHA1 orelse
-				AlgNum =:= ?DNS_ALG_RSASHA1 orelse
-				AlgNum =:= ?DNS_ALG_RSASHA256 orelse
-				AlgNum =:= ?DNS_ALG_RSASHA512 ->
+		    Alg when Alg =:= ?DNS_ALG_NSEC3RSASHA1 orelse
+			     Alg =:= ?DNS_ALG_RSASHA1 orelse
+			     Alg =:= ?DNS_ALG_RSASHA256 orelse
+			     Alg =:= ?DNS_ALG_RSASHA512 ->
 			crypto:rsa_private_encrypt(BaseSigInput, Key,
 						   rsa_pkcs1_padding)
 		end,
     Data = Data0#dns_rrdata_rrsig{signature = Signature},
-    #dns_rr{name = Name, type = rrsig, class = Class, ttl = TTL, data = Data}.
+    #dns_rr{name = Name, type = ?DNS_TYPE_RRSIG, class = Class, ttl = TTL,
+	    data = Data};
+sign_rrset(RRs, SignersName, KeyTag, Alg, Key, Opts) when is_atom(Alg) ->
+    AlgNum = dns:alg_to_int(Alg),
+    sign_rrset(RRs, SignersName, KeyTag, AlgNum, Key, Opts).
 
-verify_rrsig(#dns_rr{type = rrsig, data = Data}, RRs, RRDNSKey, Opts) ->
+verify_rrsig(#dns_rr{type = ?DNS_TYPE_RRSIG, data = Data}, RRs, RRDNSKey,
+	     Opts) ->
     Now = proplists:get_value(now, Opts, dns:unix_time()),
     #dns_rrdata_rrsig{original_ttl = OTTL,
 		      key_tag = SigKeyTag,
@@ -288,7 +293,7 @@ verify_rrsig(#dns_rr{type = rrsig, data = Data}, RRs, RRDNSKey, Opts) ->
 		      signature = Sig} = Data,
     Keys0 = [ {KeyTag, dns:encode_alg(Alg), PubKey}
 	      || #dns_rr{name = Name,
-			 type = dnskey,
+			 type = ?DNS_TYPE_DNSKEY,
 			 data = #dns_rrdata_dnskey{
 			   protocol = 3,
 			   alg = Alg,
@@ -323,8 +328,8 @@ verify_rrsig(#dns_rr{type = rrsig, data = Data}, RRs, RRDNSKey, Opts) ->
 			 Alg =:= ?DNS_ALG_RSASHA1 orelse
 			 Alg =:= ?DNS_ALG_RSASHA256 orelse
 			 Alg =:= ?DNS_ALG_RSASHA512 ->
-		      SigPayload = try crypto:rsa_public_decrypt(Sig, Key,
-								 rsa_pkcs1_padding)
+		      SigPayload = try crypto:rsa_public_decrypt(
+					 Sig, Key, rsa_pkcs1_padding)
 				   catch error:decrypt_failed -> undefined end,
 		      SigInput =:= SigPayload;
 		 (_) -> false
@@ -339,8 +344,7 @@ build_sig_input(SignersName, KeyTag, Alg, Incept, Expire,
 		[#dns_rr{name = Name,
 			 class = Class,
 			 type = Type,
-			 ttl = TTL}|_] = RRs, TTL) ->
-    AlgNum = dns:encode_alg(Alg),
+			 ttl = TTL}|_] = RRs, TTL) when is_integer(Alg) ->
     Datas = lists:sort([ canonical_rrdata_bin(RR) ||RR <- RRs ]),
     NameBin = dns:encode_dname(dns:dname_to_lower(Name)),
     IntType = dns:encode_type(Type),
@@ -349,7 +353,7 @@ build_sig_input(SignersName, KeyTag, Alg, Incept, Expire,
     RRSetBin = [  <<RecordBase/binary, (byte_size(Data)):16, Data/binary>>
 		      || Data <- Datas ],
     RRSigData0 = #dns_rrdata_rrsig{type_covered = Type,
-				   alg = AlgNum,
+				   alg = Alg,
 				   labels = count_labels(Name),
 				   original_ttl = TTL,
 				   inception = Incept,
@@ -358,14 +362,14 @@ build_sig_input(SignersName, KeyTag, Alg, Incept, Expire,
 				   signers_name = SignersName},
     RRSigRDataBin = rrsig_to_digestable(RRSigData0),
     SigInput0 = [RRSigRDataBin, RRSetBin],
-    SigInput = case AlgNum of
-		   AlgNum when AlgNum =:= ?DNS_ALG_DSA orelse
-			       AlgNum =:= ?DNS_ALG_NSEC3DSA ->
+    SigInput = case Alg of
+		   Alg when Alg =:= ?DNS_ALG_DSA orelse
+			    Alg =:= ?DNS_ALG_NSEC3DSA ->
 		       SigInput1 = iolist_to_binary(SigInput0),
 		       SigInput1Size = byte_size(SigInput1),
 		       <<SigInput1Size:32, SigInput1/binary>>;
-		   AlgNum when AlgNum =:= ?DNS_ALG_RSASHA1 orelse
-			       AlgNum =:= ?DNS_ALG_NSEC3RSASHA1 ->
+		   Alg when Alg =:= ?DNS_ALG_RSASHA1 orelse
+			    Alg =:= ?DNS_ALG_NSEC3RSASHA1 ->
 		       Hash = crypto:sha(SigInput0),
 		       <<?RSASHA1_PREFIX/binary, Hash/binary>>;
 		   ?DNS_ALG_RSASHA256 ->
@@ -374,25 +378,25 @@ build_sig_input(SignersName, KeyTag, Alg, Incept, Expire,
 		   ?DNS_ALG_RSASHA512 ->
 		       Hash = sha2:sha512(SigInput0),
 		       <<?RSASHA512_PREFIX/binary, Hash/binary>>
-	       end,	 
+	       end,
     {RRSigData0, SigInput}.
-    
 
 %% @doc Generates and appends a DNS Key records key tag.
-add_keytag_to_dnskey(#dns_rr{type = dnskey,
+add_keytag_to_dnskey(#dns_rr{type = ?DNS_TYPE_DNSKEY,
 			     data = #dns_rrdata_dnskey{} = Data} = RR) ->
     NewData = add_keytag_to_dnskey(Data),
     RR#dns_rr{data = NewData};
 add_keytag_to_dnskey(#dns_rrdata_dnskey{} = Data) ->
     KeyBin = dns:encode_rrdata(in, Data),
-    dns:decode_rrdata(in, dnskey, KeyBin).
+    dns:decode_rrdata(?DNS_CLASS_IN, ?DNS_TYPE_DNSKEY, KeyBin).
 
-rrsig_to_digestable(#dns_rr{type=rrsig, data=#dns_rrdata_rrsig{}=Data}) ->
+rrsig_to_digestable(#dns_rr{type = ?DNS_TYPE_RRSIG,
+			    data = #dns_rrdata_rrsig{} = Data}) ->
     rrsig_to_digestable(Data);
 rrsig_to_digestable(#dns_rrdata_rrsig{} = Data) ->
-    dns:encode_rrdata(in, Data#dns_rrdata_rrsig{signature = <<>>}).
+    dns:encode_rrdata(?DNS_CLASS_IN, Data#dns_rrdata_rrsig{signature = <<>>}).
 
-canonical_rrdata_bin(#dns_rr{class=Class, data=Data0}) ->
+canonical_rrdata_bin(#dns_rr{class = Class, data = Data0}) ->
     dns:encode_rrdata(Class, canonical_rrdata_form(Data0)).
 
 canonical_rrdata_form(#dns_rrdata_afsdb{hostname = Hostname} = Data) ->
@@ -474,7 +478,8 @@ gen_name_ancestors(Name, ZoneName)
 		[_] -> [];
 		[_|Labels0] ->
 		    [FirstLabel|Labels] = lists:reverse(Labels0),
-		    gen_name_ancestors(Labels, [<<FirstLabel/binary, $., ZoneName/binary>>])
+		    gen_name_ancestors(Labels, [<<FirstLabel/binary, $.,
+						  ZoneName/binary>>])
 	    end;
 	_ -> erlang:error(name_mismatch)
     end;
@@ -516,4 +521,3 @@ encode_asn1_dss_sig(R, S) when is_integer(R) andalso is_integer(S) ->
     Rec = #'DSS-Sig'{r = R, s = S},
     {ok, List} = asn1rt:encode('DNS-ASN1', 'DSS-Sig', Rec),
     iolist_to_binary(List).
-

@@ -21,15 +21,19 @@ gen_nsec_test_() ->
        ?_test(
 	  begin
 	      RRClean = [ RR || #dns_rr{type = Type} = RR <- RRSrc,
-				Type =/= nsec ],
+				Type =/= ?DNS_TYPE_NSEC ],
 	      NSEC = lists:sort(
 		       lists:foldr(
 			 fun(#dns_rr{data = Data}=RR, Acc) ->
-				 Bin = dns:encode_rrdata(in, Data),
-				 NewData = dns:decode_rrdata(in, nsec, Bin),
+				 Bin = dns:encode_rrdata(?DNS_CLASS_IN, Data),
+				 NewData = dns:decode_rrdata(?DNS_CLASS_IN,
+							     ?DNS_TYPE_NSEC,
+							     Bin),
 				 [ RR#dns_rr{data = NewData} | Acc ]
 			 end, [], gen_nsec(RRClean))),
-	      SrcNSEC = lists:sort([ RR || #dns_rr{type = nsec} = RR <- RRSrc ]),
+	      SrcNSEC = lists:sort(
+			  [ RR ||#dns_rr{type = ?DNS_TYPE_NSEC} = RR <- RRSrc ]
+			 ),
 	      ?assertEqual(SrcNSEC, NSEC)
 	  end
 	 )}
@@ -40,8 +44,9 @@ gen_nsec_test_() ->
 verify_rrset_test_() ->
     {setup, fun() -> application:start(crypto) end,
     [ {Name, ?_assert(verify_rrsig(RRSig, RRSet, DNSKeys, Opts))}
-      || {Name, RRSig, RRSet, DNSKeys, Opts} <- helper_verify_rrset_test_cases() ]}.
-    
+      || {Name, RRSig, RRSet, DNSKeys, Opts} <- helper_verify_rrset_test_cases()
+    ]}.
+
 zone_test_() ->
     {setup, fun() -> application:start(crypto) end,
     [ {helper_fmt("Build Zone ~s", [ZoneName]),
@@ -72,8 +77,8 @@ zone_test_() ->
 					   public_key = KSKPubKeyBin},
 	      KSKKey = add_keytag_to_dnskey(KSKKey0),
 	      DNSKeyTmpl = #dns_rr{name = iolist_to_binary(ZoneName),
-				   type = dnskey,
-				   class = in,
+				   type = ?DNS_TYPE_DNSKEY,
+				   class = ?DNS_CLASS_IN,
 				   ttl = 3600},
 	      RRDNSKey = [ DNSKeyTmpl#dns_rr{data = KSKKey},
 			   DNSKeyTmpl#dns_rr{data = ZSKKey} | RRClean ],
@@ -83,8 +88,8 @@ zone_test_() ->
 			       gen_nsec(RRDNSKey) ++ RRDNSKey;
 			   #dns_rrdata_nsec3param{} = Param ->
 			       RRNSEC3 = [#dns_rr{name = ZoneNameB,
-						  type = nsec3param,
-						   ttl = 0, 
+						  type = ?DNS_TYPE_NSEC3PARAM,
+						  ttl = 0,
 						  data = Param}|RRDNSKey],
 			       gen_nsec3(RRNSEC3) ++ RRNSEC3
 		       end,
@@ -93,7 +98,8 @@ zone_test_() ->
 				       type = Type,
 				       data = Data} = RR) ->
 				   Bin = dns:encode_rrdata(in, Data),
-				   NewData = dns:decode_rrdata(Class, Type, Bin),
+				   NewData = dns:decode_rrdata(
+					       Class, Type, Bin),
 				   RR#dns_rr{data=NewData}
 			   end, RRNSEC),
 	      %% Add RRSIG
@@ -101,7 +107,9 @@ zone_test_() ->
 	      RRSigsZSK = sign_rr(RRDECENC, ZoneNameB,
 				  ZSKKey#dns_rrdata_dnskey.key_tag,
 				  ZSKAlg, ZSKPrivKey, Opts),
-	      RRDNSKeys = [ RR || #dns_rr{type=dnskey} = RR <- RRDECENC ],
+	      RRDNSKeys = [ RR
+			    || #dns_rr{type = ?DNS_TYPE_DNSKEY} = RR <- RRDECENC
+			  ],
 	      RRSigsKSK = sign_rr(RRDNSKeys, ZoneNameB,
 				  KSKKey#dns_rrdata_dnskey.key_tag,
 				  KSKAlg, KSKPrivKey, Opts),
@@ -128,11 +136,12 @@ zone_test_() ->
 
 test_sample_keys_test_() ->
     Keys = lists:foldl(fun(#dnssec_test_sample{alg = Alg,
-					       zsk_pl = A, 
+					       zsk_pl = A,
 					       ksk_pl = B}, Acc) ->
 			       [ {Alg, A}, {Alg, B} | Acc ]
 		       end, [], helper_test_samples()),
-    {setup, fun() -> application:start(crypto) end, [ ?_assert(test_sample_key(Key)) || Key <- Keys ]}.
+    {setup, fun() -> application:start(crypto) end,
+     [ ?_assert(test_sample_key(Key)) || Key <- Keys ]}.
 
 test_sample_key({Alg, Proplist}) ->
     PrivKey = helper_samplekeypl_to_privkey(Proplist),
@@ -153,7 +162,9 @@ dnskey_pubkey_gen_test_() ->
     [ {ZoneName,
        ?_test(
 	  begin
-	      DnsKeyRR = lists:sort([ RR || #dns_rr{type=dnskey} = RR <- RRs ]),
+	      DnsKeyRR = lists:sort(
+			   [ RR
+			     || #dns_rr{type = ?DNS_TYPE_DNSKEY} = RR <- RRs ]),
 	      Generated = lists:sort(
 			    lists:map(
 			      fun(PL) ->
@@ -161,10 +172,11 @@ dnskey_pubkey_gen_test_() ->
 				      AlgNo = dns:encode_alg(
 						proplists:get_value(alg, PL)),
 				      Flags = proplists:get_value(flags, PL),
-				      Key = #dns_rrdata_dnskey{flags = Flags,
-							       protocol = 3,
-							       alg = AlgNo,
-							       public_key = PubKey},
+				      Key = #dns_rrdata_dnskey{
+					flags = Flags,
+					protocol = 3,
+					alg = AlgNo,
+					public_key = PubKey},
 				      add_keytag_to_dnskey(Key)
 			      end, [ZSK_PL, KSK_PL])),
 	      Expect = lists:sort([ (RR#dns_rr.data)#dns_rrdata_dnskey{}
@@ -188,7 +200,8 @@ helper_test_samples() ->
 				     Size = byte_size(Bin),
 				     {Key, <<Size:32, Bin/binary>>}
 			     end,
-    RRCleanExclude = [nsec, nsec3, nsec3param, rrsig, dnskey],
+    RRCleanExclude = [?DNS_TYPE_NSEC, ?DNS_TYPE_NSEC3, ?DNS_TYPE_NSEC3PARAM,
+		      ?DNS_TYPE_RRSIG, ?DNS_TYPE_DNSKEY],
     lists:map(
       fun({ZoneName, KeysRaw, AxfrBin}) ->
 	      [ZSK, KSK] = lists:foldl(
@@ -197,19 +210,21 @@ helper_test_samples() ->
 					       || {_,_} = Tuple <- KeyPLRaw ],
 				     case proplists:get_value(flags, KeyPL) of
 					 257 -> Acc ++ [KeyPL];
-					 _ -> [KeyPL] ++ Acc 
+					 _ -> [KeyPL] ++ Acc
 				     end
 			     end, [], KeysRaw),
 	      #dns_message{answers = RR} = dns:decode_message(AxfrBin),
 	      [{I, E}] = helper_uniqlist(
 			   [ {D#dns_rrdata_rrsig.inception,
 			      D#dns_rrdata_rrsig.expiration}
-			       || #dns_rr{type = rrsig, data = D} <- RR ]),
-	      NSEC3 = case [ P || #dns_rr{type=nsec3param, data=P} <- RR ] of
+			       || #dns_rr{type = ?DNS_TYPE_RRSIG,
+					  data = D} <- RR ]),
+	      NSEC3 = case [ P || #dns_rr{type= ?DNS_TYPE_NSEC3PARAM,
+					  data=P} <- RR ] of
 			  [ #dns_rrdata_nsec3param{} = Param ] -> Param;
 			  [] -> undefined
 		      end,
-	      CleanRR = [ R || #dns_rr{type=T} = R <- RR, 
+	      CleanRR = [ R || #dns_rr{type=T} = R <- RR,
 			       not lists:member(T, RRCleanExclude) ],
 	      Alg = case re:run(ZoneName, "dsa") of
 			{match,_} -> dsa;
@@ -258,11 +273,11 @@ helper_verify_rrset_test_cases() ->
 					  end, TestRR
 					 ),
 		      [#dns_rr{type = Type}|_]= RRSet,
-		      TestName = helper_fmt("~s/~s", [Name, Type]),
+		      TestName = helper_fmt("~s/~p", [Name, Type]),
 		      [ {TestName, RRSig, RRSet, DNSKeys, Opts}
 			|| RRSig <- RRSigs ]
 	      end, RRSets)
-	end 
+	end
       || #dnssec_test_sample{inception = Now, rr_src = RRs}
 	     <- helper_test_samples() ]).
 
@@ -323,6 +338,3 @@ helper_uniqlist(List) ->
     lists:sort(sets:to_list(sets:from_list(List))).
 
 -endif.
-
-
-

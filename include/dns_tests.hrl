@@ -11,17 +11,17 @@ message_empty_test() ->
     ?assertEqual(Msg, decode_message(Bin)).
 
 message_query_test() ->
-    Qs = [#dns_query{name = <<"example">>, class=in, type=a}],
+    Qs = [#dns_query{name = <<"example">>, type = ?DNS_TYPE_A}],
     QLen = length(Qs),
-    Msg = #dns_message{qc=QLen, questions=Qs},
+    Msg = #dns_message{qc = QLen, questions = Qs},
     Bin = encode_message(Msg),
     ?assertEqual(Msg, decode_message(Bin)).
 
 message_other_test() ->
     QName = <<"i            .txt.example.org">>,
-    Qs = [#dns_query{name = QName, class = in, type = txt}],
-    As = [#dns_rr{name = QName, class = in, type = txt, ttl = 0,
-		  data = #dns_rrdata_txt{txt=[QName]} } ],
+    Qs = [#dns_query{name = QName, type = ?DNS_TYPE_TXT}],
+    As = [#dns_rr{name = QName, type = ?DNS_TYPE_TXT, ttl = 0,
+		  data = #dns_rrdata_txt{txt = [QName]}}],
     QLen = length(Qs),
     ALen = length(As),
     Msg = #dns_message{qc = QLen, anc = ALen, questions = Qs, answers = As},
@@ -30,8 +30,8 @@ message_other_test() ->
 
 message_edns_test() ->
     QName = <<"_http._tcp.example.org">>,
-    Qs = [#dns_query{name = QName, class = in, type = ptr}],
-    Ans = [#dns_rr{name = QName, class = in, type = ptr, ttl = 42,
+    Qs = [#dns_query{name = QName, type = ?DNS_TYPE_PTR}],
+    Ans = [#dns_rr{name = QName, type = ?DNS_TYPE_PTR, ttl = 42,
 		   data = #dns_rrdata_ptr{
 		     dname = <<"Example\ Site._http._tcp.example.org">>
 		    }}],
@@ -170,6 +170,8 @@ decode_encode_rrdata_wire_samples_test_() ->
     [ {ToTestName(Case),
        ?_test(
 	  begin
+	      Class = try dns:class_to_int(ClassA) catch _:_ -> ClassA end,
+	      Type = try dns:type_to_int(TypeA) catch _:_ -> TypeA end,
 	      NewBin = case decode_rrdata(Class, Type, TestBin, TestBin) of
 			   TestBin when Type =:= 999 -> TestBin;
 			   TestBin -> throw(not_decoded);
@@ -180,26 +182,26 @@ decode_encode_rrdata_wire_samples_test_() ->
 		       end,
 	      ?assertEqual(TestBin, NewBin)
 	  end
-	 )} || {Class, Type, TestBin} = Case <- Cases ].
+	 )} || {ClassA, TypeA, TestBin} = Case <- Cases ].
 
 decode_encode_rrdata_test_() ->
     %% For testing records that don't have wire samples
-    Cases = [ {in, mb, #dns_rrdata_mb{madname = <<"example.com">>}},
-	      {in, md, #dns_rrdata_md{madname = <<"example.com">>}},
-	      {in, mf, #dns_rrdata_mf{madname = <<"example.com">>}},
-	      {in, mg, #dns_rrdata_mg{madname = <<"example.com">>}},
-	      {in, minfo, #dns_rrdata_minfo{rmailbx = <<"a.b">>,
-					    emailbx = <<"c.d">>}},
+    Cases = [ {?DNS_TYPE_MB, #dns_rrdata_mb{madname = <<"example.com">>}},
+	      {?DNS_TYPE_MD, #dns_rrdata_md{madname = <<"example.com">>}},
+	      {?DNS_TYPE_MF, #dns_rrdata_mf{madname = <<"example.com">>}},
+	      {?DNS_TYPE_MG, #dns_rrdata_mg{madname = <<"example.com">>}},
+	      {?DNS_TYPE_MINFO, #dns_rrdata_minfo{rmailbx = <<"a.b">>,
+						  emailbx = <<"c.d">>}},
 	      {in, mr, #dns_rrdata_mr{newname = <<"example.com">>}} ],
     [ ?_test(
 	 begin
-	     {Encoded, _NewCompMap} = encode_rrdata(0, Class, Data,
+	     {Encoded, _NewCompMap} = encode_rrdata(0, ?DNS_CLASS_IN, Data,
 						    gb_trees:empty()),
-	     Decoded = decode_rrdata(Class, Type, Encoded, Encoded),
+	     Decoded = decode_rrdata(?DNS_CLASS_IN, Type, Encoded, Encoded),
 	     ?assertEqual(Data, Decoded)
 	 end
 	)
-      || {Class, Type, Data} <- Cases ].
+      || {Type, Data} <- Cases ].
 
 %%%===================================================================
 %%% EDNS data functions

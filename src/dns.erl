@@ -99,9 +99,7 @@ decode_message_questions(<<>>, _Count, _MsgBin, Qs) ->
 decode_message_questions(DataBin, 0, _MsgBin, Qs) ->
     {lists:reverse(Qs), DataBin};
 decode_message_questions(DataBin, Count, MsgBin, Qs) ->
-    {Name, <<TypeN:16, ClassN:16, RB/binary>>} = decode_dname(DataBin, MsgBin),
-    Type = term_or_arg(fun type_to_atom/1, TypeN),
-    Class = term_or_arg(fun class_to_atom/1, ClassN),
+    {Name, <<Type:16, Class:16, RB/binary>>} = decode_dname(DataBin, MsgBin),
     Q = #dns_query{name = Name, type = Type, class = Class},
     decode_message_questions(RB, Count - 1, MsgBin, [Q|Qs]).
 
@@ -124,10 +122,8 @@ decode_message_body(DataBin, Count, MsgBin, RRs) ->
 			    dnssec = decode_bool(DNSSEC),
 			    data = Data},
 	    decode_message_body(RemBin, Count - 1, MsgBin, [RR|RRs]);
-	{Name, <<TypeN:16/unsigned, ClassN:16/unsigned, TTL:32/signed, Len:16,
+	{Name, <<Type:16/unsigned, Class:16/unsigned, TTL:32/signed, Len:16,
 		 RdataBin:Len/binary, RemBin/binary>>} ->
-	    Class = term_or_arg(fun class_to_atom/1, ClassN),
-	    Type = term_or_arg(fun type_to_atom/1, TypeN),
 	    RR = #dns_rr{name = Name,
 			 type = Type,
 			 class = Class,
@@ -182,11 +178,11 @@ encode_message_body(Bin, CompMap, [#dns_rr{name = Name,
     IntClass = int_or_badarg(fun class_to_int/1, Class),
     {NameBin, NameCompMap} = encode_dname(CompMap, byte_size(Bin), Name),
     RRBinOffset = byte_size(Bin) + byte_size(NameBin) + 2 + 2 + 4 + 2,
-    {RRBin, NewCompMap} = encode_rrdata(RRBinOffset, Class, Data, NameCompMap),
+    {RRBin, NewCompMap} = encode_rrdata(RRBinOffset, IntClass, Data, NameCompMap),
     RRBinSize = byte_size(RRBin),
     NewBin = <<Bin/binary, NameBin/binary, IntType:16, IntClass:16, TTL:32,
 	       RRBinSize:16, RRBin/binary>>,
-    encode_message_body(NewBin, NewCompMap, Records);    
+    encode_message_body(NewBin, NewCompMap, Records);
 encode_message_body(Bin, CompMap, [#dns_optrr{udp_payload_size = UPS,
 					      ext_rcode = ExtRcode,
 					      version = Version,
@@ -261,7 +257,8 @@ add_tsig(Msg, Alg, Name, Secret, ErrCode) ->
 
 %% @doc Generates and then appends a TSIG RR to a message.
 %%      Supports MD5, SHA1, SHA224, SHA256, SHA384 and SHA512 algorithms.
-%% @spec add_tsig(Msg, Algorithim, Name, Secret, ErrCode, [tsig_option()]) -> SignedMsg
+%% @spec add_tsig(Msg, Algorithim, Name, Secret, ErrCode, [tsig_option()]) ->
+%% SignedMsg
 add_tsig(Msg, Alg, Name, Secret, ErrCode, Options) ->
     MsgId = Msg#dns_message.id,
     MsgBin = encode_message(Msg),
@@ -274,11 +271,12 @@ add_tsig(Msg, Alg, Name, Secret, ErrCode, Options) ->
     Data = #dns_rrdata_tsig{msgid = MsgId, alg = Alg, time = Time,
 			    fudge = Fudge, mac = MAC, err = ErrCode,
 			    other = Other},
-    RR = #dns_rr{name = Name, class = any, type = tsig, ttl = 0, data = Data},
+    RR = #dns_rr{name = Name, class = ?DNS_CLASS_ANY, type = ?DNS_TYPE_TSIG,
+		 ttl = 0, data = Data},
     NewAdditional = Msg#dns_message.additional ++ [RR],
     NewADC = Msg#dns_message.adc + 1,
     Msg#dns_message{adc = NewADC, additional = NewAdditional}.
-    
+
 
 strip_tsig(<<_Id:16, _QR:1, _OC:4, _AA:1, _TC:1, _RD:1, _RA:1, _PR:1, _Z:2,
 	     _RC:4, _QC:16, _ANC:16, _AUC:16, ADC:16, _HRB/binary>>)
@@ -287,7 +285,8 @@ strip_tsig(<<_Id:16, QR:1, OC:4, AA:1, TC:1, RD:1, RA:1, PR:1, Z:2, RC:4, QC:16,
 	ANC:16, AUC:16, ADC:16, HRB/binary>> = MsgBin) ->
     UnsignedADC = ADC - 1,
     {_Questions, QRB} = decode_message_questions(HRB, QC, MsgBin),
-    {_Answers, TSIGBin} = decode_message_body(QRB, ANC + AUC + UnsignedADC, MsgBin),
+    {_Answers, TSIGBin} = decode_message_body(QRB, ANC + AUC + UnsignedADC,
+					      MsgBin),
     case decode_message_body(TSIGBin, 1, MsgBin) of
 	{[#dns_rr{data = #dns_rrdata_tsig{msgid = NewId}} = TSIG_RR], <<>>} ->
 	    MsgBodyLen = byte_size(HRB) - byte_size(TSIGBin),
@@ -307,7 +306,7 @@ gen_tsig_mac(Alg, MsgBin, Name, Secret, Time, Fudge, ErrorCode, Other, PMAC) ->
     OtherLen = byte_size(Other),
     Base = case PMAC of
 	       <<>> -> <<>>;
-	       PMAC -> 
+	       PMAC ->
 		   PMACLen = byte_size(PMAC),
 		   <<PMACLen:16, PMAC/binary>>
 	   end,
@@ -328,7 +327,7 @@ gen_tsig_mac(Alg, MsgBin, Name, Secret, Time, Fudge, ErrorCode, Other, PMAC) ->
 %%% Record data functions
 %%%===================================================================
 
--define(CLASS_IS_IN(Term), (Term =:= in orelse Term =:= none)).
+-define(CLASS_IS_IN(T), (T =:= ?DNS_CLASS_IN orelse T =:= ?DNS_CLASS_NONE)).
 
 
 %% @private
@@ -336,28 +335,32 @@ decode_rrdata(Class, Type, Data) ->
     decode_rrdata(Class, Type, Data, <<>>).
 
 decode_rrdata(_Class, _Type, <<>>, _MsgBin) -> <<>>;
-decode_rrdata(Class, a, <<A, B, C, D>>, _MsgBin) when ?CLASS_IS_IN(Class) ->
+decode_rrdata(Class, ?DNS_TYPE_A, <<A, B, C, D>>, _MsgBin)
+  when ?CLASS_IS_IN(Class) ->
     IP = inet_parse:ntoa({A,B,C,D}),
     #dns_rrdata_a{ip = list_to_binary(IP)};
-decode_rrdata(Class, aaaa, <<A:16,B:16,C:16,D:16,E:16,F:16,G:16,H:16>>, _MsgBin)
+decode_rrdata(Class, ?DNS_TYPE_AAAA,
+	      <<A:16,B:16,C:16,D:16,E:16,F:16,G:16,H:16>>, _MsgBin)
   when ?CLASS_IS_IN(Class) ->
     IP = inet_parse:ntoa({A,B,C,D,E,F,G,H}),
     #dns_rrdata_aaaa{ip = list_to_binary(IP)};
-decode_rrdata(_Class, afsdb, <<Subtype:16, Bin/binary>>, MsgBin) ->
+decode_rrdata(_Class, ?DNS_TYPE_AFSDB, <<Subtype:16, Bin/binary>>, MsgBin) ->
     #dns_rrdata_afsdb{subtype = Subtype,
 		      hostname = decode_dnameonly(Bin, MsgBin)};
-decode_rrdata(_Class, cert, <<Type:16, KeyTag:16, Alg, Bin/binary>>, _MsgBin) ->
-    #dns_rrdata_cert{type = Type, key_tag = KeyTag, alg = Alg, cert = Bin};
-decode_rrdata(_Class, cname, Bin, MsgBin) ->
-    #dns_rrdata_cname{dname = decode_dnameonly(Bin, MsgBin)};
-decode_rrdata(Class, dhcid, Bin, _MsgBin) when ?CLASS_IS_IN(Class) ->
-    #dns_rrdata_dhcid{data = Bin};
-decode_rrdata(_Class, dlv, <<KeyTag:16, Alg:8, DigestType:8, Digest/binary>>,
+decode_rrdata(_Class, ?DNS_TYPE_CERT, <<Type:16, KeyTag:16, Alg, Bin/binary>>,
 	      _MsgBin) ->
-    #dns_rrdata_dlv{keytag=KeyTag, alg=Alg, digest_type=DigestType, digest=Digest};
-decode_rrdata(_Class, dname, Bin, MsgBin) ->
+    #dns_rrdata_cert{type = Type, key_tag = KeyTag, alg = Alg, cert = Bin};
+decode_rrdata(_Class, ?DNS_TYPE_CNAME, Bin, MsgBin) ->
+    #dns_rrdata_cname{dname = decode_dnameonly(Bin, MsgBin)};
+decode_rrdata(Class, ?DNS_TYPE_DHCID, Bin, _MsgBin) when ?CLASS_IS_IN(Class) ->
+    #dns_rrdata_dhcid{data = Bin};
+decode_rrdata(_Class, ?DNS_TYPE_DLV, <<KeyTag:16, Alg:8, DigestType:8,
+				       Digest/binary>>, _MsgBin) ->
+    #dns_rrdata_dlv{keytag = KeyTag, alg = Alg, digest_type = DigestType,
+		    digest = Digest};
+decode_rrdata(_Class, ?DNS_TYPE_DNAME, Bin, MsgBin) ->
     #dns_rrdata_dname{dname = decode_dnameonly(Bin, MsgBin)};
-decode_rrdata(_Class, dnskey, <<Flags:16, Protocol:8, AlgNum:8,
+decode_rrdata(_Class, ?DNS_TYPE_DNSKEY, <<Flags:16, Protocol:8, AlgNum:8,
 				PublicKey/binary>> = Bin, _MsgBin)
   when AlgNum =:= ?DNS_ALG_RSASHA1 orelse
        AlgNum =:= ?DNS_ALG_NSEC3RSASHA1 orelse
@@ -377,7 +380,7 @@ decode_rrdata(_Class, dnskey, <<Flags:16, Protocol:8, AlgNum:8,
     KeyTag = bin_to_key_tag(Bin),
     #dns_rrdata_dnskey{flags = Flags, protocol = Protocol, alg = Alg,
 		       public_key = Key, key_tag = KeyTag};
-decode_rrdata(_Class, dnskey, <<Flags:16, Protocol:8, AlgNum:8,
+decode_rrdata(_Class, ?DNS_TYPE_DNSKEY, <<Flags:16, Protocol:8, AlgNum:8,
 				T, Q:20/unit:8, KeyBin/binary>> = Bin, _MsgBin)
   when (AlgNum =:= ?DNS_ALG_DSA orelse AlgNum =:= ?DNS_ALG_NSEC3DSA)
        andalso T =< 8 ->
@@ -390,54 +393,59 @@ decode_rrdata(_Class, dnskey, <<Flags:16, Protocol:8, AlgNum:8,
 	   crypto:mpint(Y)],
     KeyTag = bin_to_key_tag(Bin),
     #dns_rrdata_dnskey{flags = Flags, protocol = Protocol, alg = Alg,
-		       public_key = Key, key_tag = KeyTag};    
-decode_rrdata(_Class, dnskey, <<Flags:16, Protocol:8, AlgNum:8,
+		       public_key = Key, key_tag = KeyTag};
+decode_rrdata(_Class, ?DNS_TYPE_DNSKEY, <<Flags:16, Protocol:8, AlgNum:8,
 				PublicKey/binary>> = Bin, _MsgBin) ->
     Alg = term_or_arg(fun alg_to_atom/1, AlgNum),
     #dns_rrdata_dnskey{flags = Flags, protocol = Protocol, alg = Alg,
 		       public_key = PublicKey, key_tag = bin_to_key_tag(Bin)};
-decode_rrdata(_Class, ds, <<KeyTag:16, Alg:8, DigestType:8, Digest/binary>>,
-	      _MsgBin) ->
-    #dns_rrdata_ds{keytag=KeyTag, alg=Alg, digest_type=DigestType, digest=Digest};
-decode_rrdata(_Class, hinfo, Bin, _BodyBin) ->
+decode_rrdata(_Class, ?DNS_TYPE_DS, <<KeyTag:16, Alg:8, DigestType:8,
+				      Digest/binary>>, _MsgBin) ->
+    #dns_rrdata_ds{keytag = KeyTag, alg = Alg, digest_type = DigestType,
+		   digest = Digest};
+decode_rrdata(_Class, ?DNS_TYPE_HINFO, Bin, _BodyBin) ->
     [CPU, OS] = decode_txt(Bin),
     #dns_rrdata_hinfo{cpu = CPU, os = OS};
-decode_rrdata(_Class, ipseckey, <<Precedence:8, 0:8, Algorithm:8,
+decode_rrdata(_Class, ?DNS_TYPE_IPSECKEY, <<Precedence:8, 0:8, Algorithm:8,
 				  PublicKey/binary>>, _MsgBin) ->
     #dns_rrdata_ipseckey{precedence = Precedence, alg = Algorithm,
 			 gateway_type = none, public_key = PublicKey};
-decode_rrdata(_Class, ipseckey, <<Precedence:8, 1:8, Algorithm:8, A:8, B:8, C:8,
-				  D:8, PublicKey/binary>>, _MsgBin) ->
+decode_rrdata(_Class, ?DNS_TYPE_IPSECKEY,
+	      <<Precedence:8, 1:8, Algorithm:8, A:8, B:8, C:8, D:8,
+		PublicKey/binary>>, _MsgBin) ->
     IP = inet_parse:ntoa({A,B,C,D}),
     #dns_rrdata_ipseckey{precedence = Precedence, alg = Algorithm,
 			 gateway_type = ipv4, gateway = IP,
 			 public_key = PublicKey};
-decode_rrdata(_Class, ipseckey, <<Precedence:8, 2:8, Algorithm:8, A:16, B:16,
-				  C:16, D:16, E:16, F:16, G:16, H:16,
-				  PublicKey/binary>>, _MsgBin) ->
+decode_rrdata(_Class, ?DNS_TYPE_IPSECKEY,
+	      <<Precedence:8, 2:8, Algorithm:8, A:16, B:16, C:16, D:16, E:16,
+		F:16, G:16, H:16, PublicKey/binary>>, _MsgBin) ->
     IP = inet_parse:ntoa({A,B,C,D,E,F,G,H}),
     #dns_rrdata_ipseckey{precedence = Precedence, alg = Algorithm,
 			 gateway_type = ipv6, gateway = IP,
 			 public_key = PublicKey};
-decode_rrdata(_Class, ipseckey, <<Precedence:8, 3:8, Algorithm:8, Bin/binary>>, MsgBin) ->
+decode_rrdata(_Class, ?DNS_TYPE_IPSECKEY, <<Precedence:8, 3:8, Algorithm:8,
+					    Bin/binary>>, MsgBin) ->
     {Gateway, PublicKey} = decode_dname(Bin, MsgBin),
     #dns_rrdata_ipseckey{precedence = Precedence, alg = Algorithm,
 			 gateway_type = dname, gateway = Gateway,
 			 public_key = PublicKey};
-decode_rrdata(_Class, isdn, <<Len, Addr:Len/binary>>, _MsgBin) ->
+decode_rrdata(_Class, ?DNS_TYPE_ISDN, <<Len, Addr:Len/binary>>, _MsgBin) ->
     #dns_rrdata_isdn{address = Addr, subaddress = undefined};
-decode_rrdata(_Class, isdn, <<ALen, Addr:ALen/binary,
+decode_rrdata(_Class, ?DNS_TYPE_ISDN, <<ALen, Addr:ALen/binary,
 			      SLen, Subaddr:SLen/binary>>, _MsgBin) ->
     #dns_rrdata_isdn{address = Addr, subaddress = Subaddr};
-decode_rrdata(_Class, key, <<Type:2, 0:1, XT:1, 0:2, NamType:2, 0:4, SIG:4,
-			     Protocol:8, Alg:8, PublicKey/binary>>, _MsgBin) ->
+decode_rrdata(_Class, ?DNS_TYPE_KEY,
+	      <<Type:2, 0:1, XT:1, 0:2, NamType:2, 0:4, SIG:4, Protocol:8,
+		Alg:8, PublicKey/binary>>, _MsgBin) ->
     #dns_rrdata_key{type = Type, xt = XT, name_type = NamType, sig = SIG,
 		    protocol = Protocol, alg = Alg, public_key = PublicKey};
-decode_rrdata(_Class, kx, <<Preference:16, Bin/binary>>, MsgBin) ->
+decode_rrdata(_Class, ?DNS_TYPE_KX, <<Preference:16, Bin/binary>>, MsgBin) ->
     #dns_rrdata_kx{preference = Preference,
 		   exchange = decode_dnameonly(Bin, MsgBin)};
-decode_rrdata(_Class, loc, <<0:8, SizeB:4, SizeE:4, HorizB:4, HorizE:4, VertB:4,
-			     VertE:4, LatPre:32, LonPre:32, AltPre:32>>,
+decode_rrdata(_Class, ?DNS_TYPE_LOC,
+	      <<0:8, SizeB:4, SizeE:4, HorizB:4, HorizE:4, VertB:4, VertE:4,
+		LatPre:32, LonPre:32, AltPre:32>>,
 	      _MsgBin) when SizeE < 10 andalso HorizE < 10 andalso VertE < 10 ->
     #dns_rrdata_loc{size = SizeB * (round_pow(10, SizeE)),
 		    horiz = HorizB * (round_pow(10, HorizE)),
@@ -445,23 +453,24 @@ decode_rrdata(_Class, loc, <<0:8, SizeB:4, SizeE:4, HorizB:4, HorizE:4, VertB:4,
 		    lat = decode_loc_point(LatPre),
 		    lon = decode_loc_point(LonPre),
 		    alt = AltPre - 10000000};
-decode_rrdata(_Class, mb, Bin, MsgBin) ->
+decode_rrdata(_Class, ?DNS_TYPE_MB, Bin, MsgBin) ->
     #dns_rrdata_mb{madname = decode_dnameonly(Bin, MsgBin)};
-decode_rrdata(_Class, md, Bin, MsgBin) ->
+decode_rrdata(_Class, ?DNS_TYPE_MD, Bin, MsgBin) ->
     #dns_rrdata_md{madname = decode_dnameonly(Bin, MsgBin)};
-decode_rrdata(_Class, mf, Bin, MsgBin) ->
+decode_rrdata(_Class, ?DNS_TYPE_MF, Bin, MsgBin) ->
     #dns_rrdata_mf{madname = decode_dnameonly(Bin, MsgBin)};
-decode_rrdata(_Class, mg, Bin, MsgBin) ->
+decode_rrdata(_Class, ?DNS_TYPE_MG, Bin, MsgBin) ->
     #dns_rrdata_mg{madname = decode_dnameonly(Bin, MsgBin)};
-decode_rrdata(_Class, minfo, Bin, MsgBin) when is_binary(Bin) ->
+decode_rrdata(_Class, ?DNS_TYPE_MINFO, Bin, MsgBin) when is_binary(Bin) ->
     {RMB, EMB} = decode_dname(Bin, MsgBin),
     #dns_rrdata_minfo{rmailbx = RMB, emailbx = decode_dnameonly(EMB, MsgBin)};
-decode_rrdata(_Class, mr, Bin, MsgBin) ->
+decode_rrdata(_Class, ?DNS_TYPE_MR, Bin, MsgBin) ->
     #dns_rrdata_mr{newname = decode_dnameonly(Bin, MsgBin)};
-decode_rrdata(_Class, mx, <<Preference:16, Bin/binary>>, MsgBin) ->
+decode_rrdata(_Class, ?DNS_TYPE_MX, <<Preference:16, Bin/binary>>, MsgBin) ->
     #dns_rrdata_mx{preference = Preference,
 		   exchange = decode_dnameonly(Bin, MsgBin)};
-decode_rrdata(_Class, naptr, <<Order:16, Preference:16, Bin/binary>>, MsgBin) ->
+decode_rrdata(_Class, ?DNS_TYPE_NAPTR, <<Order:16, Preference:16, Bin/binary>>,
+	      MsgBin) ->
     {Bin1, Flags} = decode_string(Bin),
     {Bin2, Services} = decode_string(Bin1),
     {Bin3, RawRegexp} = decode_string(Bin2),
@@ -469,72 +478,78 @@ decode_rrdata(_Class, naptr, <<Order:16, Preference:16, Bin/binary>>, MsgBin) ->
     #dns_rrdata_naptr{order = Order, preference = Preference, flags = Flags,
 		      services = Services, regexp = Regexp,
 		      replacement = decode_dnameonly(Bin3, MsgBin)};
-decode_rrdata(_Class, ns, Bin, MsgBin) ->
+decode_rrdata(_Class, ?DNS_TYPE_NS, Bin, MsgBin) ->
     #dns_rrdata_ns{dname = decode_dnameonly(Bin, MsgBin)};
-decode_rrdata(_Class, nsec, Bin, MsgBin) ->
+decode_rrdata(_Class, ?DNS_TYPE_NSEC, Bin, MsgBin) ->
     {NextDName, TypeBMP} = decode_dname(Bin, MsgBin),
     Types = decode_nsec_types(TypeBMP),
     #dns_rrdata_nsec{next_dname = NextDName, types = Types};
-decode_rrdata(_Class, nsec3, <<HashAlg:8, _FlagsZ:7, OptOut:1, Iterations:16,
-			       SaltLen:8/unsigned, Salt:SaltLen/binary-unit:8,
-			       HashLen:8/unsigned, Hash:HashLen/binary-unit:8,
-			       TypeBMP/binary>>, _MsgBin) ->
+decode_rrdata(_Class, ?DNS_TYPE_NSEC3,
+	      <<HashAlg:8, _FlagsZ:7, OptOut:1, Iterations:16,
+		SaltLen:8/unsigned, Salt:SaltLen/binary-unit:8,
+		HashLen:8/unsigned, Hash:HashLen/binary-unit:8,
+		TypeBMP/binary>>, _MsgBin) ->
     #dns_rrdata_nsec3{hash_alg = HashAlg, opt_out = decode_bool(OptOut),
 		      iterations = Iterations, salt = Salt,
 		      hash = Hash, types = decode_nsec_types(TypeBMP)};
-decode_rrdata(_Class, nsec3param, <<Alg:8, Flags:8, Iterations:16, SaltLen:8,
-				    Salt:SaltLen/binary>>, _MsgBin) ->
+decode_rrdata(_Class, ?DNS_TYPE_NSEC3PARAM, <<Alg:8, Flags:8, Iterations:16,
+					      SaltLen:8, Salt:SaltLen/binary>>,
+	      _MsgBin) ->
     #dns_rrdata_nsec3param{hash_alg = Alg, flags = Flags,
 			   iterations = Iterations, salt = Salt};
-decode_rrdata(_Class, nxt, Bin, MsgBin) ->
+decode_rrdata(_Class, ?DNS_TYPE_NXT, Bin, MsgBin) ->
     {NxtDName, BMP} = decode_dname(Bin, MsgBin),
     #dns_rrdata_nxt{dname = NxtDName, types = decode_nxt_bmp(BMP)};
-decode_rrdata(_Class, ptr, Bin, MsgBin) ->
+decode_rrdata(_Class, ?DNS_TYPE_PTR, Bin, MsgBin) ->
     #dns_rrdata_ptr{dname = decode_dnameonly(Bin, MsgBin)};
-decode_rrdata(_Class, px, <<Pref:16, Bin/binary>>, MsgBin) ->
+decode_rrdata(_Class, ?DNS_TYPE_PX, <<Pref:16, Bin/binary>>, MsgBin) ->
     {Map822, Mapx400Bin} = decode_dname(Bin, MsgBin),
     Mapx400 = decode_dnameonly(Mapx400Bin, MsgBin),
     #dns_rrdata_px{preference = Pref, map822 = Map822, mapx400 = Mapx400};
-decode_rrdata(_Class, rp, Bin, MsgBin) ->
+decode_rrdata(_Class, ?DNS_TYPE_RP, Bin, MsgBin) ->
     {Mbox, TxtBin} = decode_dname(Bin, MsgBin),
     #dns_rrdata_rp{mbox = Mbox, txt = decode_dnameonly(TxtBin, MsgBin)};
-decode_rrdata(_Class, rrsig, <<TypeN:16, Alg:8, Labels:8, TTL:32, Expire:32,
-			       Inception:32, KeyTag:16, Bin/binary>>, MsgBin) ->
+decode_rrdata(_Class, ?DNS_TYPE_RRSIG, <<TypeN:16, Alg:8, Labels:8, TTL:32,
+					 Expire:32, Inception:32, KeyTag:16,
+					 Bin/binary>>, MsgBin) ->
     {SigName, Sig} = decode_dname(Bin, MsgBin),
-    Type = term_or_arg(fun type_to_atom/1, TypeN),
+    % Type = term_or_arg(fun type_to_atom/1, TypeN),
+    Type = TypeN,
     #dns_rrdata_rrsig{type_covered = Type, alg = Alg, labels = Labels,
 		      original_ttl = TTL, expiration = Expire,
 		      inception = Inception, key_tag = KeyTag,
 		      signers_name = SigName, signature = Sig};
-decode_rrdata(_Class, rt, <<Pref:16, Bin/binary>>, MsgBin) ->
+decode_rrdata(_Class, ?DNS_TYPE_RT, <<Pref:16, Bin/binary>>, MsgBin) ->
     #dns_rrdata_rt{preference = Pref, host = decode_dnameonly(Bin, MsgBin)};
-decode_rrdata(_Class, soa, Bin, MsgBin) ->
+decode_rrdata(_Class, ?DNS_TYPE_SOA, Bin, MsgBin) ->
     {MName, RNBin} = decode_dname(Bin, MsgBin),
     {RName, Rest} = decode_dname(RNBin, MsgBin),
     <<Ser:32, Ref:32, Ret:32, Exp:32, Min:32>> = Rest,
     #dns_rrdata_soa{mname = MName, rname = RName, serial = Ser, refresh = Ref,
 		    retry = Ret, expire = Exp, minimum = Min};
-decode_rrdata(_Class, spf, Bin, _MsgBin) ->
+decode_rrdata(_Class, ?DNS_TYPE_SPF, Bin, _MsgBin) ->
     #dns_rrdata_spf{spf = decode_txt(Bin)};
-decode_rrdata(_Class, srv, <<Pri:16, Wght:16, Port:16, Bin/binary>>, MsgBin) ->
+decode_rrdata(_Class, ?DNS_TYPE_SRV, <<Pri:16, Wght:16, Port:16, Bin/binary>>,
+	      MsgBin) ->
     #dns_rrdata_srv{priority = Pri, weight = Wght, port = Port,
 		    target = decode_dnameonly(Bin, MsgBin)};
-decode_rrdata(_Class, sshfp, <<Alg:8, FPType:8, FingerPrint/binary>>, _MsgBin) ->
+decode_rrdata(_Class, ?DNS_TYPE_SSHFP, <<Alg:8, FPType:8, FingerPrint/binary>>,
+	      _MsgBin) ->
     #dns_rrdata_sshfp{alg=Alg, fp_type=FPType, fp=FingerPrint};
-decode_rrdata(_Class, tsig, Bin, MsgBin) ->
+decode_rrdata(_Class, ?DNS_TYPE_TSIG, Bin, MsgBin) ->
     {Alg, <<Time:48, Fudge:16, MS:16, MAC:MS/bytes, MsgID:16, ErrInt:16,
 	    OtherLen:16, Other:OtherLen/binary>>} = decode_dname(Bin, MsgBin),
     #dns_rrdata_tsig{alg = Alg, time = Time, fudge = Fudge,
 		     mac = MAC, msgid = MsgID, other = Other,
 		     err = term_or_arg(fun tsigerr_to_atom/1, ErrInt)};
-decode_rrdata(_Class, txt, Bin, _MsgBin) ->
+decode_rrdata(_Class, ?DNS_TYPE_TXT, Bin, _MsgBin) ->
     #dns_rrdata_txt{txt = decode_txt(Bin)};
-decode_rrdata(Class, wks, <<A, B, C, D, P, BMP/binary>>, _MsgBin)
+decode_rrdata(Class, ?DNS_TYPE_WKS, <<A, B, C, D, P, BMP/binary>>, _MsgBin)
   when ?CLASS_IS_IN(Class) ->
     IP = inet_parse:ntoa({A,B,C,D}),
     Address = list_to_binary(IP),
     #dns_rrdata_wks{address = Address, protocol = P, bitmap = BMP};
-decode_rrdata(_Class, x25, Bin, _MsgBin) ->
+decode_rrdata(_Class, ?DNS_TYPE_X25, Bin, _MsgBin) ->
     #dns_rrdata_x25{psdn_address = list_to_integer(binary_to_list(Bin))};
 decode_rrdata(_Class, _Type, Bin, _MsgBin) -> Bin.
 
@@ -561,7 +576,7 @@ encode_rrdata(_Pos, _Class, #dns_rrdata_cert{type = Type, key_tag = KeyTag,
     {<<Type:16, KeyTag:16, Alg, Bin/binary>>, CompMap};
 encode_rrdata(Pos, _Class, #dns_rrdata_cname{dname = Name}, CompMap) ->
     encode_dname(CompMap, Pos, Name);
-encode_rrdata(_Pos, in, #dns_rrdata_dhcid{data=Bin}, CompMap) ->
+encode_rrdata(_Pos, ?DNS_CLASS_IN, #dns_rrdata_dhcid{data=Bin}, CompMap) ->
     {Bin, CompMap};
 encode_rrdata(_Pos, _Class, #dns_rrdata_dlv{keytag = KeyTag, alg = Alg,
 					   digest_type = DigestType,
@@ -592,7 +607,7 @@ encode_rrdata(_Pos, _Class, #dns_rrdata_dnskey{flags = Flags,
 		     <<0, ESize:16, EBin:ESize/binary, MBin/binary>>;
 		true -> erlang:error(badarg)
 	     end,
-    {<<Flags:16, Protocol:8, Alg:8, PKBin/binary>>, CompMap};    
+    {<<Flags:16, Protocol:8, Alg:8, PKBin/binary>>, CompMap};
 encode_rrdata(_Pos, _Class, #dns_rrdata_dnskey{flags = Flags,
 					       protocol = Protocol,
 					       alg = Alg,
@@ -619,31 +634,39 @@ encode_rrdata(_Pos, _Class, #dns_rrdata_hinfo{cpu = CPU, os = OS}, CompMap) ->
 encode_rrdata(_Pos, _Class, #dns_rrdata_ipseckey{precedence = Precedence,
 						 alg = Algorithm,
 						 gateway_type = none,
-						 public_key = PublicKey}, CompMap) ->
+						 public_key = PublicKey},
+	      CompMap) ->
     {<<Precedence:8, 0:8, Algorithm:8, PublicKey/binary>>, CompMap};
 encode_rrdata(_Pos, _Class, #dns_rrdata_ipseckey{precedence = Precedence,
 						 alg = Algorithm,
 						 gateway_type=ipv4,
 						 gateway = IP,
-						 public_key = PublicKey}, CompMap) ->
+						 public_key = PublicKey},
+	      CompMap) ->
     {ok, {A, B, C, D}} = parse_ip(IP),
-    {<<Precedence:8, 1:8, Algorithm:8, A:8, B:8, C:8, D:8, PublicKey/binary>>, CompMap};
+    {<<Precedence:8, 1:8, Algorithm:8, A:8, B:8, C:8, D:8, PublicKey/binary>>,
+     CompMap};
 encode_rrdata(_Pos, _Class, #dns_rrdata_ipseckey{precedence = Precedence,
 						 alg = Algorithm,
 						 gateway_type = ipv6,
 						 gateway = IP,
-						 public_key = PublicKey}, CompMap) ->
+						 public_key = PublicKey},
+	      CompMap) ->
     {ok, {A, B, C, D, E, F, G, H}} = parse_ip(IP),
-    {<<Precedence:8, 2:8, Algorithm:8, A:16, B:16, C:16, D:16, E:16, F:16, G:16, H:16, PublicKey/binary>>, CompMap};
+    {<<Precedence:8, 2:8, Algorithm:8, A:16, B:16, C:16, D:16, E:16, F:16, G:16,
+       H:16, PublicKey/binary>>, CompMap};
 encode_rrdata(_Pos, _Class, #dns_rrdata_ipseckey{precedence = Precedence,
 						 alg = Algorithm,
 						 gateway_type = dname,
 						 gateway = DName,
-						 public_key = PublicKey}, CompMap) ->
+						 public_key = PublicKey},
+	      CompMap) ->
     DNameBin = encode_dname(DName),
-    {<<Precedence:8, 3:8, Algorithm:8, DNameBin/binary, PublicKey/binary>>, CompMap};
+    {<<Precedence:8, 3:8, Algorithm:8, DNameBin/binary, PublicKey/binary>>,
+     CompMap};
 encode_rrdata(_Pos, _Class, #dns_rrdata_isdn{address = Addr,
-					     subaddress = undefined}, CompMap) ->
+					     subaddress = undefined},
+	      CompMap) ->
     AddrBin = iolist_to_binary(Addr),
     AddrLen = byte_size(AddrBin),
     {<<AddrLen, AddrBin/binary>>, CompMap};
@@ -671,10 +694,11 @@ encode_rrdata(_Pos, _Class, #dns_rrdata_loc{size = Size, horiz = Horiz,
 					    alt = Alt}, CompMap) ->
     SizeEnc = encode_loc_size(Size),
     HorizEnc = encode_loc_size(Horiz),
-    VertEnc = encode_loc_size(Vert),    
+    VertEnc = encode_loc_size(Vert),
     LatEnc = Lat + 2147483647,
     LonEnc = Lon + 2147483647,
-    {<<0:8, SizeEnc:1/binary, HorizEnc:1/binary, VertEnc:1/binary, LatEnc:32, LonEnc:32, (Alt+10000000):32>>, CompMap};
+    {<<0:8, SizeEnc:1/binary, HorizEnc:1/binary, VertEnc:1/binary, LatEnc:32,
+       LonEnc:32, (Alt+10000000):32>>, CompMap};
 encode_rrdata(Pos, _Class, #dns_rrdata_mb{madname = Name}, CompMap) ->
     encode_dname(CompMap, Pos, Name);
 encode_rrdata(Pos, _Class, #dns_rrdata_md{madname = Name}, CompMap) ->
@@ -808,6 +832,9 @@ encode_rrdata(_Pos, Class, #dns_rrdata_wks{address = Address,
     {<<A, B, C, D, P, BMP/binary>>, CompMap};
 encode_rrdata(_Pos, _Class, #dns_rrdata_x25{psdn_address = Number}, CompMap) ->
     {list_to_binary(integer_to_list(Number)), CompMap};
+encode_rrdata(Pos, Class, Bin, CompMap) when is_atom(Class) ->
+    ClassInt = dns:class_to_int(Class),
+    encode_rrdata(Pos, ClassInt, Bin, CompMap);
 encode_rrdata(_Pos, _Class, Bin, CompMap) when is_binary(Bin) ->
     {Bin, CompMap}.
 
@@ -855,7 +882,8 @@ decode_nsec_types(_Num, <<>>, Types) -> Types;
 decode_nsec_types(Num, <<0:1, Rest/bitstring>>, Types) ->
     decode_nsec_types(Num + 1, Rest, Types);
 decode_nsec_types(Num, <<1:1, Rest/bitstring>>, Types) ->
-    NewType = term_or_arg(fun type_to_atom/1, Num),
+    % NewType = term_or_arg(fun type_to_atom/1, Num),
+    NewType = Num,
     decode_nsec_types(Num + 1, Rest, [NewType|Types]).
 
 encode_nsec_types([]) -> <<>>;
@@ -866,7 +894,7 @@ encode_nsec_types([_|_]=UnsortedTypes) ->
     FirstLastType = FirstWindowNum * 256,
     encode_nsec_types(<<>>, <<>>, FirstWindowNum, FirstLastType, Types).
 
-encode_nsec_types(Bin, BMP0, WindowNum, _LastType, []) -> 
+encode_nsec_types(Bin, BMP0, WindowNum, _LastType, []) ->
     BMP = pad_bmp(BMP0),
     BMPSize = byte_size(BMP),
     <<Bin/binary, WindowNum:8, BMPSize:8, BMP:BMPSize/binary>>;
@@ -891,7 +919,8 @@ decode_nxt_bmp(BMP) -> decode_nxt_bmp(0, BMP, []).
 
 decode_nxt_bmp(_Offset, <<>>, Types) -> lists:reverse(Types);
 decode_nxt_bmp(Offset, <<1:1, Rest/bitstring>>, Types) ->
-    NewType = term_or_arg(fun type_to_atom/1, Offset),
+    % NewType = term_or_arg(fun type_to_atom/1, Offset),
+    NewType = Offset,
     decode_nxt_bmp(Offset + 1, Rest, [NewType|Types]);
 decode_nxt_bmp(Offset, <<0:1, Rest/bitstring>>, Types) ->
     decode_nxt_bmp(Offset + 1, Rest, Types).
@@ -924,7 +953,8 @@ pad_bmp(BMP) when is_bitstring(BMP) ->
 decode_optrrdata(<<>>) -> [];
 decode_optrrdata(Bin) -> decode_optrrdata(Bin, []).
 
-decode_optrrdata(<<EOptNum:16, EOptLen:16, EOptBin:EOptLen/binary, Rest/binary>>, Opts) ->
+decode_optrrdata(<<EOptNum:16, EOptLen:16, EOptBin:EOptLen/binary,
+		   Rest/binary>>, Opts) ->
     EOpt = term_or_arg(fun eoptcode_to_atom/1, EOptNum),
     NewOpt = decode_optrrdata(EOpt, EOptBin),
     NewOpts = [NewOpt|Opts],
@@ -1081,20 +1111,20 @@ dname_to_labels(Label, <<"\\.", Cs/binary>>) ->
 dname_to_labels(Label, <<C, Cs/binary>>) ->
     dname_to_labels(<<Label/binary, C>>, Cs).
 
-%% @doc Returns provided domain name with case-insensitive characters in uppercase.
+%% @doc Returns provided name with case-insensitive characters in uppercase.
 %% @spec dname_to_upper(string() | binary()) -> string() | binary()
 dname_to_upper(Bin) when is_binary(Bin) ->
-    << <<(dname_to_upper(C))>> || <<C>> <= Bin >>; 
+    << <<(dname_to_upper(C))>> || <<C>> <= Bin >>;
 dname_to_upper(List) when is_list(List) ->
     [ dname_to_upper(C) || C <- List ];
-dname_to_upper(Int) 
+dname_to_upper(Int)
   when is_integer(Int) andalso  (Int >= $a) andalso (Int =< $z) -> Int - 32;
 dname_to_upper(Int) when is_integer(Int) -> Int.
 
-%% @doc Returns provided domain name with case-insensitive characters in lowercase.
+%% @doc Returns provided name with case-insensitive characters in lowercase.
 %% @spec dname_to_lower(string() | binary()) -> string() | binary()
 dname_to_lower(Bin) when is_binary(Bin) ->
-    << <<(dname_to_lower(C))>> || <<C>> <= Bin >>; 
+    << <<(dname_to_lower(C))>> || <<C>> <= Bin >>;
 dname_to_lower(List) when is_list(List) ->
     [ dname_to_lower(C) || C <- List ];
 dname_to_lower(Int)

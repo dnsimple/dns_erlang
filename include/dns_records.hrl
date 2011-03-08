@@ -218,9 +218,9 @@
 		      authority = [],
 		      additional=[] }).
 
--record(dns_query, {name, class = in, type}).
+-record(dns_query, {name, class = 1, type}).
 
--record(dns_rr, {name, class = in, type, ttl = 0, data}).
+-record(dns_rr, {name, class = 1, type, ttl = 0, data}).
 -record(dns_rrdata_a, {ip}).
 -record(dns_rrdata_aaaa, {ip}).
 -record(dns_rrdata_afsdb, {subtype, hostname}).
