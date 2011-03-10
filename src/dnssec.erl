@@ -390,9 +390,6 @@ add_keytag_to_dnskey(#dns_rrdata_dnskey{} = Data) ->
     KeyBin = dns:encode_rrdata(in, Data),
     dns:decode_rrdata(?DNS_CLASS_IN, ?DNS_TYPE_DNSKEY, KeyBin).
 
-rrsig_to_digestable(#dns_rr{type = ?DNS_TYPE_RRSIG,
-			    data = #dns_rrdata_rrsig{} = Data}) ->
-    rrsig_to_digestable(Data);
 rrsig_to_digestable(#dns_rrdata_rrsig{} = Data) ->
     dns:encode_rrdata(?DNS_CLASS_IN, Data#dns_rrdata_rrsig{signature = <<>>}).
 
