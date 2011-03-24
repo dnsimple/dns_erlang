@@ -46,10 +46,9 @@
 %%      zone name and TTL.
 %% @spec gen_nsec([#dns_rr{}]) -> [#dns_rr{type = nsec}]
 gen_nsec(RR) ->
-    case lists:keysearch(?DNS_TYPE_SOA, #dns_rr.type, RR) of
+    case lists:keyfind(?DNS_TYPE_SOA, #dns_rr.type, RR) of
 	false -> erlang:error(badarg);
-	{value, #dns_rr{name = ZoneName,
-			data = #dns_rrdata_soa{minimum = TTL }}} ->
+	#dns_rr{name = ZoneName, data = #dns_rrdata_soa{minimum = TTL }} ->
 	    gen_nsec(ZoneName, RR, TTL)
     end.
 
@@ -87,17 +86,16 @@ add_next_dname(Added, [#dns_rr{type = ?DNS_TYPE_NSEC, data = Data}=RR],
 %%      hash algorithm, iterations and salt from.
 %% @spec gen_nsec3([#dns_rr{}]) -> [#dns_rr{type = nsec3}]
 gen_nsec3(RRs) ->
-    case lists:keysearch(?DNS_TYPE_SOA, #dns_rr.type, RRs) of
+    case lists:keyfind(?DNS_TYPE_SOA, #dns_rr.type, RRs) of
 	false -> erlang:error(badarg);
-	{value, #dns_rr{name = ZoneName,
-			data = #dns_rrdata_soa{minimum = TTL}}} ->
-	    case lists:keysearch(?DNS_TYPE_NSEC3PARAM, #dns_rr.type, RRs) of
+	#dns_rr{name = ZoneName, data = #dns_rrdata_soa{minimum = TTL}} ->
+	    case lists:keyfind(?DNS_TYPE_NSEC3PARAM, #dns_rr.type, RRs) of
 		false -> erlang:error(badarg);
-		{value, #dns_rr{class = Class,
-				data = #dns_rrdata_nsec3param{
-				  hash_alg = HashAlg,
-				  iterations = Iter,
-				  salt = Salt}}} ->
+		#dns_rr{class = Class,
+			data = #dns_rrdata_nsec3param{
+			  hash_alg = HashAlg,
+			  iterations = Iter,
+			  salt = Salt}} ->
 		    gen_nsec3(RRs, ZoneName, HashAlg, Salt, Iter, TTL, Class)
 	    end
     end.
@@ -210,15 +208,14 @@ rrs_to_rrsets(RR) when is_list(RR) ->
     rrs_to_rrsets(gb_trees:empty(), dict:new(), RR).
 
 rrs_to_rrsets(TTLMap, RRSets, []) ->
-    lists:map(
-      fun({{Name, Class, Type} = Key, Datas}) ->
+    [fun({{Name, Class, Type} = Key, Datas}) ->
 	      {value, TTL} = gb_trees:lookup(Key, TTLMap),
 	      [ #dns_rr{name = Name,
 			class = Class,
 			type = Type,
 			ttl = TTL,
 			data = Data} || Data <- Datas ]
-      end, dict:to_list(RRSets));
+      end(RRSet) || RRSet <- dict:to_list(RRSets)];
 rrs_to_rrsets(TTLMap, RRSets, [#dns_rr{} = RR | RRs]) ->
     #dns_rr{name = Name,
 	    class = Class,
