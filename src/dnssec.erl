@@ -208,14 +208,7 @@ rrs_to_rrsets(RR) when is_list(RR) ->
     rrs_to_rrsets(gb_trees:empty(), dict:new(), RR).
 
 rrs_to_rrsets(TTLMap, RRSets, []) ->
-    [fun({{Name, Class, Type} = Key, Datas}) ->
-	      {value, TTL} = gb_trees:lookup(Key, TTLMap),
-	      [ #dns_rr{name = Name,
-			class = Class,
-			type = Type,
-			ttl = TTL,
-			data = Data} || Data <- Datas ]
-      end(RRSet) || RRSet <- dict:to_list(RRSets)];
+    [ rrs_to_rrsets(TTLMap, RRSet) || RRSet <- dict:to_list(RRSets) ];
 rrs_to_rrsets(TTLMap, RRSets, [#dns_rr{} = RR | RRs]) ->
     #dns_rr{name = Name,
 	    class = Class,
@@ -233,6 +226,14 @@ rrs_to_rrsets(TTLMap, RRSets, [#dns_rr{} = RR | RRs]) ->
 		end,
     NewRRSets = dict:append(Key, Data, RRSets),
     rrs_to_rrsets(NewTTLMap, NewRRSets, RRs).
+
+rrs_to_rrsets(TTLMap, {{Name, Class, Type} = Key, Datas}) ->
+    {value, TTL} = gb_trees:lookup(Key, TTLMap),
+    [ #dns_rr{name = Name,
+	      class = Class,
+	      type = Type,
+	      ttl = TTL,
+	      data = Data} || Data <- Datas ].
 
 %% @equiv sign_rr(RR, SignerName, KeyTag, Alg, Key, [])
 sign_rr(RR, SignerName, KeyTag, Alg, Key) ->
