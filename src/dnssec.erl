@@ -156,7 +156,7 @@ normalise_rr(#dns_rr{name = Name} = RR) when not is_binary(Name) ->
 normalise_rr(#dns_rr{class = Class} = RR) when is_atom(Class) ->
     normalise_rr(RR#dns_rr{class = dns:encode_class(Class)});
 normalise_rr(#dns_rr{type = Type} = RR) when is_atom(Type) ->
-    normalise_rr(RR#dns_rr{type = dns:encode_type(Type)});%.
+    normalise_rr(RR#dns_rr{type = dns:encode_type(Type)});
 normalise_rr(#dns_rr{name = NBin, class = CNum, type = TNum} = RR)
   when is_binary(NBin) andalso is_integer(CNum) andalso is_integer(TNum) ->
     RR.

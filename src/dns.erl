@@ -509,12 +509,10 @@ decode_rrdata(_Class, ?DNS_TYPE_PX, <<Pref:16, Bin/binary>>, MsgBin) ->
 decode_rrdata(_Class, ?DNS_TYPE_RP, Bin, MsgBin) ->
     {Mbox, TxtBin} = decode_dname(Bin, MsgBin),
     #dns_rrdata_rp{mbox = Mbox, txt = decode_dnameonly(TxtBin, MsgBin)};
-decode_rrdata(_Class, ?DNS_TYPE_RRSIG, <<TypeN:16, Alg:8, Labels:8, TTL:32,
+decode_rrdata(_Class, ?DNS_TYPE_RRSIG, <<Type:16, Alg:8, Labels:8, TTL:32,
 					 Expire:32, Inception:32, KeyTag:16,
 					 Bin/binary>>, MsgBin) ->
     {SigName, Sig} = decode_dname(Bin, MsgBin),
-    % Type = term_or_arg(fun type_to_atom/1, TypeN),
-    Type = TypeN,
     #dns_rrdata_rrsig{type_covered = Type, alg = Alg, labels = Labels,
 		      original_ttl = TTL, expiration = Expire,
 		      inception = Inception, key_tag = KeyTag,
@@ -882,9 +880,7 @@ decode_nsec_types(_Num, <<>>, Types) -> Types;
 decode_nsec_types(Num, <<0:1, Rest/bitstring>>, Types) ->
     decode_nsec_types(Num + 1, Rest, Types);
 decode_nsec_types(Num, <<1:1, Rest/bitstring>>, Types) ->
-    % NewType = term_or_arg(fun type_to_atom/1, Num),
-    NewType = Num,
-    decode_nsec_types(Num + 1, Rest, [NewType|Types]).
+    decode_nsec_types(Num + 1, Rest, [Num|Types]).
 
 encode_nsec_types([]) -> <<>>;
 encode_nsec_types([_|_]=UnsortedTypes) ->
@@ -919,9 +915,7 @@ decode_nxt_bmp(BMP) -> decode_nxt_bmp(0, BMP, []).
 
 decode_nxt_bmp(_Offset, <<>>, Types) -> lists:reverse(Types);
 decode_nxt_bmp(Offset, <<1:1, Rest/bitstring>>, Types) ->
-    % NewType = term_or_arg(fun type_to_atom/1, Offset),
-    NewType = Offset,
-    decode_nxt_bmp(Offset + 1, Rest, [NewType|Types]);
+    decode_nxt_bmp(Offset + 1, Rest, [Offset|Types]);
 decode_nxt_bmp(Offset, <<0:1, Rest/bitstring>>, Types) ->
     decode_nxt_bmp(Offset + 1, Rest, Types).
 
