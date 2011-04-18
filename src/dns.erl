@@ -884,8 +884,8 @@ decode_nsec_types(Num, <<1:1, Rest/bitstring>>, Types) ->
 
 encode_nsec_types([]) -> <<>>;
 encode_nsec_types([_|_]=UnsortedTypes) ->
-    [FirstType|_] = Types = unique_list([int_or_badarg(fun type_to_int/1, Type)
-				     || Type <- UnsortedTypes ]),
+    [FirstType|_] = Types = lists:usort([int_or_badarg(fun type_to_int/1, Type)
+					 || Type <- UnsortedTypes ]),
     FirstWindowNum = FirstType div 256,
     FirstLastType = FirstWindowNum * 256,
     encode_nsec_types(<<>>, <<>>, FirstWindowNum, FirstLastType, Types).
@@ -920,7 +920,7 @@ decode_nxt_bmp(Offset, <<0:1, Rest/bitstring>>, Types) ->
     decode_nxt_bmp(Offset + 1, Rest, Types).
 
 encode_nxt_bmp(UnsortedTypes) when is_list(UnsortedTypes) ->
-    Types = unique_list([int_or_badarg(fun type_to_int/1, Type)
+    Types = lists:usort([int_or_badarg(fun type_to_int/1, Type)
 			 || Type <- UnsortedTypes]),
     encode_nxt_bmp(0, Types, <<>>).
 
@@ -1610,9 +1610,6 @@ const_compare(<<C1, A/binary>>, <<C2, B/binary>>, Result) ->
     const_compare(A, B, Result bor (C1 bxor C2)).
 
 round_pow(N, E) -> round(math:pow(N, E)).
-
-unique_list(List) when is_list(List) ->
-    lists:sort(sets:to_list(sets:from_list(List))).
 
 strip_leading_zeros(<<0, Rest/binary>>) ->
     strip_leading_zeros(Rest);
