@@ -26,6 +26,7 @@
 -export([sign_rrset/5, sign_rrset/6]).
 -export([verify_rrsig/4]).
 -export([add_keytag_to_dnskey/1]).
+-export([canonical_rrdata_form/1]).
 
 -include("dns.hrl").
 -include("DNS-ASN1.hrl").
@@ -394,6 +395,7 @@ rrsig_to_digestable(#dns_rrdata_rrsig{} = Data) ->
 canonical_rrdata_bin(#dns_rr{class = Class, data = Data0}) ->
     dns:encode_rrdata(Class, canonical_rrdata_form(Data0)).
 
+%% @doc Converts a resource record data record to DNSSEC canonical form.
 canonical_rrdata_form(#dns_rrdata_afsdb{hostname = Hostname} = Data) ->
     Data#dns_rrdata_afsdb{hostname = dns:dname_to_lower(Hostname)};
 canonical_rrdata_form(#dns_rrdata_cname{dname = Dname} = Data) ->
