@@ -63,45 +63,78 @@
 %%%===================================================================
 
 %% @doc Decode a binary DNS message.
-%% @spec decode_message(MsgBin :: binary()) -> dns_message()
-%% @throws bad_pointer | decode_loop | formerr | trailing_garbage
+%% @spec decode_message(MsgBin :: binary()) -> dns_message() |
+%% {bad_pointer | decode_loop |formerr | trailing_garbage,
+%% undefined | dns_message(), binary()}
 decode_message(<<Id:16, QR:1, OC:4, AA:1, TC:1, RD:1, RA:1, 0:1, AD:1, CD:1,
-		 RC:4, QC:16, ANC:16, AUC:16, ADC:16, HRB/binary>> = MsgBin) ->
-    {Questions, QRB} = decode_message_questions(HRB, QC, MsgBin),
-    {Answers, AnRB} = decode_message_body(QRB, ANC, MsgBin),
-    {Authority, AuRB} = decode_message_body(AnRB, AUC, MsgBin),
-    {Additional, AdRB} = decode_message_body(AuRB, ADC, MsgBin),
-    case AdRB of
-	<<>> ->
-	    #dns_message{id = Id,
-			 qr = decode_bool(QR),
-			 oc = term_or_arg(fun opcode_to_atom/1, OC),
-			 aa = decode_bool(AA),
-			 tc = decode_bool(TC),
-			 rd = decode_bool(RD),
-			 ra = decode_bool(RA),
-			 ad = decode_bool(AD),
-			 cd = decode_bool(CD),
-			 rc = term_or_arg(fun rcode_to_atom/1, RC),
-			 qc = QC,
-			 anc = ANC,
-			 auc = AUC,
-			 adc = ADC, questions = Questions, answers = Answers,
-			 authority = Authority, additional = Additional};
-	_ -> throw(trailing_garbage)
-    end.
+		 RC:4, QC:16, ANC:16, AUC:16, ADC:16, Rest/binary>> = MsgBin) ->
+    try #dns_message{id = Id,
+		     qr = decode_bool(QR),
+		     oc = term_or_arg(fun opcode_to_atom/1, OC),
+		     aa = decode_bool(AA),
+		     tc = decode_bool(TC),
+		     rd = decode_bool(RD),
+		     ra = decode_bool(RA),
+		     ad = decode_bool(AD),
+		     cd = decode_bool(CD),
+		     rc = term_or_arg(fun rcode_to_atom/1, RC),
+		     qc = QC,
+		     anc = ANC,
+		     auc = AUC,
+		     adc = ADC} of
+	#dns_message{} = Msg -> decode_message(questions, MsgBin, Rest, Msg)
+    catch _ -> {formerr, undefined, MsgBin} end.
+
+decode_message(questions, MsgBin, QBody, #dns_message{qc = QC} = Msg) ->
+    case decode_message_questions(QBody, QC, MsgBin) of
+	{Questions, Rest} ->
+	    NewMsg = Msg#dns_message{questions = Questions},
+	    decode_message(answers, MsgBin, Rest, NewMsg);
+	{Error, Questions, Rest} ->
+	    NewMsg = Msg#dns_message{questions = Questions},
+	    {Error, NewMsg, Rest}
+    end;
+decode_message(Section, MsgBin, Body,
+	       #dns_message{anc = ANC, auc = AUC, adc = ADC} = Msg)
+  when Section =:= answers orelse
+       Section =:= authority orelse
+       Section =:= additional ->
+    {C, Next} = case Section of
+		    answers -> {ANC, authority};
+		    authority -> {AUC, additional};
+		    additional -> {ADC, finished}
+		end,
+    case decode_message_body(Body, C, MsgBin) of
+	{RR, Rest} ->
+	    NewMsg = add_rr_to_section(Section, Msg, RR),
+	    decode_message(Next, MsgBin, Rest, NewMsg);
+	{Error, RR, Rest} ->
+	    NewMsg = add_rr_to_section(Section, Msg, RR),
+	    {Error, NewMsg, Rest}
+    end;
+decode_message(finished, _MsgBin, <<>>, #dns_message{} = Msg) -> Msg;
+decode_message(finished, _MsgBin, Bin, #dns_message{} = Msg)
+  when is_binary(Bin) -> {trailing_garbage, Msg, Bin}.
 
 decode_message_questions(DataBin, Count, MsgBin) ->
     decode_message_questions(DataBin, Count, MsgBin, []).
 
-decode_message_questions(<<>>, _Count, _MsgBin, Qs) ->
-    {lists:reverse(Qs), <<>>};
 decode_message_questions(DataBin, 0, _MsgBin, Qs) ->
     {lists:reverse(Qs), DataBin};
+decode_message_questions(<<>>, _Count, _MsgBin, Qs) ->
+    {truncated, lists:reverse(Qs), <<>>};
 decode_message_questions(DataBin, Count, MsgBin, Qs) ->
-    {Name, <<Type:16, Class:16, RB/binary>>} = decode_dname(DataBin, MsgBin),
-    Q = #dns_query{name = Name, type = Type, class = Class},
-    decode_message_questions(RB, Count - 1, MsgBin, [Q|Qs]).
+    case catch decode_dname(DataBin, MsgBin) of
+	{Name, <<Type:16, Class:16, RB/binary>>} ->
+	    Q = #dns_query{name = Name, type = Type, class = Class},
+	    decode_message_questions(RB, Count - 1, MsgBin, [Q|Qs]);
+	{_Name, _Bin} ->
+	    {truncated, lists:reverse(Qs), DataBin};
+	Error when is_atom(Error) ->
+	    {Error, lists:reverse(Qs), DataBin};
+	_ ->
+	    {formerr, lists:reverse(Qs), DataBin}
+    end.
 
 decode_message_body(DataBin, Count, MsgBin) ->
     decode_message_body(DataBin, Count, MsgBin, []).
@@ -111,7 +144,7 @@ decode_message_body(<<>>, _Count, _MsgBin, RRs) ->
 decode_message_body(DataBin, 0, _MsgBin, RRs) ->
     {lists:reverse(RRs), DataBin};
 decode_message_body(DataBin, Count, MsgBin, RRs) ->
-    case decode_dname(DataBin, MsgBin) of
+    case catch decode_dname(DataBin, MsgBin) of
 	{<<>>, <<?DNS_TYPE_OPT:16/unsigned, UPS:16/unsigned, ExtRcode:8,
 		 Version:8, DNSSEC:1, _Z:15, EDataLen:16,
 		 EDataBin:EDataLen/binary, RemBin/binary>>} ->
@@ -130,8 +163,21 @@ decode_message_body(DataBin, Count, MsgBin, RRs) ->
 			 ttl = TTL,
 			 data = decode_rrdata(Class, Type, RdataBin, MsgBin)},
 	    decode_message_body(RemBin, Count - 1, MsgBin, [RR|RRs]);
-	_ -> throw(formerr)
+	{_Name, <<_Type:16/unsigned, _Class:16/unsigned, _TTL:32/signed, Len:16,
+		  Data/binary>>} when byte_size(Data) < Len ->
+	    {truncated, lists:reverse(RRs), DataBin};
+	Error when is_atom(Error) ->
+	    {Error, lists:reverse(RRs), DataBin};
+	_ ->
+	    {formerr, lists:reverse(RRs), DataBin}
     end.
+
+add_rr_to_section(answers, #dns_message{} = Msg, RR) ->
+    Msg#dns_message{answers = RR};
+add_rr_to_section(authority, #dns_message{} = Msg, RR) ->
+    Msg#dns_message{authority = RR};
+add_rr_to_section(additional, #dns_message{} = Msg, RR) ->
+    Msg#dns_message{additional = RR}.
 
 %% @doc Encode a dns_message record.
 %% @spec encode_message(dns_message()) -> MsgBin
