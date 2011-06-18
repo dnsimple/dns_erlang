@@ -292,6 +292,17 @@ dname_to_lower_test_() ->
     Cases = [ {"Y", "y"}, {"y", "y"}, {<<"Y">>, <<"y">>}, {<<"y">>, <<"y">>} ],
     [ ?_assertEqual(Expect, dname_to_lower(Arg)) || {Arg, Expect} <-  Cases ].
 
+dname_preserve_dot_test_() ->
+    Query = #dns_query{name = <<"example\\.com">>, class = 1, type = 1},
+    Message =#dns_message{qc = 1, questions = [Query]},
+    Encoded = dns:encode_message(Message),
+    Decoded = dns:decode_message(Encoded),
+    ReEncoded = dns:encode_message(Decoded),
+    ReDecoded = dns:decode_message(ReEncoded),
+    [ ?_assertEqual(Message, Decoded),
+      ?_assertEqual(Encoded, ReEncoded),
+      ?_assertEqual(Message, ReDecoded)].
+
 %%%===================================================================
 %%% Term functions
 %%%===================================================================

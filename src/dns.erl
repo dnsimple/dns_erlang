@@ -1081,8 +1081,9 @@ decode_dname(<<0, DataRBin/binary>>, _MsgBin, RBin, Dname0, Count) ->
 		   <<>> -> <<>>
 	       end,
     {NewDname, NewRemBin};
-decode_dname(<<0:2, Len:6, Label:Len/binary, DataRemBin/binary>>,
+decode_dname(<<0:2, Len:6, Label0:Len/binary, DataRemBin/binary>>,
 	     MsgBin, RemBin, Dname, Count) ->
+    Label = escape_label(Label0),
     NewRemBin = case Count of
 		    0 -> DataRemBin;
 		    _ -> RemBin
@@ -1100,6 +1101,13 @@ decode_dname(<<3:2, Ptr:14, DataRBin/binary>>, MsgBin, RBin, Dname, Count) ->
 	    decode_dname(NewDataBin, MsgBin, NewRemBin, Dname, NewCount);
 	_ -> throw(bad_pointer)
     end.
+
+escape_label(Label) when is_binary(Label) -> escape_label(<<>>, Label).
+
+escape_label(Label, <<>>) -> Label;
+escape_label(Cur, <<$., Rest/binary>>) ->
+    escape_label(<<Cur/binary, "\\.">>, Rest);
+escape_label(Cur, <<C, Rest/binary>>) -> escape_label(<<Cur/binary, C>>, Rest).
 
 decode_dnameonly(Bin, MsgBin) ->
     case decode_dname(Bin, MsgBin) of
