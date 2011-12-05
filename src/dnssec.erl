@@ -28,6 +28,7 @@
 -export([add_keytag_to_dnskey/1]).
 -export([canonical_rrdata_form/1]).
 -export([ih/4]).
+-export([base32hex_encode/1]).
 
 -include("dns.hrl").
 -include("DNS-ASN1.hrl").
