@@ -27,6 +27,7 @@
 -export([verify_rrsig/4]).
 -export([add_keytag_to_dnskey/1]).
 -export([canonical_rrdata_form/1]).
+-export([ih/4]).
 
 -include("dns.hrl").
 -include("DNS-ASN1.hrl").
@@ -112,14 +113,11 @@ gen_nsec3(RRs, ZoneName, Alg, Salt, Iterations, TTL, Class) ->
 %% @doc Generate NSEC3 records.
 gen_nsec3(RRs, ZoneName, Alg, Salt, Iterations, TTL, Class, Opts) ->
     BaseTypes = proplists:get_value(base_types, Opts, [?DNS_TYPE_RRSIG]),
-    HashFun = case Alg of
-		  1 -> fun crypto:sha/1
-	      end,
     Map = build_rrmap(RRs, BaseTypes, ZoneName),
     Unsorted = lists:foldl(
 		 fun({{Name, SClass}, Types}, Acc) when SClass =:= Class ->
 			 DName = dns:encode_dname(Name),
-			 HashedName = ih(HashFun, Salt, DName, Iterations),
+			 HashedName = ih(Alg, Salt, DName, Iterations),
 			 HexdHashName = base32hex_encode(HashedName),
 			 NewName = <<HexdHashName/binary, $., ZoneName/binary>>,
 			 Data = #dns_rrdata_nsec3{hash_alg = Alg,
@@ -137,8 +135,9 @@ gen_nsec3(RRs, ZoneName, Alg, Salt, Iterations, TTL, Class, Opts) ->
     Sorted = name_order(Unsorted),
     add_next_hash(Sorted).
 
-ih(H, Salt, X, 0) -> H([X, Salt]);
-ih(H, Salt, X, I) -> ih(H, Salt, H([X, Salt]), I - 1).
+ih(H, Salt, X, 0) when is_function(H, 1) -> H([X, Salt]);
+ih(H, Salt, X, I) when is_function(H, 1) -> ih(H, Salt, H([X, Salt]), I - 1);
+ih(H, Salt, X, I) when is_integer(H) -> ih(fun crypto:sha/1, Salt, X, I).
 
 add_next_hash([#dns_rr{data = #dns_rrdata_nsec3{hash = First}}|_] = Hashes) ->
     add_next_hash(Hashes, [], First).
