@@ -29,7 +29,7 @@
 
 -export([compare_dname/2]).
 -export([dname_to_upper/1, dname_to_lower/1]).
--export([dname_to_labels/1]).
+-export([dname_to_labels/1, labels_to_dname/1, escape_label/1]).
 -export([unix_time/0, unix_time/1]).
 -export([random_id/0]).
 
@@ -1158,6 +1158,11 @@ dname_to_labels(Label, <<"\\.", Cs/binary>>) ->
     dname_to_labels(<<Label/binary, $.>>, Cs);
 dname_to_labels(Label, <<C, Cs/binary>>) ->
     dname_to_labels(<<Label/binary, C>>, Cs).
+
+labels_to_dname(Labels) ->
+    <<$., Dname/binary>> = << <<$., (escape_label(Label))/binary>>
+			      || Label <- Labels >>,
+    Dname.
 
 %% @doc Returns provided name with case-insensitive characters in uppercase.
 %% @spec dname_to_upper(string() | binary()) -> string() | binary()
