@@ -130,10 +130,10 @@ gen_nsec3(RRs, ZoneName, Alg, Salt, Iterations, TTL, Class, Opts) ->
 			 NewRR = #dns_rr{name = NewName, class = Class,
 					 type = ?DNS_TYPE_NSEC3, ttl = TTL,
 					 data = Data},
-			 [NewRR|Acc];
+			 [{HashedName, NewRR}|Acc];
 		    (_, Acc) -> Acc
 		 end, [], Map),
-    Sorted = name_order(Unsorted),
+    Sorted = [ RR || {_, RR} <- lists:keysort(1, Unsorted) ],
     add_next_hash(Sorted).
 
 ih(H, Salt, X, 0) when is_function(H, 1) -> H([X, Salt]);
@@ -456,7 +456,7 @@ base32hex_encode(Bin) when bit_size(Bin) rem 5 =:= 0 ->
 base32hex_encode(Int)
   when is_integer(Int) andalso Int >= 0 andalso Int =< 9 -> Int + 48;
 base32hex_encode(Int)
-  when is_integer(Int) andalso Int >= 10 andalso Int =< 31 -> Int + 55.
+  when is_integer(Int) andalso Int >= 10 andalso Int =< 31 -> Int + 87.
 
 name_ancestors(Name, ZoneName) ->
     NameLwr = dns:dname_to_lower(iolist_to_binary(Name)),
