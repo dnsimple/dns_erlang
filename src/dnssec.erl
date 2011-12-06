@@ -449,7 +449,7 @@ canonical_rrdata_form(#dns_rrdata_srv{target = Target} = Data) ->
 canonical_rrdata_form(X) -> X.
 
 base32hex_encode(Bin) when bit_size(Bin) rem 5 =/= 0 ->
-    PadBy = byte_size(Bin) rem 5,
+    PadBy = 5 - (byte_size(Bin) rem 5),
     base32hex_encode(<<Bin/bitstring, 0:PadBy>>);
 base32hex_encode(Bin) when bit_size(Bin) rem 5 =:= 0 ->
     << <<(base32hex_encode(I))>> || <<I:5>> <= Bin >>;
