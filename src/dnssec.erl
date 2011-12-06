@@ -68,7 +68,7 @@ gen_nsec(ZoneNameM, RR, TTL, Opts) ->
     Unsorted = [ #dns_rr{name = Name, class = Class, type = ?DNS_TYPE_NSEC,
 			 ttl = TTL, data = #dns_rrdata_nsec{types = Types}}
 		 || {{Name, Class}, Types} <- Map ],
-    Sorted = lists:sort(fun name_order/2, Unsorted),
+    Sorted = name_order(Unsorted),
     add_next_dname(Sorted, ZoneName).
 
 add_next_dname(RR, ZoneName) -> add_next_dname([], RR, ZoneName).
