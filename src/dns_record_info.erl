@@ -116,106 +116,106 @@ size(dns_rrdata_isdn) -> record_info(size, dns_rrdata_isdn);
 size(dns_rrdata_cert) -> record_info(size, dns_rrdata_cert).
 
 %% @doc Returns the record tag atom for the given record type.
-%% @spec atom_for_type(RecordTag :: atom()) -> atom() | undefined
-atom_for_type(a) -> dns_rrdata_a;
-atom_for_type(afsdb) -> dns_rrdata_afsdb;
-atom_for_type(aaaa) -> dns_rrdata_aaaa;
-atom_for_type(cname) -> dns_rrdata_cname;
-atom_for_type(dhcid) -> dns_rrdata_dhcid;
-atom_for_type(dname) -> dns_rrdata_dname;
-atom_for_type(dnskey) -> dns_rrdata_dnskey;
-atom_for_type(key) -> dns_rrdata_key;
-atom_for_type(mx) -> dns_rrdata_mx;
-atom_for_type(kx) -> dns_rrdata_kx;
-atom_for_type(ns) -> dns_rrdata_ns;
-atom_for_type(ptr) -> dns_rrdata_ptr;
-atom_for_type(rrsig) -> dns_rrdata_rrsig;
-atom_for_type(soa) -> dns_rrdata_soa;
-atom_for_type(srv) -> dns_rrdata_srv;
-atom_for_type(txt) -> dns_rrdata_txt;
-atom_for_type(hinfo) -> dns_rrdata_hinfo;
-atom_for_type(ipseckey) -> dns_rrdata_ipseckey;
-atom_for_type(loc) -> dns_rrdata_loc;
-atom_for_type(mb) -> dns_rrdata_mb;
-atom_for_type(md) -> dns_rrdata_md;
-atom_for_type(mf) -> dns_rrdata_mf;
-atom_for_type(mg) -> dns_rrdata_mg;
-atom_for_type(minfo) -> dns_rrdata_minfo;
-atom_for_type(mr) -> dns_rrdata_mr;
-atom_for_type(nsec) -> dns_rrdata_nsec;
-atom_for_type(nsec3) -> dns_rrdata_nsec3;
-atom_for_type(nsec3param) -> dns_rrdata_nsec3param;
-atom_for_type(nxt) -> dns_rrdata_nxt;
-atom_for_type(x25) -> dns_rrdata_x25;
-atom_for_type(wks) -> dns_rrdata_wks;
-atom_for_type(rp) -> dns_rrdata_rp;
-atom_for_type(rt) -> dns_rrdata_rt;
-atom_for_type(px) -> dns_rrdata_px;
-atom_for_type(spf) -> dns_rrdata_spf;
-atom_for_type(sshfp) -> dns_rrdata_sshfp;
-atom_for_type(naptr) -> dns_rrdata_naptr;
-atom_for_type(ds) -> dns_rrdata_ds;
-atom_for_type(dlv) -> dns_rrdata_dlv;
-atom_for_type(isdn) -> dns_rrdata_isdn;
-atom_for_type(cert) -> dns_rrdata_cert;
+%% @spec atom_for_type(RecordTag :: atom()) -> positive_integer() | undefined
+atom_for_type(?DNS_TYPE_A) -> dns_rrdata_a;
+atom_for_type(?DNS_TYPE_AFSDB) -> dns_rrdata_afsdb;
+atom_for_type(?DNS_TYPE_AAAA) -> dns_rrdata_aaaa;
+atom_for_type(?DNS_TYPE_CNAME) -> dns_rrdata_cname;
+atom_for_type(?DNS_TYPE_DHCID) -> dns_rrdata_dhcid;
+atom_for_type(?DNS_TYPE_DNAME) -> dns_rrdata_dname;
+atom_for_type(?DNS_TYPE_DNSKEY) -> dns_rrdata_dnskey;
+atom_for_type(?DNS_TYPE_KEY) -> dns_rrdata_key;
+atom_for_type(?DNS_TYPE_MX) -> dns_rrdata_mx;
+atom_for_type(?DNS_TYPE_KX) -> dns_rrdata_kx;
+atom_for_type(?DNS_TYPE_NS) -> dns_rrdata_ns;
+atom_for_type(?DNS_TYPE_PTR) -> dns_rrdata_ptr;
+atom_for_type(?DNS_TYPE_RRSIG) -> dns_rrdata_rrsig;
+atom_for_type(?DNS_TYPE_SOA) -> dns_rrdata_soa;
+atom_for_type(?DNS_TYPE_SRV) -> dns_rrdata_srv;
+atom_for_type(?DNS_TYPE_TXT) -> dns_rrdata_txt;
+atom_for_type(?DNS_TYPE_HINFO) -> dns_rrdata_hinfo;
+atom_for_type(?DNS_TYPE_IPSECKEY) -> dns_rrdata_ipseckey;
+atom_for_type(?DNS_TYPE_LOC) -> dns_rrdata_loc;
+atom_for_type(?DNS_TYPE_MB) -> dns_rrdata_mb;
+atom_for_type(?DNS_TYPE_MD) -> dns_rrdata_md;
+atom_for_type(?DNS_TYPE_MF) -> dns_rrdata_mf;
+atom_for_type(?DNS_TYPE_MG) -> dns_rrdata_mg;
+atom_for_type(?DNS_TYPE_MINFO) -> dns_rrdata_minfo;
+atom_for_type(?DNS_TYPE_MR) -> dns_rrdata_mr;
+atom_for_type(?DNS_TYPE_NSEC) -> dns_rrdata_nsec;
+atom_for_type(?DNS_TYPE_NSEC3) -> dns_rrdata_nsec3;
+atom_for_type(?DNS_TYPE_NSEC3PARAM) -> dns_rrdata_nsec3param;
+atom_for_type(?DNS_TYPE_NXT) -> dns_rrdata_nxt;
+atom_for_type(?DNS_TYPE_X25) -> dns_rrdata_x25;
+atom_for_type(?DNS_TYPE_WKS) -> dns_rrdata_wks;
+atom_for_type(?DNS_TYPE_RP) -> dns_rrdata_rp;
+atom_for_type(?DNS_TYPE_RT) -> dns_rrdata_rt;
+atom_for_type(?DNS_TYPE_PX) -> dns_rrdata_px;
+atom_for_type(?DNS_TYPE_SPF) -> dns_rrdata_spf;
+atom_for_type(?DNS_TYPE_SSHFP) -> dns_rrdata_sshfp;
+atom_for_type(?DNS_TYPE_NAPTR) -> dns_rrdata_naptr;
+atom_for_type(?DNS_TYPE_DS) -> dns_rrdata_ds;
+atom_for_type(?DNS_TYPE_DLV) -> dns_rrdata_dlv;
+atom_for_type(?DNS_TYPE_ISDN) -> dns_rrdata_isdn;
+atom_for_type(?DNS_TYPE_CERT) -> dns_rrdata_cert;
 atom_for_type(_) -> undefined.
 
 %% @doc Returns the record type for the given record tag atom.
-%% @spec type_for_atom(RecordTag :: atom()) -> atom() | undefined
-type_for_atom(dns_rrdata_a) -> a;
-type_for_atom(dns_rrdata_afsdb) -> afsdb;
-type_for_atom(dns_rrdata_aaaa) -> aaaa;
-type_for_atom(dns_rrdata_cname) -> cname;
-type_for_atom(dns_rrdata_dhcid) -> dhcid;
-type_for_atom(dns_rrdata_dname) -> dname;
-type_for_atom(dns_rrdata_dnskey) -> dnskey;
-type_for_atom(dns_rrdata_key) -> key;
-type_for_atom(dns_rrdata_mx) -> mx;
-type_for_atom(dns_rrdata_kx) -> kx;
-type_for_atom(dns_rrdata_ns) -> ns;
-type_for_atom(dns_rrdata_ptr) -> ptr;
-type_for_atom(dns_rrdata_rrsig) -> rrsig;
-type_for_atom(dns_rrdata_soa) -> soa;
-type_for_atom(dns_rrdata_srv) -> srv;
-type_for_atom(dns_rrdata_txt) -> txt;
-type_for_atom(dns_rrdata_hinfo) -> hinfo;
-type_for_atom(dns_rrdata_ipseckey) -> ipseckey;
-type_for_atom(dns_rrdata_loc) -> loc;
-type_for_atom(dns_rrdata_mb) -> mb;
-type_for_atom(dns_rrdata_md) -> md;
-type_for_atom(dns_rrdata_mf) -> mf;
-type_for_atom(dns_rrdata_mg) -> mg;
-type_for_atom(dns_rrdata_minfo) -> minfo;
-type_for_atom(dns_rrdata_mr) -> mr;
-type_for_atom(dns_rrdata_nsec) -> nsec;
-type_for_atom(dns_rrdata_nsec3) -> nsec3;
-type_for_atom(dns_rrdata_nsec3param) -> nsec3param;
-type_for_atom(dns_rrdata_nxt) -> nxt;
-type_for_atom(dns_rrdata_x25) -> x25;
-type_for_atom(dns_rrdata_wks) -> wks;
-type_for_atom(dns_rrdata_rp) -> rp;
-type_for_atom(dns_rrdata_rt) -> rt;
-type_for_atom(dns_rrdata_px) -> px;
-type_for_atom(dns_rrdata_spf) -> spf;
-type_for_atom(dns_rrdata_sshfp) -> sshfp;
-type_for_atom(dns_rrdata_naptr) -> naptr;
-type_for_atom(dns_rrdata_ds) -> ds;
-type_for_atom(dns_rrdata_dlv) -> dlv;
-type_for_atom(dns_rrdata_isdn) -> isdn;
-type_for_atom(dns_rrdata_cert) -> cert;
+%% @spec type_for_atom(RecordTag :: atom()) -> positive_integer() | undefined
+type_for_atom(dns_rrdata_a) -> ?DNS_TYPE_A;
+type_for_atom(dns_rrdata_afsdb) -> ?DNS_TYPE_AFSDB;
+type_for_atom(dns_rrdata_aaaa) -> ?DNS_TYPE_AAAA;
+type_for_atom(dns_rrdata_cname) -> ?DNS_TYPE_CNAME;
+type_for_atom(dns_rrdata_dhcid) -> ?DNS_TYPE_DHCID;
+type_for_atom(dns_rrdata_dname) -> ?DNS_TYPE_DNAME;
+type_for_atom(dns_rrdata_dnskey) -> ?DNS_TYPE_DNSKEY;
+type_for_atom(dns_rrdata_key) -> ?DNS_TYPE_KEY;
+type_for_atom(dns_rrdata_mx) -> ?DNS_TYPE_MX;
+type_for_atom(dns_rrdata_kx) -> ?DNS_TYPE_KX;
+type_for_atom(dns_rrdata_ns) -> ?DNS_TYPE_NS;
+type_for_atom(dns_rrdata_ptr) -> ?DNS_TYPE_PTR;
+type_for_atom(dns_rrdata_rrsig) -> ?DNS_TYPE_RRSIG;
+type_for_atom(dns_rrdata_soa) -> ?DNS_TYPE_SOA;
+type_for_atom(dns_rrdata_srv) -> ?DNS_TYPE_SRV;
+type_for_atom(dns_rrdata_txt) -> ?DNS_TYPE_TXT;
+type_for_atom(dns_rrdata_hinfo) -> ?DNS_TYPE_HINFO;
+type_for_atom(dns_rrdata_ipseckey) -> ?DNS_TYPE_IPSECKEY;
+type_for_atom(dns_rrdata_loc) -> ?DNS_TYPE_LOC;
+type_for_atom(dns_rrdata_mb) -> ?DNS_TYPE_MB;
+type_for_atom(dns_rrdata_md) -> ?DNS_TYPE_MD;
+type_for_atom(dns_rrdata_mf) -> ?DNS_TYPE_MF;
+type_for_atom(dns_rrdata_mg) -> ?DNS_TYPE_MG;
+type_for_atom(dns_rrdata_minfo) -> ?DNS_TYPE_MINFO;
+type_for_atom(dns_rrdata_mr) -> ?DNS_TYPE_MR;
+type_for_atom(dns_rrdata_nsec) -> ?DNS_TYPE_NSEC;
+type_for_atom(dns_rrdata_nsec3) -> ?DNS_TYPE_NSEC3;
+type_for_atom(dns_rrdata_nsec3param) -> ?DNS_TYPE_NSEC3PARAM;
+type_for_atom(dns_rrdata_nxt) -> ?DNS_TYPE_NXT;
+type_for_atom(dns_rrdata_x25) -> ?DNS_TYPE_X25;
+type_for_atom(dns_rrdata_wks) -> ?DNS_TYPE_WKS;
+type_for_atom(dns_rrdata_rp) -> ?DNS_TYPE_RP;
+type_for_atom(dns_rrdata_rt) -> ?DNS_TYPE_RT;
+type_for_atom(dns_rrdata_px) -> ?DNS_TYPE_PX;
+type_for_atom(dns_rrdata_spf) -> ?DNS_TYPE_SPF;
+type_for_atom(dns_rrdata_sshfp) -> ?DNS_TYPE_SSHFP;
+type_for_atom(dns_rrdata_naptr) -> ?DNS_TYPE_NAPTR;
+type_for_atom(dns_rrdata_ds) -> ?DNS_TYPE_DS;
+type_for_atom(dns_rrdata_dlv) -> ?DNS_TYPE_DLV;
+type_for_atom(dns_rrdata_isdn) -> ?DNS_TYPE_ISDN;
+type_for_atom(dns_rrdata_cert) -> ?DNS_TYPE_CERT;
 type_for_atom(_) -> undefined.
 
 -ifdef(TEST).
 
 type_rec_test_() ->
     {ok, Cases} = file:consult("../priv/rrdata_wire_samples.txt"),
-    Types = sets:to_list(sets:from_list([T || {_,T,_} <- Cases, is_atom(T)])),
+    Types = sets:to_list(sets:from_list([T || {_,T,_} <- Cases, T =/= 999])),
     [ ?_assertEqual(Type, type_for_atom(atom_for_type(Type)))
       || Type <- Types ].
 
 recinfo_test_() ->
     {ok, Cases} = file:consult("../priv/rrdata_wire_samples.txt"),
-    Types = sets:to_list(sets:from_list([T || {_, T ,_} <- Cases, is_atom(T)])),
+    Types = sets:to_list(sets:from_list([T || {_, T ,_} <- Cases, T =/= 999])),
     Tags = [dns_rr|[ atom_for_type(Type) || Type <- Types ]],
     [ {atom_to_list(Tag),
        ?_assertEqual(length(fields(Tag)),

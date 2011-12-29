@@ -1,5 +1,6 @@
 -ifndef('__dns_records.hrl__').
 -define('__dns_records.hrl__', ok).
+-include("dns_terms.hrl").
 
 %%
 %% @type bin_message() = binary().
@@ -201,14 +202,14 @@
 %%
 -record(dns_message, {id = dns:random_id(),
 		      qr = false,
-		      oc = 'query',
+		      oc = ?DNS_OPCODE_QUERY,
 		      aa = false,
 		      tc = false,
 		      rd = false,
 		      ra = false,
 		      ad = false,
 		      cd = false,
-		      rc = 'noerror',
+		      rc = ?DNS_RCODE_NOERROR,
 		      qc = 0,
 		      anc = 0,
 		      auc = 0,
@@ -218,7 +219,7 @@
 		      authority = [],
 		      additional=[] }).
 
--record(dns_query, {name, class = 1, type}).
+-record(dns_query, {name, class = ?DNS_CLASS_IN, type}).
 
 -record(dns_rr, {name, class = 1, type, ttl = 0, data}).
 -record(dns_rrdata_a, {ip}).
@@ -288,7 +289,7 @@
 -record(dns_rrdata_x25, {psdn_address}).
 
 -record(dns_optrr, {udp_payload_size = 4096,
-		    ext_rcode = 0,
+		    ext_rcode = ?DNS_ERCODE_NOERROR,
 		    version = 0,
 		    dnssec = false,
 		    data = []}).

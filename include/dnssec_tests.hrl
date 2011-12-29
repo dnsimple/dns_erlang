@@ -58,7 +58,7 @@ zone_test_() ->
 	      ZSKPrivKey = helper_samplekeypl_to_privkey(ZSKPL),
 	      ZSKPubKey = helper_samplekeypl_to_pubkey(ZSKPL),
 	      ZSKPubKeyBin = helper_pubkey_to_dnskey_pubkey(Alg, ZSKPubKey),
-	      ZSKAlgNo = dns:encode_alg(proplists:get_value(alg, ZSKPL)),
+	      ZSKAlgNo = proplists:get_value(alg, ZSKPL),
 	      ZSKFlags = proplists:get_value(flags, ZSKPL),
 	      ZSKKey0 = #dns_rrdata_dnskey{flags = ZSKFlags,
 					   protocol = 3,
@@ -69,7 +69,7 @@ zone_test_() ->
 	      KSKPrivKey = helper_samplekeypl_to_privkey(KSKPL),
 	      KSKPubKey = helper_samplekeypl_to_pubkey(KSKPL),
 	      KSKPubKeyBin = helper_pubkey_to_dnskey_pubkey(Alg, KSKPubKey),
-	      KSKAlgNo = dns:encode_alg(proplists:get_value(alg, KSKPL)),
+	      KSKAlgNo = proplists:get_value(alg, KSKPL),
 	      KSKFlags = proplists:get_value(flags, KSKPL),
 	      KSKKey0 = #dns_rrdata_dnskey{flags = KSKFlags,
 					   protocol = 3,
@@ -97,7 +97,7 @@ zone_test_() ->
 			   fun(#dns_rr{class = Class,
 				       type = Type,
 				       data = Data} = RR) ->
-				   Bin = dns:encode_rrdata(in, Data),
+				   Bin = dns:encode_rrdata(?DNS_CLASS_IN, Data),
 				   NewData = dns:decode_rrdata(
 					       Class, Type, Bin),
 				   RR#dns_rr{data=NewData}
@@ -169,8 +169,7 @@ dnskey_pubkey_gen_test_() ->
 			    lists:map(
 			      fun(PL) ->
 				      PubKey = helper_samplekeypl_to_pubkey(PL),
-				      AlgNo = dns:encode_alg(
-						proplists:get_value(alg, PL)),
+				      AlgNo = proplists:get_value(alg, PL),
 				      Flags = proplists:get_value(flags, PL),
 				      Key = #dns_rrdata_dnskey{
 					flags = Flags,
@@ -286,7 +285,7 @@ helper_samplekeypl_to_privkey(Proplist) ->
     helper_samplekeypl_to_privkey(Alg, Proplist).
 
 helper_samplekeypl_to_privkey(DSA, Proplist)
-  when DSA =:= dsa orelse DSA =:= nsec3dsa ->
+  when DSA =:= ?DNS_ALG_DSA orelse DSA =:= ?DNS_ALG_NSEC3DSA ->
     P = proplists:get_value(p, Proplist),
     Q = proplists:get_value(q, Proplist),
     G = proplists:get_value(g, Proplist),
@@ -303,7 +302,7 @@ helper_samplekeypl_to_pubkey(Proplist) ->
     helper_samplekeypl_to_pubkey(Alg, Proplist).
 
 helper_samplekeypl_to_pubkey(DSA, Proplist)
-  when DSA =:= dsa orelse DSA =:= nsec3dsa ->
+  when DSA =:= ?DNS_ALG_DSA orelse DSA =:= ?DNS_ALG_NSEC3DSA ->
     P = proplists:get_value(p, Proplist),
     Q = proplists:get_value(q, Proplist),
     G = proplists:get_value(g, Proplist),

@@ -35,12 +35,12 @@ message_edns_test() ->
 		   data = #dns_rrdata_ptr{
 		     dname = <<"Example\ Site._http._tcp.example.org">>
 		    }}],
+    LLQ = #dns_opt_llq{opcode = ?DNS_LLQOPCODE_SETUP,
+		       errorcode = ?DNS_LLQERRCODE_NOERROR,
+		       id = 42,
+		       leaselife = 7200},
     Ads = [#dns_optrr{udp_payload_size = 4096, ext_rcode = 0, version = 0,
-		      dnssec=false, data = [#dns_opt_llq{opcode = setup,
-							 errorcode = noerror,
-							 id = 42,
-							 leaselife = 7200
-							}]}],
+		      dnssec=false, data = [LLQ]}],
     QLen = length(Qs),
     AnsLen = length(Ans),
     AdsLen = length(Ads),
@@ -66,23 +66,23 @@ tsig_bad_key_test() ->
 				err = 0,
 				other = <<>>
 			       },
-    TSIG = #dns_rr{name = <<"name_a">>, class = in, type = tsig, ttl = 0,
+    TSIG = #dns_rr{name = <<"name_a">>, type = ?DNS_TYPE_TSIG, ttl = 0,
 		   data = TSIGData},
     Msg = #dns_message{id=MsgId, adc = 1, additional=[TSIG]},
     MsgBin = encode_message(Msg),
     Result = verify_tsig(MsgBin, <<"name_b">>, B64),
-    ?assertEqual({ok, ?DNS_TSIGERR_BADKEY_ATOM}, Result).
+    ?assertEqual({error, ?DNS_TSIGERR_BADKEY}, Result).
 
 tsig_bad_alg_test() ->
     Id = random_id(),
     Name = <<"keyname">>,
     Data = #dns_rrdata_tsig{alg = <<"null">>, time = unix_time(), fudge = 0,
 			    mac = <<"MAC">>, msgid = Id, err = 0, other = <<>>},
-    RR = #dns_rr{name = Name, class = in, type = tsig, ttl = 0, data = Data},
+    RR = #dns_rr{name = Name, type = ?DNS_TYPE_TSIG, ttl = 0, data = Data},
     Msg = #dns_message{id = Id, adc = 1, additional = [RR]},
     MsgBin = encode_message(Msg),
     Result = verify_tsig(MsgBin, Name, <<"secret">>),
-    ?assertEqual({error, bad_alg}, Result).
+    ?assertEqual({error, ?DNS_TSIGERR_BADKEY}, Result).
 
 tsig_bad_sig_test() ->
     application:start(crypto),
@@ -96,7 +96,7 @@ tsig_bad_sig_test() ->
     BadSignedMsg = Msg#dns_message{adc = 1, additional = [BadTSIG]},
     BadSignedMsgBin = encode_message(BadSignedMsg),
     Result = verify_tsig(BadSignedMsgBin, Name, Value),
-    ?assertEqual({ok, ?DNS_TSIGERR_BADSIG_ATOM}, Result).
+    ?assertEqual({error, ?DNS_TSIGERR_BADSIG}, Result).
 
 tsig_badtime_test_() ->
     application:start(crypto),
@@ -113,7 +113,7 @@ tsig_badtime_test_() ->
 	     BadNow = Now + (Throwoff * Fudge),
 	     Options = [{fudge, 30}, {time, BadNow}],
 	     Result = verify_tsig(SignedMsgBin, Name, Secret, Options),
-	     ?assertEqual({ok, ?DNS_TSIGERR_BADTIME_ATOM}, Result)
+	     ?assertEqual({error, ?DNS_TSIGERR_BADTIME}, Result)
 	 end
 	) || Throwoff <- [ -2, 2 ] ].
 
@@ -208,7 +208,9 @@ decode_encode_rrdata_test_() ->
 %%%===================================================================
 
 decode_encode_optdata_test_() ->
-    Cases = [ #dns_opt_llq{opcode = setup, errorcode = noerror, id = 123,
+    Cases = [ #dns_opt_llq{opcode = ?DNS_LLQOPCODE_SETUP,
+			   errorcode = ?DNS_LLQERRCODE_NOERROR,
+			   id = 123,
 			   leaselife = 456},
 	      #dns_opt_ul{lease = 789},
 	      #dns_opt_nsid{data = <<"hi">>},
@@ -312,27 +314,20 @@ dname_preserve_dot_test_() ->
 %%% Term functions
 %%%===================================================================
 
-class_terms_match_test_() ->
+class_name_test_() ->
     {ok, Cases} = file:consult("../priv/rrdata_wire_samples.txt"),
     Classes = sets:to_list(sets:from_list([ C || {C,_,_} <- Cases ])),
-    [ ?_assertEqual(Class, dns:class_to_atom(dns:class_to_int(Class)))
-      || Class <- Classes ].
+    [ ?_assertEqual(true, is_binary(dns:class_name(C))) || C <- Classes ].
 
-type_terms_match_test_() ->
+type_name_test_() ->
     {ok, Cases} = file:consult("../priv/rrdata_wire_samples.txt"),
-    Types = sets:to_list(sets:from_list([ T || {_,T,_} <- Cases, is_atom(T) ])),
-    [ {atom_to_list(Type),
-       ?_assertEqual(Type,
-		     dns:type_to_atom(dns:type_to_int(Type)))
-      } || Type <- Types ].
+    Types = sets:to_list(sets:from_list([ T || {_,T,_} <- Cases ])),
+    [ ?_assertEqual(T =/= 999, is_binary(dns:type_name(T))) || T <- Types ].
 
-alg_terms_match_test_() ->
-    Cases = [ ?DNS_ALG_DSA_ATOM, ?DNS_ALG_NSEC3DSA_ATOM, ?DNS_ALG_RSASHA1_ATOM,
-	      ?DNS_ALG_NSEC3RSASHA1_ATOM, ?DNS_ALG_RSASHA256_ATOM,
-	      ?DNS_ALG_RSASHA512_ATOM ],
-    [ {atom_to_list(Alg),
-       ?_assertEqual(Alg, dns:alg_to_atom(dns:alg_to_int(Alg)))
-      } || Alg <- Cases ].
+alg_terms_test_() ->
+    Cases = [ ?DNS_ALG_DSA, ?DNS_ALG_NSEC3DSA, ?DNS_ALG_RSASHA1,
+	      ?DNS_ALG_NSEC3RSASHA1, ?DNS_ALG_RSASHA256, ?DNS_ALG_RSASHA512 ],
+    [ ?_assertEqual(true, is_binary(dns:alg_name(Alg))) || Alg <- Cases ].
 
 %%%===================================================================
 

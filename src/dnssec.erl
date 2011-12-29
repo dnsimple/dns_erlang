@@ -154,13 +154,8 @@ add_next_hash([#dns_rr{data = Data} = RR|
 
 normalise_rr(#dns_rr{name = Name} = RR) when not is_binary(Name) ->
     normalise_rr(RR#dns_rr{name = iolist_to_binary(Name)});
-normalise_rr(#dns_rr{class = Class} = RR) when is_atom(Class) ->
-    normalise_rr(RR#dns_rr{class = dns:encode_class(Class)});
-normalise_rr(#dns_rr{type = Type} = RR) when is_atom(Type) ->
-    normalise_rr(RR#dns_rr{type = dns:encode_type(Type)});
 normalise_rr(#dns_rr{name = NBin, class = CNum, type = TNum} = RR)
-  when is_binary(NBin) andalso is_integer(CNum) andalso is_integer(TNum) ->
-    RR.
+  when is_binary(NBin) andalso is_integer(CNum) andalso is_integer(TNum) -> RR.
 
 build_rrmap(RR, BaseTypes) ->
     Base = build_rrmap_gbt(RR, BaseTypes),
@@ -275,10 +270,7 @@ sign_rrset([#dns_rr{name = Name, class = Class, ttl = TTL}|_] = RRs,
 		end,
     Data = Data0#dns_rrdata_rrsig{signature = Signature},
     #dns_rr{name = Name, type = ?DNS_TYPE_RRSIG, class = Class, ttl = TTL,
-	    data = Data};
-sign_rrset(RRs, SignersName, KeyTag, Alg, Key, Opts) when is_atom(Alg) ->
-    AlgNum = dns:alg_to_int(Alg),
-    sign_rrset(RRs, SignersName, KeyTag, AlgNum, Key, Opts).
+	    data = Data}.
 
 verify_rrsig(#dns_rr{type = ?DNS_TYPE_RRSIG, data = Data}, RRs, RRDNSKey,
 	     Opts) ->
@@ -290,7 +282,7 @@ verify_rrsig(#dns_rr{type = ?DNS_TYPE_RRSIG, data = Data}, RRs, RRDNSKey,
 		      expiration = Expire,
 		      signers_name = SignersName,
 		      signature = Sig} = Data,
-    Keys0 = [ {KeyTag, dns:encode_alg(Alg), PubKey}
+    Keys0 = [ {KeyTag, Alg, PubKey}
 	      || #dns_rr{name = Name,
 			 type = ?DNS_TYPE_DNSKEY,
 			 data = #dns_rrdata_dnskey{
@@ -299,7 +291,7 @@ verify_rrsig(#dns_rr{type = ?DNS_TYPE_RRSIG, data = Data}, RRs, RRDNSKey,
 			   key_tag = KeyTag,
 			   public_key = PubKey
 			 }} <- RRDNSKey,
-		 dns:encode_alg(Alg) =:= dns:encode_alg(SigAlg),
+		 Alg =:= SigAlg,
 		 normalise_dname(Name) =:= normalise_dname(SignersName)
 	    ],
     Keys = case lists:keytake(SigKeyTag, 1, Keys0) of
@@ -346,9 +338,7 @@ build_sig_input(SignersName, KeyTag, Alg, Incept, Expire,
 			 ttl = TTL}|_] = RRs, TTL) when is_integer(Alg) ->
     Datas = lists:sort([ canonical_rrdata_bin(RR) ||RR <- RRs ]),
     NameBin = dns:encode_dname(dns:dname_to_lower(Name)),
-    IntType = dns:encode_type(Type),
-    IntClass = dns:encode_class(Class),
-    RecordBase = <<NameBin/binary, IntType:16, IntClass:16, TTL:32>>,
+    RecordBase = <<NameBin/binary, Type:16, Class:16, TTL:32>>,
     RRSetBin = [  <<RecordBase/binary, (byte_size(Data)):16, Data/binary>>
 		      || Data <- Datas ],
     RRSigData0 = #dns_rrdata_rrsig{type_covered = Type,
