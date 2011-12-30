@@ -17,7 +17,6 @@
 %% under the License.
 %%
 %% -------------------------------------------------------------------
-%% @headerfile "dns_records.hrl"
 -module(dns).
 
 %% API
@@ -51,9 +50,6 @@
 %%%===================================================================
 
 %% @doc Decode a binary DNS message.
-%% @spec decode_message(MsgBin :: binary()) -> dns_message() |
-%% {bad_pointer | decode_loop |formerr | trailing_garbage,
-%% undefined | dns_message(), binary()}
 decode_message(<<Id:16, QR:1, OC:4, AA:1, TC:1, RD:1, RA:1, 0:1, AD:1, CD:1,
 		 RC:4, QC:16, ANC:16, AUC:16, ADC:16, Rest/binary>> = MsgBin) ->
     try #dns_message{id = Id,
@@ -168,7 +164,6 @@ add_rr_to_section(additional, #dns_message{} = Msg, RR) ->
     Msg#dns_message{additional = RR}.
 
 %% @doc Encode a dns_message record.
-%% @spec encode_message(dns_message()) -> MsgBin
 encode_message(#dns_message{id = Id, qr = QR, oc = OC, aa = AA, tc = TC,
 			    rd = RD, ra = RA, ad = AD, cd = CD, rc = RC,
 			    qc = QC, anc = ANC, auc = AUC, adc = ADC,
@@ -225,28 +220,17 @@ encode_message_body(Bin, CompMap, [#dns_optrr{udp_payload_size = UPS,
     encode_message_body(NewBin, CompMap, Records).
 
 %% @doc Returns a random integer suitable for use as DNS message identifier.
-%% @spec random_id() -> integer()
 random_id() -> crypto:rand_uniform(0, 65535).
 
 %%%===================================================================
 %%% TSIG functions
 %%%===================================================================
 
-%% @spec verify_tsig(binary(), dname(), binary()) ->
-%%       {ok, MAC :: binary()} |
-%%       {error, integer()}
 %% @equiv verify_tsig(MsgBin, Name, Secret, [])
-%% @throws bad_pointer | decode_loop | formerr | trailing_garbage | no_tsig
 verify_tsig(MsgBin, Name, Secret) ->
     verify_tsig(MsgBin, Name, Secret, []).
 
 %% @doc Verifies a TSIG message signature.
-%% @spec verify_tsig(binary(), dname(), binary(), [tsig_option()]) ->
-%%       {ok, MAC :: binary()} |
-%%       {error, integer()}
-%% @throws bad_pointer | decode_loop | formerr | trailing_garbage | no_tsig
-%% @type tsig_option() = {time, unix_time()} | {fudge, integer()} |
-%%                       {mac, binary()} | {other, binary()}
 verify_tsig(MsgBin, Name, Secret, Options) ->
     Now = proplists:get_value(time, Options, unix_time()),
     Fudge = proplists:get_value(fudge, Options, ?DEFAULT_TSIG_FUDGE),
@@ -276,15 +260,12 @@ verify_tsig(MsgBin, Name, Secret, Options) ->
 
 %% @doc Generates and then appends a TSIG RR to a message.
 %%      Supports MD5, SHA1, SHA224, SHA256, SHA384 and SHA512 algorithms.
-%% @spec add_tsig(Msg, Algorithim, Name, Secret, ErrCode) -> SignedMsg
 %% @equiv add_tsig(Msg, Alg, Name, Secret, ErrCode, [])
 add_tsig(Msg, Alg, Name, Secret, ErrCode) ->
     add_tsig(Msg, Alg, Name, Secret, ErrCode, []).
 
 %% @doc Generates and then appends a TSIG RR to a message.
 %%      Supports MD5, SHA1, SHA224, SHA256, SHA384 and SHA512 algorithms.
-%% @spec add_tsig(Msg, Algorithim, Name, Secret, ErrCode, [tsig_option()]) ->
-%% SignedMsg
 add_tsig(Msg, Alg, Name, Secret, ErrCode, Options) ->
     MsgId = Msg#dns_message.id,
     MsgBin = encode_message(Msg),
@@ -1018,7 +999,6 @@ encode_optrrdata([Opt|Opts], Bin) ->
 %%%===================================================================
 
 %% @doc Compare two domain names insensitive of case.
-%% @spec compare_dname(A :: dname(), B :: dname()) -> bool()
 compare_dname(Name, Name) -> true;
 compare_dname(NameA, NameB) ->
     NameALwr = dname_to_lower(iolist_to_binary(NameA)),
@@ -1125,7 +1105,6 @@ labels_to_dname(Labels) ->
     Dname.
 
 %% @doc Returns provided name with case-insensitive characters in uppercase.
-%% @spec dname_to_upper(string() | binary()) -> string() | binary()
 dname_to_upper(Bin) when is_binary(Bin) ->
     << <<(dname_to_upper(C))>> || <<C>> <= Bin >>;
 dname_to_upper(List) when is_list(List) ->
@@ -1135,7 +1114,6 @@ dname_to_upper(Int)
 dname_to_upper(Int) when is_integer(Int) -> Int.
 
 %% @doc Returns provided name with case-insensitive characters in lowercase.
-%% @spec dname_to_lower(string() | binary()) -> string() | binary()
 dname_to_lower(Bin) when is_binary(Bin) ->
     << <<(dname_to_lower(C))>> || <<C>> <= Bin >>;
 dname_to_lower(List) when is_list(List) ->
@@ -1149,7 +1127,6 @@ dname_to_lower(Int) when is_integer(Int) -> Int.
 %%%===================================================================
 
 %% @doc Returns the name of the class as a binary string.
-%% @spec class_name(Class :: integer()) -> binary() | undefined
 class_name(Int) when is_integer(Int) ->
     case Int of
 	?DNS_CLASS_IN_NUMBER -> ?DNS_CLASS_IN_BSTR;
@@ -1162,7 +1139,6 @@ class_name(Int) when is_integer(Int) ->
     end.
 
 %% @doc Returns the name of the type as a binary string.
-%% @spec type_name(Type :: integer()) -> binary() | undefined
 type_name(Int) when is_integer(Int) ->
     case Int of
 	?DNS_TYPE_A_NUMBER -> ?DNS_TYPE_A_BSTR;
@@ -1235,7 +1211,6 @@ type_name(Int) when is_integer(Int) ->
     end.
 
 %% @doc Returns the name of an rcode as a binary string.
-%% @spec rcode_name(Rcode :: integer()) -> binary() | undefined.
 rcode_name(Int) when is_integer(Int) ->
     case Int of
 	?DNS_RCODE_NOERROR_NUMBER -> ?DNS_RCODE_NOERROR_BSTR;
@@ -1253,7 +1228,6 @@ rcode_name(Int) when is_integer(Int) ->
     end.
 
 %% @doc Returns the name of an opcode as a binary string.
-%% @spec opcode_name(OpCode :: integer()) -> binary() | undefined
 opcode_name(Int) when is_integer(Int) ->
     case Int of
 	?DNS_OPCODE_QUERY_NUMBER -> ?DNS_OPCODE_QUERY_BSTR;
@@ -1264,7 +1238,6 @@ opcode_name(Int) when is_integer(Int) ->
     end.
 
 %% @doc Returns the name of a TSIG error as a binary string.
-%% @spec tsigerr_name(TSIGRCode :: integer()) -> binary() | undefined
 tsigerr_name(Int) when is_integer(Int) ->
     case Int of
 	?DNS_TSIGERR_NOERROR_NUMBER -> ?DNS_TSIGERR_NOERROR_BSTR;
@@ -1275,7 +1248,6 @@ tsigerr_name(Int) when is_integer(Int) ->
     end.
 
 %% @doc Returns the name of an extended rcode as a binary string.
-%% @spec ercode_name(ERcode :: integer()) -> binary() | undefined
 ercode_name(Int) when is_integer(Int) ->
     case Int of
 	?DNS_ERCODE_NOERROR_NUMBER -> ?DNS_ERCODE_NOERROR_BSTR;
@@ -1284,7 +1256,6 @@ ercode_name(Int) when is_integer(Int) ->
     end.
 
 %% @doc Returns the name of an extended option as a binary string.
-%% @spec eoptcode_name(EOptCode :: integer()) -> binary() | undefined
 eoptcode_name(Int) when is_integer(Int) ->
     case Int of
 	?DNS_EOPTCODE_LLQ_NUMBER -> ?DNS_EOPTCODE_LLQ_BSTR;
@@ -1295,7 +1266,6 @@ eoptcode_name(Int) when is_integer(Int) ->
     end.
 
 %% @doc Returns the name of an LLQ opcode as a binary string.
-%% @spec llqopcode_name(LLQOpCode :: integer()) -> binary() | undefined
 llqopcode_name(Int) when is_integer(Int) ->
     case Int of
 	?DNS_LLQOPCODE_SETUP_NUMBER -> ?DNS_LLQOPCODE_SETUP_BSTR;
@@ -1305,7 +1275,6 @@ llqopcode_name(Int) when is_integer(Int) ->
     end.
 
 %% @doc Returns the name of an LLQ error code as a binary string.
-%% @spec llqerrcode_name(LLQErrCode :: integer()) -> binary() | undefined
 llqerrcode_name(Int) when is_integer(Int) ->
     case Int of
 	?DNS_LLQERRCODE_NOERROR_NUMBER -> ?DNS_LLQERRCODE_NOERROR_BSTR;
@@ -1319,7 +1288,6 @@ llqerrcode_name(Int) when is_integer(Int) ->
     end.
 
 %% @doc Returns the name of a DNS algorithm as a binary string.
-%% @spec alg_name(Alg :: integer()) -> binary() | undefined
 alg_name(Int) when is_integer(Int) ->
     case Int of
 	?DNS_ALG_DSA_NUMBER -> ?DNS_ALG_DSA_BSTR;
@@ -1336,12 +1304,10 @@ alg_name(Int) when is_integer(Int) ->
 %%%===================================================================
 
 %% @doc Return current unix time.
-%% @spec unix_time() -> unix_time()
 unix_time() ->
     unix_time(now()).
 
 %% @doc Return the unix time from a now or universal time.
-%% @spec unix_time(tuple()) -> unix_time()
 unix_time({_MegaSecs, _Secs, _MicroSecs} = NowTime) ->
     UniversalTime = calendar:now_to_universal_time(NowTime),
     unix_time(UniversalTime);
@@ -1384,7 +1350,6 @@ encode_string(Bin, StringBin)
 
 %% @doc Compares two equal sized binaries over their entire length.
 %%      Returns immediately if sizes do not match.
-%% @spec const_compare(A :: binary(), B :: binary()) -> bool()
 const_compare(A, B) when is_binary(A) andalso is_binary(B) ->
     if byte_size(A) =:= byte_size(B) -> const_compare(A, B, 0);
        true -> false end.

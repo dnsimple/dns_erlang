@@ -47,7 +47,6 @@
 %% @doc Generate NSEC records from a list of #dns_rr{}.
 %%      The list must contain a SOA #dns_rr{} which is used to determine
 %%      zone name and TTL.
-%% @spec gen_nsec([#dns_rr{}]) -> [#dns_rr{type = nsec}]
 gen_nsec(RR) ->
     case lists:keyfind(?DNS_TYPE_SOA, #dns_rr.type, RR) of
 	false -> erlang:error(badarg);
@@ -87,7 +86,6 @@ add_next_dname(Added, [#dns_rr{type = ?DNS_TYPE_NSEC, data = Data}=RR],
 %%      The list must contain a SOA #dns_rr{} to source the zone name and
 %%      TTL from as well as as an NSEC3Param #dns_rr{} to source the
 %%      hash algorithm, iterations and salt from.
-%% @spec gen_nsec3([#dns_rr{}]) -> [#dns_rr{type = nsec3}]
 gen_nsec3(RRs) ->
     case lists:keyfind(?DNS_TYPE_SOA, #dns_rr.type, RRs) of
 	false -> erlang:error(badarg);
