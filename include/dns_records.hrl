@@ -2,28 +2,34 @@
 -define('__dns_records.hrl__', ok).
 -include("dns_terms.hrl").
 
--record(dns_message, {id = dns:random_id(),
-		      qr = false,
-		      oc = ?DNS_OPCODE_QUERY,
-		      aa = false,
-		      tc = false,
-		      rd = false,
-		      ra = false,
-		      ad = false,
-		      cd = false,
-		      rc = ?DNS_RCODE_NOERROR,
-		      qc = 0,
-		      anc = 0,
-		      auc = 0,
-		      adc = 0,
-		      questions = [],
-		      answers = [],
-		      authority = [],
-		      additional=[] }).
+-record(dns_message, {id = dns:random_id() :: dns:message_id(),
+		      qr = false :: 0..1 | boolean(),
+		      oc = ?DNS_OPCODE_QUERY :: dns:opcode(),
+		      aa = false :: 0..1 | boolean(),
+		      tc = false :: 0..1 | boolean(),
+		      rd = false :: 0..1 | boolean(),
+		      ra = false :: 0..1 | boolean(),
+		      ad = false :: 0..1 | boolean(),
+		      cd = false :: 0..1 | boolean(),
+		      rc = ?DNS_RCODE_NOERROR :: dns:rcode(),
+		      qc = 0 :: 0..65535,
+		      anc = 0 :: 0..65535,
+		      auc = 0 :: 0..65535,
+		      adc = 0 :: 0..65535,
+		      questions = [] :: [dns:'query'()],
+		      answers = [] :: [dns:rr()],
+		      authority = [] :: [dns:optrr()|dns:rr()],
+		      additional = [] :: [dns:rr()]}).
 
--record(dns_query, {name, class = ?DNS_CLASS_IN, type}).
+-record(dns_query, {name :: dns:dname(),
+		    class = ?DNS_CLASS_IN :: dns:class(),
+		    type :: dns:type()}).
 
--record(dns_rr, {name, class = 1, type, ttl = 0, data}).
+-record(dns_rr, {name :: dns:dname(),
+		 class = ?DNS_CLASS_IN :: dns:class(),
+		 type :: dns:type(),
+		 ttl = 0 :: dns:ttl(),
+		 data :: dns:rrdata()}).
 -record(dns_rrdata_a, {ip}).
 -record(dns_rrdata_aaaa, {ip}).
 -record(dns_rrdata_afsdb, {subtype, hostname}).

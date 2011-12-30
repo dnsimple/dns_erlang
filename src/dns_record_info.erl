@@ -26,6 +26,7 @@
 -endif.
 
 %% @doc Returns the fields that make up a given record.
+-spec fields(atom()) -> [atom()].
 fields(dns_rr) -> record_info(fields, dns_rr);
 fields(dns_rrdata_a) -> record_info(fields, dns_rrdata_a);
 fields(dns_rrdata_afsdb) -> record_info(fields, dns_rrdata_afsdb);
@@ -70,6 +71,7 @@ fields(dns_rrdata_isdn) -> record_info(fields, dns_rrdata_isdn);
 fields(dns_rrdata_cert) -> record_info(fields, dns_rrdata_cert).
 
 %% @doc Returns the size of a given record.
+-spec size(atom()) -> non_neg_integer().
 size(dns_rr) -> record_info(size, dns_rr);
 size(dns_rrdata_a) -> record_info(size, dns_rrdata_a);
 size(dns_rrdata_afsdb) -> record_info(size, dns_rrdata_afsdb);
@@ -114,6 +116,7 @@ size(dns_rrdata_isdn) -> record_info(size, dns_rrdata_isdn);
 size(dns_rrdata_cert) -> record_info(size, dns_rrdata_cert).
 
 %% @doc Returns the record tag atom for the given record type.
+-spec atom_for_type(dns:type()) -> atom() | 'undefined'.
 atom_for_type(?DNS_TYPE_A) -> dns_rrdata_a;
 atom_for_type(?DNS_TYPE_AFSDB) -> dns_rrdata_afsdb;
 atom_for_type(?DNS_TYPE_AAAA) -> dns_rrdata_aaaa;
@@ -158,6 +161,7 @@ atom_for_type(?DNS_TYPE_CERT) -> dns_rrdata_cert;
 atom_for_type(_) -> undefined.
 
 %% @doc Returns the record type for the given record tag atom.
+-spec type_for_atom(atom()) -> dns:type() | 'undefined'.
 type_for_atom(dns_rrdata_a) -> ?DNS_TYPE_A;
 type_for_atom(dns_rrdata_afsdb) -> ?DNS_TYPE_AFSDB;
 type_for_atom(dns_rrdata_aaaa) -> ?DNS_TYPE_AAAA;

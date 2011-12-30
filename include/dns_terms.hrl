@@ -25,6 +25,10 @@
 -define(DNS_ALG_RSASHA512_NUMBER, 10).
 -define(DNS_ALG_RSASHA512_BSTR, <<"RSASHA512">>).
 
+-define(DNSSEC_NSEC3_ALG_SHA1, ?DNSSEC_NSEC3_ALG_SHA1_NUMBER).
+-define(DNSSEC_NSEC3_ALG_SHA1_NUMBER, 1).
+-define(DNSSEC_NSEC3_ALG_SHA1_BSTR, <<"SHA1">>).
+
 -define(DNS_TSIG_ALG_MD5, <<"hmac-md5.sig-alg.reg.int">>).
 -define(DNS_TSIG_ALG_SHA1, <<"hmac-sha1">>).
 -define(DNS_TSIG_ALG_SHA224, <<"hmac-sha224">>).

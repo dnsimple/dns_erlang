@@ -32,6 +32,24 @@
 
 -include("dns.hrl").
 -include("DNS-ASN1.hrl").
+
+-export_type([sigalg/0, nsec3_hashalg/0, nsec3_salt/0, nsec3_iterations/0,
+	      keytag/0, key/0]).
+%% this isn't a redefinition of dns:alg() - the algorithms here may only be used
+%% for signing zones. dns:alg() may contain other algorithms.
+-type sigalg() :: ?DNS_ALG_DSA | ?DNS_ALG_NSEC3DSA|
+		  ?DNS_ALG_RSASHA1 | ?DNS_ALG_NSEC3RSASHA1 |
+		  ?DNS_ALG_RSASHA256 | ?DNS_ALG_RSASHA512.
+-type nsec3_hashalg() :: ?DNSSEC_NSEC3_ALG_SHA1.
+-type nsec3_salt() :: binary().
+-type nsec3_iterations() :: non_neg_integer().
+-type gen_nsec_opt() :: {'base_types', [dns:type()]}.
+-type gen_nsec3_opt() :: gen_nsec_opt().
+-type keytag() :: integer().
+-type key() :: [binary()].
+-type sign_rr_opt() :: {'inception' | 'expiration', dns:unix_time()}.
+-type verify_rrsig_opt() :: {'now', dns:unix_time()}.
+
 -include("dnssec_tests.hrl").
 
 -define(RSASHA1_PREFIX, <<16#30, 16#21, 16#30, 16#09, 16#06, 16#05, 16#2B,
@@ -47,6 +65,7 @@
 %% @doc Generate NSEC records from a list of #dns_rr{}.
 %%      The list must contain a SOA #dns_rr{} which is used to determine
 %%      zone name and TTL.
+-spec gen_nsec([dns:rr()]) -> [dns:rr()].
 gen_nsec(RR) ->
     case lists:keyfind(?DNS_TYPE_SOA, #dns_rr.type, RR) of
 	false -> erlang:error(badarg);
@@ -55,10 +74,13 @@ gen_nsec(RR) ->
     end.
 
 %% @equiv gen_nsec(ZoneName, RR, TTL, [])
+-spec gen_nsec(dns:dname(), [dns:rr()], dns:ttl()) -> [dns:rr()].
 gen_nsec(ZoneName, RR, TTL) ->
     gen_nsec(ZoneName, RR, TTL, []).
 
 %% @doc Generate NSEC records.
+-spec gen_nsec(dns:dname(), [dns:rr()], dns:ttl(), [gen_nsec_opt()]) ->
+		      [dns:rr()].
 gen_nsec(ZoneNameM, RR, TTL, Opts) ->
     ZoneName = normalise_dname(ZoneNameM),
     BaseTypes = proplists:get_value(base_types, Opts, [?DNS_TYPE_NSEC,
@@ -86,6 +108,7 @@ add_next_dname(Added, [#dns_rr{type = ?DNS_TYPE_NSEC, data = Data}=RR],
 %%      The list must contain a SOA #dns_rr{} to source the zone name and
 %%      TTL from as well as as an NSEC3Param #dns_rr{} to source the
 %%      hash algorithm, iterations and salt from.
+-spec gen_nsec3([dns:rr()]) -> [dns:rr()].
 gen_nsec3(RRs) ->
     case lists:keyfind(?DNS_TYPE_SOA, #dns_rr.type, RRs) of
 	false -> erlang:error(badarg);
@@ -102,14 +125,21 @@ gen_nsec3(RRs) ->
     end.
 
 %% @equiv gen_nsec3(RR, ZoneName, Alg, Salt, Iterations, TTL, in, [])
+-spec gen_nsec3([dns:rr()], dns:dname(), nsec3_hashalg(), nsec3_salt(),
+		nsec3_iterations(), dns:ttl()) -> [dns:rr()].
 gen_nsec3(RR, ZoneName, Alg, Salt, Iterations, TTL) ->
     gen_nsec3(RR, ZoneName, Alg, Salt, Iterations, TTL, ?DNS_CLASS_IN, []).
 
 %% @equiv gen_nsec3(RRs, ZoneName, Alg, Salt, Iterations, TTL, Class, [])
+-spec gen_nsec3([dns:rr()], dns:dname(), nsec3_hashalg(), nsec3_salt(),
+		nsec3_iterations(), dns:ttl(), dns:class()) -> [dns:rr()].
 gen_nsec3(RRs, ZoneName, Alg, Salt, Iterations, TTL, Class) ->
     gen_nsec3(RRs, ZoneName, Alg, Salt, Iterations, TTL, Class, []).
 
 %% @doc Generate NSEC3 records.
+-spec gen_nsec3([dns:rr()], dns:dname(), nsec3_hashalg(), nsec3_salt(),
+		nsec3_iterations(), dns:ttl(), dns:class(), [gen_nsec3_opt()]
+	       ) -> [dns:rr()].
 gen_nsec3(RRs, ZoneName, Alg, Salt, Iterations, TTL, Class, Opts) ->
     BaseTypes = proplists:get_value(base_types, Opts, [?DNS_TYPE_RRSIG]),
     Map = build_rrmap(RRs, BaseTypes, ZoneName),
@@ -134,9 +164,12 @@ gen_nsec3(RRs, ZoneName, Alg, Salt, Iterations, TTL, Class, Opts) ->
     Sorted = [ RR || {_, RR} <- lists:keysort(1, Unsorted) ],
     add_next_hash(Sorted).
 
+%% @doc NSEC3 iterative hash function
+-spec ih(nsec3_hashalg() | fun((binary()) -> binary()), nsec3_salt(), binary(),
+	 non_neg_integer()) -> binary().
 ih(H, Salt, X, 0) when is_function(H, 1) -> H([X, Salt]);
 ih(H, Salt, X, I) when is_function(H, 1) -> ih(H, Salt, H([X, Salt]), I - 1);
-ih(H, Salt, X, I) when is_integer(H) -> ih(fun crypto:sha/1, Salt, X, I).
+ih(?DNSSEC_NSEC3_ALG_SHA1, Salt, X, I) -> ih(fun crypto:sha/1, Salt, X, I).
 
 add_next_hash([#dns_rr{data = #dns_rrdata_nsec3{hash = First}}|_] = Hashes) ->
     add_next_hash(Hashes, [], First).
@@ -150,10 +183,8 @@ add_next_hash([#dns_rr{data = Data} = RR|
     NewRR = RR#dns_rr{data = Data#dns_rrdata_nsec3{hash = NextHash}},
     add_next_hash(Hashes, [NewRR|RRs], FirstHash).
 
-normalise_rr(#dns_rr{name = Name} = RR) when not is_binary(Name) ->
-    normalise_rr(RR#dns_rr{name = iolist_to_binary(Name)});
-normalise_rr(#dns_rr{name = NBin, class = CNum, type = TNum} = RR)
-  when is_binary(NBin) andalso is_integer(CNum) andalso is_integer(TNum) -> RR.
+normalise_rr(#dns_rr{name = Name} = RR) ->
+    RR#dns_rr{name = dns:dname_to_lower(Name)}.
 
 build_rrmap(RR, BaseTypes) ->
     Base = build_rrmap_gbt(RR, BaseTypes),
@@ -230,20 +261,27 @@ rrs_to_rrsets(TTLMap, {{Name, Class, Type} = Key, Datas}) ->
 	      data = Data} || Data <- Datas ].
 
 %% @equiv sign_rr(RR, SignerName, KeyTag, Alg, Key, [])
+-spec sign_rr([dns:rr()], dns:dname(), keytag(), sigalg(), key()) -> [dns:rr()].
 sign_rr(RR, SignerName, KeyTag, Alg, Key) ->
     sign_rr(RR, SignerName, KeyTag, Alg, Key, []).
 
 %% @doc Signs a list of #dns_rr{}.
+-spec sign_rr([dns:rr()], dns:dname(), keytag(), sigalg(), key(),
+	      [sign_rr_opt()]) -> [dns:rr()].
 sign_rr(RR, SignerName, KeyTag, Alg, Key, Opts) when is_list(Opts) ->
     RRSets = rrs_to_rrsets(RR),
     [ sign_rrset(RRSet, SignerName, KeyTag, Alg, Key, Opts)
       || RRSet <- RRSets ].
 
 %% @equiv sign_rrset(RRSet, SignerName, KeyTag, Alg, Key, [])
+-spec sign_rrset([dns:rr(),...], dns:dname(), keytag(), sigalg(), key()) ->
+			dns:rr().
 sign_rrset(RRSet, SignerName, KeyTag, Alg, Key) ->
     sign_rrset(RRSet, SignerName, KeyTag, Alg, Key, []).
 
 %% @doc Signs a list of #dns_rr{} of the same class and type.
+-spec sign_rrset([dns:rr(),...], dns:dname(), keytag(), sigalg(), key(),
+		 [sign_rr_opt()]) -> dns:rr().
 sign_rrset([#dns_rr{name = Name, class = Class, ttl = TTL}|_] = RRs,
 	   SignersName, KeyTag, Alg, Key, Opts) when is_integer(Alg) ->
     Now = dns:unix_time(),
@@ -270,6 +308,9 @@ sign_rrset([#dns_rr{name = Name, class = Class, ttl = TTL}|_] = RRs,
     #dns_rr{name = Name, type = ?DNS_TYPE_RRSIG, class = Class, ttl = TTL,
 	    data = Data}.
 
+%% @doc Provides primitive verification of an RR set.
+-spec verify_rrsig(dns:rr(), [dns:rr()], [dns:rr()], [verify_rrsig_opt()]
+		  ) -> boolean().
 verify_rrsig(#dns_rr{type = ?DNS_TYPE_RRSIG, data = Data}, RRs, RRDNSKey,
 	     Opts) ->
     Now = proplists:get_value(now, Opts, dns:unix_time()),
@@ -369,6 +410,7 @@ build_sig_input(SignersName, KeyTag, Alg, Incept, Expire,
     {RRSigData0, SigInput}.
 
 %% @doc Generates and appends a DNS Key records key tag.
+-spec add_keytag_to_dnskey(dns:rr()) -> dns:rr().
 add_keytag_to_dnskey(#dns_rr{type = ?DNS_TYPE_DNSKEY,
 			     data = #dns_rrdata_dnskey{} = Data} = RR) ->
     NewData = add_keytag_to_dnskey(Data),
@@ -384,6 +426,7 @@ canonical_rrdata_bin(#dns_rr{class = Class, data = Data0}) ->
     dns:encode_rrdata(Class, canonical_rrdata_form(Data0)).
 
 %% @doc Converts a resource record data record to DNSSEC canonical form.
+-spec canonical_rrdata_form(dns:rrdata()) -> dns:rrdata().
 canonical_rrdata_form(#dns_rrdata_afsdb{hostname = Hostname} = Data) ->
     Data#dns_rrdata_afsdb{hostname = dns:dname_to_lower(Hostname)};
 canonical_rrdata_form(#dns_rrdata_cname{dname = Dname} = Data) ->
@@ -436,6 +479,8 @@ canonical_rrdata_form(#dns_rrdata_srv{target = Target} = Data) ->
     Data#dns_rrdata_srv{target = dns:dname_to_lower(Target)};
 canonical_rrdata_form(X) -> X.
 
+%% @doc Base 32 hex encoding suitable for generating NSEC3 labels.
+-spec base32hex_encode(binary()) -> dns:label().
 base32hex_encode(Bin) when bit_size(Bin) rem 5 =/= 0 ->
     PadBy = 5 - (byte_size(Bin) rem 5),
     base32hex_encode(<<Bin/bitstring, 0:PadBy>>);

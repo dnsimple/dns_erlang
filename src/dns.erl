@@ -41,6 +41,87 @@
 -export([encode_dname/1]).
 
 -include("dns.hrl").
+
+%% Types
+-export_type([message/0, message_id/0, opcode/0, rcode/0, 'query'/0,
+	      questions/0, rr/0, optrr/0, answers/0, authority/0, additional/0,
+	      dname/0, class/0, type/0, ttl/0, rrdata/0]).
+-type decode_error() :: 'formerr' | 'truncated' | 'trailing_garbage'.
+-type message() :: #dns_message{}.
+-type message_bin() :: <<_:64,_:_*8>>.
+-type message_id() :: 0..65535.
+-type opcode() :: 0..16.
+-type rcode() :: 0..65535.
+-type 'query'() :: #dns_query{}.
+-type questions() :: ['query'()].
+-type rr() :: #dns_rr{}.
+-type optrr() :: #dns_optrr{}.
+-type answers() :: [rr()].
+-type authority() :: [rr()].
+-type additional() :: [optrr()|rr()].
+-type dname() :: binary().
+-type label() :: binary().
+-type class() :: 0..65535.
+-type type() :: 0..65535.
+-type ttl() :: 0..65535.
+-type rrdata() :: binary()
+		| #dns_rrdata_a{}
+		| #dns_rrdata_aaaa{}
+		| #dns_rrdata_afsdb{}
+		| #dns_rrdata_cert{}
+		| #dns_rrdata_cname{}
+		| #dns_rrdata_dhcid{}
+		| #dns_rrdata_dlv{}
+		| #dns_rrdata_dname{}
+		| #dns_rrdata_dnskey{}
+		| #dns_rrdata_ds{}
+		| #dns_rrdata_hinfo{}
+		| #dns_rrdata_ipseckey{}
+		| #dns_rrdata_isdn{}
+		| #dns_rrdata_key{}
+		| #dns_rrdata_kx{}
+		| #dns_rrdata_loc{}
+		| #dns_rrdata_mb{}
+		| #dns_rrdata_md{}
+		| #dns_rrdata_mf{}
+		| #dns_rrdata_mg{}
+		| #dns_rrdata_minfo{}
+		| #dns_rrdata_mr{}
+		| #dns_rrdata_mx{}
+		| #dns_rrdata_naptr{}
+		| #dns_rrdata_ns{}
+		| #dns_rrdata_nsec{}
+		| #dns_rrdata_nsec3{}
+		| #dns_rrdata_nsec3param{}
+		| #dns_rrdata_nxt{}
+		| #dns_rrdata_ptr{}
+		| #dns_rrdata_px{}
+		| #dns_rrdata_rp{}
+		| #dns_rrdata_rrsig{}
+		| #dns_rrdata_rt{}
+		| #dns_rrdata_soa{}
+		| #dns_rrdata_spf{}
+		| #dns_rrdata_srv{}
+		| #dns_rrdata_sshfp{}
+		| #dns_rrdata_tsig{}
+		| #dns_rrdata_txt{}
+		| #dns_rrdata_wks{}
+		| #dns_rrdata_x25{}.
+-type unix_time() :: 0..4294967295.
+-type tsig_mac() :: binary().
+-type tsig_error() :: 0 | 16..18.
+-type tsig_opt() :: {'time', unix_time()} |
+		    {'fudge', non_neg_integer()} |
+		    {'mac', tsig_mac()}.
+-type tsig_alg() :: binary().
+-type alg() :: ?DNS_ALG_DSA | ?DNS_ALG_NSEC3DSA|
+	       ?DNS_ALG_RSASHA1 | ?DNS_ALG_NSEC3RSASHA1 |
+	       ?DNS_ALG_RSASHA256 | ?DNS_ALG_RSASHA512.
+-type eoptcode() :: 0..65535.
+-type ercode() :: 0 | 16.
+-type llqerrcode() :: 0..6.
+-type llqopcode() :: 1..3.
+
 -include("dns_tests.hrl").
 
 -define(DEFAULT_TSIG_FUDGE, 5 * 60).
@@ -50,6 +131,8 @@
 %%%===================================================================
 
 %% @doc Decode a binary DNS message.
+-spec decode_message(message_bin()) ->
+    {decode_error(), message() | 'undefined', binary()} | message().
 decode_message(<<Id:16, QR:1, OC:4, AA:1, TC:1, RD:1, RA:1, 0:1, AD:1, CD:1,
 		 RC:4, QC:16, ANC:16, AUC:16, ADC:16, Rest/binary>> = MsgBin) ->
     try #dns_message{id = Id,
@@ -164,6 +247,7 @@ add_rr_to_section(additional, #dns_message{} = Msg, RR) ->
     Msg#dns_message{additional = RR}.
 
 %% @doc Encode a dns_message record.
+-spec encode_message(message()) -> message_bin().
 encode_message(#dns_message{id = Id, qr = QR, oc = OC, aa = AA, tc = TC,
 			    rd = RD, ra = RA, ad = AD, cd = CD, rc = RC,
 			    qc = QC, anc = ANC, auc = AUC, adc = ADC,
@@ -220,6 +304,7 @@ encode_message_body(Bin, CompMap, [#dns_optrr{udp_payload_size = UPS,
     encode_message_body(NewBin, CompMap, Records).
 
 %% @doc Returns a random integer suitable for use as DNS message identifier.
+-spec random_id() -> message_id().
 random_id() -> crypto:rand_uniform(0, 65535).
 
 %%%===================================================================
@@ -227,10 +312,14 @@ random_id() -> crypto:rand_uniform(0, 65535).
 %%%===================================================================
 
 %% @equiv verify_tsig(MsgBin, Name, Secret, [])
+-spec verify_tsig(message_bin(), dname(), binary()) ->
+			 {'ok', tsig_mac()} | {'error', tsig_error()}.
 verify_tsig(MsgBin, Name, Secret) ->
     verify_tsig(MsgBin, Name, Secret, []).
 
 %% @doc Verifies a TSIG message signature.
+-spec verify_tsig(message_bin(), dname(), binary(), [tsig_opt()]) ->
+			 {'ok', tsig_mac()} | {'error', tsig_error()}.
 verify_tsig(MsgBin, Name, Secret, Options) ->
     Now = proplists:get_value(time, Options, unix_time()),
     Fudge = proplists:get_value(fudge, Options, ?DEFAULT_TSIG_FUDGE),
@@ -261,11 +350,15 @@ verify_tsig(MsgBin, Name, Secret, Options) ->
 %% @doc Generates and then appends a TSIG RR to a message.
 %%      Supports MD5, SHA1, SHA224, SHA256, SHA384 and SHA512 algorithms.
 %% @equiv add_tsig(Msg, Alg, Name, Secret, ErrCode, [])
+-spec add_tsig(message(), tsig_alg(), dname(), binary(), tsig_error()) ->
+		      message().
 add_tsig(Msg, Alg, Name, Secret, ErrCode) ->
     add_tsig(Msg, Alg, Name, Secret, ErrCode, []).
 
 %% @doc Generates and then appends a TSIG RR to a message.
 %%      Supports MD5, SHA1, SHA224, SHA256, SHA384 and SHA512 algorithms.
+-spec add_tsig(message(), tsig_alg(), dname(), binary(), tsig_error(), [tsig_opt()]) ->
+		      message().
 add_tsig(Msg, Alg, Name, Secret, ErrCode, Options) ->
     MsgId = Msg#dns_message.id,
     MsgBin = encode_message(Msg),
@@ -999,6 +1092,7 @@ encode_optrrdata([Opt|Opts], Bin) ->
 %%%===================================================================
 
 %% @doc Compare two domain names insensitive of case.
+-spec compare_dname(dname(), dname()) -> boolean().
 compare_dname(Name, Name) -> true;
 compare_dname(NameA, NameB) ->
     NameALwr = dname_to_lower(iolist_to_binary(NameA)),
@@ -1042,6 +1136,8 @@ decode_dname(<<3:2, Ptr:14, DataRBin/binary>>, MsgBin, RBin, Dname, Count) ->
 	_ -> throw(bad_pointer)
     end.
 
+%% @doc Escapes dots in a DNS label
+-spec escape_label(label()) -> label().
 escape_label(Label) when is_binary(Label) -> escape_label(<<>>, Label).
 
 escape_label(Label, <<>>) -> Label;
@@ -1086,6 +1182,8 @@ encode_dname_labels(Bin, CompMap, Pos, [L|Ls], [_|LwrLs]=LwrLabels) ->
 				NewPos, Ls, LwrLs)
     end.
 
+%% @doc Splits a dname into a list of labels and removes unneeded escapes.
+-spec dname_to_labels(dname()) -> [label()].
 dname_to_labels("") -> [];
 dname_to_labels(".") -> [];
 dname_to_labels(<<>>) -> [];
@@ -1099,12 +1197,15 @@ dname_to_labels(Label, <<"\\.", Cs/binary>>) ->
 dname_to_labels(Label, <<C, Cs/binary>>) ->
     dname_to_labels(<<Label/binary, C>>, Cs).
 
+%% @doc Joins a list of DNS labels, escaping where necessary.
+-spec labels_to_dname([label()]) -> dname().
 labels_to_dname(Labels) ->
     <<$., Dname/binary>> = << <<$., (escape_label(Label))/binary>>
 			      || Label <- Labels >>,
     Dname.
 
 %% @doc Returns provided name with case-insensitive characters in uppercase.
+-spec dname_to_upper(dname()) -> dname().
 dname_to_upper(Bin) when is_binary(Bin) ->
     << <<(dname_to_upper(C))>> || <<C>> <= Bin >>;
 dname_to_upper(List) when is_list(List) ->
@@ -1114,6 +1215,7 @@ dname_to_upper(Int)
 dname_to_upper(Int) when is_integer(Int) -> Int.
 
 %% @doc Returns provided name with case-insensitive characters in lowercase.
+-spec dname_to_lower(dname()) -> dname().
 dname_to_lower(Bin) when is_binary(Bin) ->
     << <<(dname_to_lower(C))>> || <<C>> <= Bin >>;
 dname_to_lower(List) when is_list(List) ->
@@ -1127,6 +1229,7 @@ dname_to_lower(Int) when is_integer(Int) -> Int.
 %%%===================================================================
 
 %% @doc Returns the name of the class as a binary string.
+-spec class_name(class()) -> binary() | 'undefined'.
 class_name(Int) when is_integer(Int) ->
     case Int of
 	?DNS_CLASS_IN_NUMBER -> ?DNS_CLASS_IN_BSTR;
@@ -1139,6 +1242,7 @@ class_name(Int) when is_integer(Int) ->
     end.
 
 %% @doc Returns the name of the type as a binary string.
+-spec type_name(type()) -> binary() | 'undefined'.
 type_name(Int) when is_integer(Int) ->
     case Int of
 	?DNS_TYPE_A_NUMBER -> ?DNS_TYPE_A_BSTR;
@@ -1211,6 +1315,7 @@ type_name(Int) when is_integer(Int) ->
     end.
 
 %% @doc Returns the name of an rcode as a binary string.
+-spec rcode_name(rcode()) -> binary() | 'undefined'.
 rcode_name(Int) when is_integer(Int) ->
     case Int of
 	?DNS_RCODE_NOERROR_NUMBER -> ?DNS_RCODE_NOERROR_BSTR;
@@ -1228,6 +1333,7 @@ rcode_name(Int) when is_integer(Int) ->
     end.
 
 %% @doc Returns the name of an opcode as a binary string.
+-spec opcode_name(opcode()) -> binary() | 'undefined'.
 opcode_name(Int) when is_integer(Int) ->
     case Int of
 	?DNS_OPCODE_QUERY_NUMBER -> ?DNS_OPCODE_QUERY_BSTR;
@@ -1238,6 +1344,7 @@ opcode_name(Int) when is_integer(Int) ->
     end.
 
 %% @doc Returns the name of a TSIG error as a binary string.
+-spec tsigerr_name(tsig_error()) -> binary() | 'undefined'.
 tsigerr_name(Int) when is_integer(Int) ->
     case Int of
 	?DNS_TSIGERR_NOERROR_NUMBER -> ?DNS_TSIGERR_NOERROR_BSTR;
@@ -1248,6 +1355,7 @@ tsigerr_name(Int) when is_integer(Int) ->
     end.
 
 %% @doc Returns the name of an extended rcode as a binary string.
+-spec ercode_name(ercode()) -> binary() | 'undefined'.
 ercode_name(Int) when is_integer(Int) ->
     case Int of
 	?DNS_ERCODE_NOERROR_NUMBER -> ?DNS_ERCODE_NOERROR_BSTR;
@@ -1256,6 +1364,7 @@ ercode_name(Int) when is_integer(Int) ->
     end.
 
 %% @doc Returns the name of an extended option as a binary string.
+-spec eoptcode_name(eoptcode()) -> binary() | 'undefined'.
 eoptcode_name(Int) when is_integer(Int) ->
     case Int of
 	?DNS_EOPTCODE_LLQ_NUMBER -> ?DNS_EOPTCODE_LLQ_BSTR;
@@ -1266,6 +1375,7 @@ eoptcode_name(Int) when is_integer(Int) ->
     end.
 
 %% @doc Returns the name of an LLQ opcode as a binary string.
+-spec llqopcode_name(llqopcode()) -> binary() | 'undefined'.
 llqopcode_name(Int) when is_integer(Int) ->
     case Int of
 	?DNS_LLQOPCODE_SETUP_NUMBER -> ?DNS_LLQOPCODE_SETUP_BSTR;
@@ -1275,6 +1385,7 @@ llqopcode_name(Int) when is_integer(Int) ->
     end.
 
 %% @doc Returns the name of an LLQ error code as a binary string.
+-spec llqerrcode_name(llqerrcode()) -> binary() | 'undefined'.
 llqerrcode_name(Int) when is_integer(Int) ->
     case Int of
 	?DNS_LLQERRCODE_NOERROR_NUMBER -> ?DNS_LLQERRCODE_NOERROR_BSTR;
@@ -1288,6 +1399,7 @@ llqerrcode_name(Int) when is_integer(Int) ->
     end.
 
 %% @doc Returns the name of a DNS algorithm as a binary string.
+-spec alg_name(alg()) -> binary() | 'undefined'.
 alg_name(Int) when is_integer(Int) ->
     case Int of
 	?DNS_ALG_DSA_NUMBER -> ?DNS_ALG_DSA_BSTR;
@@ -1304,10 +1416,12 @@ alg_name(Int) when is_integer(Int) ->
 %%%===================================================================
 
 %% @doc Return current unix time.
+-spec unix_time() -> unix_time().
 unix_time() ->
     unix_time(now()).
 
 %% @doc Return the unix time from a now or universal time.
+-spec unix_time(erlang:now() | calendar:datetime1970()) -> unix_time().
 unix_time({_MegaSecs, _Secs, _MicroSecs} = NowTime) ->
     UniversalTime = calendar:now_to_universal_time(NowTime),
     unix_time(UniversalTime);
@@ -1350,6 +1464,7 @@ encode_string(Bin, StringBin)
 
 %% @doc Compares two equal sized binaries over their entire length.
 %%      Returns immediately if sizes do not match.
+-spec const_compare(dname(), dname()) -> boolean().
 const_compare(A, B) when is_binary(A) andalso is_binary(B) ->
     if byte_size(A) =:= byte_size(B) -> const_compare(A, B, 0);
        true -> false end.
