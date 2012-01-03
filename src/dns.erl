@@ -20,7 +20,7 @@
 -module(dns).
 
 %% API
--export([decode_message/1, encode_message/1]).
+-export([decode_message/1, encode_message/1, encode_message/2]).
 -export([verify_tsig/3, verify_tsig/4]).
 -export([add_tsig/5, add_tsig/6]).
 
@@ -107,12 +107,23 @@
 		| #dns_rrdata_txt{}
 		| #dns_rrdata_wks{}
 		| #dns_rrdata_x25{}.
+-type encode_message_opt() :: {'max_size', 512..65535} |
+			      {'tc_mode', 'default' | 'axfr' | 'llq_event'} |
+			      {'tsig', [encode_message_tsig_opt()]}.
+-type encode_message_tsig_opt() :: {'msgid', message_id()} |
+				   {'alg', tsig_alg()} |
+				   {'name', dname()} |
+				   {'secret', binary()} |
+				   {'errcode', tsig_error()} |
+				   {'other', binary()} |
+				   tsig_opt().
 -type unix_time() :: 0..4294967295.
 -type tsig_mac() :: binary().
 -type tsig_error() :: 0 | 16..18.
 -type tsig_opt() :: {'time', unix_time()} |
 		    {'fudge', non_neg_integer()} |
-		    {'mac', tsig_mac()}.
+		    {'mac', tsig_mac()} |
+		    {'tail', boolean()} .
 -type tsig_alg() :: binary().
 -type alg() :: ?DNS_ALG_DSA | ?DNS_ALG_NSEC3DSA|
 	       ?DNS_ALG_RSASHA1 | ?DNS_ALG_NSEC3RSASHA1 |
@@ -248,60 +259,351 @@ add_rr_to_section(additional, #dns_message{} = Msg, RR) ->
 
 %% @doc Encode a dns_message record.
 -spec encode_message(message()) -> message_bin().
-encode_message(#dns_message{id = Id, qr = QR, oc = OC, aa = AA, tc = TC,
-			    rd = RD, ra = RA, ad = AD, cd = CD, rc = RC,
-			    qc = QC, anc = ANC, auc = AUC, adc = ADC,
-			    questions = Questions, answers = Answers,
-			    authority = Authority, additional = Additional}) ->
-    QRInt = encode_bool(QR),
-    AAInt = encode_bool(AA),
-    TCInt = encode_bool(TC),
-    RDInt = encode_bool(RD),
-    RAInt = encode_bool(RA),
-    ADInt = encode_bool(AD),
-    CDInt = encode_bool(CD),
-    BinH = <<Id:16, QRInt:1, OC:4, AAInt:1, TCInt:1, RDInt:1, RAInt:1, 0:1,
-	     ADInt:1, CDInt:1, RC:4, QC:16, ANC:16, AUC:16, ADC:16>>,
-    NewCompMap = gb_trees:empty(),
-    {QBin, CompMapQ} = encode_message_questions(BinH, NewCompMap, Questions),
-    {AnBin, CompMapAn} = encode_message_body(QBin, CompMapQ, Answers),
-    {AuBin, CompMapAU} = encode_message_body(AnBin, CompMapAn, Authority),
-    {Bin, _CompMap} = encode_message_body(AuBin, CompMapAU, Additional),
-    Bin.
+encode_message(#dns_message{questions = Questions, answers = Answers,
+			    authority = Authority, additional = Additional
+			   } = Msg) ->
+    Head = encode_message_head(Msg),
+    Fun = fun(Rec, {CompMapTmp, BinTmp}) ->
+		  {CompMapTmp0, RecBin} =
+		      encode_message_rec(CompMapTmp, byte_size(BinTmp), Rec),
+		  {CompMapTmp0, <<BinTmp/binary, RecBin/binary>>}
+	  end,
+    {CompMap0, QBin} = lists:foldl(Fun, {new_compmap(), Head}, Questions),
+    {CompMap1, AnBin} = lists:foldl(Fun, {CompMap0, QBin}, Answers),
+    {CompMap2, AuBin} = lists:foldl(Fun, {CompMap1, AnBin}, Authority),
+    {_CompMap3, AdBin} = lists:foldl(Fun, {CompMap2, AuBin}, Additional),
+    AdBin.
 
-encode_message_questions(Bin, CompMap, []) -> {Bin, CompMap};
-encode_message_questions(Bin, CompMap, [#dns_query{name = Name,
-						   type = Type,
-						   class = Class}|Questions]) ->
-    {NameBin, NewCompMap} = encode_dname(Bin, CompMap, byte_size(Bin), Name),
-    NewBin = <<NameBin/binary, Type:16, Class:16>>,
-    encode_message_questions(NewBin, NewCompMap, Questions).
+%% @doc Encode a dns_message record - will truncate the message as needed.
+-spec encode_message(message(), [encode_message_opt()]) ->
+			    {false, message_bin()} |
+			    {true, message_bin(), message()} |
+			    {false, message_bin(), tsig_mac()} |
+			    {true, message_bin(), tsig_mac(), message()}.
+encode_message(#dns_message{id = MsgId, additional = Ad} = Msg, Opts) ->
+    TCMode = proplists:get_value(tc_mode, Opts, default),
+    ValidTCMode = lists:member(TCMode, [default, axfr, llq_event]),
+    MaxSizeDefault = case Ad of
+			 [#dns_optrr{udp_payload_size = UPS}|_] -> UPS;
+			 _ -> 512
+		     end,
+    MaxSize = proplists:get_value(max_size, Opts, MaxSizeDefault),
+    if not is_integer(MaxSize) -> erlang:error(badarg);
+       MaxSize < 512 orelse 65535 < MaxSize -> erlang:error(badarg);
+       not ValidTCMode -> erlang:error(badarg);
+       true -> ok end,
+    EncodeFun = case TCMode of
+		    default -> fun encode_message_default/2;
+		    axfr -> fun encode_message_axfr/2;
+		    llq_event -> fun encode_message_llq/2
+		end,
+    case proplists:get_value(tsig, Opts) of
+	undefined ->
+	    case EncodeFun(Msg, MaxSize) of
+		{Bin, Leftover} -> {true, Bin, Leftover};
+		Bin -> {false, Bin}
+	    end;
+	TSIGOpts when is_list(TSIGOpts) ->
+	    OrigMsgId = proplists:get_value(msgid, TSIGOpts, MsgId),
+	    Alg = proplists:get_value(alg, TSIGOpts),
+	    Name = proplists:get_value(name, TSIGOpts),
+	    Secret = proplists:get_value(secret, TSIGOpts),
+	    Err = proplists:get_value(errcode, TSIGOpts, ?DNS_TSIGERR_NOERROR),
+	    Time = proplists:get_value(time, TSIGOpts, unix_time()),
+	    Fudge = proplists:get_value(fudge, TSIGOpts, ?DEFAULT_TSIG_FUDGE),
+	    PreviousMAC = proplists:get_value(mac, TSIGOpts, <<>>),
+	    Other = proplists:get_value(other, TSIGOpts, <<>>),
+	    Tail = proplists:get_bool(tail, TSIGOpts),
+	    TSIGSize = encode_message_tsig_size(Name, Alg, Other),
+	    Msg0 = Msg#dns_message{id = OrigMsgId},
+	    case EncodeFun(Msg0, MaxSize - TSIGSize) of
+		{MsgBin, MsgLeftover} ->
+		    MsgLeftover0 = MsgLeftover#dns_message{id = MsgId},
+		    {MsgBin0, NewMAC} =
+			encode_message_tsig_add(MsgId, Name, Alg, Secret,
+						Time, Fudge, Err, Other,
+						PreviousMAC, Tail,
+						MsgBin),
+		    {true, MsgBin0, NewMAC, MsgLeftover0};
+		MsgBin ->
+		    {MsgBin0, NewMAC} =
+			encode_message_tsig_add(MsgId, Name, Alg, Secret, Time,
+						Fudge, Err, Other, PreviousMAC,
+						Tail, MsgBin),
+		    {false, MsgBin0, NewMAC}
+	    end
+    end.
 
-encode_message_body(Bin, CompMap, []) -> {Bin, CompMap};
-encode_message_body(Bin, CompMap, [#dns_rr{name = Name,
-					   type = Type,
-					   class = Class,
-					   ttl = TTL,
-					   data = Data}|Records]) ->
-    {NameBin, NameCompMap} = encode_dname(CompMap, byte_size(Bin), Name),
-    RRBinOffset = byte_size(Bin) + byte_size(NameBin) + 2 + 2 + 4 + 2,
-    {RRBin, NewCompMap} = encode_rrdata(RRBinOffset, Class, Data, NameCompMap),
-    RRBinSize = byte_size(RRBin),
-    NewBin = <<Bin/binary, NameBin/binary, Type:16, Class:16, TTL:32,
-	       RRBinSize:16, RRBin/binary>>,
-    encode_message_body(NewBin, NewCompMap, Records);
-encode_message_body(Bin, CompMap, [#dns_optrr{udp_payload_size = UPS,
-					      ext_rcode = ExtRcode,
-					      version = Version,
-					      dnssec = DNSSEC,
-					      data = Data}|Records]) ->
+encode_message_tsig_add(MsgId, Name, Alg, Secret, Time, Fudge, Err, Other, PMAC,
+			Tail, <<OrigMsgId:16, Head:8/binary, ADC:16,
+				    Body/binary>> = MsgBin) ->
+    case gen_tsig_mac(Alg, MsgBin, Name, Secret, Time, Fudge, Err, Other,
+		      PMAC, Tail) of
+	{ok, MAC} ->
+	    MS = byte_size(MAC),
+	    OLen = byte_size(Other),
+	    NameBin = encode_dname(Name),
+	    AlgBin = encode_dname(Alg),
+	    TSIGData = <<AlgBin/binary, Time:48, Fudge:16, MS:16, MAC:MS/binary,
+			 OrigMsgId:16, Err:16, OLen:16, Other:OLen/binary>>,
+	    TSIGDataSize = byte_size(TSIGData),
+	    TSIGRR = <<NameBin/binary, ?DNS_TYPE_TSIG:16, ?DNS_CLASS_ANY:16,
+		       0:32, TSIGDataSize:16, TSIGData/binary>>,
+	    MsgBin0 = <<MsgId:16, Head/binary, (ADC+1):16, Body/binary,
+			TSIGRR/binary>>,
+	    {MsgBin0, MAC};
+	{error, _} -> erlang:error(badarg)
+    end.
+
+encode_message_tsig_size(Name, Alg, Other) ->
+    NameSize = byte_size(encode_dname(Name)),
+    AlgSize = byte_size(encode_dname(Alg)),
+    MACSize = case Alg of
+		  ?DNS_TSIG_ALG_MD5 -> 16;
+		  ?DNS_TSIG_ALG_SHA1 -> 20;
+		  ?DNS_TSIG_ALG_SHA224 -> 28;
+		  ?DNS_TSIG_ALG_SHA256 -> 32;
+		  ?DNS_TSIG_ALG_SHA384 -> 48;
+		  ?DNS_TSIG_ALG_SHA512 -> 64
+	      end,
+    OtherSize = byte_size(Other),
+    DataSize = AlgSize + 16 + MACSize + OtherSize,
+    NameSize + 10 + DataSize.
+
+encode_message_default(#dns_message{additional = Ad} = Msg, MaxSize) ->
+    BuildHead = fun(TCBool, EncQC, EncANC, EncAUC, EncADC) ->
+			Msg0 = Msg#dns_message{qc = EncQC, anc = EncANC,
+					       auc = EncAUC, adc = EncADC,
+					       tc = encode_bool(TCBool)},
+			encode_message_head(Msg0)
+		end,
+    {OptRRBin, Ad0} = encode_message_pop_optrr(Ad),
+    Pos = 12,
+    SpaceLeft = MaxSize - Pos,
+    case encode_message_d_req(Pos, SpaceLeft, Msg) of
+	{false, QC, ANC, AUC, Body} ->
+	    Head = BuildHead(true, QC, ANC, AUC, 0),
+	    <<Head/binary, Body/binary>>;
+	{CompMap, QC, ANC, AUC, Body} ->
+	    BodySize = byte_size(Body),
+	    OptRRBinSize = byte_size(OptRRBin),
+	    Pos0 = BodySize + Pos,
+	    case SpaceLeft - BodySize of
+		SpaceLeft0 when SpaceLeft0 < OptRRBinSize ->
+		    Head = BuildHead(true, QC, ANC, AUC, 0),
+		    <<Head/binary, Body/binary>>;
+		SpaceLeft0 ->
+		    Pos1 = Pos0 + OptRRBinSize,
+		    SpaceLeft1 = SpaceLeft0 - OptRRBinSize,
+		    OptC = case OptRRBinSize of
+			       0 -> 0;
+			       _ -> 1
+			   end,
+		    case encode_message_d_opt(Pos1, SpaceLeft1, CompMap, Ad0) of
+			false ->
+			    Head = BuildHead(false, QC, ANC, AUC, OptC),
+			    <<Head/binary, Body/binary, OptRRBin/binary>>;
+			{ADC, AdBin} ->
+			    Head = BuildHead(false, QC, ANC, AUC, OptC + ADC),
+			    <<Head/binary, Body/binary, OptRRBin/binary,
+			      AdBin/binary>>
+			end
+	    end
+    end.
+
+encode_message_d_req(Pos, SpaceLeft, #dns_message{} = Msg) ->
+    Msg0 = Msg#dns_message{qc = 0, anc = 0, auc = 0},
+    encode_message_d_req(Pos, SpaceLeft, new_compmap(), <<>>, Msg0).
+
+encode_message_d_req(Pos, SpaceLeft, CompMap, Bin,
+		     #dns_message{qc = QC, anc = ANC, auc = AUC} = Msg) ->
+    case encode_message_pop(Msg) of
+	{additional, _} ->
+	    {CompMap, QC, ANC, AUC, Bin};
+	{Section, Recs} ->
+	    RecsLen = length(Recs),
+	    {CompMap0, NewBin, Recs0} = encode_message_rec_list(Pos, SpaceLeft,
+								CompMap, Recs),
+	    Recs0Len = length(Recs0),
+	    EncodedLen = RecsLen - Recs0Len,
+	    Msg0 = encode_message_put(Recs0, Section, Msg),
+	    Msg1 = encode_message_updatecount(EncodedLen, Section, Msg0),
+	    Bin0 = <<Bin/binary, NewBin/binary>>,
+	    case Recs0Len of
+		0 ->
+		    NewBinSize = byte_size(NewBin),
+		    Pos0 = Pos + NewBinSize,
+		    SpaceLeft0 = SpaceLeft - NewBinSize,
+		    encode_message_d_req(Pos0, SpaceLeft0, CompMap0, Bin0,
+					 Msg1);
+		_ ->
+		    #dns_message{qc = QC0, anc = ANC0, auc = AUC0} = Msg1,
+		    {false, QC0, ANC0, AUC0, Bin0}
+	    end
+    end.
+
+encode_message_d_opt(Pos, SpaceLeft, CompMap, Recs) ->
+    case encode_message_rec_list(Pos, SpaceLeft, CompMap, Recs) of
+	{_, Bin, []} -> {length(Recs), Bin};
+	_ -> false
+    end.
+
+encode_message_axfr(#dns_message{} = Msg, MaxSize) ->
+    Pos = 12,
+    SpaceLeft = MaxSize - Pos,
+    encode_message_axfr(Pos, SpaceLeft, new_compmap(), <<>>, Msg).
+
+encode_message_axfr(Pos, SpaceLeft, CompMap, Bin, #dns_message{} = Msg) ->
+    {Section, Recs} = encode_message_pop(Msg),
+    RecsLen = length(Recs),
+    {CompMap0, NewBin, Recs0} =
+	encode_message_rec_list(Pos, SpaceLeft, CompMap, Recs),
+    Recs0Len = length(Recs0),
+    EncodedLen = RecsLen - Recs0Len,
+    Msg0 = encode_message_put(Recs0, Section, Msg),
+    Msg1 = encode_message_updatecount(EncodedLen, Section, Msg0),
+    case Recs0Len of
+	0 when Section =:= additional ->
+	    Head = encode_message_head(Msg1),
+	    <<Head/binary, Bin/binary, NewBin/binary>>;
+	0 ->
+	    NewBinSize = byte_size(NewBin),
+	    Pos0 = Pos + NewBinSize,
+	    SpaceLeft0 = SpaceLeft - NewBinSize,
+	    Bin0 = <<Bin/binary, NewBin/binary>>,
+	    encode_message_axfr(Pos0, SpaceLeft0, CompMap0, Bin0, Msg1);
+	_ ->
+	    Head = encode_message_head(Msg1),
+	    Msg2 = encode_message_a_setcounts(Msg1),
+	    {<<Head/binary, Bin/binary, NewBin/binary>>, Msg2}
+    end.
+
+encode_message_pop(#dns_message{questions = [_|_] = Recs}) -> {questions, Recs};
+encode_message_pop(#dns_message{answers = [_|_] = Recs}) -> {answers, Recs};
+encode_message_pop(#dns_message{authority = [_|_] = Recs}) -> {authority, Recs};
+encode_message_pop(#dns_message{additional = Recs}) -> {additional, Recs}.
+
+encode_message_put(Recs, questions, #dns_message{} = Msg) ->
+    Msg#dns_message{questions = Recs};
+encode_message_put(Recs, answers, #dns_message{} = Msg) ->
+    Msg#dns_message{answers = Recs};
+encode_message_put(Recs, authority, #dns_message{} = Msg) ->
+    Msg#dns_message{authority = Recs};
+encode_message_put(Recs, additional, #dns_message{} = Msg) ->
+    Msg#dns_message{additional = Recs}.
+
+encode_message_a_setcounts(#dns_message{questions = Q,
+					answers = An,
+					authority = Au,
+					additional = Ad} = Msg) ->
+    Msg#dns_message{qc = length(Q),
+		    anc = length(An),
+		    auc = length(Au),
+		    adc = length(Ad)}.
+
+encode_message_updatecount(Count, questions, #dns_message{} = Msg) ->
+    Msg#dns_message{qc = Count};
+encode_message_updatecount(Count, answers, #dns_message{} = Msg) ->
+    Msg#dns_message{anc = Count};
+encode_message_updatecount(Count, authority, #dns_message{} = Msg) ->
+    Msg#dns_message{auc = Count};
+encode_message_updatecount(Count, additional, #dns_message{} = Msg) ->
+    Msg#dns_message{adc = Count}.
+
+encode_message_head(#dns_message{id = Id, qr = QR, oc = OC, aa = AA, tc = TC,
+				 rd = RD, ra = RA, ad = AD, cd = CD, rc = RC,
+				 qc = QC, anc = ANC, auc = AUC, adc = ADC}) ->
+    <<Id:16, (encode_bool(QR)):1, OC:4, (encode_bool(AA)):1,
+      (encode_bool(TC)):1, (encode_bool(RD)):1, (encode_bool(RA)):1, 0:1,
+      (encode_bool(AD)):1, (encode_bool(CD)):1, RC:4, QC:16, ANC:16, AUC:16,
+      ADC:16>>.
+
+encode_message_llq(#dns_message{questions = Q, answers = An, authority = Au,
+				additional = Ad} = Msg, MaxSize) ->
+    QC = length(Q),
+    AnC = length(An),
+    AuC = length(Au),
+    AdC = length(Ad),
+    AuAd = Au ++ Ad,
+    Pos = 12,
+    SpaceLeft = MaxSize - Pos,
+    {CompMap0, QBin, []} =
+	encode_message_rec_list(Pos, SpaceLeft, new_compmap(), Q),
+    QBinSize = byte_size(QBin),
+    SpaceLeft0 = SpaceLeft - QBinSize,
+    Pos0 = QBinSize + Pos,
+    {_, AuAdTmp, []} =
+	encode_message_rec_list(Pos0, SpaceLeft0, CompMap0, AuAd),
+    AuAdTmpSize = byte_size(AuAdTmp),
+    {CompMap1, AnBin, LeftoverAn} =
+	encode_message_rec_list(Pos0, SpaceLeft0 - AuAdTmpSize, CompMap0, An),
+    LeftoverAnC = length(LeftoverAn),
+    EncodedAnC = AnC - LeftoverAnC,
+    AnBinSize = byte_size(AnBin),
+    Pos1 = Pos0 + AnBinSize,
+    SpaceLeft1 = SpaceLeft0 - AnBinSize,
+    {_, AuAdBin, []} =
+	encode_message_rec_list(Pos1, SpaceLeft1, CompMap1, AuAd),
+    Msg0 = Msg#dns_message{qc = QC, anc = EncodedAnC, auc = AuC, adc = AdC},
+    Head = encode_message_head(Msg0),
+    Bin = <<Head/binary, QBin/binary, AnBin/binary, AuAdBin/binary>>,
+    case LeftoverAnC =:= 0 of
+	true -> Bin;
+	false -> {Bin, Msg#dns_message{anc = LeftoverAnC, answers = LeftoverAn}}
+    end.
+
+encode_message_rec_list(Pos, SpaceLeft, CompMap, Recs) ->
+    encode_message_rec_list(Pos, SpaceLeft, CompMap, <<>>, Recs).
+
+encode_message_rec_list(Pos, SpaceLeft, CompMap, Body, [Rec|Rest] = Recs) ->
+    {CompMap0, NewBin} = encode_message_rec(CompMap, Pos, Rec),
+    NewBinSize = byte_size(NewBin),
+    case SpaceLeft - NewBinSize of
+	SpaceLeft0 when SpaceLeft0 > 0 ->
+	    Pos0 = Pos + NewBinSize,
+	    Body0 = <<Body/binary, NewBin/binary>>,
+	    encode_message_rec_list(Pos0, SpaceLeft0, CompMap0, Body0, Rest);
+	_ -> {CompMap, Body, Recs}
+    end;
+encode_message_rec_list(_Pos, _SpaceLeft, CompMap, Body, [] = Recs) ->
+    {CompMap, Body, Recs}.
+
+encode_message_rec(CompMap, Pos, #dns_query{name = N, type = T, class = C}) ->
+    {NameBin, CompMap0} = encode_dname(CompMap, Pos, N),
+    {CompMap0, <<NameBin/binary, T:16, C:16>>};
+encode_message_rec(CompMap, _Pos, #dns_optrr{udp_payload_size = UPS,
+					     ext_rcode = ExtRcode,
+					     version = Version,
+					     dnssec = DNSSEC,
+					     data = Data}) ->
     IntClass = UPS,
     DNSSECBit = encode_bool(DNSSEC),
     RRBin = encode_optrrdata(Data),
     RRBinSize = byte_size(RRBin),
-    NewBin = <<Bin/binary, 0, 41:16, IntClass:16, ExtRcode:8, Version:8,
+    NewBin = <<0, 41:16, IntClass:16, ExtRcode:8, Version:8,
 	       DNSSECBit:1, 0:15, RRBinSize:16, RRBin/binary>>,
-    encode_message_body(NewBin, CompMap, Records).
+    {CompMap, NewBin};
+encode_message_rec(CompMap, Pos, #dns_rr{name = N, type = T, class = C,
+					 ttl = TTL, data = D}) ->
+    {NameBin, CompMap0} = encode_dname(CompMap, Pos, N),
+    DPos = Pos + byte_size(NameBin) + 2 + 2 + 4 + 2,
+    {DBin, CompMap1} = encode_rrdata(DPos, C, D, CompMap0),
+    DSize = byte_size(DBin),
+    {CompMap1, <<NameBin/binary, T:16, C:16, TTL:32, DSize:16, DBin/binary>>}.
+
+encode_message_pop_optrr([#dns_optrr{udp_payload_size = UPS,
+				     ext_rcode = ExtRcode,
+				     version = Version,
+				     dnssec = DNSSEC,
+				     data = Data}|Rest]) ->
+    Class = UPS,
+    DNSSECBit = encode_bool(DNSSEC),
+    RRBin = encode_optrrdata(Data),
+    RRBinSize = byte_size(RRBin),
+    Bin = <<0, 41:16, Class:16, ExtRcode:8, Version:8, DNSSECBit:1, 0:15,
+	    RRBinSize:16, RRBin/binary>>,
+    {Bin, Rest};
+encode_message_pop_optrr(Other) -> {<<>>, Other}.
 
 %% @doc Returns a random integer suitable for use as DNS message identifier.
 -spec random_id() -> message_id().
@@ -324,13 +626,14 @@ verify_tsig(MsgBin, Name, Secret, Options) ->
     Now = proplists:get_value(time, Options, unix_time()),
     Fudge = proplists:get_value(fudge, Options, ?DEFAULT_TSIG_FUDGE),
     PreviousMAC = proplists:get_value(mac, Options, <<>>),
+    Tail = proplists:get_bool(tail, Options),
     {UnsignedMsgBin, #dns_rr{name = TName, data = TData}} = strip_tsig(MsgBin),
     case compare_dname(Name, TName) of
 	true ->
 	    #dns_rrdata_tsig{alg = Alg, time = Time, fudge = CFudge, mac = CMAC,
 			     err = Err, other = Other} = TData,
 	    case gen_tsig_mac(Alg, UnsignedMsgBin, Name, Secret, Time, CFudge,
-			      Err, Other, PreviousMAC) of
+			      Err, Other, PreviousMAC, Tail) of
 		{ok, SMAC} ->
 		    case const_compare(CMAC, SMAC) of
 			true ->
@@ -357,8 +660,8 @@ add_tsig(Msg, Alg, Name, Secret, ErrCode) ->
 
 %% @doc Generates and then appends a TSIG RR to a message.
 %%      Supports MD5, SHA1, SHA224, SHA256, SHA384 and SHA512 algorithms.
--spec add_tsig(message(), tsig_alg(), dname(), binary(), tsig_error(), [tsig_opt()]) ->
-		      message().
+-spec add_tsig(message(), tsig_alg(), dname(), binary(), tsig_error(),
+	       [tsig_opt()]) -> message().
 add_tsig(Msg, Alg, Name, Secret, ErrCode, Options) ->
     MsgId = Msg#dns_message.id,
     MsgBin = encode_message(Msg),
@@ -366,8 +669,9 @@ add_tsig(Msg, Alg, Name, Secret, ErrCode, Options) ->
     Fudge = proplists:get_value(fudge, Options, ?DEFAULT_TSIG_FUDGE),
     PreviousMAC = proplists:get_value(mac, Options, <<>>),
     Other = proplists:get_value(other, Options, <<>>),
+    Tail = proplists:get_bool(tail, Options),
     {ok, MAC} = gen_tsig_mac(Alg, MsgBin, Name, Secret, Time, Fudge, ErrCode,
-			     Other, PreviousMAC),
+			     Other, PreviousMAC, Tail),
     Data = #dns_rrdata_tsig{msgid = MsgId, alg = Alg, time = Time,
 			    fudge = Fudge, mac = MAC, err = ErrCode,
 			    other = Other},
@@ -385,8 +689,8 @@ strip_tsig(<<_Id:16, QR:1, OC:4, AA:1, TC:1, RD:1, RA:1, PR:1, Z:2, RC:4, QC:16,
 	ANC:16, AUC:16, ADC:16, HRB/binary>> = MsgBin) ->
     UnsignedADC = ADC - 1,
     {_Questions, QRB} = decode_message_questions(HRB, QC, MsgBin),
-    {_Answers, TSIGBin} = decode_message_body(QRB, ANC + AUC + UnsignedADC,
-					      MsgBin),
+    {_Answers, TSIGBin} =
+	decode_message_body(QRB, ANC + AUC + UnsignedADC, MsgBin),
     case decode_message_body(TSIGBin, 1, MsgBin) of
 	{[#dns_rr{data = #dns_rrdata_tsig{msgid = NewId}} = TSIG_RR], <<>>} ->
 	    MsgBodyLen = byte_size(HRB) - byte_size(TSIGBin),
@@ -399,27 +703,32 @@ strip_tsig(<<_Id:16, QR:1, OC:4, AA:1, TC:1, RD:1, RA:1, PR:1, Z:2, RC:4, QC:16,
 	_ -> throw(no_tsig)
     end.
 
-gen_tsig_mac(Alg, MsgBin, Name, Secret, Time, Fudge, ErrorCode, Other, PMAC) ->
+gen_tsig_mac(Alg, Msg, Name, Secret, Time, Fudge, Err, Other, MAC, Tail) ->
     NameBin = encode_dname(dname_to_lower(Name)),
     AlgBin = encode_dname(dname_to_lower(Alg)),
-    OtherLen = byte_size(Other),
-    Base = case PMAC of
-	       <<>> -> <<>>;
-	       PMAC ->
-		   PMACLen = byte_size(PMAC),
-		   <<PMACLen:16, PMAC/binary>>
+    OLen = byte_size(Other),
+    PMAC = if MAC =:= <<>> -> MAC;
+	      true -> <<(byte_size(MAC)):16, MAC/binary>> end,
+    Data = if Tail -> [PMAC, Msg, <<Time:48>>, <<Fudge:16>>];
+	      true ->
+		   [PMAC, Msg, NameBin, <<?DNS_CLASS_ANY:16>>, <<0:32>>, AlgBin,
+		    <<Time:48>>, <<Fudge:16>>, <<Err:16>>, <<OLen:16>>, Other]
 	   end,
-    MACData = [Base, MsgBin, NameBin, <<?DNS_CLASS_ANY:16>>, <<0:32>>, AlgBin,
-	       <<Time:48>>, <<Fudge:16>>, <<ErrorCode:16>>, <<OtherLen:16>>,
-	       Other],
-    case dname_to_lower(iolist_to_binary(Alg)) of
-	?DNS_TSIG_ALG_MD5 -> {ok, crypto:md5_mac(Secret, MACData)};
-	?DNS_TSIG_ALG_SHA1 -> {ok, crypto:sha_mac(Secret, MACData)};
-	?DNS_TSIG_ALG_SHA224 -> {ok, sha2:hmac_sha224(Secret, MACData)};
-	?DNS_TSIG_ALG_SHA256 -> {ok, sha2:hmac_sha256(Secret, MACData)};
-	?DNS_TSIG_ALG_SHA384 -> {ok, sha2:hmac_sha384(Secret, MACData)};
-	?DNS_TSIG_ALG_SHA512 -> {ok, sha2:hmac_sha512(Secret, MACData)};
-	_ -> {error, ?DNS_TSIGERR_BADKEY}
+    case hmac(Alg, Secret, Data) of
+	{ok, _MAC} = Result -> Result;
+	{error, bad_alg} -> {error, ?DNS_TSIGERR_BADKEY}
+    end.
+
+hmac(?DNS_TSIG_ALG_MD5, Key, Data) -> {ok, crypto:md5_mac(Key, Data)};
+hmac(?DNS_TSIG_ALG_SHA1, Key, Data) -> {ok,  crypto:sha_mac(Key, Data)};
+hmac(?DNS_TSIG_ALG_SHA224, Key, Data) -> {ok, sha2:hmac_sha224(Key, Data)};
+hmac(?DNS_TSIG_ALG_SHA256, Key, Data) -> {ok, sha2:hmac_sha256(Key, Data)};
+hmac(?DNS_TSIG_ALG_SHA384, Key, Data) -> {ok, sha2:hmac_sha384(Key, Data)};
+hmac(?DNS_TSIG_ALG_SHA512, Key, Data) -> {ok, sha2:hmac_sha512(Key, Data)};
+hmac(Alg, Key, Data) ->
+    case dname_to_lower(Alg) of
+	Alg -> {error, bad_alg};
+	AlgLwr -> hmac(AlgLwr, Key, Data)
     end.
 
 %%%===================================================================
@@ -1150,6 +1459,8 @@ decode_dnameonly(Bin, MsgBin) ->
 	{Dname, <<>>} -> Dname;
 	_ -> throw(trailing_garbage)
     end.
+
+new_compmap() -> gb_trees:empty().
 
 %% @private
 encode_dname(Name) ->
