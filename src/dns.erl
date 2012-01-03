@@ -58,7 +58,7 @@
 -type optrr() :: #dns_optrr{}.
 -type answers() :: [rr()].
 -type authority() :: [rr()].
--type additional() :: [optrr()|rr()].
+-type additional() :: [optrr()|[rr()]] | [rr()].
 -type dname() :: binary().
 -type label() :: binary().
 -type class() :: 0..65535.
@@ -1207,22 +1207,22 @@ labels_to_dname(Labels) ->
 %% @doc Returns provided name with case-insensitive characters in uppercase.
 -spec dname_to_upper(dname()) -> dname().
 dname_to_upper(Bin) when is_binary(Bin) ->
-    << <<(dname_to_upper(C))>> || <<C>> <= Bin >>;
+    << <<(dname_to_upper_i(C))>> || <<C>> <= Bin >>;
 dname_to_upper(List) when is_list(List) ->
-    [ dname_to_upper(C) || C <- List ];
-dname_to_upper(Int)
+    [ dname_to_upper_i(C) || C <- List ].
+dname_to_upper_i(Int)
   when is_integer(Int) andalso  (Int >= $a) andalso (Int =< $z) -> Int - 32;
-dname_to_upper(Int) when is_integer(Int) -> Int.
+dname_to_upper_i(Int) when is_integer(Int) -> Int.
 
 %% @doc Returns provided name with case-insensitive characters in lowercase.
 -spec dname_to_lower(dname()) -> dname().
 dname_to_lower(Bin) when is_binary(Bin) ->
-    << <<(dname_to_lower(C))>> || <<C>> <= Bin >>;
+    << <<(dname_to_lower_i(C))>> || <<C>> <= Bin >>;
 dname_to_lower(List) when is_list(List) ->
-    [ dname_to_lower(C) || C <- List ];
-dname_to_lower(Int)
+    [ dname_to_lower_i(C) || C <- List ].
+dname_to_lower_i(Int)
   when is_integer(Int) andalso (Int >= $A) andalso (Int =< $Z) -> Int + 32;
-dname_to_lower(Int) when is_integer(Int) -> Int.
+dname_to_lower_i(Int) when is_integer(Int) -> Int.
 
 %%%===================================================================
 %%% DNS terms

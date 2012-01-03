@@ -413,11 +413,9 @@ build_sig_input(SignersName, KeyTag, Alg, Incept, Expire,
 -spec add_keytag_to_dnskey(dns:rr()) -> dns:rr().
 add_keytag_to_dnskey(#dns_rr{type = ?DNS_TYPE_DNSKEY,
 			     data = #dns_rrdata_dnskey{} = Data} = RR) ->
-    NewData = add_keytag_to_dnskey(Data),
-    RR#dns_rr{data = NewData};
-add_keytag_to_dnskey(#dns_rrdata_dnskey{} = Data) ->
     KeyBin = dns:encode_rrdata(in, Data),
-    dns:decode_rrdata(?DNS_CLASS_IN, ?DNS_TYPE_DNSKEY, KeyBin).
+    NewData = dns:decode_rrdata(?DNS_CLASS_IN, ?DNS_TYPE_DNSKEY, KeyBin),
+    RR#dns_rr{data = NewData}.
 
 rrsig_to_digestable(#dns_rrdata_rrsig{} = Data) ->
     dns:encode_rrdata(?DNS_CLASS_IN, Data#dns_rrdata_rrsig{signature = <<>>}).
@@ -485,10 +483,10 @@ base32hex_encode(Bin) when bit_size(Bin) rem 5 =/= 0 ->
     PadBy = 5 - (byte_size(Bin) rem 5),
     base32hex_encode(<<Bin/bitstring, 0:PadBy>>);
 base32hex_encode(Bin) when bit_size(Bin) rem 5 =:= 0 ->
-    << <<(base32hex_encode(I))>> || <<I:5>> <= Bin >>;
-base32hex_encode(Int)
+    << <<(base32hex_encode_i(I))>> || <<I:5>> <= Bin >>.
+base32hex_encode_i(Int)
   when is_integer(Int) andalso Int >= 0 andalso Int =< 9 -> Int + 48;
-base32hex_encode(Int)
+base32hex_encode_i(Int)
   when is_integer(Int) andalso Int >= 10 andalso Int =< 31 -> Int + 87.
 
 name_ancestors(Name, ZoneName) ->

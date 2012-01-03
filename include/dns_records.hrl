@@ -16,10 +16,10 @@
 		      anc = 0 :: 0..65535,
 		      auc = 0 :: 0..65535,
 		      adc = 0 :: 0..65535,
-		      questions = [] :: [dns:'query'()],
-		      answers = [] :: [dns:rr()],
-		      authority = [] :: [dns:optrr()|dns:rr()],
-		      additional = [] :: [dns:rr()]}).
+		      questions = [] :: dns:questions(),
+		      answers = [] :: dns:answers(),
+		      authority = [] :: dns:authority(),
+		      additional = [] :: dns:additional()}).
 
 -record(dns_query, {name :: dns:dname(),
 		    class = ?DNS_CLASS_IN :: dns:class(),

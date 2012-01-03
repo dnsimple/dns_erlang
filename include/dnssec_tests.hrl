@@ -64,7 +64,7 @@ zone_test_() ->
 					   protocol = 3,
 					   alg = ZSKAlgNo,
 					   public_key = ZSKPubKeyBin},
-	      ZSKKey = add_keytag_to_dnskey(ZSKKey0),
+	      ZSKKey = helper_add_keytag_to_dnskey(ZSKKey0),
 	      KSKAlg = proplists:get_value(alg, KSKPL),
 	      KSKPrivKey = helper_samplekeypl_to_privkey(KSKPL),
 	      KSKPubKey = helper_samplekeypl_to_pubkey(KSKPL),
@@ -75,7 +75,7 @@ zone_test_() ->
 					   protocol = 3,
 					   alg = KSKAlgNo,
 					   public_key = KSKPubKeyBin},
-	      KSKKey = add_keytag_to_dnskey(KSKKey0),
+	      KSKKey = helper_add_keytag_to_dnskey(KSKKey0),
 	      DNSKeyTmpl = #dns_rr{name = iolist_to_binary(ZoneName),
 				   type = ?DNS_TYPE_DNSKEY,
 				   class = ?DNS_CLASS_IN,
@@ -176,7 +176,7 @@ dnskey_pubkey_gen_test_() ->
 					protocol = 3,
 					alg = AlgNo,
 					public_key = PubKey},
-				      add_keytag_to_dnskey(Key)
+				      helper_add_keytag_to_dnskey(Key)
 			      end, [ZSK_PL, KSK_PL])),
 	      Expect = lists:sort([ (RR#dns_rr.data)#dns_rrdata_dnskey{}
 			       || RR <- DnsKeyRR ]),
@@ -329,6 +329,10 @@ helper_pubkey_to_dnskey_pubkey(dsa, [P, Q, G, Y] = Key) ->
     T = (M - 64) div 8,
     M = 64 + T * 8,
     <<T, QI:20/unit:8, PI:M/unit:8, GI:M/unit:8, YI:M/unit:8>>.
+
+helper_add_keytag_to_dnskey(#dns_rrdata_dnskey{} = DNSKey) ->
+    RR = #dns_rr{type = ?DNS_TYPE_DNSKEY, data = DNSKey},
+    (add_keytag_to_dnskey(RR))#dns_rr.data.
 
 helper_fmt(Fmt, Args) ->
     lists:flatten(io_lib:format(Fmt, Args)).
