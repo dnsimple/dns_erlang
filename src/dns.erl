@@ -77,13 +77,10 @@
 		| #dns_rrdata_ds{}
 		| #dns_rrdata_hinfo{}
 		| #dns_rrdata_ipseckey{}
-		| #dns_rrdata_isdn{}
 		| #dns_rrdata_key{}
 		| #dns_rrdata_kx{}
 		| #dns_rrdata_loc{}
 		| #dns_rrdata_mb{}
-		| #dns_rrdata_md{}
-		| #dns_rrdata_mf{}
 		| #dns_rrdata_mg{}
 		| #dns_rrdata_minfo{}
 		| #dns_rrdata_mr{}
@@ -95,7 +92,6 @@
 		| #dns_rrdata_nsec3param{}
 		| #dns_rrdata_nxt{}
 		| #dns_rrdata_ptr{}
-		| #dns_rrdata_px{}
 		| #dns_rrdata_rp{}
 		| #dns_rrdata_rrsig{}
 		| #dns_rrdata_rt{}
@@ -104,9 +100,7 @@
 		| #dns_rrdata_srv{}
 		| #dns_rrdata_sshfp{}
 		| #dns_rrdata_tsig{}
-		| #dns_rrdata_txt{}
-		| #dns_rrdata_wks{}
-		| #dns_rrdata_x25{}.
+		| #dns_rrdata_txt{}.
 -type encode_message_opt() :: {'max_size', 512..65535} |
 			      {'tc_mode', 'default' | 'axfr' | 'llq_event'} |
 			      {'tsig', [encode_message_tsig_opt()]}.
@@ -835,11 +829,6 @@ decode_rrdata(_Class, ?DNS_TYPE_IPSECKEY, <<Precedence:8, 3:8, Algorithm:8,
     #dns_rrdata_ipseckey{precedence = Precedence, alg = Algorithm,
 			 gateway_type = dname, gateway = Gateway,
 			 public_key = PublicKey};
-decode_rrdata(_Class, ?DNS_TYPE_ISDN, <<Len, Addr:Len/binary>>, _MsgBin) ->
-    #dns_rrdata_isdn{address = Addr, subaddress = undefined};
-decode_rrdata(_Class, ?DNS_TYPE_ISDN, <<ALen, Addr:ALen/binary,
-			      SLen, Subaddr:SLen/binary>>, _MsgBin) ->
-    #dns_rrdata_isdn{address = Addr, subaddress = Subaddr};
 decode_rrdata(_Class, ?DNS_TYPE_KEY,
 	      <<Type:2, 0:1, XT:1, 0:2, NamType:2, 0:4, SIG:4, Protocol:8,
 		Alg:8, PublicKey/binary>>, _MsgBin) ->
@@ -860,10 +849,6 @@ decode_rrdata(_Class, ?DNS_TYPE_LOC,
 		    alt = AltPre - 10000000};
 decode_rrdata(_Class, ?DNS_TYPE_MB, Bin, MsgBin) ->
     #dns_rrdata_mb{madname = decode_dnameonly(Bin, MsgBin)};
-decode_rrdata(_Class, ?DNS_TYPE_MD, Bin, MsgBin) ->
-    #dns_rrdata_md{madname = decode_dnameonly(Bin, MsgBin)};
-decode_rrdata(_Class, ?DNS_TYPE_MF, Bin, MsgBin) ->
-    #dns_rrdata_mf{madname = decode_dnameonly(Bin, MsgBin)};
 decode_rrdata(_Class, ?DNS_TYPE_MG, Bin, MsgBin) ->
     #dns_rrdata_mg{madname = decode_dnameonly(Bin, MsgBin)};
 decode_rrdata(_Class, ?DNS_TYPE_MINFO, Bin, MsgBin) when is_binary(Bin) ->
@@ -907,10 +892,6 @@ decode_rrdata(_Class, ?DNS_TYPE_NXT, Bin, MsgBin) ->
     #dns_rrdata_nxt{dname = NxtDName, types = decode_nxt_bmp(BMP)};
 decode_rrdata(_Class, ?DNS_TYPE_PTR, Bin, MsgBin) ->
     #dns_rrdata_ptr{dname = decode_dnameonly(Bin, MsgBin)};
-decode_rrdata(_Class, ?DNS_TYPE_PX, <<Pref:16, Bin/binary>>, MsgBin) ->
-    {Map822, Mapx400Bin} = decode_dname(Bin, MsgBin),
-    Mapx400 = decode_dnameonly(Mapx400Bin, MsgBin),
-    #dns_rrdata_px{preference = Pref, map822 = Map822, mapx400 = Mapx400};
 decode_rrdata(_Class, ?DNS_TYPE_RP, Bin, MsgBin) ->
     {Mbox, TxtBin} = decode_dname(Bin, MsgBin),
     #dns_rrdata_rp{mbox = Mbox, txt = decode_dnameonly(TxtBin, MsgBin)};
@@ -947,13 +928,6 @@ decode_rrdata(_Class, ?DNS_TYPE_TSIG, Bin, MsgBin) ->
 		     err = ErrInt};
 decode_rrdata(_Class, ?DNS_TYPE_TXT, Bin, _MsgBin) ->
     #dns_rrdata_txt{txt = decode_txt(Bin)};
-decode_rrdata(Class, ?DNS_TYPE_WKS, <<A, B, C, D, P, BMP/binary>>, _MsgBin)
-  when ?CLASS_IS_IN(Class) ->
-    IP = inet_parse:ntoa({A,B,C,D}),
-    Address = list_to_binary(IP),
-    #dns_rrdata_wks{address = Address, protocol = P, bitmap = BMP};
-decode_rrdata(_Class, ?DNS_TYPE_X25, Bin, _MsgBin) ->
-    #dns_rrdata_x25{psdn_address = list_to_integer(binary_to_list(Bin))};
 decode_rrdata(_Class, _Type, Bin, _MsgBin) -> Bin.
 
 
@@ -1063,19 +1037,6 @@ encode_rrdata(_Pos, _Class, #dns_rrdata_ipseckey{precedence = Precedence,
     DNameBin = encode_dname(DName),
     {<<Precedence:8, 3:8, Algorithm:8, DNameBin/binary, PublicKey/binary>>,
      CompMap};
-encode_rrdata(_Pos, _Class, #dns_rrdata_isdn{address = Addr,
-					     subaddress = undefined},
-	      CompMap) ->
-    AddrBin = iolist_to_binary(Addr),
-    AddrLen = byte_size(AddrBin),
-    {<<AddrLen, AddrBin/binary>>, CompMap};
-encode_rrdata(_Pos, _Class, #dns_rrdata_isdn{address = Addr,
-					     subaddress = Subaddr}, CompMap) ->
-    AddrBin = iolist_to_binary(Addr),
-    AddrLen = byte_size(AddrBin),
-    SubaddrBin = iolist_to_binary(Subaddr),
-    SubaddrLen = byte_size(SubaddrBin),
-    {<<AddrLen, AddrBin/binary, SubaddrLen, SubaddrBin/binary>>, CompMap};
 encode_rrdata(_Pos, _Class, #dns_rrdata_key{type = Type,
 					    xt = XT,
 					    name_type = NameType,
@@ -1099,10 +1060,6 @@ encode_rrdata(_Pos, _Class, #dns_rrdata_loc{size = Size, horiz = Horiz,
     {<<0:8, SizeEnc:1/binary, HorizEnc:1/binary, VertEnc:1/binary, LatEnc:32,
        LonEnc:32, (Alt+10000000):32>>, CompMap};
 encode_rrdata(Pos, _Class, #dns_rrdata_mb{madname = Name}, CompMap) ->
-    encode_dname(CompMap, Pos, Name);
-encode_rrdata(Pos, _Class, #dns_rrdata_md{madname = Name}, CompMap) ->
-    encode_dname(CompMap, Pos, Name);
-encode_rrdata(Pos, _Class, #dns_rrdata_mf{madname = Name}, CompMap) ->
     encode_dname(CompMap, Pos, Name);
 encode_rrdata(Pos, _Class, #dns_rrdata_mg{madname = Name}, CompMap) ->
     encode_dname(CompMap, Pos, Name);
@@ -1163,14 +1120,6 @@ encode_rrdata(Pos, _Class, #dns_rrdata_nxt{dname = NxtDName, types = Types},
     {<<NextDNameBin/binary, BMP/binary>>, NewCompMap};
 encode_rrdata(Pos, _Class, #dns_rrdata_ptr{dname = Name}, CompMap) ->
     encode_dname(CompMap, Pos, Name);
-encode_rrdata(Pos, _Class, #dns_rrdata_px{preference = Pref,
-					  map822 = Map822,
-					  mapx400 = Mapx400}, CompMap) ->
-    {Map822Bin, Map822CompMap} = encode_dname(CompMap, Pos + 2, Map822),
-    NewPos = Pos + byte_size(Map822Bin) + 2,
-    {DnameBin, NewMap} = encode_dname(Map822Bin, Map822CompMap,
-				      NewPos, Mapx400),
-    {<<Pref:16, DnameBin/binary>>, NewMap};
 encode_rrdata(_Pos, _Class, #dns_rrdata_rp{mbox=Mbox, txt=Txt}, CompMap) ->
     MboxBin = encode_dname(Mbox),
     TxtBin = encode_dname(Txt),
@@ -1220,14 +1169,6 @@ encode_rrdata(_Pos, _Class, #dns_rrdata_tsig{alg = Alg, time = Time,
        MsgID:16, Err:16, OtherLen:16, Other/binary>>, CompMap};
 encode_rrdata(_Pos, _Class, #dns_rrdata_txt{txt = Strings}, CompMap) ->
     {encode_txt(Strings), CompMap};
-encode_rrdata(_Pos, Class, #dns_rrdata_wks{address = Address,
-					   protocol = P,
-					   bitmap = BMP}, CompMap)
-  when ?CLASS_IS_IN(Class) ->
-    {ok, {A, B, C, D}} = parse_ip(Address),
-    {<<A, B, C, D, P, BMP/binary>>, CompMap};
-encode_rrdata(_Pos, _Class, #dns_rrdata_x25{psdn_address = Number}, CompMap) ->
-    {list_to_binary(integer_to_list(Number)), CompMap};
 encode_rrdata(_Pos, _Class, Bin, CompMap) when is_binary(Bin) ->
     {Bin, CompMap}.
 

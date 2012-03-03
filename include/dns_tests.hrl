@@ -187,12 +187,10 @@ decode_encode_rrdata_wire_samples_test_() ->
 decode_encode_rrdata_test_() ->
     %% For testing records that don't have wire samples
     Cases = [ {?DNS_TYPE_MB, #dns_rrdata_mb{madname = <<"example.com">>}},
-	      {?DNS_TYPE_MD, #dns_rrdata_md{madname = <<"example.com">>}},
-	      {?DNS_TYPE_MF, #dns_rrdata_mf{madname = <<"example.com">>}},
 	      {?DNS_TYPE_MG, #dns_rrdata_mg{madname = <<"example.com">>}},
 	      {?DNS_TYPE_MINFO, #dns_rrdata_minfo{rmailbx = <<"a.b">>,
 						  emailbx = <<"c.d">>}},
-	      {in, mr, #dns_rrdata_mr{newname = <<"example.com">>}} ],
+	      {?DNS_TYPE_MR, #dns_rrdata_mr{newname = <<"example.com">>}} ],
     [ ?_test(
 	 begin
 	     {Encoded, _NewCompMap} = encode_rrdata(0, ?DNS_CLASS_IN, Data,

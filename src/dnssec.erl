@@ -435,10 +435,6 @@ canonical_rrdata_form(#dns_rrdata_kx{exchange = Exchange} = Data) ->
     Data#dns_rrdata_kx{exchange = dns:dname_to_lower(Exchange)};
 canonical_rrdata_form(#dns_rrdata_mb{madname = MaDname} = Data) ->
     Data#dns_rrdata_mb{madname = dns:dname_to_lower(MaDname) };
-canonical_rrdata_form(#dns_rrdata_md{madname = MaDname} = Data) ->
-    Data#dns_rrdata_md{madname = dns:dname_to_lower(MaDname) };
-canonical_rrdata_form(#dns_rrdata_mf{madname = MaDname} = Data) ->
-    Data#dns_rrdata_mf{madname = dns:dname_to_lower(MaDname) };
 canonical_rrdata_form(#dns_rrdata_mg{madname = MaDname} = Data) ->
     Data#dns_rrdata_mg{madname = dns:dname_to_lower(MaDname) };
 canonical_rrdata_form(#dns_rrdata_minfo{rmailbx = RmailBx,
@@ -459,10 +455,6 @@ canonical_rrdata_form(#dns_rrdata_nxt{dname = Dname} = Data) ->
     Data#dns_rrdata_nxt{dname = dns:dname_to_lower(Dname)};
 canonical_rrdata_form(#dns_rrdata_ptr{dname = Dname} = Data) ->
     Data#dns_rrdata_ptr{dname = dns:dname_to_lower(Dname) };
-canonical_rrdata_form(#dns_rrdata_px{map822 = Map822,
-				     mapx400 = Mapx400} = Data) ->
-    Data#dns_rrdata_px{map822 = dns:dname_to_lower(Map822),
-		       mapx400 = dns:dname_to_lower(Mapx400)};
 canonical_rrdata_form(#dns_rrdata_rp{mbox = Mbox, txt = Txt} = Data) ->
     Data#dns_rrdata_rp{mbox = dns:dname_to_lower(Mbox),
 		       txt = dns:dname_to_lower(Txt)};

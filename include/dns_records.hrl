@@ -46,13 +46,10 @@
 			      gateway_type,
 			      gateway,
 			      public_key}).
--record(dns_rrdata_isdn, {address, subaddress}).
 -record(dns_rrdata_key, {type, xt, name_type, sig, protocol, alg, public_key}).
 -record(dns_rrdata_kx, {preference, exchange}).
 -record(dns_rrdata_loc, {size, horiz, vert, lat, lon, alt}).
 -record(dns_rrdata_mb, {madname}).
--record(dns_rrdata_md, {madname}).
--record(dns_rrdata_mf, {madname}).
 -record(dns_rrdata_mg, {madname}).
 -record(dns_rrdata_minfo, {rmailbx, emailbx}).
 -record(dns_rrdata_mr, {newname}).
@@ -69,7 +66,6 @@
 -record(dns_rrdata_nsec3param, {hash_alg, flags, iterations, salt}).
 -record(dns_rrdata_nxt, {dname, types}).
 -record(dns_rrdata_ptr, {dname}).
--record(dns_rrdata_px, {preference, map822, mapx400}).
 -record(dns_rrdata_rp, {mbox, txt}).
 -record(dns_rrdata_rrsig, {type_covered,
 			   alg,
@@ -93,8 +89,6 @@
 -record(dns_rrdata_sshfp, {alg, fp_type, fp}).
 -record(dns_rrdata_tsig, {alg, time, fudge, mac, msgid, err, other}).
 -record(dns_rrdata_txt, {txt}).
--record(dns_rrdata_wks, {address, protocol, bitmap}).
--record(dns_rrdata_x25, {psdn_address}).
 
 -record(dns_optrr, {udp_payload_size = 4096,
 		    ext_rcode = ?DNS_ERCODE_NOERROR,

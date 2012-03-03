@@ -48,8 +48,6 @@ fields(dns_rrdata_hinfo) -> record_info(fields, dns_rrdata_hinfo);
 fields(dns_rrdata_ipseckey) -> record_info(fields, dns_rrdata_ipseckey);
 fields(dns_rrdata_loc) -> record_info(fields, dns_rrdata_loc);
 fields(dns_rrdata_mb) -> record_info(fields, dns_rrdata_mb);
-fields(dns_rrdata_md) -> record_info(fields, dns_rrdata_md);
-fields(dns_rrdata_mf) -> record_info(fields, dns_rrdata_mf);
 fields(dns_rrdata_mg) -> record_info(fields, dns_rrdata_mg);
 fields(dns_rrdata_minfo) -> record_info(fields, dns_rrdata_minfo);
 fields(dns_rrdata_mr) -> record_info(fields, dns_rrdata_mr);
@@ -57,17 +55,13 @@ fields(dns_rrdata_nsec) -> record_info(fields, dns_rrdata_nsec);
 fields(dns_rrdata_nsec3) -> record_info(fields, dns_rrdata_nsec3);
 fields(dns_rrdata_nsec3param) -> record_info(fields, dns_rrdata_nsec3param);
 fields(dns_rrdata_nxt) -> record_info(fields, dns_rrdata_nxt);
-fields(dns_rrdata_x25) -> record_info(fields, dns_rrdata_x25);
-fields(dns_rrdata_wks) -> record_info(fields, dns_rrdata_wks);
 fields(dns_rrdata_rp) -> record_info(fields, dns_rrdata_rp);
 fields(dns_rrdata_rt) -> record_info(fields, dns_rrdata_rt);
-fields(dns_rrdata_px) -> record_info(fields, dns_rrdata_px);
 fields(dns_rrdata_spf) -> record_info(fields, dns_rrdata_spf);
 fields(dns_rrdata_sshfp) -> record_info(fields, dns_rrdata_sshfp);
 fields(dns_rrdata_naptr) -> record_info(fields, dns_rrdata_naptr);
 fields(dns_rrdata_ds) -> record_info(fields, dns_rrdata_ds);
 fields(dns_rrdata_dlv) -> record_info(fields, dns_rrdata_dlv);
-fields(dns_rrdata_isdn) -> record_info(fields, dns_rrdata_isdn);
 fields(dns_rrdata_cert) -> record_info(fields, dns_rrdata_cert).
 
 %% @doc Returns the size of a given record.
@@ -93,8 +87,6 @@ size(dns_rrdata_hinfo) -> record_info(size, dns_rrdata_hinfo);
 size(dns_rrdata_ipseckey) -> record_info(size, dns_rrdata_ipseckey);
 size(dns_rrdata_loc) -> record_info(size, dns_rrdata_loc);
 size(dns_rrdata_mb) -> record_info(size, dns_rrdata_mb);
-size(dns_rrdata_md) -> record_info(size, dns_rrdata_md);
-size(dns_rrdata_mf) -> record_info(size, dns_rrdata_mf);
 size(dns_rrdata_mg) -> record_info(size, dns_rrdata_mg);
 size(dns_rrdata_minfo) -> record_info(size, dns_rrdata_minfo);
 size(dns_rrdata_mr) -> record_info(size, dns_rrdata_mr);
@@ -102,17 +94,13 @@ size(dns_rrdata_nsec) -> record_info(size, dns_rrdata_nsec);
 size(dns_rrdata_nsec3) -> record_info(size, dns_rrdata_nsec3);
 size(dns_rrdata_nsec3param) -> record_info(size, dns_rrdata_nsec3param);
 size(dns_rrdata_nxt) -> record_info(size, dns_rrdata_nxt);
-size(dns_rrdata_x25) -> record_info(size, dns_rrdata_x25);
-size(dns_rrdata_wks) -> record_info(size, dns_rrdata_wks);
 size(dns_rrdata_rp) -> record_info(size, dns_rrdata_rp);
 size(dns_rrdata_rt) -> record_info(size, dns_rrdata_rt);
-size(dns_rrdata_px) -> record_info(size, dns_rrdata_px);
 size(dns_rrdata_spf) -> record_info(size, dns_rrdata_spf);
 size(dns_rrdata_sshfp) -> record_info(size, dns_rrdata_sshfp);
 size(dns_rrdata_naptr) -> record_info(size, dns_rrdata_naptr);
 size(dns_rrdata_ds) -> record_info(size, dns_rrdata_ds);
 size(dns_rrdata_dlv) -> record_info(size, dns_rrdata_dlv);
-size(dns_rrdata_isdn) -> record_info(size, dns_rrdata_isdn);
 size(dns_rrdata_cert) -> record_info(size, dns_rrdata_cert).
 
 %% @doc Returns the record tag atom for the given record type.
@@ -146,17 +134,13 @@ atom_for_type(?DNS_TYPE_NSEC) -> dns_rrdata_nsec;
 atom_for_type(?DNS_TYPE_NSEC3) -> dns_rrdata_nsec3;
 atom_for_type(?DNS_TYPE_NSEC3PARAM) -> dns_rrdata_nsec3param;
 atom_for_type(?DNS_TYPE_NXT) -> dns_rrdata_nxt;
-atom_for_type(?DNS_TYPE_X25) -> dns_rrdata_x25;
-atom_for_type(?DNS_TYPE_WKS) -> dns_rrdata_wks;
 atom_for_type(?DNS_TYPE_RP) -> dns_rrdata_rp;
 atom_for_type(?DNS_TYPE_RT) -> dns_rrdata_rt;
-atom_for_type(?DNS_TYPE_PX) -> dns_rrdata_px;
 atom_for_type(?DNS_TYPE_SPF) -> dns_rrdata_spf;
 atom_for_type(?DNS_TYPE_SSHFP) -> dns_rrdata_sshfp;
 atom_for_type(?DNS_TYPE_NAPTR) -> dns_rrdata_naptr;
 atom_for_type(?DNS_TYPE_DS) -> dns_rrdata_ds;
 atom_for_type(?DNS_TYPE_DLV) -> dns_rrdata_dlv;
-atom_for_type(?DNS_TYPE_ISDN) -> dns_rrdata_isdn;
 atom_for_type(?DNS_TYPE_CERT) -> dns_rrdata_cert;
 atom_for_type(_) -> undefined.
 
@@ -191,17 +175,13 @@ type_for_atom(dns_rrdata_nsec) -> ?DNS_TYPE_NSEC;
 type_for_atom(dns_rrdata_nsec3) -> ?DNS_TYPE_NSEC3;
 type_for_atom(dns_rrdata_nsec3param) -> ?DNS_TYPE_NSEC3PARAM;
 type_for_atom(dns_rrdata_nxt) -> ?DNS_TYPE_NXT;
-type_for_atom(dns_rrdata_x25) -> ?DNS_TYPE_X25;
-type_for_atom(dns_rrdata_wks) -> ?DNS_TYPE_WKS;
 type_for_atom(dns_rrdata_rp) -> ?DNS_TYPE_RP;
 type_for_atom(dns_rrdata_rt) -> ?DNS_TYPE_RT;
-type_for_atom(dns_rrdata_px) -> ?DNS_TYPE_PX;
 type_for_atom(dns_rrdata_spf) -> ?DNS_TYPE_SPF;
 type_for_atom(dns_rrdata_sshfp) -> ?DNS_TYPE_SSHFP;
 type_for_atom(dns_rrdata_naptr) -> ?DNS_TYPE_NAPTR;
 type_for_atom(dns_rrdata_ds) -> ?DNS_TYPE_DS;
 type_for_atom(dns_rrdata_dlv) -> ?DNS_TYPE_DLV;
-type_for_atom(dns_rrdata_isdn) -> ?DNS_TYPE_ISDN;
 type_for_atom(dns_rrdata_cert) -> ?DNS_TYPE_CERT;
 type_for_atom(_) -> undefined.
 
