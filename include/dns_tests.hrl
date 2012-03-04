@@ -170,8 +170,6 @@ decode_encode_rrdata_wire_samples_test_() ->
     [ {ToTestName(Case),
        ?_test(
 	  begin
-	      Class = try dns:class_to_int(ClassA) catch _:_ -> ClassA end,
-	      Type = try dns:type_to_int(TypeA) catch _:_ -> TypeA end,
 	      NewBin = case decode_rrdata(Class, Type, TestBin, TestBin) of
 			   TestBin when Type =:= 999 -> TestBin;
 			   TestBin -> throw(not_decoded);
@@ -182,7 +180,7 @@ decode_encode_rrdata_wire_samples_test_() ->
 		       end,
 	      ?assertEqual(TestBin, NewBin)
 	  end
-	 )} || {ClassA, TypeA, TestBin} = Case <- Cases ].
+	 )} || {Class, Type, TestBin} = Case <- Cases ].
 
 decode_encode_rrdata_test_() ->
     %% For testing records that don't have wire samples
