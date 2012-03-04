@@ -739,13 +739,11 @@ decode_rrdata(Class, Type, Data) ->
 decode_rrdata(_Class, _Type, <<>>, _MsgBin) -> <<>>;
 decode_rrdata(Class, ?DNS_TYPE_A, <<A, B, C, D>>, _MsgBin)
   when ?CLASS_IS_IN(Class) ->
-    IP = inet_parse:ntoa({A,B,C,D}),
-    #dns_rrdata_a{ip = list_to_binary(IP)};
+    #dns_rrdata_a{ip = {A,B,C,D}};
 decode_rrdata(Class, ?DNS_TYPE_AAAA,
 	      <<A:16,B:16,C:16,D:16,E:16,F:16,G:16,H:16>>, _MsgBin)
   when ?CLASS_IS_IN(Class) ->
-    IP = inet_parse:ntoa({A,B,C,D,E,F,G,H}),
-    #dns_rrdata_aaaa{ip = list_to_binary(IP)};
+    #dns_rrdata_aaaa{ip = {A,B,C,D,E,F,G,H}};
 decode_rrdata(_Class, ?DNS_TYPE_AFSDB, <<Subtype:16, Bin/binary>>, MsgBin) ->
     #dns_rrdata_afsdb{subtype = Subtype,
 		      hostname = decode_dnameonly(Bin, MsgBin)};
@@ -930,19 +928,16 @@ decode_rrdata(_Class, ?DNS_TYPE_TXT, Bin, _MsgBin) ->
     #dns_rrdata_txt{txt = decode_txt(Bin)};
 decode_rrdata(_Class, _Type, Bin, _MsgBin) -> Bin.
 
-
 %% @private
 encode_rrdata(Class, Data) ->
     {Bin, undefined} = encode_rrdata(0, Class, Data, undefined),
     Bin.
 
-encode_rrdata(_Pos, Class, #dns_rrdata_a{ip = IP}, CompMap)
+encode_rrdata(_Pos, Class, #dns_rrdata_a{ip = {A,B,C,D}}, CompMap)
   when ?CLASS_IS_IN(Class) ->
-    {ok, {A,B,C,D}} = parse_ip(IP),
     {<<A, B, C, D>>, CompMap};
-encode_rrdata(_Pos, Class, #dns_rrdata_aaaa{ip = IP}, CompMap)
+encode_rrdata(_Pos, Class, #dns_rrdata_aaaa{ip = {A,B,C,D,E,F,G,H}}, CompMap)
   when ?CLASS_IS_IN(Class) ->
-    {ok, {A, B, C, D, E, F, G, H}} = parse_ip(IP),
     {<<A:16, B:16, C:16, D:16, E:16, F:16, G:16, H:16>>, CompMap};
 encode_rrdata(_Pos, _Class, #dns_rrdata_afsdb{subtype = Subtype,
 					      hostname = Hostname}, CompMap) ->
