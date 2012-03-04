@@ -43,7 +43,6 @@
 -record(dns_rrdata_hinfo, {cpu, os}).
 -record(dns_rrdata_ipseckey, {precedence,
 			      alg,
-			      gateway_type,
 			      gateway,
 			      public_key}).
 -record(dns_rrdata_key, {type, xt, name_type, sig, protocol, alg, public_key}).

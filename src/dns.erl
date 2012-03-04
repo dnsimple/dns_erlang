@@ -806,27 +806,22 @@ decode_rrdata(_Class, ?DNS_TYPE_HINFO, Bin, _BodyBin) ->
 decode_rrdata(_Class, ?DNS_TYPE_IPSECKEY, <<Precedence:8, 0:8, Algorithm:8,
 				  PublicKey/binary>>, _MsgBin) ->
     #dns_rrdata_ipseckey{precedence = Precedence, alg = Algorithm,
-			 gateway_type = none, public_key = PublicKey};
+			 gateway = <<>>, public_key = PublicKey};
 decode_rrdata(_Class, ?DNS_TYPE_IPSECKEY,
 	      <<Precedence:8, 1:8, Algorithm:8, A:8, B:8, C:8, D:8,
 		PublicKey/binary>>, _MsgBin) ->
-    IP = inet_parse:ntoa({A,B,C,D}),
     #dns_rrdata_ipseckey{precedence = Precedence, alg = Algorithm,
-			 gateway_type = ipv4, gateway = IP,
-			 public_key = PublicKey};
+			 gateway = {A,B,C,D}, public_key = PublicKey};
 decode_rrdata(_Class, ?DNS_TYPE_IPSECKEY,
 	      <<Precedence:8, 2:8, Algorithm:8, A:16, B:16, C:16, D:16, E:16,
 		F:16, G:16, H:16, PublicKey/binary>>, _MsgBin) ->
-    IP = inet_parse:ntoa({A,B,C,D,E,F,G,H}),
     #dns_rrdata_ipseckey{precedence = Precedence, alg = Algorithm,
-			 gateway_type = ipv6, gateway = IP,
-			 public_key = PublicKey};
+			 gateway = {A,B,C,D,E,F,G,H}, public_key = PublicKey};
 decode_rrdata(_Class, ?DNS_TYPE_IPSECKEY, <<Precedence:8, 3:8, Algorithm:8,
 					    Bin/binary>>, MsgBin) ->
     {Gateway, PublicKey} = decode_dname(Bin, MsgBin),
     #dns_rrdata_ipseckey{precedence = Precedence, alg = Algorithm,
-			 gateway_type = dname, gateway = Gateway,
-			 public_key = PublicKey};
+			 gateway = Gateway, public_key = PublicKey};
 decode_rrdata(_Class, ?DNS_TYPE_KEY,
 	      <<Type:2, 0:1, XT:1, 0:2, NamType:2, 0:4, SIG:4, Protocol:8,
 		Alg:8, PublicKey/binary>>, _MsgBin) ->
@@ -1001,31 +996,26 @@ encode_rrdata(_Pos, _Class, #dns_rrdata_hinfo{cpu = CPU, os = OS}, CompMap) ->
     {encode_txt([CPU, OS]), CompMap};
 encode_rrdata(_Pos, _Class, #dns_rrdata_ipseckey{precedence = Precedence,
 						 alg = Algorithm,
-						 gateway_type = none,
+						 gateway = <<>>,
 						 public_key = PublicKey},
 	      CompMap) ->
     {<<Precedence:8, 0:8, Algorithm:8, PublicKey/binary>>, CompMap};
 encode_rrdata(_Pos, _Class, #dns_rrdata_ipseckey{precedence = Precedence,
 						 alg = Algorithm,
-						 gateway_type=ipv4,
-						 gateway = IP,
+						 gateway = {A,B,C,D},
 						 public_key = PublicKey},
 	      CompMap) ->
-    {ok, {A, B, C, D}} = parse_ip(IP),
     {<<Precedence:8, 1:8, Algorithm:8, A:8, B:8, C:8, D:8, PublicKey/binary>>,
      CompMap};
 encode_rrdata(_Pos, _Class, #dns_rrdata_ipseckey{precedence = Precedence,
 						 alg = Algorithm,
-						 gateway_type = ipv6,
-						 gateway = IP,
+						 gateway = {A,B,C,D,E,F,G,H},
 						 public_key = PublicKey},
 	      CompMap) ->
-    {ok, {A, B, C, D, E, F, G, H}} = parse_ip(IP),
     {<<Precedence:8, 2:8, Algorithm:8, A:16, B:16, C:16, D:16, E:16, F:16, G:16,
        H:16, PublicKey/binary>>, CompMap};
 encode_rrdata(_Pos, _Class, #dns_rrdata_ipseckey{precedence = Precedence,
 						 alg = Algorithm,
-						 gateway_type = dname,
 						 gateway = DName,
 						 public_key = PublicKey},
 	      CompMap) ->
@@ -1173,11 +1163,6 @@ decode_loc_point(P) when is_integer(P) ->
 	true -> (P - M);
 	false -> -1 * (M - P)
     end.
-
-parse_ip(IP) when is_list(IP) andalso is_integer(hd(IP)) ->
-    inet_parse:address(IP);
-parse_ip(IP) when is_binary(IP) ->
-    parse_ip(binary_to_list(IP)).
 
 bin_to_key_tag(Binary) when is_binary(Binary) ->
     bin_to_key_tag(Binary, 0).
