@@ -28,7 +28,6 @@
 -export([add_keytag_to_dnskey/1]).
 -export([canonical_rrdata_form/1]).
 -export([ih/4]).
--export([base32hex_encode/1]).
 
 -include("dns.hrl").
 -include("DNS-ASN1.hrl").
@@ -147,7 +146,7 @@ gen_nsec3(RRs, ZoneName, Alg, Salt, Iterations, TTL, Class, Opts) ->
 		 fun({{Name, SClass}, Types}, Acc) when SClass =:= Class ->
 			 DName = dns:encode_dname(Name),
 			 HashedName = ih(Alg, Salt, DName, Iterations),
-			 HexdHashName = base32hex_encode(HashedName),
+			 HexdHashName = base32:encode(HashedName, [hex,nopad]),
 			 NewName = <<HexdHashName/binary, $., ZoneName/binary>>,
 			 Data = #dns_rrdata_nsec3{hash_alg = Alg,
 						  opt_out = false,
@@ -468,18 +467,6 @@ canonical_rrdata_form(#dns_rrdata_soa{mname = Mname, rname = Rname} = Data) ->
 canonical_rrdata_form(#dns_rrdata_srv{target = Target} = Data) ->
     Data#dns_rrdata_srv{target = dns:dname_to_lower(Target)};
 canonical_rrdata_form(X) -> X.
-
-%% @doc Base 32 hex encoding suitable for generating NSEC3 labels.
--spec base32hex_encode(binary()) -> dns:label().
-base32hex_encode(Bin) when bit_size(Bin) rem 5 =/= 0 ->
-    PadBy = 5 - (byte_size(Bin) rem 5),
-    base32hex_encode(<<Bin/bitstring, 0:PadBy>>);
-base32hex_encode(Bin) when bit_size(Bin) rem 5 =:= 0 ->
-    << <<(base32hex_encode_i(I))>> || <<I:5>> <= Bin >>.
-base32hex_encode_i(Int)
-  when is_integer(Int) andalso Int >= 0 andalso Int =< 9 -> Int + 48;
-base32hex_encode_i(Int)
-  when is_integer(Int) andalso Int >= 10 andalso Int =< 31 -> Int + 87.
 
 name_ancestors(Name, ZoneName) ->
     NameLwr = dns:dname_to_lower(iolist_to_binary(Name)),
