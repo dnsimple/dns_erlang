@@ -1274,10 +1274,11 @@ decode_optrrdata(?DNS_EOPTCODE_LLQ, <<1:16, OC:16, EC:16, Id:64, LeaseLife:32>>)
 decode_optrrdata(?DNS_EOPTCODE_NSID, Data) ->
     #dns_opt_nsid{data = Data};
 decode_optrrdata(?DNS_EOPTCODE_OWNER, <<0:8, S:8, PMAC:6/binary>>) ->
-    #dns_opt_owner{seq = S, primary_mac = PMAC};
+    #dns_opt_owner{seq = S, primary_mac = PMAC, _ = <<>>};
 decode_optrrdata(?DNS_EOPTCODE_OWNER,
 		 <<0:8, S:8, PMAC:6/binary, WMAC:6/binary>>) ->
-    #dns_opt_owner{seq = S, primary_mac = PMAC, wakeup_mac = WMAC};
+    #dns_opt_owner{seq = S, primary_mac = PMAC, wakeup_mac = WMAC,
+		   password = <<>>};
 decode_optrrdata(?DNS_EOPTCODE_OWNER, <<0:8, S:8, PMAC:6/binary, WMAC:6/binary,
 					Password/binary>>) ->
     #dns_opt_owner{seq = S, primary_mac = PMAC, wakeup_mac = WMAC,
@@ -1302,10 +1303,10 @@ encode_optrrdata(#dns_opt_owner{seq = S, primary_mac = PMAC, wakeup_mac = WMAC,
     Bin = <<0:8, S:8, PMAC/binary, WMAC/binary, Password/binary>>,
     {?DNS_EOPTCODE_OWNER, Bin};
 encode_optrrdata(#dns_opt_owner{seq = S, primary_mac = PMAC, wakeup_mac = WMAC,
-				password = undefined})
+				password = <<>>})
   when byte_size(PMAC) =:= 6 andalso byte_size(WMAC) =:= 6 ->
     {?DNS_EOPTCODE_OWNER, <<0:8, S:8, PMAC/binary, WMAC/binary>>};
-encode_optrrdata(#dns_opt_owner{seq = S, primary_mac = PMAC, _ = undefined})
+encode_optrrdata(#dns_opt_owner{seq = S, primary_mac = PMAC, _ = <<>>})
   when byte_size(PMAC) =:= 6 ->
     {?DNS_EOPTCODE_OWNER, <<0:8, S:8, PMAC/binary>>};
 encode_optrrdata(#dns_opt_unknown{id = Id, bin = Data})

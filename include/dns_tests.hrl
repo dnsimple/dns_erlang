@@ -226,9 +226,11 @@ decode_encode_optdata_owner_test_() ->
 			     password = crypto:rand_bytes(4)},
 	      #dns_opt_owner{seq = crypto:rand_uniform(0, 255),
 			     primary_mac = crypto:rand_bytes(6),
-			     wakeup_mac = crypto:rand_bytes(6)},
+			     wakeup_mac = crypto:rand_bytes(6),
+			     _ = <<>>},
 	      #dns_opt_owner{seq = crypto:rand_uniform(0, 255),
-			     primary_mac = crypto:rand_bytes(6)} ],
+			     primary_mac = crypto:rand_bytes(6),
+			     _ = <<>>} ],
     [ ?_assertEqual([Case], decode_optrrdata(encode_optrrdata([Case])))
       || Case <- Cases ].
 
