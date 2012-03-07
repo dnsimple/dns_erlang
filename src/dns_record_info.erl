@@ -27,6 +27,8 @@
 
 %% @doc Returns the fields that make up a given record.
 -spec fields(atom()) -> [atom()].
+fields(dns_message) -> record_info(fields, dns_message);
+fields(dns_query) -> record_info(fields, dns_query);
 fields(dns_rr) -> record_info(fields, dns_rr);
 fields(dns_rrdata_a) -> record_info(fields, dns_rrdata_a);
 fields(dns_rrdata_afsdb) -> record_info(fields, dns_rrdata_afsdb);
@@ -62,10 +64,19 @@ fields(dns_rrdata_sshfp) -> record_info(fields, dns_rrdata_sshfp);
 fields(dns_rrdata_naptr) -> record_info(fields, dns_rrdata_naptr);
 fields(dns_rrdata_ds) -> record_info(fields, dns_rrdata_ds);
 fields(dns_rrdata_dlv) -> record_info(fields, dns_rrdata_dlv);
-fields(dns_rrdata_cert) -> record_info(fields, dns_rrdata_cert).
+fields(dns_rrdata_cert) -> record_info(fields, dns_rrdata_cert);
+fields(dns_rrdata_tsig) -> record_info(fields, dns_rrdata_tsig);
+fields(dns_optrr) -> record_info(fields, dns_optrr);
+fields(dns_opt_llq) -> record_info(fields, dns_opt_llq);
+fields(dns_opt_nsid) -> record_info(fields, dns_opt_nsid);
+fields(dns_opt_owner) -> record_info(fields, dns_opt_owner);
+fields(dns_opt_ul) -> record_info(fields, dns_opt_ul);
+fields(dns_opt_unknown) -> record_info(fields, dns_opt_unknown).
 
 %% @doc Returns the size of a given record.
 -spec size(atom()) -> non_neg_integer().
+size(dns_message) -> record_info(size, dns_message);
+size(dns_query) -> record_info(size, dns_query);
 size(dns_rr) -> record_info(size, dns_rr);
 size(dns_rrdata_a) -> record_info(size, dns_rrdata_a);
 size(dns_rrdata_afsdb) -> record_info(size, dns_rrdata_afsdb);
@@ -101,7 +112,14 @@ size(dns_rrdata_sshfp) -> record_info(size, dns_rrdata_sshfp);
 size(dns_rrdata_naptr) -> record_info(size, dns_rrdata_naptr);
 size(dns_rrdata_ds) -> record_info(size, dns_rrdata_ds);
 size(dns_rrdata_dlv) -> record_info(size, dns_rrdata_dlv);
-size(dns_rrdata_cert) -> record_info(size, dns_rrdata_cert).
+size(dns_rrdata_cert) -> record_info(size, dns_rrdata_cert);
+size(dns_rrdata_tsig) -> record_info(size, dns_rrdata_tsig);
+size(dns_optrr) -> record_info(size, dns_optrr);
+size(dns_opt_llq) -> record_info(size, dns_opt_llq);
+size(dns_opt_nsid) -> record_info(size, dns_opt_nsid);
+size(dns_opt_owner) -> record_info(size, dns_opt_owner);
+size(dns_opt_ul) -> record_info(size, dns_opt_ul);
+size(dns_opt_unknown) -> record_info(size, dns_opt_unknown).
 
 %% @doc Returns the record tag atom for the given record type.
 -spec atom_for_type(dns:type()) -> atom() | 'undefined'.
@@ -142,6 +160,7 @@ atom_for_type(?DNS_TYPE_NAPTR) -> dns_rrdata_naptr;
 atom_for_type(?DNS_TYPE_DS) -> dns_rrdata_ds;
 atom_for_type(?DNS_TYPE_DLV) -> dns_rrdata_dlv;
 atom_for_type(?DNS_TYPE_CERT) -> dns_rrdata_cert;
+atom_for_type(?DNS_TYPE_TSIG) -> dns_rrdata_tsig;
 atom_for_type(_) -> undefined.
 
 %% @doc Returns the record type for the given record tag atom.
@@ -183,6 +202,7 @@ type_for_atom(dns_rrdata_naptr) -> ?DNS_TYPE_NAPTR;
 type_for_atom(dns_rrdata_ds) -> ?DNS_TYPE_DS;
 type_for_atom(dns_rrdata_dlv) -> ?DNS_TYPE_DLV;
 type_for_atom(dns_rrdata_cert) -> ?DNS_TYPE_CERT;
+type_for_atom(dns_rrdata_tsig) -> ?DNS_TYPE_TSIG;
 type_for_atom(_) -> undefined.
 
 -ifdef(TEST).
