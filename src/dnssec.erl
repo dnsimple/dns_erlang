@@ -389,24 +389,25 @@ build_sig_input(SignersName, KeyTag, Alg, Incept, Expire,
 				   signers_name = SignersName},
     RRSigRDataBin = rrsig_to_digestable(RRSigData0),
     SigInput0 = [RRSigRDataBin, RRSetBin],
-    SigInput = case Alg of
-		   Alg when Alg =:= ?DNS_ALG_DSA orelse
-			    Alg =:= ?DNS_ALG_NSEC3DSA ->
-		       SigInput1 = iolist_to_binary(SigInput0),
-		       SigInput1Size = byte_size(SigInput1),
-		       <<SigInput1Size:32, SigInput1/binary>>;
-		   Alg when Alg =:= ?DNS_ALG_RSASHA1 orelse
-			    Alg =:= ?DNS_ALG_NSEC3RSASHA1 ->
-		       Hash = crypto:sha(SigInput0),
-		       <<?RSASHA1_PREFIX/binary, Hash/binary>>;
-		   ?DNS_ALG_RSASHA256 ->
-		       Hash = sha2:sha256(SigInput0),
-		       <<?RSASHA256_PREFIX/binary, Hash/binary>>;
-		   ?DNS_ALG_RSASHA512 ->
-		       Hash = sha2:sha512(SigInput0),
-		       <<?RSASHA512_PREFIX/binary, Hash/binary>>
-	       end,
-    {RRSigData0, SigInput}.
+    case Alg of
+        Alg when Alg =:= ?DNS_ALG_DSA orelse Alg =:= ?DNS_ALG_NSEC3DSA ->
+            SigInput1 = iolist_to_binary(SigInput0),
+            SigInput1Size = byte_size(SigInput1),
+            {RRSigData0, <<SigInput1Size:32, SigInput1/binary>>};
+        _ ->
+            {Prefix, HashType} = case Alg of
+                                     ?DNS_ALG_RSASHA1 ->
+                                         {?RSASHA1_PREFIX, sha};
+                                     ?DNS_ALG_NSEC3RSASHA1 ->
+                                         {?RSASHA1_PREFIX, sha};
+                                     ?DNS_ALG_RSASHA256 ->
+                                         {?RSASHA256_PREFIX, sha256};
+                                     ?DNS_ALG_RSASHA512 ->
+                                         {?RSASHA512_PREFIX, sha512}
+                                 end,
+            Hash = crypto:hash(HashType, SigInput0),
+            {RRSigData0, <<Prefix/binary, Hash/binary>>}
+    end.
 
 %% @doc Generates and appends a DNS Key records key tag.
 -spec add_keytag_to_dnskey(dns:rr()) -> dns:rr().

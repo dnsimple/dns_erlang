@@ -713,16 +713,22 @@ gen_tsig_mac(Alg, Msg, Name, Secret, Time, Fudge, Err, Other, MAC, Tail) ->
 	{error, bad_alg} -> {error, ?DNS_TSIGERR_BADKEY}
     end.
 
-hmac(?DNS_TSIG_ALG_MD5, Key, Data) -> {ok, crypto:md5_mac(Key, Data)};
-hmac(?DNS_TSIG_ALG_SHA1, Key, Data) -> {ok,  crypto:sha_mac(Key, Data)};
-hmac(?DNS_TSIG_ALG_SHA224, Key, Data) -> {ok, sha2:hmac_sha224(Key, Data)};
-hmac(?DNS_TSIG_ALG_SHA256, Key, Data) -> {ok, sha2:hmac_sha256(Key, Data)};
-hmac(?DNS_TSIG_ALG_SHA384, Key, Data) -> {ok, sha2:hmac_sha384(Key, Data)};
-hmac(?DNS_TSIG_ALG_SHA512, Key, Data) -> {ok, sha2:hmac_sha512(Key, Data)};
-hmac(Alg, Key, Data) ->
+hmac(TypeBin, Key, Data) ->
+    case hmac_type(TypeBin) of
+        undefined -> {error, bad_alg};
+        TypeAtom -> {ok, crypto:hmac(TypeAtom, Key, Data)}
+    end.
+
+hmac_type(?DNS_TSIG_ALG_MD5) -> md5;
+hmac_type(?DNS_TSIG_ALG_SHA1) -> sha;
+hmac_type(?DNS_TSIG_ALG_SHA224) -> sha224;
+hmac_type(?DNS_TSIG_ALG_SHA256) -> sha256;
+hmac_type(?DNS_TSIG_ALG_SHA384) -> sha384;
+hmac_type(?DNS_TSIG_ALG_SHA512) -> sha512;
+hmac_type(Alg) ->
     case dname_to_lower(Alg) of
-	Alg -> {error, bad_alg};
-	AlgLwr -> hmac(AlgLwr, Key, Data)
+        Alg -> undefined;
+        AlgLower -> hmac_type(AlgLower)
     end.
 
 %%%===================================================================
