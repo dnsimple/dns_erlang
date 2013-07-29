@@ -155,7 +155,10 @@ decode_message(<<Id:16, QR:1, OC:4, AA:1, TC:1, RD:1, RA:1, 0:1, AD:1, CD:1,
 		     auc = AUC,
 		     adc = ADC} of
 	#dns_message{} = Msg -> decode_message(questions, MsgBin, Rest, Msg)
-    catch _ -> {formerr, undefined, MsgBin} end.
+    catch _ -> {formerr, undefined, MsgBin} end;
+
+decode_message(<<_/binary>> = MsgBin) ->
+  {formerr, undefined, MsgBin}.
 
 decode_message(questions, MsgBin, QBody, #dns_message{qc = QC} = Msg) ->
     case decode_message_questions(QBody, QC, MsgBin) of
