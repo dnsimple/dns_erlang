@@ -61,8 +61,15 @@ serialise(dns_rrdata_dlv, Field, Value, Opts) ->
     serialise(dns_rrdata_ds, Field, Value, Opts);
 serialise(dns_rrdata_key, public_key, PublicKey, _Opts) ->
     {<<"public_key">>, base64:encode(iolist_to_binary(PublicKey))};
+serialise(dns_rrdata_dnskey, public_key, PublicKey, _Opts)
+  when is_binary(PublicKey) -> {<<"public_key">>, base64:encode(PublicKey)};
 serialise(dns_rrdata_dnskey, public_key, PublicKey, _Opts) ->
-    {<<"public_key">>, base64:encode(iolist_to_binary(PublicKey))};
+    PKMpint = [ begin
+                    BI = binary:encode_unsigned(I),
+                    L = byte_size(BI),
+                    <<L:32, BI/binary>>
+                end || I <- PublicKey ],
+    {<<"public_key">>, base64:encode(iolist_to_binary(PKMpint))};
 serialise(dns_rrdata_ds, digest, Digest, _Opts) ->
     {<<"digest">>, bin_to_hex(Digest)};
 serialise(dns_rrdata_ipseckey, gateway, Tuple, _Opts) when is_tuple(Tuple) ->
@@ -113,6 +120,16 @@ deserialise(Term, Opts) ->
 	    list_to_tuple([Tag|Values])
     end.
 
+deserialise_dnskey_publickey(PublicKeyB64) ->
+    PublicKey = base64:decode(PublicKeyB64),
+    deserialise_dnskey_publickey(PublicKey, PublicKey, []).
+
+deserialise_dnskey_publickey(_PK, <<>>, Ints) ->
+    lists:reverse(Ints);
+deserialise_dnskey_publickey(PK, <<L:32, I:L/unit:8, Rest/binary>>, Ints) ->
+    deserialise_dnskey_publickey(PK, Rest, [I|Ints]);
+deserialise_dnskey_publickey(PK, _, _) -> PK.
+
 deserialise(dns_message, _Field, Terms, Opts) when is_list(Terms) ->
     [ deserialise(Term, Opts) || Term <- Terms ];
 deserialise(dns_rr, data, Term, Opts) -> deserialise(Term, Opts);
@@ -129,12 +146,7 @@ deserialise(dns_rrdata_dlv, Field, Value, _Opts) ->
 deserialise(dns_rrdata_key, public_key, PublicKeyB64, _Opts) ->
     base64:decode(PublicKeyB64);
 deserialise(dns_rrdata_dnskey, public_key, PublicKeyB64, _Opts) ->
-    PublicKey = base64:decode(PublicKeyB64),
-    MPInts = [ <<X:32, Y/binary>> || <<X:32, Y:X/binary>> <= PublicKey ],
-    case iolist_to_binary(MPInts) of
-	PublicKey -> MPInts;
-	_ -> PublicKey
-    end;
+    deserialise_dnskey_publickey(PublicKeyB64);
 deserialise(dns_rrdata_ds, digest, Digest, _Opts) ->
     hex_to_bin(Digest);
 deserialise(dns_rrdata_ipseckey, gateway, Gateway, _Opts) ->

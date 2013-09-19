@@ -776,13 +776,9 @@ decode_rrdata(_Class, ?DNS_TYPE_DNSKEY, <<Flags:16, Protocol:8, AlgNum:8,
        AlgNum =:= ?DNS_ALG_RSASHA512 ->
     Key = case PublicKey of
 	      <<0, Len:16, Exp:Len/unit:8, ModBin/binary>> ->
-		  ModSize = byte_size(ModBin),
-		  <<Mod:ModSize/unit:8>> = ModBin,
-		  [crypto:mpint(Exp), crypto:mpint(Mod)];
+		  [Exp, binary:decode_unsigned(ModBin)];
 	      <<Len:8, Exp:Len/unit:8, ModBin/binary>> ->
-		  ModSize = byte_size(ModBin),
-		  <<Mod:ModSize/unit:8>> = ModBin,
-		  [crypto:mpint(Exp), crypto:mpint(Mod)]
+		  [Exp, binary:decode_unsigned(ModBin)]
 	  end,
     KeyTag = bin_to_key_tag(Bin),
     #dns_rrdata_dnskey{flags = Flags, protocol = Protocol, alg = AlgNum,
@@ -793,10 +789,7 @@ decode_rrdata(_Class, ?DNS_TYPE_DNSKEY, <<Flags:16, Protocol:8, AlgNum:8,
        andalso T =< 8 ->
     S = 64 + T * 8,
     <<P:S/unit:8, G:S/unit:8, Y:S/unit:8>> = KeyBin,
-    Key = [crypto:mpint(P),
-	   crypto:mpint(Q),
-	   crypto:mpint(G),
-	   crypto:mpint(Y)],
+    Key = [P, Q, G, Y],
     KeyTag = bin_to_key_tag(Bin),
     #dns_rrdata_dnskey{flags = Flags, protocol = Protocol, alg = AlgNum,
 		       public_key = Key, key_tag = KeyTag};
@@ -967,10 +960,8 @@ encode_rrdata(_Pos, _Class, #dns_rrdata_dnskey{flags = Flags,
        Alg =:= ?DNS_ALG_NSEC3RSASHA1 orelse
        Alg =:= ?DNS_ALG_RSASHA256 orelse
        Alg =:= ?DNS_ALG_RSASHA512 ->
-    <<_MSize:32, MBin0/binary>> = M,
-    MBin = strip_leading_zeros(MBin0),
-    <<_ESize:32, EBin0/binary>> = E,
-    EBin = strip_leading_zeros(EBin0),
+    MBin = strip_leading_zeros(binary:encode_unsigned(M)),
+    EBin = strip_leading_zeros(binary:encode_unsigned(E)),
     ESize = byte_size(EBin),
     PKBin =  if ESize =< 16#FF ->
 		     <<ESize:8, EBin:ESize/binary, MBin/binary>>;
@@ -985,9 +976,12 @@ encode_rrdata(_Pos, _Class, #dns_rrdata_dnskey{flags = Flags,
 					       public_key = PKM}, CompMap)
   when Alg =:= ?DNS_ALG_DSA orelse
        Alg =:= ?DNS_ALG_NSEC3DSA ->
-    [<<_MSize:32, MBin/binary>>, _, _, _] = PKM,
-    [P, Q, G, Y] = [ crypto:erlint(Mpint) || Mpint <- PKM ],
-    M = byte_size(strip_leading_zeros(MBin)),
+    [P, Q, G, Y] = [ case X of
+                         <<L:32, I:L/unit:8>> -> I;
+                         X when is_binary(X) -> binary:decode_unsigned(X);
+                         X when is_integer(X) -> X
+                     end || X <- PKM ],
+    M = byte_size(strip_leading_zeros(binary:encode_unsigned(P))),
     T = (M - 64) div 8,
     PKBin = <<T, Q:20/unit:8, P:M/unit:8, G:M/unit:8, Y:M/unit:8>>,
     {<<Flags:16, Protocol:8, Alg:8, PKBin/binary>>, CompMap};

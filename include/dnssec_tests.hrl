@@ -149,14 +149,13 @@ test_sample_key({Alg, Proplist}) ->
     test_sample_key(Alg, PrivKey, PubKey).
 
 test_sample_key(dsa, PrivKey, PubKey) ->
-    Sample = <<4:32,"1234">>,
-    Sig = crypto:dss_sign(Sample, PrivKey),
-    SigSize = byte_size(Sig),
-    crypto:dss_verify(Sample, <<SigSize:32, Sig/binary>>, PubKey);
+    Sample = <<"1234">>,
+    Sig = crypto:sign(dss, sha, Sample, PrivKey),
+    crypto:verify(dss, sha, Sample, Sig, PubKey);
 test_sample_key(rsa, PrivKey, PubKey) ->
-    Sample = <<4:32,"1234">>,
-    Cipher = crypto:rsa_private_encrypt(Sample, PrivKey, rsa_pkcs1_padding),
-    Sample =:= crypto:rsa_public_decrypt(Cipher, PubKey, rsa_pkcs1_padding).
+    Sample = <<"1234">>,
+    Cipher = crypto:private_encrypt(rsa, Sample, PrivKey, rsa_pkcs1_padding),
+    Sample =:= crypto:public_decrypt(rsa, Cipher, PubKey, rsa_pkcs1_padding).
 
 dnskey_pubkey_gen_test_() ->
     [ {ZoneName,
@@ -290,12 +289,12 @@ helper_samplekeypl_to_privkey(DSA, Proplist)
     Q = proplists:get_value(q, Proplist),
     G = proplists:get_value(g, Proplist),
     X = proplists:get_value(x, Proplist),
-    [P, Q, G, X];
+    [ I || <<L:32, I:L/unit:8>> <- [ P, Q, G, X] ];
 helper_samplekeypl_to_privkey(_RSA, Proplist) ->
     E = proplists:get_value(public_exp, Proplist),
     N = proplists:get_value(modulus, Proplist),
     D = proplists:get_value(private_exp, Proplist),
-    [E, N, D].
+    [ I || <<L:32, I:L/unit:8>> <- [ E, N, D] ].
 
 helper_samplekeypl_to_pubkey(Proplist) ->
     Alg = proplists:get_value(alg, Proplist),
@@ -307,28 +306,37 @@ helper_samplekeypl_to_pubkey(DSA, Proplist)
     Q = proplists:get_value(q, Proplist),
     G = proplists:get_value(g, Proplist),
     Y = proplists:get_value(y, Proplist),
-    [P, Q, G, Y];
+    [ I || <<L:32, I:L/unit:8>> <- [P, Q, G, Y] ];
 helper_samplekeypl_to_pubkey(_RSA, Proplist) ->
     E = proplists:get_value(public_exp, Proplist),
     N = proplists:get_value(modulus, Proplist),
-    [ E, N].
+    [ I || <<L:32, I:L/unit:8>> <-[ E, N] ].
 
-helper_pubkey_to_dnskey_pubkey(rsa,
-			       [<<ExpBinSize:32, ExpBin:ExpBinSize/binary>>,
-				<<ModBinSize:32, ModBin:ModBinSize/binary>>]) ->
-    case ExpBinSize > 255 of
-	true -> <<0, ExpBinSize:16, ExpBin/binary, ModBin/binary>>;
- 	false -> <<ExpBinSize:8, ExpBin/binary, ModBin/binary>>
+helper_strip_leading_zeros(<<0, Rest/binary>>) ->
+    helper_strip_leading_zeros(Rest);
+helper_strip_leading_zeros(B) -> B.
+
+helper_pubkey_to_dnskey_pubkey(rsa, [E, M]) ->
+    MBin = helper_strip_leading_zeros(binary:encode_unsigned(M)),
+    EBin = helper_strip_leading_zeros(binary:encode_unsigned(E)),
+    ESize = byte_size(EBin),
+    if ESize =< 16#FF ->
+            <<ESize:8, EBin:ESize/binary, MBin/binary>>;
+       ESize =< 16#FFFF ->
+            <<0, ESize:16, EBin:ESize/binary, MBin/binary>>;
+       true -> erlang:error(badarg)
     end;
-helper_pubkey_to_dnskey_pubkey(dsa, [P, Q, G, Y] = Key) ->
-    M = lists:max([ X || <<X:32, _:X/unit:8>> <- Key ]),
-    PI = crypto:erlint(P),
-    QI = crypto:erlint(Q),
-    GI = crypto:erlint(G),
-    YI = crypto:erlint(Y),
+helper_pubkey_to_dnskey_pubkey(dsa, Key) ->
+    {M, [P, Q, G, Y]} = lists:foldr(fun(<<L:32, I:L/unit:8>>, {MaxL, Ints}) ->
+                                            NewMaxL = case L > MaxL of
+                                                          true -> L;
+                                                          false -> MaxL
+                                                      end,
+                                            {NewMaxL, [I|Ints]}
+                                    end, {0,[]}, Key),
     T = (M - 64) div 8,
     M = 64 + T * 8,
-    <<T, QI:20/unit:8, PI:M/unit:8, GI:M/unit:8, YI:M/unit:8>>.
+    <<T, Q:20/unit:8, P:M/unit:8, G:M/unit:8, Y:M/unit:8>>.
 
 helper_add_keytag_to_dnskey(#dns_rrdata_dnskey{} = DNSKey) ->
     RR = #dns_rr{type = ?DNS_TYPE_DNSKEY, data = DNSKey},
