@@ -291,7 +291,7 @@ sign_rrset([#dns_rr{name = Name, class = Class, ttl = TTL}|_] = RRs,
     Signature = case Alg of
 		    Alg when Alg =:= ?DNS_ALG_DSA orelse
 			     Alg =:= ?DNS_ALG_NSEC3DSA ->
-			Asn1Sig = crypto:dss_sign(none, BaseSigInput, Key),
+			Asn1Sig = crypto:sign(dss, none, BaseSigInput, Key),
 			{R, S} = decode_asn1_dss_sig(Asn1Sig),
 			[ P, _Q, _G, _Y ] = Key,
 			T = (byte_size(P) - 64) div 8,
@@ -300,8 +300,8 @@ sign_rrset([#dns_rr{name = Name, class = Class, ttl = TTL}|_] = RRs,
 			     Alg =:= ?DNS_ALG_RSASHA1 orelse
 			     Alg =:= ?DNS_ALG_RSASHA256 orelse
 			     Alg =:= ?DNS_ALG_RSASHA512 ->
-			crypto:rsa_private_encrypt(BaseSigInput, Key,
-						   rsa_pkcs1_padding)
+			crypto:private_encrypt(rsa, BaseSigInput, Key,
+						rsa_pkcs1_padding)
 		end,
     Data = Data0#dns_rrdata_rrsig{signature = Signature},
     #dns_rr{name = Name, type = ?DNS_TYPE_RRSIG, class = Class, ttl = TTL,
@@ -351,14 +351,14 @@ verify_rrsig(#dns_rr{type = ?DNS_TYPE_RRSIG, data = Data}, RRs, RRDNSKey,
 		      AsnSig = encode_asn1_dss_sig(R, S),
 		      AsnSigSize = byte_size(AsnSig),
 		      AsnBin = <<AsnSigSize:32, AsnSig/binary>>,
-		      crypto:dss_verify(SigInput, AsnBin, Key);
+		      crypto:verify(dss, none, SigInput, AsnBin, Key);
 		 ({_, Alg, Key})
 		    when Alg =:= ?DNS_ALG_NSEC3RSASHA1 orelse
 			 Alg =:= ?DNS_ALG_RSASHA1 orelse
 			 Alg =:= ?DNS_ALG_RSASHA256 orelse
 			 Alg =:= ?DNS_ALG_RSASHA512 ->
-		      SigPayload = try crypto:rsa_public_decrypt(
-					 Sig, Key, rsa_pkcs1_padding)
+		      SigPayload = try crypto:public_decrypt(
+					 rsa, Sig, Key, rsa_pkcs1_padding)
 				   catch error:decrypt_failed -> undefined end,
 		      SigInput =:= SigPayload;
 		 (_) -> false
