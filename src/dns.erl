@@ -366,11 +366,11 @@ encode_message_tsig_size(Name, Alg, Other) ->
     DataSize = AlgSize + 16 + MACSize + OtherSize,
     NameSize + 10 + DataSize.
 
-encode_message_default(#dns_message{additional = Ad} = Msg, MaxSize) ->
+encode_message_default(#dns_message{tc = TC, additional = Ad} = Msg, MaxSize) ->
     BuildHead = fun(TCBool, EncQC, EncANC, EncAUC, EncADC) ->
 			Msg0 = Msg#dns_message{qc = EncQC, anc = EncANC,
 					       auc = EncAUC, adc = EncADC,
-					       tc = encode_bool(TCBool)},
+					       tc = encode_bool(case TC of true -> true; _ -> TCBool end)},
 			encode_message_head(Msg0)
 		end,
     {OptRRBin, Ad0} = encode_message_pop_optrr(Ad),
