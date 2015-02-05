@@ -527,5 +527,5 @@ decode_asn1_dss_sig(Bin) when is_binary(Bin) ->
 
 encode_asn1_dss_sig(R, S) when is_integer(R) andalso is_integer(S) ->
     Rec = #'DSS-Sig'{r = R, s = S},
-    {ok, List} = asn1rt:encode('DNS-ASN1', 'DSS-Sig', Rec),
+    {ok, List} = 'DNS-ASN1':encode('DSS-Sig', Rec),
     iolist_to_binary(List).
