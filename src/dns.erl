@@ -1653,10 +1653,10 @@ alg_name(Int) when is_integer(Int) ->
 %% @doc Return current unix time.
 -spec unix_time() -> unix_time().
 unix_time() ->
-    unix_time(now()).
+    unix_time(erlang:timestamp()).
 
 %% @doc Return the unix time from a now or universal time.
--spec unix_time(erlang:now() | calendar:datetime1970()) -> unix_time().
+-spec unix_time(erlang:timestamp() | calendar:datetime1970()) -> unix_time().
 unix_time({_MegaSecs, _Secs, _MicroSecs} = NowTime) ->
     UniversalTime = calendar:now_to_universal_time(NowTime),
     unix_time(UniversalTime);
