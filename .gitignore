@@ -9,3 +9,7 @@ deps
 .DS_Store
 src/DNS-ASN1.*
 include/DNS-ASN1.hrl
+./rebar3
+rebar.lock
+_build
+asn1_gen

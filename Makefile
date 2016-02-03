@@ -1,5 +1,5 @@
-REBAR:=$(shell which rebar || echo ./rebar)
-REBAR_URL:="https://github.com/downloads/basho/rebar/rebar"
+REBAR:=$(shell which rebar3 || echo ./rebar3)
+REBAR_URL:="https://github.com/downloads/basho/rebar/rebar3"
 
 gh-pages : TMPDIR := $(shell mktemp -d -t dns_erlang.gh-pages.XXXX)
 gh-pages : BRANCH := $(shell git branch 2> /dev/null | sed -e '/^[^*]/d' -e 's/* \(.*\)/\1 /')
@@ -8,7 +8,7 @@ gh-pages : VERSION := $(shell sed -n 's/.*{vsn,.*"\(.*\)"}.*/\1/p' src/dns.app.s
 
 .PHONY: all doc clean test
 
-all: deps compile
+all: compile
 
 $(REBAR):
 	@echo "No rebar was found so a copy will be downloaded in 5 seconds."
@@ -28,9 +28,6 @@ init:stop(Status)."
 
 compile: $(REBAR)
 	@$(REBAR) compile
-
-deps: $(REBAR)
-	@$(REBAR) get-deps
 
 doc: $(REBAR)
 	@$(REBAR) doc skip_deps=true
