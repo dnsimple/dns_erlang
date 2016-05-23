@@ -196,7 +196,7 @@ hex_to_bin(Bin) when is_binary(Bin) ->
 -ifdef(TEST).
 
 dnssec_cases() ->
-    {ok, Cases} = file:consult("../priv/dnssec_samples.txt"),
+    {ok, Cases} = file:consult("priv/dnssec_samples.txt"),
     [ {ZoneName, dns:decode_message(Bin)}
       || {ZoneName, _RawKeys, Bin} <- Cases ].
 
@@ -215,12 +215,12 @@ optrr_cases() ->
 		 #dns_opt_unknown{id = 1, bin = <<222,173,192,222>>}] ].
 
 rrdata_cases() ->
-    {ok, Cases} = file:consult("../priv/rrdata_wire_samples.txt"),
+    {ok, Cases} = file:consult("priv/rrdata_wire_samples.txt"),
     [ {lists:flatten(io_lib:format("~p/~p", [Class, Type])),
        dns:decode_rrdata(Class, Type, Bin)} || {Class, Type, Bin} <- Cases ].
 
 tsig_cases() ->
-    {ok, Cases} = file:consult("../priv/tsig_wire_samples.txt"),
+    {ok, Cases} = file:consult("priv/tsig_wire_samples.txt"),
     [ {Name, dns:decode_message(Msg)} || {Name, Msg} <- Cases ].
 
 tests(Cases, Serialise, Deserialise) ->

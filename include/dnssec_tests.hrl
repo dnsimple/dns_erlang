@@ -188,7 +188,7 @@ dnskey_pubkey_gen_test_() ->
 				zsk_pl = ZSK_PL} <- helper_test_samples() ].
 
 helper_test_samples() ->
-    Path = "../priv/dnssec_samples.txt",
+    Path = "priv/dnssec_samples.txt",
     {ok, Terms} = file:consult(Path),
     DecodeKeyProplistTuple = fun({alg, _}=Tuple) -> Tuple;
 				({flags, _}=Tuple) -> Tuple;

@@ -144,7 +144,7 @@ tsig_wire_test_() ->
     Now = 1292459455,
     Keyname = <<"key.name">>,
     Secret = base64:decode(<<"8F1BRL+xp3gNW1GfbSnlUuvUtxQ=">>),
-    {ok, Cases} = file:consult("../priv/tsig_wire_samples.txt"),
+    {ok, Cases} = file:consult("priv/tsig_wire_samples.txt"),
     [ {Alg,
        ?_test(
 	  begin
@@ -161,7 +161,7 @@ tsig_wire_test_() ->
 %%%===================================================================
 
 decode_encode_rrdata_wire_samples_test_() ->
-    {ok, Cases} = file:consult("../priv/rrdata_wire_samples.txt"),
+    {ok, Cases} = file:consult("priv/rrdata_wire_samples.txt"),
     ToTestName = fun({Class, Type, Bin}) ->
 			 Fmt = "~p/~p/~n~p",
 			 Args = [Class, Type, Bin],
@@ -313,12 +313,12 @@ dname_preserve_dot_test_() ->
 %%%===================================================================
 
 class_name_test_() ->
-    {ok, Cases} = file:consult("../priv/rrdata_wire_samples.txt"),
+    {ok, Cases} = file:consult("priv/rrdata_wire_samples.txt"),
     Classes = sets:to_list(sets:from_list([ C || {C,_,_} <- Cases ])),
     [ ?_assertEqual(true, is_binary(dns:class_name(C))) || C <- Classes ].
 
 type_name_test_() ->
-    {ok, Cases} = file:consult("../priv/rrdata_wire_samples.txt"),
+    {ok, Cases} = file:consult("priv/rrdata_wire_samples.txt"),
     Types = sets:to_list(sets:from_list([ T || {_,T,_} <- Cases ])),
     [ ?_assertEqual(T =/= 999, is_binary(dns:type_name(T))) || T <- Types ].
 

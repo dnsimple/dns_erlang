@@ -1,0 +1,4 @@
+[{<<"base32">>,
+  {git,"https://github.com/aetrion/base32_erlang.git",
+       {ref,"40431a7480176b24863e18b92d9872e54c714df5"}},
+  0}].
