@@ -63,7 +63,7 @@
 -type label() :: binary().
 -type class() :: 0..65535.
 -type type() :: 0..65535.
--type ttl() :: 0..65535.
+-type ttl() :: 0..2147483647.
 -type rrdata() :: binary()
 		| #dns_rrdata_a{}
 		| #dns_rrdata_aaaa{}
