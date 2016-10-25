@@ -33,6 +33,7 @@
 -record(dns_rrdata_a, {ip}).
 -record(dns_rrdata_aaaa, {ip}).
 -record(dns_rrdata_afsdb, {subtype, hostname}).
+-record(dns_rrdata_caa, {flags, tag, value}).
 -record(dns_rrdata_cert, {type, key_tag, alg, cert}).
 -record(dns_rrdata_cname, {dname}).
 -record(dns_rrdata_dhcid, {data}).

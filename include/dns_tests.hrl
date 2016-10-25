@@ -189,7 +189,9 @@ decode_encode_rrdata_test_() ->
 	      {?DNS_TYPE_MG, #dns_rrdata_mg{madname = <<"example.com">>}},
 	      {?DNS_TYPE_MINFO, #dns_rrdata_minfo{rmailbx = <<"a.b">>,
 						  emailbx = <<"c.d">>}},
-	      {?DNS_TYPE_MR, #dns_rrdata_mr{newname = <<"example.com">>}} ],
+	      {?DNS_TYPE_MR, #dns_rrdata_mr{newname = <<"example.com">>}},
+              {?DNS_TYPE_CAA, #dns_rrdata_caa{flags = 0, tag = <<"issue">>, value = <<"letsencrypt.org">>}}
+            ],
     [ ?_test(
 	 begin
 	     {Encoded, _NewCompMap} = encode_rrdata(0, ?DNS_CLASS_IN, Data,

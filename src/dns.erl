@@ -68,6 +68,7 @@
 		| #dns_rrdata_a{}
 		| #dns_rrdata_aaaa{}
 		| #dns_rrdata_afsdb{}
+		| #dns_rrdata_caa{}
 		| #dns_rrdata_cert{}
 		| #dns_rrdata_cname{}
 		| #dns_rrdata_dhcid{}
@@ -755,6 +756,9 @@ decode_rrdata(Class, ?DNS_TYPE_AAAA,
 decode_rrdata(_Class, ?DNS_TYPE_AFSDB, <<Subtype:16, Bin/binary>>, MsgBin) ->
     #dns_rrdata_afsdb{subtype = Subtype,
 		      hostname = decode_dnameonly(Bin, MsgBin)};
+decode_rrdata(_Class, ?DNS_TYPE_CAA, <<Flags:8, Len:8, Bin/binary>>, _MsgBin) ->
+    <<Tag:Len/binary, Value/binary>> = Bin,
+    #dns_rrdata_caa{flags = Flags, tag = Tag, value = Value};
 decode_rrdata(_Class, ?DNS_TYPE_CERT, <<Type:16, KeyTag:16, Alg, Bin/binary>>,
 	      _MsgBin) ->
     #dns_rrdata_cert{type = Type, key_tag = KeyTag, alg = Alg, cert = Bin};
@@ -939,6 +943,9 @@ encode_rrdata(_Pos, _Class, #dns_rrdata_afsdb{subtype = Subtype,
 					      hostname = Hostname}, CompMap) ->
     HostnameBin = encode_dname(Hostname),
     {<<Subtype:16, HostnameBin/binary>>, CompMap};
+encode_rrdata(_Pos, _Class, #dns_rrdata_caa{flags = Flags, tag = Tag, value = Value}, CompMap) ->
+    Len = size(Tag),
+    {<<Flags:8, Len:8, Tag/binary, Value/binary>>, CompMap};
 encode_rrdata(_Pos, _Class, #dns_rrdata_cert{type = Type, key_tag = KeyTag,
 					     alg = Alg, cert = Bin}, CompMap) ->
     {<<Type:16, KeyTag:16, Alg, Bin/binary>>, CompMap};
