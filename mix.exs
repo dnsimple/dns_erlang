@@ -3,7 +3,7 @@ defmodule DNS.Mixfile do
 
   def project do
     [app: :dns,
-     version: "0.0.1",
+     version: "0.1.0",
      elixir: "~> 1.4",
      compilers: [:asn1, :erlang] ++ Mix.compilers,
      build_embedded: Mix.env == :prod,
@@ -15,8 +15,8 @@ defmodule DNS.Mixfile do
   #
   # Type `mix help compile.app` for more information.
   def application do
-    [mod: {DNS, []},
-     applications: [:base32]]
+    [#mod: {:dns, []},
+     applications: [:kernel, :stdlib, :crypto, :base32]]
   end
 
 
