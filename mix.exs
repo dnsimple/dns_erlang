@@ -25,7 +25,7 @@ defmodule DNS.Mixfile do
   # Type `mix help deps` for examples and options.
   defp deps do
     [
-        {:base32, github: "aetrion/base32_erlang", branch: :master},
+        {:base32, github: "dnsimple/base32_erlang", branch: :master},
         {:asn1ex, github: "T0ha/asn1ex", branch: "master"}
     ]
   end
