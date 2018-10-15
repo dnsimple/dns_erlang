@@ -604,7 +604,7 @@ encode_message_pop_optrr(Other) -> {<<>>, Other}.
 
 %% @doc Returns a random integer suitable for use as DNS message identifier.
 -spec random_id() -> message_id().
-random_id() -> crypto:rand_uniform(0, 65535).
+random_id() -> rand:uniform(65535).
 
 %%%===================================================================
 %%% TSIG functions
