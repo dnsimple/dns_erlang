@@ -219,19 +219,19 @@ decode_encode_optdata_test_() ->
 
 decode_encode_optdata_owner_test_() ->
     application:start(crypto),
-    Cases = [ #dns_opt_owner{seq = crypto:rand_uniform(0, 255),
+    Cases = [ #dns_opt_owner{seq = rand:uniform(255),
 			     primary_mac = crypto:strong_rand_bytes(6),
 			     wakeup_mac = crypto:strong_rand_bytes(6),
 			     password = crypto:strong_rand_bytes(6)},
-	      #dns_opt_owner{seq = crypto:rand_uniform(0, 255),
+	      #dns_opt_owner{seq = rand:uniform(255),
 			     primary_mac = crypto:strong_rand_bytes(6),
 			     wakeup_mac = crypto:strong_rand_bytes(6),
 			     password = crypto:strong_rand_bytes(4)},
-	      #dns_opt_owner{seq = crypto:rand_uniform(0, 255),
+	      #dns_opt_owner{seq = rand:uniform(255),
 			     primary_mac = crypto:strong_rand_bytes(6),
 			     wakeup_mac = crypto:strong_rand_bytes(6),
 			     _ = <<>>},
-	      #dns_opt_owner{seq = crypto:rand_uniform(0, 255),
+	      #dns_opt_owner{seq = rand:uniform(255),
 			     primary_mac = crypto:strong_rand_bytes(6),
 			     _ = <<>>} ],
     [ ?_assertEqual([Case], decode_optrrdata(encode_optrrdata([Case])))
