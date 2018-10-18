@@ -168,7 +168,7 @@ gen_nsec3(RRs, ZoneName, Alg, Salt, Iterations, TTL, Class, Opts) ->
 	 non_neg_integer()) -> binary().
 ih(H, Salt, X, 0) when is_function(H, 1) -> H([X, Salt]);
 ih(H, Salt, X, I) when is_function(H, 1) -> ih(H, Salt, H([X, Salt]), I - 1);
-ih(?DNSSEC_NSEC3_ALG_SHA1, Salt, X, I) -> ih(fun crypto:sha/1, Salt, X, I).
+ih(?DNSSEC_NSEC3_ALG_SHA1, Salt, X, I) -> ih(fun (Data) -> crypto:hash(sha, Data) end, Salt, X, I).
 
 add_next_hash([#dns_rr{data = #dns_rrdata_nsec3{hash = First}}|_] = Hashes) ->
     add_next_hash(Hashes, [], First).
