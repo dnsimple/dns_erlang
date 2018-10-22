@@ -11,3 +11,4 @@ src/DNS-ASN1.*
 include/DNS-ASN1.hrl
 _build
 
+asngen
