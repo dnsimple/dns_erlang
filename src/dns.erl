@@ -49,7 +49,7 @@
 -type decode_error() :: 'formerr' | 'truncated' | 'trailing_garbage'.
 -type message() :: #dns_message{}.
 -type message_bin() :: <<_:64,_:_*8>>.
--type message_id() :: 0..65535.
+-type message_id() :: 1..65535.
 -type opcode() :: 0..16.
 -type rcode() :: 0..65535.
 -type 'query'() :: #dns_query{}.
