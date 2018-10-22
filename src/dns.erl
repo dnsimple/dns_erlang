@@ -69,6 +69,7 @@
 		| #dns_rrdata_aaaa{}
 		| #dns_rrdata_afsdb{}
 		| #dns_rrdata_caa{}
+		| #dns_rrdata_cds{}
 		| #dns_rrdata_cert{}
 		| #dns_rrdata_cname{}
 		| #dns_rrdata_dhcid{}
@@ -805,6 +806,8 @@ decode_rrdata(_Class, ?DNS_TYPE_DS, <<KeyTag:16, Alg:8, DigestType:8,
 				      Digest/binary>>, _MsgBin) ->
     #dns_rrdata_ds{keytag = KeyTag, alg = Alg, digest_type = DigestType,
 		   digest = Digest};
+decode_rrdata(_Class, ?DNS_TYPE_CDS, Data, MsgBin) ->
+  decode_rrdata(_Class, ?DNS_TYPE_DS, Data, MsgBin);
 decode_rrdata(_Class, ?DNS_TYPE_HINFO, Bin, _BodyBin) ->
     [CPU, OS] = decode_txt(Bin),
     #dns_rrdata_hinfo{cpu = CPU, os = OS};
@@ -998,6 +1001,10 @@ encode_rrdata(_Pos, _Class, #dns_rrdata_dnskey{flags = Flags,
 					       public_key=PK}, CompMap) ->
     {<<Flags:16, Protocol:8, Alg:8, PK/binary>>, CompMap};
 encode_rrdata(_Pos, _Class, #dns_rrdata_ds{keytag = KeyTag, alg = Alg,
+					   digest_type = DigestType,
+					   digest = Digest}, CompMap) ->
+    {<<KeyTag:16, Alg:8, DigestType:8, Digest/binary>>, CompMap};
+encode_rrdata(_Pos, _Class, #dns_rrdata_cds{keytag = KeyTag, alg = Alg,
 					   digest_type = DigestType,
 					   digest = Digest}, CompMap) ->
     {<<KeyTag:16, Alg:8, DigestType:8, Digest/binary>>, CompMap};
