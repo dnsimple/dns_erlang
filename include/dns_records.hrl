@@ -41,6 +41,7 @@
 -record(dns_rrdata_dname, {dname}).
 -record(dns_rrdata_dnskey, {flags, protocol, alg, public_key, key_tag}).
 -record(dns_rrdata_ds, {keytag, alg, digest_type, digest}).
+-record(dns_rrdata_cds, {keytag, alg, digest_type, digest}).
 -record(dns_rrdata_hinfo, {cpu, os}).
 -record(dns_rrdata_ipseckey, {precedence,
 			      alg,
