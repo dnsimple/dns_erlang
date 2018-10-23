@@ -70,6 +70,7 @@
 		| #dns_rrdata_afsdb{}
 		| #dns_rrdata_caa{}
 		| #dns_rrdata_cds{}
+		| #dns_rrdata_cdnskey{}
 		| #dns_rrdata_cert{}
 		| #dns_rrdata_cname{}
 		| #dns_rrdata_dhcid{}
@@ -801,6 +802,35 @@ decode_rrdata(_Class, ?DNS_TYPE_DNSKEY, <<Flags:16, Protocol:8, AlgNum:8,
 decode_rrdata(_Class, ?DNS_TYPE_DNSKEY, <<Flags:16, Protocol:8, AlgNum:8,
 				PublicKey/binary>> = Bin, _MsgBin) ->
     #dns_rrdata_dnskey{flags = Flags, protocol = Protocol, alg = AlgNum,
+		       public_key = PublicKey, key_tag = bin_to_key_tag(Bin)};
+decode_rrdata(_Class, ?DNS_TYPE_CDNSKEY, <<Flags:16, Protocol:8, AlgNum:8,
+				PublicKey/binary>> = Bin, _MsgBin)
+  when AlgNum =:= ?DNS_ALG_RSASHA1 orelse
+       AlgNum =:= ?DNS_ALG_NSEC3RSASHA1 orelse
+       AlgNum =:= ?DNS_ALG_RSASHA256 orelse
+       AlgNum =:= ?DNS_ALG_RSASHA512 ->
+    Key = case PublicKey of
+	      <<0, Len:16, Exp:Len/unit:8, ModBin/binary>> ->
+		  [Exp, binary:decode_unsigned(ModBin)];
+	      <<Len:8, Exp:Len/unit:8, ModBin/binary>> ->
+		  [Exp, binary:decode_unsigned(ModBin)]
+	  end,
+    KeyTag = bin_to_key_tag(Bin),
+    #dns_rrdata_cdnskey{flags = Flags, protocol = Protocol, alg = AlgNum,
+		       public_key = Key, key_tag = KeyTag};
+decode_rrdata(_Class, ?DNS_TYPE_CDNSKEY, <<Flags:16, Protocol:8, AlgNum:8,
+				T, Q:20/unit:8, KeyBin/binary>> = Bin, _MsgBin)
+  when (AlgNum =:= ?DNS_ALG_DSA orelse AlgNum =:= ?DNS_ALG_NSEC3DSA)
+       andalso T =< 8 ->
+    S = 64 + T * 8,
+    <<P:S/unit:8, G:S/unit:8, Y:S/unit:8>> = KeyBin,
+    Key = [P, Q, G, Y],
+    KeyTag = bin_to_key_tag(Bin),
+    #dns_rrdata_cdnskey{flags = Flags, protocol = Protocol, alg = AlgNum,
+		       public_key = Key, key_tag = KeyTag};
+decode_rrdata(_Class, ?DNS_TYPE_CDNSKEY, <<Flags:16, Protocol:8, AlgNum:8,
+				PublicKey/binary>> = Bin, _MsgBin) ->
+    #dns_rrdata_cdnskey{flags = Flags, protocol = Protocol, alg = AlgNum,
 		       public_key = PublicKey, key_tag = bin_to_key_tag(Bin)};
 decode_rrdata(_Class, ?DNS_TYPE_DS, <<KeyTag:16, Alg:8, DigestType:8,
 				      Digest/binary>>, _MsgBin) ->
@@ -1541,6 +1571,7 @@ type_name(Int) when is_integer(Int) ->
 	?DNS_TYPE_RRSIG_NUMBER -> ?DNS_TYPE_RRSIG_BSTR;
 	?DNS_TYPE_NSEC_NUMBER -> ?DNS_TYPE_NSEC_BSTR;
 	?DNS_TYPE_DNSKEY_NUMBER -> ?DNS_TYPE_DNSKEY_BSTR;
+	?DNS_TYPE_CDNSKEY_NUMBER -> ?DNS_TYPE_CDNSKEY_BSTR;
 	?DNS_TYPE_NSEC3_NUMBER -> ?DNS_TYPE_NSEC3_BSTR;
 	?DNS_TYPE_NSEC3PARAM_NUMBER -> ?DNS_TYPE_NSEC3PARAM_BSTR;
 	?DNS_TYPE_DHCID_NUMBER -> ?DNS_TYPE_DHCID_BSTR;
