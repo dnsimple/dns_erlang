@@ -69,8 +69,8 @@
 		| #dns_rrdata_aaaa{}
 		| #dns_rrdata_afsdb{}
 		| #dns_rrdata_caa{}
-		| #dns_rrdata_cds{}
 		| #dns_rrdata_cdnskey{}
+		| #dns_rrdata_cds{}
 		| #dns_rrdata_cert{}
 		| #dns_rrdata_cname{}
 		| #dns_rrdata_dhcid{}
