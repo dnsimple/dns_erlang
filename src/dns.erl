@@ -836,8 +836,10 @@ decode_rrdata(_Class, ?DNS_TYPE_DS, <<KeyTag:16, Alg:8, DigestType:8,
 				      Digest/binary>>, _MsgBin) ->
     #dns_rrdata_ds{keytag = KeyTag, alg = Alg, digest_type = DigestType,
 		   digest = Digest};
-decode_rrdata(_Class, ?DNS_TYPE_CDS, Data, MsgBin) ->
-  decode_rrdata(_Class, ?DNS_TYPE_DS, Data, MsgBin);
+decode_rrdata(_Class, ?DNS_TYPE_CDS, <<KeyTag:16, Alg:8, DigestType:8,
+				      Digest/binary>>, _MsgBin) ->
+    #dns_rrdata_cds{keytag = KeyTag, alg = Alg, digest_type = DigestType,
+		   digest = Digest};
 decode_rrdata(_Class, ?DNS_TYPE_HINFO, Bin, _BodyBin) ->
     [CPU, OS] = decode_txt(Bin),
     #dns_rrdata_hinfo{cpu = CPU, os = OS};
