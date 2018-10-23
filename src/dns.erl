@@ -833,13 +833,13 @@ decode_rrdata(_Class, ?DNS_TYPE_CDNSKEY, <<Flags:16, Protocol:8, AlgNum:8,
     #dns_rrdata_cdnskey{flags = Flags, protocol = Protocol, alg = AlgNum,
 		       public_key = PublicKey, key_tag = bin_to_key_tag(Bin)};
 decode_rrdata(_Class, ?DNS_TYPE_DS, <<KeyTag:16, Alg:8, DigestType:8,
-				      Digest/binary>>, _MsgBin) ->
+              Digest/binary>>, _MsgBin) ->
     #dns_rrdata_ds{keytag = KeyTag, alg = Alg, digest_type = DigestType,
-		   digest = Digest};
+       digest = Digest};
 decode_rrdata(_Class, ?DNS_TYPE_CDS, <<KeyTag:16, Alg:8, DigestType:8,
-				      Digest/binary>>, _MsgBin) ->
+              Digest/binary>>, _MsgBin) ->
     #dns_rrdata_cds{keytag = KeyTag, alg = Alg, digest_type = DigestType,
-		   digest = Digest};
+       digest = Digest};
 decode_rrdata(_Class, ?DNS_TYPE_HINFO, Bin, _BodyBin) ->
     [CPU, OS] = decode_txt(Bin),
     #dns_rrdata_hinfo{cpu = CPU, os = OS};
@@ -1605,6 +1605,7 @@ type_name(Int) when is_integer(Int) ->
 	?DNS_TYPE_OPT_NUMBER -> ?DNS_TYPE_OPT_BSTR;
 	?DNS_TYPE_APL_NUMBER -> ?DNS_TYPE_APL_BSTR;
 	?DNS_TYPE_DS_NUMBER -> ?DNS_TYPE_DS_BSTR;
+	?DNS_TYPE_CDS_NUMBER -> ?DNS_TYPE_CDS_BSTR;
 	?DNS_TYPE_SSHFP_NUMBER -> ?DNS_TYPE_SSHFP_BSTR;
         ?DNS_TYPE_CAA_NUMBER -> ?DNS_TYPE_CAA_BSTR;
 	?DNS_TYPE_IPSECKEY_NUMBER -> ?DNS_TYPE_IPSECKEY_BSTR;
