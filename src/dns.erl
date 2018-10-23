@@ -1032,6 +1032,44 @@ encode_rrdata(_Pos, _Class, #dns_rrdata_dnskey{flags = Flags,
 					       alg = Alg,
 					       public_key=PK}, CompMap) ->
     {<<Flags:16, Protocol:8, Alg:8, PK/binary>>, CompMap};
+encode_rrdata(_Pos, _Class, #dns_rrdata_cdnskey{flags = Flags,
+					       protocol = Protocol,
+					       alg = Alg,
+					       public_key = [E, M]}, CompMap)
+  when Alg =:= ?DNS_ALG_RSASHA1 orelse
+       Alg =:= ?DNS_ALG_NSEC3RSASHA1 orelse
+       Alg =:= ?DNS_ALG_RSASHA256 orelse
+       Alg =:= ?DNS_ALG_RSASHA512 ->
+    MBin = strip_leading_zeros(binary:encode_unsigned(M)),
+    EBin = strip_leading_zeros(binary:encode_unsigned(E)),
+    ESize = byte_size(EBin),
+    PKBin =  if ESize =< 16#FF ->
+		     <<ESize:8, EBin:ESize/binary, MBin/binary>>;
+		ESize =< 16#FFFF ->
+		     <<0, ESize:16, EBin:ESize/binary, MBin/binary>>;
+		true -> erlang:error(badarg)
+	     end,
+    {<<Flags:16, Protocol:8, Alg:8, PKBin/binary>>, CompMap};
+encode_rrdata(_Pos, _Class, #dns_rrdata_cdnskey{flags = Flags,
+					       protocol = Protocol,
+					       alg = Alg,
+					       public_key = PKM}, CompMap)
+  when Alg =:= ?DNS_ALG_DSA orelse
+       Alg =:= ?DNS_ALG_NSEC3DSA ->
+    [P, Q, G, Y] = [ case X of
+                         <<L:32, I:L/unit:8>> -> I;
+                         X when is_binary(X) -> binary:decode_unsigned(X);
+                         X when is_integer(X) -> X
+                     end || X <- PKM ],
+    M = byte_size(strip_leading_zeros(binary:encode_unsigned(P))),
+    T = (M - 64) div 8,
+    PKBin = <<T, Q:20/unit:8, P:M/unit:8, G:M/unit:8, Y:M/unit:8>>,
+    {<<Flags:16, Protocol:8, Alg:8, PKBin/binary>>, CompMap};
+encode_rrdata(_Pos, _Class, #dns_rrdata_cdnskey{flags = Flags,
+					       protocol = Protocol,
+					       alg = Alg,
+					       public_key=PK}, CompMap) ->
+    {<<Flags:16, Protocol:8, Alg:8, PK/binary>>, CompMap};
 encode_rrdata(_Pos, _Class, #dns_rrdata_ds{keytag = KeyTag, alg = Alg,
 					   digest_type = DigestType,
 					   digest = Digest}, CompMap) ->
