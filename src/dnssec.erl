@@ -25,7 +25,7 @@
 -export([sign_rr/5, sign_rr/6]).
 -export([sign_rrset/5, sign_rrset/6]).
 -export([verify_rrsig/4]).
--export([add_keytag_to_dnskey/1]).
+-export([add_keytag_to_dnskey/1, add_keytag_to_cdnskey/1]).
 -export([canonical_rrdata_form/1]).
 -export([ih/4]).
 
@@ -415,6 +415,13 @@ add_keytag_to_dnskey(#dns_rr{type = ?DNS_TYPE_DNSKEY,
 			     data = #dns_rrdata_dnskey{} = Data} = RR) ->
     KeyBin = dns:encode_rrdata(in, Data),
     NewData = dns:decode_rrdata(?DNS_CLASS_IN, ?DNS_TYPE_DNSKEY, KeyBin),
+    RR#dns_rr{data = NewData}.
+
+-spec add_keytag_to_cdnskey(dns:rr()) -> dns:rr().
+add_keytag_to_cdnskey(#dns_rr{type = ?DNS_TYPE_CDNSKEY,
+			     data = #dns_rrdata_cdnskey{} = Data} = RR) ->
+    KeyBin = dns:encode_rrdata(in, Data),
+    NewData = dns:decode_rrdata(?DNS_CLASS_IN, ?DNS_TYPE_CDNSKEY, KeyBin),
     RR#dns_rr{data = NewData}.
 
 rrsig_to_digestable(#dns_rrdata_rrsig{} = Data) ->
