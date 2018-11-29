@@ -1,4 +1,16 @@
-{ok, Version} = application:get_key(rebar, vsn),
+{ok, Version} = case application:get_env(rebar, vsn) of
+                    {ok, VSN} ->
+                        VSN;
+                    undefined ->
+                        %% is mix used
+                        {ok, "3"}
+                        % case lists:keymember(mix, 1, application:loaded_applications()) of
+                        %     true ->
+                        %         {ok, "3"};
+                        %     _ ->
+                        %         undefined
+                        % end
+                end,
 Fun =
     fun
         ({erl_opts, ErlOpts})  ->
