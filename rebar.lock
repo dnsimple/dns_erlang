@@ -1,4 +1,4 @@
 [{<<"base32">>,
   {git,"https://github.com/dnsimple/base32_erlang.git",
-       {ref,"8b1ebce8895662b05970f481c9ce1a9f44add50b"}},
+       {ref,"40431a7480176b24863e18b92d9872e54c714df5"}},
   0}].

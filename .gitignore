@@ -1,3 +1,5 @@
+rebar3
+.rebar3
 .eunit
 doc
 ebin
