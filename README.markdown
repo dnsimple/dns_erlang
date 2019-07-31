@@ -8,7 +8,7 @@ This library exposes types via `include/dns.hrl`, which in turn includes `includ
 
 This is a library, not a DNS server. It is meant to be used by Erlang-based DNS servers for low level packet handling and RR processing.
 
-If you'd like to see a full example of `dns_erlang` in use, please have a look at [erldns](https://github.com/aetrion/erl-dns).
+If you'd like to see a full example of `dns_erlang` in use, please have a look at [erldns](https://github.com/dnsimple/erldns).
 
 ## Details
 
