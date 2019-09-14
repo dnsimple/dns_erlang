@@ -46,3 +46,4 @@ gh-pages: $(REBAR) test doc
 
 test: $(REBAR) all
 	@$(REBAR) eunit skip_deps=true
+	@$(REBAR) dialyzer

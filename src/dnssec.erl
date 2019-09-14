@@ -291,7 +291,7 @@ sign_rrset([#dns_rr{name = Name, class = Class, ttl = TTL}|_] = RRs,
     Signature = case Alg of
 		    Alg when Alg =:= ?DNS_ALG_DSA orelse
 			     Alg =:= ?DNS_ALG_NSEC3DSA ->
-			Asn1Sig = crypto:sign(dss, none, BaseSigInput, Key),
+			Asn1Sig = crypto:sign(dss, sha, BaseSigInput, Key),
 			{R, S} = decode_asn1_dss_sig(Asn1Sig),
 			[ P, _Q, _G, _Y ] = Key,
 			T = (byte_size(P) - 64) div 8,
@@ -351,7 +351,7 @@ verify_rrsig(#dns_rr{type = ?DNS_TYPE_RRSIG, data = Data}, RRs, RRDNSKey,
 		      AsnSig = encode_asn1_dss_sig(R, S),
 		      AsnSigSize = byte_size(AsnSig),
 		      AsnBin = <<AsnSigSize:32, AsnSig/binary>>,
-		      crypto:verify(dss, none, SigInput, AsnBin, Key);
+		      crypto:verify(dss, sha, SigInput, AsnBin, Key);
 		 ({_, Alg, Key})
 		    when Alg =:= ?DNS_ALG_NSEC3RSASHA1 orelse
 			 Alg =:= ?DNS_ALG_RSASHA1 orelse
