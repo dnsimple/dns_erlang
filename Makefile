@@ -26,7 +26,7 @@ clean: $(REBAR)
 	@$(REBAR) clean
 	@rm -fr doc/*
 
-fresh:
+fresh: clean
 	rm -fr _build/*
 
 gh-pages: $(REBAR) test doc
