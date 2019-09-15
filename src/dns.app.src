@@ -2,7 +2,8 @@
 {application, dns,
  [
   {description, "DNS library"},
-  {vsn, "0.1.0"},
+  {vsn, "1.0.0"},
+  {licenses, ["Apache"]},
   {modules, []},
   {registered, []},
   {applications, [kernel, stdlib, crypto, base32]},
