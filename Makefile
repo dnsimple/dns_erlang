@@ -8,7 +8,7 @@ gh-pages : VERSION := $(shell sed -n 's/.*{vsn,.*"\(.*\)"}.*/\1/p' src/dns.app.s
 
 .PHONY: all doc clean test
 
-all: deps compile
+all: compile
 
 $(REBAR):
 	wget $(REBAR_URL) && chmod +x rebar3	
@@ -16,11 +16,8 @@ $(REBAR):
 compile: $(REBAR)
 	@$(REBAR) compile
 
-deps: $(REBAR)
-	@$(REBAR) get-deps
-
 doc: $(REBAR)
-	@$(REBAR) doc skip_deps=true
+	@$(REBAR) edoc
 
 clean: $(REBAR)
 	@$(REBAR) clean
@@ -45,5 +42,5 @@ gh-pages: $(REBAR) test doc
 	rm -fr ${TMPDIR}
 
 test: $(REBAR) all
-	@$(REBAR) eunit skip_deps=true
+	@$(REBAR) eunit
 	@$(REBAR) dialyzer

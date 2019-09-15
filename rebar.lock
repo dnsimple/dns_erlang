@@ -1,4 +1,6 @@
-[{<<"base32">>,
-  {git,"https://github.com/dnsimple/base32_erlang.git",
-       {ref,"8b1ebce8895662b05970f481c9ce1a9f44add50b"}},
-  0}].
+{"1.1.0",
+[{<<"base32">>,{pkg,<<"base32">>,<<"0.1.0">>},0}]}.
+[
+{pkg_hash,[
+ {<<"base32">>, <<"044F6DC95709727CA2176F3E97A41DDAA76B5BC690D3536908618C0CB32616A2">>}]}
+].
