@@ -1,5 +1,5 @@
 -ifndef('REBAR_VERSION').
--define(REBAR_VERSION, "2").
+-define(REBAR_VERSION, "3").
 -endif.
 
 rebar_version() ->
