@@ -4,7 +4,7 @@ REBAR_URL:="https://s3.amazonaws.com/rebar3/rebar3"
 gh-pages : TMPDIR := $(shell mktemp -d -t dns_erlang.gh-pages.XXXX)
 gh-pages : BRANCH := $(shell git branch 2> /dev/null | sed -e '/^[^*]/d' -e 's/* \(.*\)/\1 /')
 gh-pages : STASH := $(shell (test -z "`git status --porcelain`" && echo false) || echo true)
-gh-pages : VERSION := $(shell sed -n 's/.*{vsn,.*"\(.*\)"}.*/\1/p' src/dns.app.src)
+gh-pages : VERSION := $(shell sed -n 's/.*{vsn,.*"\(.*\)"}.*/\1/p' src/dns_erlang.app.src)
 
 .PHONY: all doc clean test
 
