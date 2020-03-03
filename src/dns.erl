@@ -18,7 +18,6 @@
 %%
 %% -------------------------------------------------------------------
 -module(dns).
-
 %% API
 -export([decode_message/1, encode_message/1, encode_message/2]).
 -export([verify_tsig/3, verify_tsig/4]).
@@ -1342,7 +1341,6 @@ pad_bmp(BMP) when is_bitstring(BMP) ->
 
 %%%===================================================================
 %%% EDNS data functions
-%%%===================================================================
 
 decode_optrrdata(<<>>) -> [];
 decode_optrrdata(Bin) -> decode_optrrdata(Bin, []).
@@ -1370,7 +1368,10 @@ decode_optrrdata(?DNS_EOPTCODE_OWNER, <<0:8, S:8, PMAC:6/binary, WMAC:6/binary,
     #dns_opt_owner{seq = S, primary_mac = PMAC, wakeup_mac = WMAC,
 		   password = Password};
 decode_optrrdata(?DNS_EOPTCODE_UL, <<Time:32>>) -> #dns_opt_ul{lease = Time};
-decode_optrrdata(EOpt, Bin) -> #dns_opt_unknown{id = EOpt, bin = Bin}.
+decode_optrrdata(?DNS_EOPTCODE_ECS, <<FAMILY:16, SRCPL:8, SCOPEPL:8, Payload/binary>>) ->
+	#dns_opt_ecs{family = FAMILY , source_prefix_length = SRCPL, scope_prefix_length = SCOPEPL, address = Payload};
+decode_optrrdata(EOpt, Bin) -> 
+	#dns_opt_unknown{id = EOpt, bin = Bin}.
 
 encode_optrrdata(Opts) when is_list(Opts) ->
     encode_optrrdata(lists:reverse(Opts), <<>>);
@@ -1395,6 +1396,13 @@ encode_optrrdata(#dns_opt_owner{seq = S, primary_mac = PMAC, wakeup_mac = WMAC,
 encode_optrrdata(#dns_opt_owner{seq = S, primary_mac = PMAC, _ = <<>>})
   when byte_size(PMAC) =:= 6 ->
     {?DNS_EOPTCODE_OWNER, <<0:8, S:8, PMAC/binary>>};
+encode_optrrdata(
+  #dns_opt_ecs{family = FAMILY, 
+			   source_prefix_length = SRCPL,
+			   scope_prefix_length = SCOPEPL, 
+			   address = ADDRESS}) ->
+	Data = <<FAMILY:16, SRCPL:8, SCOPEPL:8, ADDRESS/binary>>,
+	{?DNS_EOPTCODE_ECS, Data};
 encode_optrrdata(#dns_opt_unknown{id = Id, bin = Data})
   when is_integer(Id) andalso is_binary(Data) -> {Id, Data}.
 

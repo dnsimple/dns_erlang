@@ -101,6 +101,12 @@
 -record(dns_opt_nsid, {data}).
 -record(dns_opt_owner, {seq = 0, primary_mac, wakeup_mac, password}).
 -record(dns_opt_ul, {lease}).
+-record(dns_opt_ecs, {
+		      family,
+		      source_prefix_length, 
+		      scope_prefix_length,
+		      address
+		     }).
 -record(dns_opt_unknown, {id, bin}).
 
 -endif.
