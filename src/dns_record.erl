@@ -100,6 +100,8 @@ serialise(dns_opt_nsid, data, Data, _Opts) when is_binary(Data) ->
     {<<"data">>, bin_to_hex(Data)};
 serialise(dns_opt_owner, Field, Data, _Opts) when is_binary(Data) ->
     {atom_to_binary(Field, utf8), bin_to_hex(Data)};
+serialise(dns_opt_ecs, Field, Data, _Opts) when is_binary(Data) ->
+    {atom_to_binary(Field, utf8), bin_to_hex(Data)};
 serialise(dns_opt_unknown, bin, Bin, _Opts) when is_binary(Bin) ->
     {<<"bin">>, bin_to_hex(Bin)};
 serialise(_Tag, Field, Value, _Opts) -> {atom_to_binary(Field, utf8), Value}.
@@ -175,6 +177,8 @@ deserialise(dns_optrr, data, Terms, Opts) ->
 deserialise(dns_opt_nsid, data, Data, _Opts) when is_binary(Data) ->
     hex_to_bin(Data);
 deserialise(dns_opt_owner, _Field, Data, _Opts) when is_binary(Data) ->
+    hex_to_bin(Data);
+deserialise(dns_opt_ecs, _Field, Data, _Opts) when is_binary(Data) ->
     hex_to_bin(Data);
 deserialise(dns_opt_unknown, bin, Bin, _Opts) when is_binary(Bin) ->
     hex_to_bin(Bin);

@@ -75,6 +75,7 @@ fields(dns_opt_llq) -> record_info(fields, dns_opt_llq);
 fields(dns_opt_nsid) -> record_info(fields, dns_opt_nsid);
 fields(dns_opt_owner) -> record_info(fields, dns_opt_owner);
 fields(dns_opt_ul) -> record_info(fields, dns_opt_ul);
+fields(dns_opt_ecs) -> record_info(fields, dns_opt_ecs);
 fields(dns_opt_unknown) -> record_info(fields, dns_opt_unknown).
 
 %% @doc Returns the size of a given record.
@@ -126,6 +127,7 @@ size(dns_opt_llq) -> record_info(size, dns_opt_llq);
 size(dns_opt_nsid) -> record_info(size, dns_opt_nsid);
 size(dns_opt_owner) -> record_info(size, dns_opt_owner);
 size(dns_opt_ul) -> record_info(size, dns_opt_ul);
+size(dns_opt_ecs) -> record_info(size, dns_opt_ecs);
 size(dns_opt_unknown) -> record_info(size, dns_opt_unknown).
 
 %% @doc Returns the record tag atom for the given record type.
