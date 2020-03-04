@@ -1,11 +1,8 @@
-% -*- mode: Erlang; -*-
-{application, dns_erlang,
- [
-  {description, "DNS library"},
-  {vsn, "1.0.1"},
-  {licenses, ["Apache"]},
-  {modules, []},
-  {registered, []},
-  {applications, [kernel, stdlib, crypto, base32]},
-  {env, []}
- ]}.
+{application,dns_erlang,
+             [{description,"DNS library"},
+              {vsn,"1.1.0"},
+              {licenses,["Apache"]},
+              {modules,[]},
+              {registered,[]},
+              {applications,[kernel,stdlib,crypto,base32]},
+              {env,[]}]}.
