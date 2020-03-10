@@ -47,6 +47,7 @@ make test
     ```
 
 3. Initiate PR for reviewing and merging upstream.
+
 ## Tests
 
-Submit unit tests for your changes. You can test your changes on your machine by [running the test suite](#testing).
+Please be sure to submit unit tests for your changes. You can test your changes on your machine by [running the test suite](#testing).
