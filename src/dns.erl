@@ -955,9 +955,9 @@ decode_rrdata(_Class, ?DNS_TYPE_SSHFP, <<Alg:8, FPType:8, FingerPrint/binary>>,
 	      _MsgBin) ->
     #dns_rrdata_sshfp{alg=Alg, fp_type=FPType, fp=FingerPrint};
 decode_rrdata(_Class, ?DNS_TYPE_SVCB, <<SvcPriority:16, Bin/binary>>, MsgBin) ->
-    {TargetName, _SvcParamsBin} = decode_dname(Bin, MsgBin),
-    % TODO implement SvcParams parsing
-    #dns_rrdata_svcb{svc_priority = SvcPriority, target_name = TargetName, svc_params = #{}};
+    {TargetName, SvcParamsBin} = decode_dname(Bin, MsgBin),
+    SvcParams = decode_svcb_svc_params(SvcParamsBin),
+    #dns_rrdata_svcb{svc_priority = SvcPriority, target_name = TargetName, svc_params = SvcParams};
 decode_rrdata(_Class, ?DNS_TYPE_TSIG, Bin, MsgBin) ->
     {Alg, <<Time:48, Fudge:16, MS:16, MAC:MS/bytes, MsgID:16, ErrInt:16,
 	    OtherLen:16, Other:OtherLen/binary>>} = decode_dname(Bin, MsgBin),
@@ -1236,9 +1236,9 @@ encode_rrdata(_Pos, _Class, #dns_rrdata_sshfp{alg = Alg,
     {<<Alg:8, FPType:8, FingerPrint/binary>>, CompMap};
 encode_rrdata(_Pos, _Class, #dns_rrdata_svcb{svc_priority = SvcPriority,
                                              target_name = TargetName,
-                                             svc_params = _SvcParams}, CompMap) ->
+                                             svc_params = SvcParams}, CompMap) ->
     TargetNameBin = encode_dname(TargetName),
-    SvcParamsBin = <<"">>, % TODO: encode SvcParams
+    SvcParamsBin = encode_svcb_svc_params(SvcParams),
     {<<SvcPriority:16, TargetNameBin/binary, SvcParamsBin/binary>>, CompMap};
 encode_rrdata(_Pos, _Class, #dns_rrdata_tsig{alg = Alg, time = Time,
 					     fudge = Fudge, mac = MAC,
@@ -1803,6 +1803,27 @@ encode_string(Bin, StringBin)
   when byte_size(StringBin) < 256 ->
     Size = byte_size(StringBin),
     <<Bin/binary, Size, StringBin/binary>>.
+
+decode_svcb_svc_params(Bin) ->
+  decode_svcb_svc_params(Bin, #{}).
+decode_svcb_svc_params(<<>>, SvcParams) ->
+  SvcParams;
+decode_svcb_svc_params(<<?DNS_SVCB_PARAM_PORT:16, Len:16, SvcParamValueBin:Len/binary, Rest/binary>>, SvcParams) ->
+  <<V:16/integer>> = SvcParamValueBin,
+  decode_svcb_svc_params(Rest, SvcParams#{?DNS_SVCB_PARAM_PORT => V}).
+
+-spec encode_svcb_svc_params(map()) -> binary().
+encode_svcb_svc_params(SvcParams) ->
+  SortedKeys = lists:sort(maps:keys(SvcParams)),
+  lists:foldl(fun(K, AccIn) ->
+                  case {K, maps:get(K, SvcParams)} of
+                    {?DNS_SVCB_PARAM_PORT, V} ->
+                      <<AccIn/binary, K:16/integer, 2:16/integer, V:16/integer>>;
+                    _ ->
+                      AccIn
+                  end
+              end, <<>>, SortedKeys).
+
 
 %% @doc Compares two equal sized binaries over their entire length.
 %%      Returns immediately if sizes do not match.
