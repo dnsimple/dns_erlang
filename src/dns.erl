@@ -1820,7 +1820,7 @@ encode_svcb_svc_params(SvcParams) ->
               end, <<>>, SortedKeys).
 
 encode_svcb_svc_params_value(port, V, Bin) ->
-  <<Bin/binary, ?DNS_SVCB_PARAM_PORT_NUMBER:16/integer, 2:16/integer, V:16/integer>>;
+  encode_svcb_svc_params_value(?DNS_SVCB_PARAM_PORT, V, Bin);
 encode_svcb_svc_params_value(K = ?DNS_SVCB_PARAM_PORT, V, Bin) ->
   <<Bin/binary, K:16/integer, 2:16/integer, V:16/integer>>;
 encode_svcb_svc_params_value(_, _, Bin) ->
