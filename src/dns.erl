@@ -78,6 +78,7 @@
 		| #dns_rrdata_dnskey{}
 		| #dns_rrdata_ds{}
 		| #dns_rrdata_hinfo{}
+                | #dns_rrdata_https{}
 		| #dns_rrdata_ipseckey{}
 		| #dns_rrdata_key{}
 		| #dns_rrdata_kx{}
@@ -100,6 +101,7 @@
 		| #dns_rrdata_soa{}
 		| #dns_rrdata_spf{}
 		| #dns_rrdata_srv{}
+                | #dns_rrdata_svcb{}
 		| #dns_rrdata_sshfp{}
 		| #dns_rrdata_tsig{}
 		| #dns_rrdata_txt{}.
@@ -952,6 +954,10 @@ decode_rrdata(_Class, ?DNS_TYPE_SRV, <<Pri:16, Wght:16, Port:16, Bin/binary>>,
 decode_rrdata(_Class, ?DNS_TYPE_SSHFP, <<Alg:8, FPType:8, FingerPrint/binary>>,
 	      _MsgBin) ->
     #dns_rrdata_sshfp{alg=Alg, fp_type=FPType, fp=FingerPrint};
+decode_rrdata(_Class, ?DNS_TYPE_SVCB, <<SvcPriority:16, Bin/binary>>, MsgBin) ->
+    {TargetName, _SvcParamsBin} = decode_dname(Bin, MsgBin),
+    % TODO implement SvcParams parsing
+    #dns_rrdata_svcb{svc_priority = SvcPriority, target_name = TargetName, svc_params = #{}};
 decode_rrdata(_Class, ?DNS_TYPE_TSIG, Bin, MsgBin) ->
     {Alg, <<Time:48, Fudge:16, MS:16, MAC:MS/bytes, MsgID:16, ErrInt:16,
 	    OtherLen:16, Other:OtherLen/binary>>} = decode_dname(Bin, MsgBin),
@@ -1228,6 +1234,12 @@ encode_rrdata(_Pos, _Class, #dns_rrdata_sshfp{alg = Alg,
 					      fp_type = FPType,
 					      fp = FingerPrint}, CompMap) ->
     {<<Alg:8, FPType:8, FingerPrint/binary>>, CompMap};
+encode_rrdata(_Pos, _Class, #dns_rrdata_svcb{svc_priority = SvcPriority,
+                                             target_name = TargetName,
+                                             svc_params = _SvcParams}, CompMap) ->
+    TargetNameBin = encode_dname(TargetName),
+    SvcParamsBin = <<"">>, % TODO: encode SvcParams
+    {<<SvcPriority:16, TargetNameBin/binary, SvcParamsBin/binary>>, CompMap};
 encode_rrdata(_Pos, _Class, #dns_rrdata_tsig{alg = Alg, time = Time,
 					     fudge = Fudge, mac = MAC,
 					     msgid = MsgID, err = Err,

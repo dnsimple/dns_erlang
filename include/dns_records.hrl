@@ -44,6 +44,7 @@
 -record(dns_rrdata_ds, {keytag, alg, digest_type, digest}).
 -record(dns_rrdata_cds, {keytag, alg, digest_type, digest}).
 -record(dns_rrdata_hinfo, {cpu, os}).
+-record(dns_rrdata_https, {svc_priority, target_name, svc_params}).
 -record(dns_rrdata_ipseckey, {precedence,
 			      alg,
 			      gateway,
@@ -89,6 +90,7 @@
 -record(dns_rrdata_spf, {spf}).
 -record(dns_rrdata_srv, {priority, weight, port, target}).
 -record(dns_rrdata_sshfp, {alg, fp_type, fp}).
+-record(dns_rrdata_svcb, {svc_priority, target_name, svc_params}).
 -record(dns_rrdata_tsig, {alg, time, fudge, mac, msgid, err, other}).
 -record(dns_rrdata_txt, {txt}).
 

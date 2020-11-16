@@ -194,7 +194,8 @@ decode_encode_rrdata_test_() ->
 	      {?DNS_TYPE_MINFO, #dns_rrdata_minfo{rmailbx = <<"a.b">>,
 						  emailbx = <<"c.d">>}},
 	      {?DNS_TYPE_MR, #dns_rrdata_mr{newname = <<"example.com">>}},
-              {?DNS_TYPE_CAA, #dns_rrdata_caa{flags = 0, tag = <<"issue">>, value = <<"letsencrypt.org">>}}
+              {?DNS_TYPE_CAA, #dns_rrdata_caa{flags = 0, tag = <<"issue">>, value = <<"letsencrypt.org">>}},
+              {?DNS_TYPE_SVCB, #dns_rrdata_svcb{svc_priority = 0, target_name = <<"target.example.com">>, svc_params = #{}}}
             ],
     [ ?_test(
 	 begin
