@@ -247,6 +247,15 @@ decode_encode_optdata_owner_test_() ->
     [ ?_assertEqual([Case], decode_optrrdata(encode_optrrdata([Case])))
       || Case <- Cases ].
 
+decode_encode_svcb_params_test() ->
+  Cases = [
+           {#{}, #{}},
+           {#{?DNS_SVCB_PARAM_PORT => 8079}, #{?DNS_SVCB_PARAM_PORT => 8079}},
+           {#{port => 8080}, #{?DNS_SVCB_PARAM_PORT => 8080}}
+          ],
+
+  [ ?assertEqual(Expected, decode_svcb_svc_params(encode_svcb_svc_params(Input))) || {Input, Expected} <- Cases ].
+
 %%%===================================================================
 %%% Domain name functions
 %%%===================================================================

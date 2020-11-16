@@ -1816,13 +1816,15 @@ decode_svcb_svc_params(<<?DNS_SVCB_PARAM_PORT:16, Len:16, SvcParamValueBin:Len/b
 encode_svcb_svc_params(SvcParams) ->
   SortedKeys = lists:sort(maps:keys(SvcParams)),
   lists:foldl(fun(K, AccIn) ->
-                  case {K, maps:get(K, SvcParams)} of
-                    {?DNS_SVCB_PARAM_PORT, V} ->
-                      <<AccIn/binary, K:16/integer, 2:16/integer, V:16/integer>>;
-                    _ ->
-                      AccIn
-                  end
+                  encode_svcb_svc_params_value(K, maps:get(K, SvcParams), AccIn)
               end, <<>>, SortedKeys).
+
+encode_svcb_svc_params_value(port, V, Bin) ->
+  <<Bin/binary, ?DNS_SVCB_PARAM_PORT_NUMBER:16/integer, 2:16/integer, V:16/integer>>;
+encode_svcb_svc_params_value(K = ?DNS_SVCB_PARAM_PORT, V, Bin) ->
+  <<Bin/binary, K:16/integer, 2:16/integer, V:16/integer>>;
+encode_svcb_svc_params_value(_, _, Bin) ->
+  Bin.
 
 
 %% @doc Compares two equal sized binaries over their entire length.
