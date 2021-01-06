@@ -199,7 +199,9 @@ decode_encode_rrdata_test_() ->
               {?DNS_TYPE_SVCB, #dns_rrdata_svcb{svc_priority = 0, target_name = <<"target.example.com">>, svc_params = #{?DNS_SVCB_PARAM_PORT_NUMBER => 8080}}},
               {?DNS_TYPE_SVCB, #dns_rrdata_svcb{svc_priority = 0, target_name = <<"target.example.com">>, svc_params = #{?DNS_SVCB_PARAM_NO_DEFAULT_ALPN => none}}},
               {?DNS_TYPE_SVCB, #dns_rrdata_svcb{svc_priority = 0, target_name = <<"target.example.com">>, svc_params = #{?DNS_SVCB_PARAM_ALPN => <<"h2,h3">>}}},
-              {?DNS_TYPE_SVCB, #dns_rrdata_svcb{svc_priority = 0, target_name = <<"target.example.com">>, svc_params = #{?DNS_SVCB_PARAM_ECHCONFIG => <<"123abc">>}}}
+              {?DNS_TYPE_SVCB, #dns_rrdata_svcb{svc_priority = 0, target_name = <<"target.example.com">>, svc_params = #{?DNS_SVCB_PARAM_ECHCONFIG => <<"123abc">>}}},
+              {?DNS_TYPE_SVCB, #dns_rrdata_svcb{svc_priority = 0, target_name = <<"target.example.com">>, svc_params = #{?DNS_SVCB_PARAM_IPV4HINT => <<"1.2.3.4,1.2.3.5">>}}},
+              {?DNS_TYPE_SVCB, #dns_rrdata_svcb{svc_priority = 0, target_name = <<"target.example.com">>, svc_params = #{?DNS_SVCB_PARAM_IPV6HINT => <<"2001:0db8:85a3:0000:0000:8a2e:0370:7334,2001:0db8:85a3:0000:0000:8a2e:0370:7335">>}}}
             ],
     [ ?_test(
 	 begin
