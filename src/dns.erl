@@ -1808,6 +1808,10 @@ decode_svcb_svc_params(Bin) ->
   decode_svcb_svc_params(Bin, #{}).
 decode_svcb_svc_params(<<>>, SvcParams) ->
   SvcParams;
+decode_svcb_svc_params(<<?DNS_SVCB_PARAM_ALPN:16, Len:16, SvcParamValueBin:Len/binary, Rest/binary>>, SvcParams) ->
+  decode_svcb_svc_params(Rest, SvcParams#{?DNS_SVCB_PARAM_ALPN => SvcParamValueBin});
+decode_svcb_svc_params(<<?DNS_SVCB_PARAM_NO_DEFAULT_ALPN:16, 0:16, Rest/binary>>, SvcParams) ->
+  decode_svcb_svc_params(Rest, SvcParams#{?DNS_SVCB_PARAM_NO_DEFAULT_ALPN => none});
 decode_svcb_svc_params(<<?DNS_SVCB_PARAM_PORT:16, Len:16, SvcParamValueBin:Len/binary, Rest/binary>>, SvcParams) ->
   <<V:16/integer>> = SvcParamValueBin,
   decode_svcb_svc_params(Rest, SvcParams#{?DNS_SVCB_PARAM_PORT => V}).
@@ -1819,6 +1823,16 @@ encode_svcb_svc_params(SvcParams) ->
                   encode_svcb_svc_params_value(K, maps:get(K, SvcParams), AccIn)
               end, <<>>, SortedKeys).
 
+encode_svcb_svc_params_value(alpn, V, Bin) ->
+  encode_svcb_svc_params_value(?DNS_SVCB_PARAM_ALPN, V, Bin);
+encode_svcb_svc_params_value(K = ?DNS_SVCB_PARAM_ALPN, V, Bin) ->
+  L = byte_size(V),
+  <<Bin/binary, K:16/integer, L:16/integer, V/binary>>;
+encode_svcb_svc_params_value(no_default_alpn, V, Bin) ->
+  encode_svcb_svc_params_value(?DNS_SVCB_PARAM_NO_DEFAULT_ALPN, V, Bin);
+encode_svcb_svc_params_value(K = ?DNS_SVCB_PARAM_NO_DEFAULT_ALPN, _, Bin) ->
+  L = 0,
+  <<Bin/binary, K:16/integer, L:16/integer>>;
 encode_svcb_svc_params_value(port, V, Bin) ->
   encode_svcb_svc_params_value(?DNS_SVCB_PARAM_PORT, V, Bin);
 encode_svcb_svc_params_value(K = ?DNS_SVCB_PARAM_PORT, V, Bin) ->
