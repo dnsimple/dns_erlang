@@ -198,7 +198,8 @@ decode_encode_rrdata_test_() ->
               {?DNS_TYPE_SVCB, #dns_rrdata_svcb{svc_priority = 0, target_name = <<"target.example.com">>, svc_params = #{}}},
               {?DNS_TYPE_SVCB, #dns_rrdata_svcb{svc_priority = 0, target_name = <<"target.example.com">>, svc_params = #{?DNS_SVCB_PARAM_PORT_NUMBER => 8080}}},
               {?DNS_TYPE_SVCB, #dns_rrdata_svcb{svc_priority = 0, target_name = <<"target.example.com">>, svc_params = #{?DNS_SVCB_PARAM_NO_DEFAULT_ALPN => none}}},
-              {?DNS_TYPE_SVCB, #dns_rrdata_svcb{svc_priority = 0, target_name = <<"target.example.com">>, svc_params = #{?DNS_SVCB_PARAM_ALPN => <<"h2,h3">>}}}
+              {?DNS_TYPE_SVCB, #dns_rrdata_svcb{svc_priority = 0, target_name = <<"target.example.com">>, svc_params = #{?DNS_SVCB_PARAM_ALPN => <<"h2,h3">>}}},
+              {?DNS_TYPE_SVCB, #dns_rrdata_svcb{svc_priority = 0, target_name = <<"target.example.com">>, svc_params = #{?DNS_SVCB_PARAM_ECHCONFIG => <<"123abc">>}}}
             ],
     [ ?_test(
 	 begin
