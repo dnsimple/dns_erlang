@@ -722,7 +722,7 @@ gen_tsig_mac(Alg, Msg, Name, Secret, Time, Fudge, Err, Other, MAC, Tail) ->
 hmac(TypeBin, Key, Data) ->
     case hmac_type(TypeBin) of
         undefined -> {error, bad_alg};
-        TypeAtom -> {ok, crypto:hmac(TypeAtom, Key, Data)}
+        TypeAtom -> {ok, crypto:mac(hmac, TypeAtom, Key, Data)}
     end.
 
 hmac_type(?DNS_TSIG_ALG_MD5) -> md5;
