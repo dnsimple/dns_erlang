@@ -8,12 +8,12 @@ gh-pages : VERSION := $(shell sed -n 's/.*{vsn,.*"\(.*\)"}.*/\1/p' src/dns_erlan
 
 .PHONY: all doc clean test
 
-all: compile
+all: build
 
 $(REBAR):
-	wget $(REBAR_URL) && chmod +x rebar3	
+	wget $(REBAR_URL) && chmod +x rebar3
 
-compile: $(REBAR)
+build: $(REBAR)
 	@$(REBAR) compile
 
 doc: $(REBAR)
