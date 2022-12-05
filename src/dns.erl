@@ -2401,14 +2401,19 @@ choose_next_bin(0, DataRBin, _RBin) ->
 choose_next_bin(_, _DataRBin, RBin) ->
     RBin.
 
-%% @doc Escapes dots in a DNS label
+%% @doc Escapes dots and backslashes in a DNS label
 -spec escape_label(label()) -> label().
 escape_label(Label) when is_binary(Label) -> escape_label(<<>>, Label).
 
 -spec escape_label(bitstring(), binary()) -> bitstring().
-escape_label(Label, <<>>) -> Label;
-escape_label(Cur, <<$., Rest/binary>>) -> escape_label(<<Cur/binary, "\\.">>, Rest);
-escape_label(Cur, <<C, Rest/binary>>) -> escape_label(<<Cur/binary, C>>, Rest).
+escape_label(Label, <<>>) ->
+    Label;
+escape_label(Cur, <<$\\, Rest/binary>>) ->
+    escape_label(<<Cur/binary, "\\\\">>, Rest);
+escape_label(Cur, <<$., Rest/binary>>) ->
+    escape_label(<<Cur/binary, "\\.">>, Rest);
+escape_label(Cur, <<C, Rest/binary>>) ->
+    escape_label(<<Cur/binary, C>>, Rest).
 
 -spec decode_dnameonly(nonempty_binary(), binary()) -> binary().
 decode_dnameonly(Bin, MsgBin) ->
@@ -2473,11 +2478,18 @@ dname_to_labels(<<$.>>) -> [];
 dname_to_labels(Name) -> dname_to_labels(<<>>, iolist_to_binary(Name)).
 
 -spec dname_to_labels(bitstring(), binary()) -> [bitstring(), ...].
-dname_to_labels(Label, <<>>) -> [Label];
-dname_to_labels(Label, <<$.>>) -> [Label];
-dname_to_labels(Label, <<$., Cs/binary>>) -> [Label | dname_to_labels(<<>>, Cs)];
-dname_to_labels(Label, <<"\\.", Cs/binary>>) -> dname_to_labels(<<Label/binary, $.>>, Cs);
-dname_to_labels(Label, <<C, Cs/binary>>) -> dname_to_labels(<<Label/binary, C>>, Cs).
+dname_to_labels(Label, <<>>) ->
+    [Label];
+dname_to_labels(Label, <<$.>>) ->
+    [Label];
+dname_to_labels(Label, <<$., Cs/binary>>) ->
+    [Label | dname_to_labels(<<>>, Cs)];
+dname_to_labels(Label, <<"\\.", Cs/binary>>) ->
+    dname_to_labels(<<Label/binary, $.>>, Cs);
+dname_to_labels(Label, <<"\\\\", Cs/binary>>) ->
+    dname_to_labels(<<Label/binary, $\\>>, Cs);
+dname_to_labels(Label, <<C, Cs/binary>>) ->
+    dname_to_labels(<<Label/binary, C>>, Cs).
 
 %% @doc Joins a list of DNS labels, escaping where necessary.
 -spec labels_to_dname([label()]) -> dname().
