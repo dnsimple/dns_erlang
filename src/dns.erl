@@ -334,10 +334,10 @@ decode_message_body(DataBin, Count, MsgBin) ->
 
 -spec decode_message_body(binary(), integer(), <<_:64, _:_*8>>, [optrr() | rr()]) ->
     {[{_, _, _, _, _, _}], binary()} | {atom(), [{_, _, _, _, _, _}], binary()}.
-decode_message_body(<<>>, _Count, _MsgBin, RRs) ->
-    {lists:reverse(RRs), <<>>};
 decode_message_body(DataBin, 0, _MsgBin, RRs) ->
     {lists:reverse(RRs), DataBin};
+decode_message_body(<<>>, _Count, _MsgBin, RRs) ->
+    {truncated, lists:reverse(RRs), <<>>};
 decode_message_body(DataBin, Count, MsgBin, RRs) ->
     try decode_dname(DataBin, MsgBin) of
         {<<>>,
