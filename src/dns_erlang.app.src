@@ -5,4 +5,7 @@
               {modules,[]},
               {registered,[]},
               {applications,[kernel,stdlib,crypto,base32]},
-              {env,[]}]}.
+              {env,[]},
+
+              {licenses, ["Apache-2.0"]},
+              {links, [{"GitHub", "https://github.com/dnsimple/dns_erlang"}]}]}.
