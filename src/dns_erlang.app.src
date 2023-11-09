@@ -1,11 +1,12 @@
-{application,dns_erlang,
-             [{description,"DNS library"},
-              {vsn,"1.1.0"},
-              {licenses,["Apache"]},
-              {modules,[]},
-              {registered,[]},
-              {applications,[kernel,stdlib,crypto,base32]},
-              {env,[]},
+{application, dns_erlang, [
+    {description, "DNS library"},
+    {vsn, "1.1.0"},
+    {licenses, ["Apache"]},
+    {modules, []},
+    {registered, []},
+    {applications, [kernel, stdlib, crypto, base32]},
+    {env, []},
 
-              {licenses, ["Apache-2.0"]},
-              {links, [{"GitHub", "https://github.com/dnsimple/dns_erlang"}]}]}.
+    {licenses, ["Apache-2.0"]},
+    {links, [{"GitHub", "https://github.com/dnsimple/dns_erlang"}]}
+]}.
