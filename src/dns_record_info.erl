@@ -34,7 +34,7 @@ fields(dns_rr) -> record_info(fields, dns_rr);
 fields(dns_rrdata_a) -> record_info(fields, dns_rrdata_a);
 fields(dns_rrdata_afsdb) -> record_info(fields, dns_rrdata_afsdb);
 fields(dns_rrdata_aaaa) -> record_info(fields, dns_rrdata_aaaa);
-fields(dns_rrdata_caa) -> record_info(fields, dns_rrdata_caa);
+fields(dns_rrdata_caa) ->  record_info(fields, dns_rrdata_caa);
 fields(dns_rrdata_cname) -> record_info(fields, dns_rrdata_cname);
 fields(dns_rrdata_dhcid) -> record_info(fields, dns_rrdata_dhcid);
 fields(dns_rrdata_dname) -> record_info(fields, dns_rrdata_dname);
@@ -224,25 +224,17 @@ type_for_atom(_) -> undefined.
 
 type_rec_test_() ->
     {ok, Cases} = file:consult(filename:join(prefix(), "rrdata_wire_samples.txt")),
-    Types = sets:to_list(sets:from_list([T || {_, T, _} <- Cases, T =/= 999])),
-    [
-        ?_assertEqual(Type, type_for_atom(atom_for_type(Type)))
-     || Type <- Types
-    ].
+    Types = sets:to_list(sets:from_list([T || {_,T,_} <- Cases, T =/= 999])),
+    [ ?_assertEqual(Type, type_for_atom(atom_for_type(Type)))
+      || Type <- Types ].
 
 recinfo_test_() ->
     {ok, Cases} = file:consult(filename:join(prefix(), "rrdata_wire_samples.txt")),
-    Types = sets:to_list(sets:from_list([T || {_, T, _} <- Cases, T =/= 999])),
-    Tags = [dns_rr | [atom_for_type(Type) || Type <- Types]],
-    [
-        {
-            atom_to_list(Tag),
-            ?_assertEqual(
-                length(fields(Tag)),
-                ?MODULE:size(Tag) - 1
-            )
-        }
-     || Tag <- Tags
-    ].
+    Types = sets:to_list(sets:from_list([T || {_, T ,_} <- Cases, T =/= 999])),
+    Tags = [dns_rr|[ atom_for_type(Type) || Type <- Types ]],
+    [ {atom_to_list(Tag),
+       ?_assertEqual(length(fields(Tag)),
+		     ?MODULE:size(Tag) - 1)}
+      || Tag <- Tags ].
 
 -endif.
