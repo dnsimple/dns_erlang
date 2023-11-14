@@ -10,7 +10,6 @@ rebar_version() ->
             2
     end.
 
-
 prefix() ->
     case rebar_version() of
         2 ->
