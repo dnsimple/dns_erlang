@@ -1473,13 +1473,15 @@ decode_dname(<<3:2, Ptr:14, DataRBin/binary>>, MsgBin, RBin, Dname, Count) ->
 	_ -> throw(bad_pointer)
     end.
 
-%% @doc Escapes dots in a DNS label
+%% @doc Escapes dots and backslashes in a DNS label
 -spec escape_label(label()) -> label().
 escape_label(Label) when is_binary(Label) -> escape_label(<<>>, Label).
 
 escape_label(Label, <<>>) -> Label;
-escape_label(Cur, <<$., Rest/binary>>) ->
-    escape_label(<<Cur/binary, "\\.">>, Rest);
+escape_label(Cur, <<Char, Rest/binary>>)
+  when Char =:= $. orelse
+       Char =:= $\\ ->
+    escape_label(<<Cur/binary, $\\, Char>>, Rest);
 escape_label(Cur, <<C, Rest/binary>>) -> escape_label(<<Cur/binary, C>>, Rest).
 
 decode_dnameonly(Bin, MsgBin) ->
@@ -1531,8 +1533,8 @@ dname_to_labels(Name) -> dname_to_labels(<<>>, iolist_to_binary(Name)).
 dname_to_labels(Label, <<>>) -> [Label];
 dname_to_labels(Label, <<$.>>) -> [Label];
 dname_to_labels(Label, <<$., Cs/binary>>) -> [Label|dname_to_labels(<<>>, Cs)];
-dname_to_labels(Label, <<"\\.", Cs/binary>>) ->
-    dname_to_labels(<<Label/binary, $.>>, Cs);
+dname_to_labels(Label, <<$\\, C, Cs/binary>>) ->
+    dname_to_labels(<<Label/binary, C>>, Cs);
 dname_to_labels(Label, <<C, Cs/binary>>) ->
     dname_to_labels(<<Label/binary, C>>, Cs).
 
