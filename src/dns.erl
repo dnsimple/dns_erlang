@@ -217,10 +217,10 @@ decode_message_questions(DataBin, Count, MsgBin, Qs) ->
 decode_message_body(DataBin, Count, MsgBin) ->
     decode_message_body(DataBin, Count, MsgBin, []).
 
-decode_message_body(<<>>, _Count, _MsgBin, RRs) ->
-    {lists:reverse(RRs), <<>>};
 decode_message_body(DataBin, 0, _MsgBin, RRs) ->
     {lists:reverse(RRs), DataBin};
+decode_message_body(<<>>, _Count, _MsgBin, RRs) ->
+    {truncated, lists:reverse(RRs), <<>>};
 decode_message_body(DataBin, Count, MsgBin, RRs) ->
     case catch decode_dname(DataBin, MsgBin) of
 	{<<>>, <<?DNS_TYPE_OPT:16/unsigned, UPS:16/unsigned, ExtRcode:8,

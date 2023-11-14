@@ -54,6 +54,12 @@ message_edns_test() ->
     Bin = encode_message(Msg),
     ?assertEqual(Msg, decode_message(Bin)).
 
+missing_additional_section_test() ->
+    %% Query for test./IN/A with missing additional section
+    Bin = <<192, 46, 0, 32, 0, 1, 0, 0, 0, 0, 0, 1, 4, 116, 101, 115,
+            116, 0, 0, 1, 0, 1>>,
+    ?assertMatch({truncated, _, <<>>}, decode_message(Bin)).
+
 tsig_no_tsig_test() ->
     MsgBin = encode_message(#dns_message{}),
     Name = <<"name">>,
