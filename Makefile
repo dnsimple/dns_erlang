@@ -6,26 +6,29 @@ gh-pages : BRANCH := $(shell git branch 2> /dev/null | sed -e '/^[^*]/d' -e 's/*
 gh-pages : STASH := $(shell (test -z "`git status --porcelain`" && echo false) || echo true)
 gh-pages : VERSION := $(shell sed -n 's/.*{vsn,.*"\(.*\)"}.*/\1/p' src/dns_erlang.app.src)
 
-.PHONY: all doc clean test
-
 all: build
 
 $(REBAR):
 	wget $(REBAR_URL) && chmod +x rebar3
 
+.PHONY: build
 build: $(REBAR)
 	@$(REBAR) compile
 
+.PHONY: doc
 doc: $(REBAR)
 	@$(REBAR) edoc
 
+.PHONY: clean
 clean: $(REBAR)
 	@$(REBAR) clean
 	@rm -fr doc/*
 
+.PHONY: fresh
 fresh: clean
 	rm -fr _build/*
 
+.PHONY: gh-pages
 gh-pages: $(REBAR) test doc
 	@echo "Building gh-pages for ${VERSION} in ${TMPDIR} from branch ${BRANCH}. Branch dirty: ${STASH}."
 	sed 's/{{VERSION}}/${VERSION}/g' priv/index.html > ${TMPDIR}/index.html
@@ -41,6 +44,7 @@ gh-pages: $(REBAR) test doc
 	(${STASH} && git stash pop) || true
 	rm -fr ${TMPDIR}
 
+.PHONY: test
 test: $(REBAR) all
 	@$(REBAR) eunit
 	@$(REBAR) dialyzer
