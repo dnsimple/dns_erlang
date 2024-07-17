@@ -502,21 +502,24 @@ verify_rrsig(
                             Alg =:= ?DNS_ALG_RSASHA256 orelse
                             Alg =:= ?DNS_ALG_RSASHA512
                     ->
-                        SigPayload =
-                            try
-                                crypto:public_decrypt(
-                                    rsa, Sig, Key, rsa_pkcs1_padding
-                                )
-                            catch
-                                error:decrypt_failed -> undefined
-                            end,
-                        SigInput =:= SigPayload;
+                        try
+                            crypto:verify(
+                                rsa, dns_algo_to_digest_type(Alg), SigInput, Sig, Key, [{rsa_padding, rsa_pkcs1_padding}]
+                            )
+                        catch
+                            error:decrypt_failed -> undefined
+                        end;
                     (_) ->
                         false
                 end,
                 Keys
             )
     end.
+
+dns_algo_to_digest_type(?DNS_ALG_NSEC3RSASHA1) -> sha;
+dns_algo_to_digest_type(?DNS_ALG_RSASHA1) -> sha;
+dns_algo_to_digest_type(?DNS_ALG_RSASHA256) -> sha256;
+dns_algo_to_digest_type(?DNS_ALG_RSASHA512) -> sha512.
 
 build_sig_input(
     SignersName,

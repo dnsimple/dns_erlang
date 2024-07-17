@@ -218,8 +218,9 @@ test_sample_key(dsa, PrivKey, PubKey) ->
     crypto:verify(dss, sha, Sample, Sig, PubKey);
 test_sample_key(rsa, PrivKey, PubKey) ->
     Sample = <<"1234">>,
-    Cipher = crypto:private_encrypt(rsa, Sample, PrivKey, rsa_pkcs1_padding),
-    Sample =:= crypto:public_decrypt(rsa, Cipher, PubKey, rsa_pkcs1_padding).
+    Signature = crypto:sign(rsa, sha, Sample, PrivKey, [{rsa_padding, rsa_pkcs1_padding}]),
+    crypto:verify(rsa, sha, Sample, Signature, PubKey, [{rsa_padding, rsa_pkcs1_padding}]).
+
 
 dnskey_pubkey_gen_test_() ->
     [
