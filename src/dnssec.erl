@@ -425,12 +425,6 @@ sign_rrset(
                     Key,
                     [{rsa_padding, rsa_pkcs1_padding}]
                 )
-                % crypto:private_encrypt(
-                %     rsa,
-                %     BaseSigInput,
-                %     Key,
-                %     rsa_pkcs1_padding
-                % )
         end,
     Data = Data0#dns_rrdata_rrsig{signature = Signature},
     #dns_rr{
@@ -510,13 +504,9 @@ verify_rrsig(
                             Alg =:= ?DNS_ALG_RSASHA512
                     ->
                         try
-                            io:format("SigInput: ~p~n", [SigInput]),
-                            io:format("Sig: ~p~n", [Sig]),
-                            io:format("Data: ~p~n", [Data]),
                             SigPayload = crypto:public_decrypt(
                                 rsa, Sig, Key, rsa_pkcs1_padding
                             ),
-                            io:format("SigPayload: ~p~n", [SigPayload]),
                             crypto:verify(
                                 rsa, dns_algo_to_digest_type(Alg), SigInput, Sig, Key, [{rsa_padding, rsa_pkcs1_padding}]
                             )
