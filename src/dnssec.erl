@@ -504,9 +504,6 @@ verify_rrsig(
                             Alg =:= ?DNS_ALG_RSASHA512
                     ->
                         try
-                            SigPayload = crypto:public_decrypt(
-                                rsa, Sig, Key, rsa_pkcs1_padding
-                            ),
                             crypto:verify(
                                 rsa, dns_algo_to_digest_type(Alg), SigInput, Sig, Key, [{rsa_padding, rsa_pkcs1_padding}]
                             )
