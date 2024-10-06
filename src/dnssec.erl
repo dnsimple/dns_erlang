@@ -420,7 +420,7 @@ sign_rrset(
             ->
                 crypto:sign(
                     rsa,
-                    dns_algo_to_digest_type(Alg),
+                    none,
                     BaseSigInput,
                     Key,
                     [{rsa_padding, rsa_pkcs1_padding}]
@@ -505,7 +505,12 @@ verify_rrsig(
                     ->
                         try
                             crypto:verify(
-                                rsa, dns_algo_to_digest_type(Alg), SigInput, Sig, Key, [{rsa_padding, rsa_pkcs1_padding}]
+                                rsa,
+                                none,
+                                SigInput,
+                                Sig,
+                                Key,
+                                [{rsa_padding, rsa_pkcs1_padding}]
                             )
                         catch
                             error:decrypt_failed -> undefined
@@ -516,11 +521,6 @@ verify_rrsig(
                 Keys
             )
     end.
-
-dns_algo_to_digest_type(?DNS_ALG_NSEC3RSASHA1) -> sha;
-dns_algo_to_digest_type(?DNS_ALG_RSASHA1) -> sha;
-dns_algo_to_digest_type(?DNS_ALG_RSASHA256) -> sha256;
-dns_algo_to_digest_type(?DNS_ALG_RSASHA512) -> sha512.
 
 build_sig_input(
     SignersName,
