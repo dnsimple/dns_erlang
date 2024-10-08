@@ -418,11 +418,12 @@ sign_rrset(
                     Alg =:= ?DNS_ALG_RSASHA256 orelse
                     Alg =:= ?DNS_ALG_RSASHA512
             ->
-                crypto:private_encrypt(
+                crypto:sign(
                     rsa,
+                    none,
                     BaseSigInput,
                     Key,
-                    rsa_pkcs1_padding
+                    [{rsa_padding, rsa_pkcs1_padding}]
                 )
         end,
     Data = Data0#dns_rrdata_rrsig{signature = Signature},
@@ -502,15 +503,18 @@ verify_rrsig(
                             Alg =:= ?DNS_ALG_RSASHA256 orelse
                             Alg =:= ?DNS_ALG_RSASHA512
                     ->
-                        SigPayload =
-                            try
-                                crypto:public_decrypt(
-                                    rsa, Sig, Key, rsa_pkcs1_padding
-                                )
-                            catch
-                                error:decrypt_failed -> undefined
-                            end,
-                        SigInput =:= SigPayload;
+                        try
+                            crypto:verify(
+                                rsa,
+                                none,
+                                SigInput,
+                                Sig,
+                                Key,
+                                [{rsa_padding, rsa_pkcs1_padding}]
+                            )
+                        catch
+                            error:decrypt_failed -> undefined
+                        end;
                     (_) ->
                         false
                 end,
