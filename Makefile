@@ -47,4 +47,9 @@ gh-pages: $(REBAR) test doc
 .PHONY: test
 test: $(REBAR) all
 	@$(REBAR) eunit
+	@$(REBAR) fmt --check
 	@$(REBAR) dialyzer
+
+.PHONY: format
+format: build
+	@$(REBAR) fmt
