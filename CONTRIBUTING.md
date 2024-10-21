@@ -27,13 +27,19 @@ Compile the project and [run the test suite](#testing) to check everything works
 make all
 ```
 
-
 ## Testing
 
 ```shell
 make test
 ```
 
+## Formatting
+
+To format the codebase:
+
+```shell
+make format
+```
 
 ## Releasing
 
