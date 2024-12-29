@@ -1,15 +1,13 @@
-rebar3
-.rebar3
 .eunit
 doc
 ebin
-deps
 *.o
 *.beam
-*.bea#
-*~
-.DS_Store
 src/DNS-ASN1.*
 include/DNS-ASN1.hrl
-_build
 asngen
+
+# rebar 3
+rebar3
+.rebar3
+/_build
