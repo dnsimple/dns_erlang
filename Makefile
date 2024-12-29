@@ -28,22 +28,6 @@ clean: $(REBAR)
 fresh: clean
 	rm -fr _build/*
 
-.PHONY: gh-pages
-gh-pages: $(REBAR) test doc
-	@echo "Building gh-pages for ${VERSION} in ${TMPDIR} from branch ${BRANCH}. Branch dirty: ${STASH}."
-	sed 's/{{VERSION}}/${VERSION}/g' priv/index.html > ${TMPDIR}/index.html
-	rsync -a --remove-source-files doc/ ${TMPDIR}/doc
-	rsync -a --remove-source-files .eunit/ ${TMPDIR}/coverage
-	@$(REBAR) clean
-	(${STASH} && git stash save) || true
-	git checkout gh-pages
-	rsync -a --delete ${TMPDIR}/* .
-	git add .
-	git commit -a -m "update auto-generated docs"
-	git checkout ${BRANCH}
-	(${STASH} && git stash pop) || true
-	rm -fr ${TMPDIR}
-
 .PHONY: test
 test: $(REBAR) all
 	@$(REBAR) eunit
