@@ -1,4 +1,4 @@
-# Contributing to DNSimple/dns_erlang
+# Contributing to dns_erlang
 
 ## Getting started
 
@@ -13,19 +13,33 @@ cd dns_erlang
 
 ### 2. Install Erlang
 
-### 3. Create your own working branch
+### 3. Install the dependencies
 
 ```shell
-git checkout -b dev_new_feature_xyz
+make
 ```
+
+#### Updating Dependencies
+
+When dependencies are updated the rebar.lock file will need to be updated for the new dependency to be used. The following command does this:
+
+```shell
+./rebar3 upgrade --all
+```
+
+## Formatting
+
+If your editor doesn't automatically format Erlang code using [erlfmt](https://github.com/WhatsApp/erlfmt), run:
+
+```shell
+make format
+```
+
+You should run this command before releasing.
 
 ### 3. Build and test
 
 Compile the project and [run the test suite](#testing) to check everything works as expected.
-
-```shell
-make all
-```
 
 ## Testing
 
@@ -33,27 +47,38 @@ make all
 make test
 ```
 
-## Formatting
-
-To format the codebase:
-
-```shell
-make format
-```
-
 ## Releasing
+
+The following instructions uses `$VERSION` as a placeholder, where `$VERSION` is a `MAJOR.MINOR.BUGFIX` release such as `1.2.0`.
 
 1. Run the test suite and ensure all the tests pass.
 
-2. Commit and push the changes
+1. Set the version in `src/dns_erlang.app.src` & `src/bugsnag.erl`
+
+1. Run the test suite and ensure all the tests pass.
+
+1. Finalize the `## main` section in `CHANGELOG.md` assigning the version.
+
+1. Commit and push the changes
 
     ```shell
-    git commit -a -m "* <adding feature/enhancement X/Y/Z"
-    git push origin dev_new_feature_xyz
+    git commit -a -m "Release $VERSION"
+    git push origin main
     ```
 
-3. Initiate PR for reviewing and merging upstream.
+1. Wait for CI to complete.
+
+1. Create a signed tag.
+
+    ```shell
+    git tag -a v$VERSION -s -m "Release $VERSION"
+    git push origin --tags
+    ```
+
+1. GitHub actions will take it from there and release to <https://hex.pm/packages/dns_erlang>
 
 ## Tests
 
-Please be sure to submit unit tests for your changes. You can test your changes on your machine by [running the test suite](#testing).
+Submit unit tests for your changes. You can test your changes on your machine by [running the test suite](#testing).
+
+When you submit a PR, tests will also be run on the [continuous integration environment via GitHub Actions](https://github.com/dnsimple/dnsimple-ruby/actions/workflows/ci.yml).
