@@ -2,7 +2,7 @@
 
 ## Getting started
 
-#### 1. Clone the repository
+### 1. Clone the repository
 
 Clone the repository and move into it:
 
@@ -11,15 +11,15 @@ git clone git@github.com:dnsimple/dns_erlang.git
 cd dns_erlang
 ```
 
-#### 2. Install Erlang
+### 2. Install Erlang
 
-#### 3. Create your own working branch
+### 3. Create your own working branch
 
 ```shell
 git checkout -b dev_new_feature_xyz
 ```
 
-#### 3. Build and test
+### 3. Build and test
 
 Compile the project and [run the test suite](#testing) to check everything works as expected.
 

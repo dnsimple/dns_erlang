@@ -1,9 +1,12 @@
+---
+
 name: CI
 
 on:
   pull_request:
   push:
-    branches: [ "main" ]
+    branches:
+      - main
   workflow_dispatch:
 
 concurrency:
@@ -11,6 +14,25 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  yamllint:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+      - name: Run YAML Lint
+        uses: actionshub/yamllint@main
+
+  markdownlint-cli:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout Code
+        uses: actions/checkout@v4
+      - name: Run markdownlint-cli
+        uses: nosborn/github-action-markdown-cli@v3.4.0
+        with:
+          files: .
+          config_file: ".markdownlint.yaml"
+
   build:
     name: Build
     runs-on: ubuntu-latest
@@ -44,6 +66,8 @@ jobs:
 
     needs:
       - build
+      - markdownlint-cli
+      - yamllint
 
     steps:
       - uses: actions/checkout@v4

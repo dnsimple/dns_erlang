@@ -66,7 +66,7 @@ Note that all support RR types must include a `dns_rrdata_` record definition, u
 
 The `dns` module is the primary entry point for the functionality in this library. The module exports various types used in type specs, such as `message()`, which indicates a `#dns_message` record, `query()` which represents a single `#dns_query` record, `questions()`, which represents a list of queries, etc.
 
-It also exports functions for encoding and decoding messages, TSIG supporting functions, and various utility functions for comparing domain names, converting domain names into different cases, converting to and from label lists, etc. 
+It also exports functions for encoding and decoding messages, TSIG supporting functions, and various utility functions for comparing domain names, converting domain names into different cases, converting to and from label lists, etc.
 
 ### dns\_record.erl
 
