@@ -2,6 +2,9 @@
 
 An Erlang DNS message library that supports most common record types, TSIG authenticated messages, EDNS0 and DNSSEC.
 
+[![Build Status](https://github.com/dnsimple/dns_erlang/actions/workflows/ci.yml/badge.svg)](https://github.com/dnsimple/dns-_rlang/actions/workflows/ci.yml)
+[![Module Version](https://img.shields.io/hexpm/v/dns_erlang.svg)](https://hex.pm/packages/dns_erlang)
+
 ## Usage
 
 This library exposes types via `include/dns.hrl`, which in turn includes `include/dns_terms.hrl` and `include/dns_records.hrl`, as well as functions useful for constructing and deconstructing DNS packets with `src/dns.erl`
