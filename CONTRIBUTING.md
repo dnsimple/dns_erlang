@@ -53,7 +53,7 @@ The following instructions uses `$VERSION` as a placeholder, where `$VERSION` is
 
 1. Run the test suite and ensure all the tests pass.
 
-1. Set the version in `src/dns_erlang.app.src` & `src/bugsnag.erl`
+1. Set the version in `src/dns_erlang.app.src`
 
 1. Run the test suite and ensure all the tests pass.
 
