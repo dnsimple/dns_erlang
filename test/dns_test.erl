@@ -91,7 +91,7 @@ tsig_bad_key_test() ->
     B64 = <<"abcdefgh">>,
     TSIGData = #dns_rrdata_tsig{
         alg = ?DNS_TSIG_ALG_MD5,
-        time = dns:unix_seconds(),
+        time = dns:unix_time(),
         fudge = 0,
         mac = B64,
         msgid = MsgId,
@@ -114,7 +114,7 @@ tsig_bad_alg_test() ->
     Name = <<"keyname">>,
     Data = #dns_rrdata_tsig{
         alg = <<"null">>,
-        time = dns:unix_seconds(),
+        time = dns:unix_time(),
         fudge = 0,
         mac = <<"MAC">>,
         msgid = Id,
@@ -150,7 +150,7 @@ tsig_badtime_test_() ->
     Fudge = 30,
     SignedMsg = dns:add_tsig(Msg, ?DNS_TSIG_ALG_MD5, Name, Secret, 0),
     SignedMsgBin = dns:encode_message(SignedMsg),
-    Now = dns:unix_seconds(),
+    Now = dns:unix_time(),
     [
         ?_test(
             begin
@@ -177,7 +177,7 @@ tsig_ok_test_() ->
         ?DNS_TSIG_ALG_SHA512
     ],
     Msg = #dns_message{id = MsgId},
-    Options = [{time, dns:unix_seconds()}, {fudge, 30}],
+    Options = [{time, dns:unix_time()}, {fudge, 30}],
     [
         {Alg,
             ?_test(

@@ -61,8 +61,8 @@
 -type gen_nsec3_opt() :: gen_nsec_opt().
 -type keytag() :: integer().
 -type key() :: [binary()].
--type sign_rr_opt() :: {inception | expiration, dns:unix_seconds()}.
--type verify_rrsig_opt() :: {now, dns:unix_seconds()}.
+-type sign_rr_opt() :: {inception | expiration, dns:unix_time()}.
+-type verify_rrsig_opt() :: {now, dns:unix_time()}.
 
 -define(RSASHA1_PREFIX,
     <<16#30, 16#21, 16#30, 16#09, 16#06, 16#05, 16#2B, 16#0E, 16#03, 16#02, 16#1A, 16#05, 16#00, 16#04, 16#14>>
@@ -393,7 +393,7 @@ sign_rrset(
     Key,
     Opts
 ) when is_integer(Alg) ->
-    Now = dns:unix_seconds(),
+    Now = dns:unix_time(),
     Incept = proplists:get_value(inception, Opts, Now),
     Expire = proplists:get_value(expiration, Opts, Now + (365 * 24 * 60 * 60)),
     {Data0, BaseSigInput} = build_sig_input(
@@ -446,7 +446,7 @@ verify_rrsig(
     RRDNSKey,
     Opts
 ) ->
-    Now = proplists:get_value(now, Opts, dns:unix_seconds()),
+    Now = proplists:get_value(now, Opts, dns:unix_time()),
     #dns_rrdata_rrsig{
         original_ttl = OTTL,
         key_tag = SigKeyTag,

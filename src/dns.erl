@@ -26,7 +26,7 @@
 -export([compare_dname/2]).
 -export([dname_to_upper/1, dname_to_lower/1]).
 -export([dname_to_labels/1, labels_to_dname/1, escape_label/1]).
--export([unix_seconds/0]).
+-export([unix_time/0, unix_time/1]).
 -export([random_id/0]).
 
 -export([
@@ -75,7 +75,7 @@
     type/0,
     ttl/0,
     rrdata/0,
-    unix_seconds/0
+    unix_time/0
 ]).
 -type decode_error() :: formerr | truncated | trailing_garbage.
 -type message() :: #dns_message{}.
@@ -150,11 +150,11 @@
     | {errcode, tsig_error()}
     | {other, binary()}
     | tsig_opt().
--type unix_seconds() :: 0..4294967295.
+-type unix_time() :: 0..4294967295.
 -type tsig_mac() :: binary().
 -type tsig_error() :: 0 | 16..18.
 -type tsig_opt() ::
-    {time, unix_seconds()}
+    {time, unix_time()}
     | {fudge, non_neg_integer()}
     | {mac, tsig_mac()}
     | {tail, boolean()}.
@@ -376,7 +376,7 @@ encode_message(#dns_message{id = MsgId, additional = Ad} = Msg, Opts) ->
             Name = proplists:get_value(name, TSIGOpts),
             Secret = proplists:get_value(secret, TSIGOpts),
             Err = proplists:get_value(errcode, TSIGOpts, ?DNS_TSIGERR_NOERROR),
-            Time = proplists:get_value(time, TSIGOpts, unix_seconds()),
+            Time = proplists:get_value(time, TSIGOpts, unix_time()),
             Fudge = proplists:get_value(fudge, TSIGOpts, ?DEFAULT_TSIG_FUDGE),
             PreviousMAC = proplists:get_value(mac, TSIGOpts, <<>>),
             Other = proplists:get_value(other, TSIGOpts, <<>>),
@@ -793,7 +793,7 @@ verify_tsig(MsgBin, Name, Secret) ->
 -spec verify_tsig(message_bin(), dname(), binary(), [tsig_opt()]) ->
     {ok, tsig_mac()} | {error, tsig_error()}.
 verify_tsig(MsgBin, Name, Secret, Options) ->
-    Now = proplists:get_value(time, Options, unix_seconds()),
+    Now = proplists:get_value(time, Options, unix_time()),
     Fudge = proplists:get_value(fudge, Options, ?DEFAULT_TSIG_FUDGE),
     PreviousMAC = proplists:get_value(mac, Options, <<>>),
     Tail = proplists:get_bool(tail, Options),
@@ -864,7 +864,7 @@ add_tsig(Msg, Alg, Name, Secret, ErrCode) ->
 add_tsig(Msg, Alg, Name, Secret, ErrCode, Options) ->
     MsgId = Msg#dns_message.id,
     MsgBin = encode_message(Msg),
-    Time = proplists:get_value(time, Options, unix_seconds()),
+    Time = proplists:get_value(time, Options, unix_time()),
     Fudge = proplists:get_value(fudge, Options, ?DEFAULT_TSIG_FUDGE),
     PreviousMAC = proplists:get_value(mac, Options, <<>>),
     Other = proplists:get_value(other, Options, <<>>),
@@ -2487,9 +2487,19 @@ alg_name(Int) when is_integer(Int) ->
 %%%===================================================================
 
 %% @doc Return current unix time.
--spec unix_seconds() -> unix_seconds().
-unix_seconds() ->
-    erlang:system_time(second).
+-spec unix_time() -> unix_time().
+unix_time() ->
+    unix_time(erlang:timestamp()).
+
+%% @doc Return the unix time from a now or universal time.
+-spec unix_time(erlang:timestamp() | calendar:datetime1970()) -> unix_time().
+unix_time({_MegaSecs, _Secs, _MicroSecs} = NowTime) ->
+    UniversalTime = calendar:now_to_universal_time(NowTime),
+    unix_time(UniversalTime);
+unix_time({{_, _, _}, {_, _, _}} = UniversalTime) ->
+    Epoch = {{1970, 1, 1}, {0, 0, 0}},
+    (calendar:datetime_to_gregorian_seconds(UniversalTime) -
+        calendar:datetime_to_gregorian_seconds(Epoch)).
 
 %%%===================================================================
 %%% Internal functions
