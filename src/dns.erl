@@ -48,6 +48,13 @@
 -export([encode_rrdata/2, decode_rrdata/3]).
 -export([encode_dname/1]).
 
+-ifdef(TEST).
+-export([encode_rrdata/4, decode_rrdata/4]).
+-export([encode_svcb_svc_params/1, decode_svcb_svc_params/1]).
+-export([encode_optrrdata/1, decode_optrrdata/1]).
+-export([encode_dname/3, encode_dname/4, decode_dname/2]).
+-endif.
+
 -include("dns.hrl").
 
 %% Types
@@ -56,7 +63,7 @@
     message_id/0,
     opcode/0,
     rcode/0,
-    'query'/0,
+    query/0,
     questions/0,
     rr/0,
     optrr/0,
@@ -67,16 +74,17 @@
     class/0,
     type/0,
     ttl/0,
-    rrdata/0
+    rrdata/0,
+    unix_time/0
 ]).
--type decode_error() :: 'formerr' | 'truncated' | 'trailing_garbage'.
+-type decode_error() :: formerr | truncated | trailing_garbage.
 -type message() :: #dns_message{}.
 -type message_bin() :: <<_:64, _:_*8>>.
 -type message_id() :: 1..65535.
 -type opcode() :: 0..16.
 -type rcode() :: 0..65535.
--type 'query'() :: #dns_query{}.
--type questions() :: ['query'()].
+-type query() :: #dns_query{}.
+-type questions() :: [query()].
 -type rr() :: #dns_rr{}.
 -type optrr() :: #dns_optrr{}.
 -type answers() :: [rr()].
@@ -131,25 +139,25 @@
     | #dns_rrdata_tsig{}
     | #dns_rrdata_txt{}.
 -type encode_message_opt() ::
-    {'max_size', 512..65535}
-    | {'tc_mode', 'default' | 'axfr' | 'llq_event'}
-    | {'tsig', [encode_message_tsig_opt()]}.
+    {max_size, 512..65535}
+    | {tc_mode, default | axfr | llq_event}
+    | {tsig, [encode_message_tsig_opt()]}.
 -type encode_message_tsig_opt() ::
-    {'msgid', message_id()}
-    | {'alg', tsig_alg()}
-    | {'name', dname()}
-    | {'secret', binary()}
-    | {'errcode', tsig_error()}
-    | {'other', binary()}
+    {msgid, message_id()}
+    | {alg, tsig_alg()}
+    | {name, dname()}
+    | {secret, binary()}
+    | {errcode, tsig_error()}
+    | {other, binary()}
     | tsig_opt().
 -type unix_time() :: 0..4294967295.
 -type tsig_mac() :: binary().
 -type tsig_error() :: 0 | 16..18.
 -type tsig_opt() ::
-    {'time', unix_time()}
-    | {'fudge', non_neg_integer()}
-    | {'mac', tsig_mac()}
-    | {'tail', boolean()}.
+    {time, unix_time()}
+    | {fudge, non_neg_integer()}
+    | {mac, tsig_mac()}
+    | {tail, boolean()}.
 -type tsig_alg() :: binary().
 -type alg() ::
     ?DNS_ALG_DSA
@@ -163,8 +171,6 @@
 -type llqerrcode() :: 0..6.
 -type llqopcode() :: 1..3.
 
--include("dns_tests.hrl").
-
 -define(DEFAULT_TSIG_FUDGE, 5 * 60).
 
 %%%===================================================================
@@ -173,7 +179,7 @@
 
 %% @doc Decode a binary DNS message.
 -spec decode_message(message_bin()) ->
-    {decode_error(), message() | 'undefined', binary()} | message().
+    {decode_error(), message() | undefined, binary()} | message().
 decode_message(
     <<Id:16, QR:1, OC:4, AA:1, TC:1, RD:1, RA:1, 0:1, AD:1, CD:1, RC:4, QC:16, ANC:16, AUC:16, ADC:16, Rest/binary>> = MsgBin
 ) ->
@@ -779,13 +785,13 @@ random_id() -> rand:uniform(65535).
 
 %% @equiv verify_tsig(MsgBin, Name, Secret, [])
 -spec verify_tsig(message_bin(), dname(), binary()) ->
-    {'ok', tsig_mac()} | {'error', tsig_error()}.
+    {ok, tsig_mac()} | {error, tsig_error()}.
 verify_tsig(MsgBin, Name, Secret) ->
     verify_tsig(MsgBin, Name, Secret, []).
 
 %% @doc Verifies a TSIG message signature.
 -spec verify_tsig(message_bin(), dname(), binary(), [tsig_opt()]) ->
-    {'ok', tsig_mac()} | {'error', tsig_error()}.
+    {ok, tsig_mac()} | {error, tsig_error()}.
 verify_tsig(MsgBin, Name, Secret, Options) ->
     Now = proplists:get_value(time, Options, unix_time()),
     Fudge = proplists:get_value(fudge, Options, ?DEFAULT_TSIG_FUDGE),
@@ -1911,6 +1917,7 @@ encode_rrdata(_Pos, _Class, Bin, CompMap) when is_binary(Bin) ->
     {Bin, CompMap}.
 
 decode_loc_point(P) when is_integer(P) ->
+    %% 2^31 - 1, the largest signed 32-bit integer value
     M = 2147483647,
     case P > M of
         true -> (P - M);
@@ -2290,7 +2297,7 @@ dname_to_lower_i(Int) when is_integer(Int) -> Int.
 %%%===================================================================
 
 %% @doc Returns the name of the class as a binary string.
--spec class_name(class()) -> binary() | 'undefined'.
+-spec class_name(class()) -> binary() | undefined.
 class_name(Int) when is_integer(Int) ->
     case Int of
         ?DNS_CLASS_IN_NUMBER -> ?DNS_CLASS_IN_BSTR;
@@ -2303,7 +2310,7 @@ class_name(Int) when is_integer(Int) ->
     end.
 
 %% @doc Returns the name of the type as a binary string.
--spec type_name(type()) -> binary() | 'undefined'.
+-spec type_name(type()) -> binary() | undefined.
 type_name(Int) when is_integer(Int) ->
     case Int of
         ?DNS_TYPE_A_NUMBER -> ?DNS_TYPE_A_BSTR;
@@ -2379,7 +2386,7 @@ type_name(Int) when is_integer(Int) ->
     end.
 
 %% @doc Returns the name of an rcode as a binary string.
--spec rcode_name(rcode()) -> binary() | 'undefined'.
+-spec rcode_name(rcode()) -> binary() | undefined.
 rcode_name(Int) when is_integer(Int) ->
     case Int of
         ?DNS_RCODE_NOERROR_NUMBER -> ?DNS_RCODE_NOERROR_BSTR;
@@ -2397,7 +2404,7 @@ rcode_name(Int) when is_integer(Int) ->
     end.
 
 %% @doc Returns the name of an opcode as a binary string.
--spec opcode_name(opcode()) -> binary() | 'undefined'.
+-spec opcode_name(opcode()) -> binary() | undefined.
 opcode_name(Int) when is_integer(Int) ->
     case Int of
         ?DNS_OPCODE_QUERY_NUMBER -> ?DNS_OPCODE_QUERY_BSTR;
@@ -2408,7 +2415,7 @@ opcode_name(Int) when is_integer(Int) ->
     end.
 
 %% @doc Returns the name of a TSIG error as a binary string.
--spec tsigerr_name(tsig_error()) -> binary() | 'undefined'.
+-spec tsigerr_name(tsig_error()) -> binary() | undefined.
 tsigerr_name(Int) when is_integer(Int) ->
     case Int of
         ?DNS_TSIGERR_NOERROR_NUMBER -> ?DNS_TSIGERR_NOERROR_BSTR;
@@ -2419,7 +2426,7 @@ tsigerr_name(Int) when is_integer(Int) ->
     end.
 
 %% @doc Returns the name of an extended rcode as a binary string.
--spec ercode_name(ercode()) -> binary() | 'undefined'.
+-spec ercode_name(ercode()) -> binary() | undefined.
 ercode_name(Int) when is_integer(Int) ->
     case Int of
         ?DNS_ERCODE_NOERROR_NUMBER -> ?DNS_ERCODE_NOERROR_BSTR;
@@ -2428,7 +2435,7 @@ ercode_name(Int) when is_integer(Int) ->
     end.
 
 %% @doc Returns the name of an extended option as a binary string.
--spec eoptcode_name(eoptcode()) -> binary() | 'undefined'.
+-spec eoptcode_name(eoptcode()) -> binary() | undefined.
 eoptcode_name(Int) when is_integer(Int) ->
     case Int of
         ?DNS_EOPTCODE_LLQ_NUMBER -> ?DNS_EOPTCODE_LLQ_BSTR;
@@ -2439,7 +2446,7 @@ eoptcode_name(Int) when is_integer(Int) ->
     end.
 
 %% @doc Returns the name of an LLQ opcode as a binary string.
--spec llqopcode_name(llqopcode()) -> binary() | 'undefined'.
+-spec llqopcode_name(llqopcode()) -> binary() | undefined.
 llqopcode_name(Int) when is_integer(Int) ->
     case Int of
         ?DNS_LLQOPCODE_SETUP_NUMBER -> ?DNS_LLQOPCODE_SETUP_BSTR;
@@ -2449,7 +2456,7 @@ llqopcode_name(Int) when is_integer(Int) ->
     end.
 
 %% @doc Returns the name of an LLQ error code as a binary string.
--spec llqerrcode_name(llqerrcode()) -> binary() | 'undefined'.
+-spec llqerrcode_name(llqerrcode()) -> binary() | undefined.
 llqerrcode_name(Int) when is_integer(Int) ->
     case Int of
         ?DNS_LLQERRCODE_NOERROR_NUMBER -> ?DNS_LLQERRCODE_NOERROR_BSTR;
@@ -2463,7 +2470,7 @@ llqerrcode_name(Int) when is_integer(Int) ->
     end.
 
 %% @doc Returns the name of a DNS algorithm as a binary string.
--spec alg_name(alg()) -> binary() | 'undefined'.
+-spec alg_name(alg()) -> binary() | undefined.
 alg_name(Int) when is_integer(Int) ->
     case Int of
         ?DNS_ALG_DSA_NUMBER -> ?DNS_ALG_DSA_BSTR;

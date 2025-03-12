@@ -1,6 +1,7 @@
--ifdef(TEST).
+-module(dnssec_test).
+
 -include_lib("eunit/include/eunit.hrl").
--include("rebar_version.hrl").
+-include("dns.hrl").
 
 -record(dnssec_test_sample, {
     zonename,
@@ -38,7 +39,7 @@ gen_nsec_test_() ->
                                 [RR#dns_rr{data = NewData} | Acc]
                             end,
                             [],
-                            gen_nsec(RRClean)
+                            dnssec:gen_nsec(RRClean)
                         )
                     ),
                     SrcNSEC = lists:sort(
@@ -56,7 +57,7 @@ gen_nsec_test_() ->
 
 verify_rrset_test_() ->
     {setup, fun() -> application:start(crypto) end, [
-        {Name, ?_assert(verify_rrsig(RRSig, RRSet, DNSKeys, Opts))}
+        {Name, ?_assert(dnssec:verify_rrsig(RRSig, RRSet, DNSKeys, Opts))}
      || {Name, RRSig, RRSet, DNSKeys, Opts} <- helper_verify_rrset_test_cases()
     ]}.
 
@@ -109,7 +110,7 @@ zone_test_() ->
                     RRNSEC =
                         case NSEC3 of
                             undefined ->
-                                gen_nsec(RRDNSKey) ++ RRDNSKey;
+                                dnssec:gen_nsec(RRDNSKey) ++ RRDNSKey;
                             #dns_rrdata_nsec3param{} = Param ->
                                 RRNSEC3 = [
                                     #dns_rr{
@@ -120,7 +121,7 @@ zone_test_() ->
                                     }
                                     | RRDNSKey
                                 ],
-                                gen_nsec3(RRNSEC3) ++ RRNSEC3
+                                dnssec:gen_nsec3(RRNSEC3) ++ RRNSEC3
                         end,
                     RRDECENC = lists:map(
                         fun(
@@ -140,7 +141,7 @@ zone_test_() ->
                     ),
                     %% Add RRSIG
                     Opts = [{inception, I}, {expiration, E}],
-                    RRSigsZSK = sign_rr(
+                    RRSigsZSK = dnssec:sign_rr(
                         RRDECENC,
                         ZoneNameB,
                         ZSKKey#dns_rrdata_dnskey.key_tag,
@@ -152,7 +153,7 @@ zone_test_() ->
                         RR
                      || #dns_rr{type = ?DNS_TYPE_DNSKEY} = RR <- RRDECENC
                     ],
-                    RRSigsKSK = sign_rr(
+                    RRSigsKSK = dnssec:sign_rr(
                         RRDNSKeys,
                         ZoneNameB,
                         KSKKey#dns_rrdata_dnskey.key_tag,
@@ -163,13 +164,13 @@ zone_test_() ->
                     RRFinal = RRSigsKSK ++ RRSigsZSK ++ RRDECENC,
                     GeneratedRR = lists:sort(
                         [
-                            RR#dns_rr{name = normalise_dname(Name)}
+                            RR#dns_rr{name = dnssec:normalise_dname(Name)}
                          || #dns_rr{name = Name} = RR <- RRFinal
                         ]
                     ),
                     SampleRR = lists:sort(
                         [
-                            RR#dns_rr{name = normalise_dname(Name)}
+                            RR#dns_rr{name = dnssec:normalise_dname(Name)}
                          || #dns_rr{name = Name} = RR <- RRSrc
                         ]
                     ),
@@ -265,7 +266,7 @@ dnskey_pubkey_gen_test_() ->
     ].
 
 helper_test_samples() ->
-    Path = filename:join(prefix(), "dnssec_samples.txt"),
+    Path = filename:join("priv", "dnssec_samples.txt"),
     {ok, Terms} = file:consult(Path),
     DecodeKeyProplistTuple = fun
         ({alg, _} = Tuple) ->
@@ -480,12 +481,10 @@ helper_pubkey_to_dnskey_pubkey(dsa, Key) ->
 
 helper_add_keytag_to_dnskey(#dns_rrdata_dnskey{} = DNSKey) ->
     RR = #dns_rr{type = ?DNS_TYPE_DNSKEY, data = DNSKey},
-    (add_keytag_to_dnskey(RR))#dns_rr.data.
+    (dnssec:add_keytag_to_dnskey(RR))#dns_rr.data.
 
 helper_fmt(Fmt, Args) ->
     lists:flatten(io_lib:format(Fmt, Args)).
 
 helper_uniqlist(List) ->
     lists:sort(sets:to_list(sets:from_list(List))).
-
--endif.

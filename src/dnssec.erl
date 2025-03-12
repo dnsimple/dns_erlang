@@ -29,6 +29,11 @@
 -export([canonical_rrdata_form/1]).
 -export([ih/4]).
 
+%% Private
+-ifdef(TEST).
+-export([normalise_dname/1]).
+-endif.
+
 -include("dns.hrl").
 -include("DNS-ASN1.hrl").
 
@@ -52,14 +57,12 @@
 -type nsec3_hashalg() :: ?DNSSEC_NSEC3_ALG_SHA1.
 -type nsec3_salt() :: binary().
 -type nsec3_iterations() :: non_neg_integer().
--type gen_nsec_opt() :: {'base_types', [dns:type()]}.
+-type gen_nsec_opt() :: {base_types, [dns:type()]}.
 -type gen_nsec3_opt() :: gen_nsec_opt().
 -type keytag() :: integer().
 -type key() :: [binary()].
--type sign_rr_opt() :: {'inception' | 'expiration', dns:unix_time()}.
--type verify_rrsig_opt() :: {'now', dns:unix_time()}.
-
--include("dnssec_tests.hrl").
+-type sign_rr_opt() :: {inception | expiration, dns:unix_time()}.
+-type verify_rrsig_opt() :: {now, dns:unix_time()}.
 
 -define(RSASHA1_PREFIX,
     <<16#30, 16#21, 16#30, 16#09, 16#06, 16#05, 16#2B, 16#0E, 16#03, 16#02, 16#1A, 16#05, 16#00, 16#04, 16#14>>

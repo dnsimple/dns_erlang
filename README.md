@@ -4,6 +4,9 @@ An Erlang DNS message library that supports most common record types, TSIG authe
 
 [![Build Status](https://github.com/dnsimple/dns_erlang/actions/workflows/ci.yml/badge.svg)](https://github.com/dnsimple/dns-_rlang/actions/workflows/ci.yml)
 [![Module Version](https://img.shields.io/hexpm/v/dns_erlang.svg)](https://hex.pm/packages/dns_erlang)
+[![Hex Docs](https://img.shields.io/badge/hex-docs-lightgreen.svg)](https://hexdocs.pm/dns_erlang/)
+[![Hex Downloads](https://img.shields.io/hexpm/dt/dns_erlang.svg)](https://hex.pm/packages/dns_erlang)
+[![Coverage Status](https://coveralls.io/repos/github/dnsimple/dns_erlang/badge.svg?branch=main)](https://coveralls.io/github/dnsimple/dns_erlang?branch=main)
 
 ## Usage
 

@@ -21,11 +21,6 @@
 -include("dns_records.hrl").
 -export([fields/1, size/1, atom_for_type/1, type_for_atom/1]).
 
--ifdef(TEST).
--include_lib("eunit/include/eunit.hrl").
--include("rebar_version.hrl").
--endif.
-
 %% @doc Returns the fields that make up a given record.
 -spec fields(atom()) -> [atom()].
 fields(dns_message) -> record_info(fields, dns_message);
@@ -219,30 +214,3 @@ type_for_atom(dns_rrdata_dlv) -> ?DNS_TYPE_DLV;
 type_for_atom(dns_rrdata_cert) -> ?DNS_TYPE_CERT;
 type_for_atom(dns_rrdata_tsig) -> ?DNS_TYPE_TSIG;
 type_for_atom(_) -> undefined.
-
--ifdef(TEST).
-
-type_rec_test_() ->
-    {ok, Cases} = file:consult(filename:join(prefix(), "rrdata_wire_samples.txt")),
-    Types = sets:to_list(sets:from_list([T || {_, T, _} <- Cases, T =/= 999])),
-    [
-        ?_assertEqual(Type, type_for_atom(atom_for_type(Type)))
-     || Type <- Types
-    ].
-
-recinfo_test_() ->
-    {ok, Cases} = file:consult(filename:join(prefix(), "rrdata_wire_samples.txt")),
-    Types = sets:to_list(sets:from_list([T || {_, T, _} <- Cases, T =/= 999])),
-    Tags = [dns_rr | [atom_for_type(Type) || Type <- Types]],
-    [
-        {
-            atom_to_list(Tag),
-            ?_assertEqual(
-                length(fields(Tag)),
-                ?MODULE:size(Tag) - 1
-            )
-        }
-     || Tag <- Tags
-    ].
-
--endif.
