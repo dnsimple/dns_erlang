@@ -2,6 +2,8 @@
 -define('__dns_records.hrl__', ok).
 -include("dns_terms.hrl").
 
+-type uint16() :: 0..65535.
+
 -record(dns_message, {
     id = dns:random_id() :: dns:message_id(),
     qr = false :: 0..1 | boolean(),
@@ -13,10 +15,10 @@
     ad = false :: 0..1 | boolean(),
     cd = false :: 0..1 | boolean(),
     rc = ?DNS_RCODE_NOERROR :: dns:rcode(),
-    qc = 0 :: 0..65535,
-    anc = 0 :: 0..65535,
-    auc = 0 :: 0..65535,
-    adc = 0 :: 0..65535,
+    qc = 0 :: uint16(),
+    anc = 0 :: uint16(),
+    auc = 0 :: uint16(),
+    adc = 0 :: uint16(),
     questions = [] :: dns:questions(),
     answers = [] :: dns:answers(),
     authority = [] :: dns:authority(),
