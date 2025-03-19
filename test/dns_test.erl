@@ -32,6 +32,65 @@ message_other_test() ->
     Bin = dns:encode_message(Msg),
     ?assertEqual(Msg, dns:decode_message(Bin)).
 
+message_txt_test() ->
+    QName = <<"lorem.example.org">>,
+    Lorem = ten_lorem_ipsums_in_chunks(),
+    Qs = [#dns_query{name = QName, type = ?DNS_TYPE_TXT}],
+    As = [
+        #dns_rr{
+            name = QName,
+            type = ?DNS_TYPE_TXT,
+            ttl = 0,
+            data = #dns_rrdata_txt{txt = Lorem}
+        }
+    ],
+    QLen = length(Qs),
+    ALen = length(As),
+    Msg = #dns_message{qc = QLen, anc = ALen, questions = Qs, answers = As},
+    Bin = dns:encode_message(Msg),
+    ?assertEqual(Msg, dns:decode_message(Bin)).
+
+truncated_txt_test() ->
+    QName = <<"lorem.example.org">>,
+    Lorem = ten_lorem_ipsums_in_chunks(),
+    Qs = [#dns_query{name = QName, type = ?DNS_TYPE_TXT}],
+    As = [
+        #dns_rr{
+            name = QName,
+            type = ?DNS_TYPE_TXT,
+            ttl = 0,
+            data = #dns_rrdata_txt{txt = Lorem}
+        }
+    ],
+    QLen = length(Qs),
+    ALen = length(As),
+    Msg = #dns_message{qc = QLen, anc = ALen, questions = Qs, answers = As},
+    Bin = dns:encode_message(Msg),
+    Head = binary:part(Bin, 0, 47),
+    OneLorem = iolist_to_binary(Lorem),
+    NewBin = <<Head/binary, 255, OneLorem/binary>>,
+    ?assertMatch({truncated, _, _}, dns:decode_message(NewBin)).
+
+trailing_garbage_txt_test() ->
+    QName = <<"lorem.example.org">>,
+    Text = <<"\"Hello\"">>,
+    Qs = [#dns_query{name = QName, type = ?DNS_TYPE_TXT}],
+    As = [
+        #dns_rr{
+            name = QName,
+            type = ?DNS_TYPE_TXT,
+            ttl = 0,
+            data = #dns_rrdata_txt{txt = [Text]}
+        }
+    ],
+    QLen = length(Qs),
+    ALen = length(As),
+    Msg = #dns_message{qc = QLen, anc = ALen, questions = Qs, answers = As},
+    Bin = dns:encode_message(Msg),
+    Head = binary:part(Bin, 0, 48),
+    NewBin = <<Head/binary, "_Hello__">>,
+    ?assertMatch({trailing_garbage, _, _}, dns:decode_message(NewBin)).
+
 message_edns_test() ->
     QName = <<"_http._tcp.example.org">>,
     Qs = [#dns_query{name = QName, type = ?DNS_TYPE_PTR}],
@@ -502,3 +561,9 @@ alg_terms_test_() ->
         ?DNS_ALG_RSASHA512
     ],
     [?_assertEqual(true, is_binary(dns:alg_name(Alg))) || Alg <- Cases].
+
+ten_lorem_ipsums_in_chunks() ->
+    Lorem = "Lorem ipsum dolor sit \"amet\", consectetur adipisicing elit.",
+    RepeatedLorem = lists:duplicate(10, Lorem),
+    BigLorem = lists:flatten(lists:join("\n", RepeatedLorem)),
+    [iolist_to_binary(lists:sublist(BigLorem, X, 255)) || X <- lists:seq(1, length(BigLorem), 255)].
