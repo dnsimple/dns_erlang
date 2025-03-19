@@ -18,11 +18,13 @@
 %%
 %% -------------------------------------------------------------------
 -module(dns_record_info).
+
 -include("dns_records.hrl").
+
 -export([fields/1, size/1, atom_for_type/1, type_for_atom/1]).
 
 %% @doc Returns the fields that make up a given record.
--spec fields(atom()) -> [atom()].
+-spec fields(atom()) -> [atom(), ...].
 fields(dns_message) -> record_info(fields, dns_message);
 fields(dns_query) -> record_info(fields, dns_query);
 fields(dns_rr) -> record_info(fields, dns_rr);
@@ -126,7 +128,7 @@ size(dns_opt_ecs) -> record_info(size, dns_opt_ecs);
 size(dns_opt_unknown) -> record_info(size, dns_opt_unknown).
 
 %% @doc Returns the record tag atom for the given record type.
--spec atom_for_type(dns:type()) -> atom() | 'undefined'.
+-spec atom_for_type(dns:type()) -> atom() | undefined.
 atom_for_type(?DNS_TYPE_A) -> dns_rrdata_a;
 atom_for_type(?DNS_TYPE_AFSDB) -> dns_rrdata_afsdb;
 atom_for_type(?DNS_TYPE_AAAA) -> dns_rrdata_aaaa;
@@ -171,7 +173,7 @@ atom_for_type(?DNS_TYPE_TSIG) -> dns_rrdata_tsig;
 atom_for_type(_) -> undefined.
 
 %% @doc Returns the record type for the given record tag atom.
--spec type_for_atom(atom()) -> dns:type() | 'undefined'.
+-spec type_for_atom(atom()) -> dns:type() | undefined.
 type_for_atom(dns_rrdata_a) -> ?DNS_TYPE_A;
 type_for_atom(dns_rrdata_afsdb) -> ?DNS_TYPE_AFSDB;
 type_for_atom(dns_rrdata_aaaa) -> ?DNS_TYPE_AAAA;
