@@ -1,12 +1,11 @@
 {application, dns_erlang, [
-    {description, "An Erlang DNS message library that supports most common record types, TSIG authenticated messages, EDNS0 and DNSSEC."},
+    {description,
+        "An Erlang DNS message library that supports most common record types, TSIG authenticated messages, EDNS0 and DNSSEC."},
     {vsn, git},
-    {licenses, ["Apache"]},
     {modules, []},
     {registered, []},
     {applications, [kernel, stdlib, crypto, base32]},
     {env, []},
-
     {licenses, ["Apache-2.0"]},
     {links, [{"GitHub", "https://github.com/dnsimple/dns_erlang"}]}
 ]}.
