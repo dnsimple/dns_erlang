@@ -75,18 +75,29 @@
     type/0,
     ttl/0,
     rrdata/0,
+    tsig_alg/0,
     unix_time/0
 ]).
+-export_type([rrdata_rrsig/0]).
 -type decode_error() :: formerr | truncated | trailing_garbage.
--type message() :: #dns_message{}.
 -type message_bin() :: <<_:64, _:_*8>>.
 -type message_id() :: 1..65535.
 -type opcode() :: 0..16.
 -type rcode() :: 0..65535.
--type query() :: #dns_query{}.
 -type questions() :: [query()].
+
+-type message() :: #dns_message{}.
+-type query() :: #dns_query{}.
 -type rr() :: #dns_rr{}.
 -type optrr() :: #dns_optrr{}.
+-type opt_nsid() :: #dns_opt_nsid{}.
+-type opt_ul() :: #dns_opt_ul{}.
+-type opt_ecs() :: #dns_opt_ecs{}.
+-type opt_llq() :: #dns_opt_llq{}.
+-type opt_owner() :: #dns_opt_owner{}.
+-type opt_unknown() :: #dns_opt_unknown{}.
+-type rrdata_rrsig() :: #dns_rrdata_rrsig{}.
+
 -type answers() :: [rr()].
 -type authority() :: [rr()].
 -type additional() :: [optrr() | [rr()]] | [rr()].
@@ -181,7 +192,8 @@
 -spec decode_message(message_bin()) ->
     {decode_error(), message() | undefined, binary()} | message().
 decode_message(
-    <<Id:16, QR:1, OC:4, AA:1, TC:1, RD:1, RA:1, 0:1, AD:1, CD:1, RC:4, QC:16, ANC:16, AUC:16, ADC:16, Rest/binary>> = MsgBin
+    <<Id:16, QR:1, OC:4, AA:1, TC:1, RD:1, RA:1, 0:1, AD:1, CD:1, RC:4, QC:16, ANC:16, AUC:16,
+        ADC:16, Rest/binary>> = MsgBin
 ) ->
     try
         #dns_message{
@@ -201,13 +213,18 @@ decode_message(
             adc = ADC
         }
     of
-        #dns_message{} = Msg -> decode_message(questions, MsgBin, Rest, Msg)
+        #dns_message{} = Msg ->
+            decode_message(questions, MsgBin, Rest, Msg)
     catch
         _ -> {formerr, undefined, MsgBin}
     end;
 decode_message(<<_/binary>> = MsgBin) ->
     {formerr, undefined, MsgBin}.
 
+-spec decode_message(
+    additional | answers | authority | finished | questions, <<_:64, _:_*8>>, binary(), message()
+) ->
+    {atom(), message(), binary()} | message().
 decode_message(questions, MsgBin, QBody, #dns_message{qc = QC} = Msg) ->
     case decode_message_questions(QBody, QC, MsgBin) of
         {Questions, Rest} ->
@@ -248,9 +265,15 @@ decode_message(finished, _MsgBin, Bin, #dns_message{} = Msg) when
 ->
     {trailing_garbage, Msg, Bin}.
 
+-spec decode_message_questions(binary(), char(), <<_:64, _:_*8>>) ->
+    {[{_, _, _, _}], binary()} | {atom(), [{_, _, _, _}], binary()}.
 decode_message_questions(DataBin, Count, MsgBin) ->
     decode_message_questions(DataBin, Count, MsgBin, []).
 
+-spec decode_message_questions(binary(), char(), <<_:64, _:_*8>>, [
+    #dns_query{name :: binary(), class :: char(), type :: char()}
+]) ->
+    {[{_, _, _, _}], binary()} | {atom(), [{_, _, _, _}], binary()}.
 decode_message_questions(DataBin, 0, _MsgBin, Qs) ->
     {lists:reverse(Qs), DataBin};
 decode_message_questions(<<>>, _Count, _MsgBin, Qs) ->
@@ -268,9 +291,13 @@ decode_message_questions(DataBin, Count, MsgBin, Qs) ->
             {formerr, lists:reverse(Qs), DataBin}
     end.
 
+-spec decode_message_body(binary(), integer(), <<_:64, _:_*8>>) ->
+    {[{_, _, _, _, _, _}], binary()} | {atom(), [{_, _, _, _, _, _}], binary()}.
 decode_message_body(DataBin, Count, MsgBin) ->
     decode_message_body(DataBin, Count, MsgBin, []).
 
+-spec decode_message_body(binary(), integer(), <<_:64, _:_*8>>, [optrr() | rr()]) ->
+    {[{_, _, _, _, _, _}], binary()} | {atom(), [{_, _, _, _, _, _}], binary()}.
 decode_message_body(<<>>, _Count, _MsgBin, RRs) ->
     {lists:reverse(RRs), <<>>};
 decode_message_body(DataBin, 0, _MsgBin, RRs) ->
@@ -278,8 +305,8 @@ decode_message_body(DataBin, 0, _MsgBin, RRs) ->
 decode_message_body(DataBin, Count, MsgBin, RRs) ->
     case catch decode_dname(DataBin, MsgBin) of
         {<<>>,
-            <<?DNS_TYPE_OPT:16/unsigned, UPS:16/unsigned, ExtRcode:8, Version:8, DNSSEC:1, _Z:15, EDataLen:16, EDataBin:EDataLen/binary,
-                RemBin/binary>>} ->
+            <<?DNS_TYPE_OPT:16/unsigned, UPS:16/unsigned, ExtRcode:8, Version:8, DNSSEC:1, _Z:15,
+                EDataLen:16, EDataBin:EDataLen/binary, RemBin/binary>>} ->
             Data = decode_optrrdata(EDataBin),
             RR = #dns_optrr{
                 udp_payload_size = UPS,
@@ -289,7 +316,9 @@ decode_message_body(DataBin, Count, MsgBin, RRs) ->
                 data = Data
             },
             decode_message_body(RemBin, Count - 1, MsgBin, [RR | RRs]);
-        {Name, <<Type:16/unsigned, Class:16/unsigned, TTL:32/signed, Len:16, RdataBin:Len/binary, RemBin/binary>>} ->
+        {Name,
+            <<Type:16/unsigned, Class:16/unsigned, TTL:32/signed, Len:16, RdataBin:Len/binary,
+                RemBin/binary>>} ->
             RR = #dns_rr{
                 name = Name,
                 type = Type,
@@ -308,6 +337,8 @@ decode_message_body(DataBin, Count, MsgBin, RRs) ->
             {formerr, lists:reverse(RRs), DataBin}
     end.
 
+-spec add_rr_to_section(additional | answers | authority, message(), [optrr() | rr()]) ->
+    message().
 add_rr_to_section(answers, #dns_message{} = Msg, RR) ->
     Msg#dns_message{answers = RR};
 add_rr_to_section(authority, #dns_message{} = Msg, RR) ->
@@ -420,6 +451,19 @@ encode_message(#dns_message{id = MsgId, additional = Ad} = Msg, Opts) ->
             end
     end.
 
+-spec encode_message_tsig_add(
+    1..1114111,
+    binary(),
+    <<_:64, _:_*8>>,
+    _,
+    integer(),
+    integer(),
+    integer(),
+    binary(),
+    binary(),
+    boolean(),
+    <<_:64, _:_*8>>
+) -> {<<_:32, _:_*8>>, binary()}.
 encode_message_tsig_add(
     MsgId,
     Name,
@@ -453,16 +497,19 @@ encode_message_tsig_add(
             NameBin = encode_dname(Name),
             AlgBin = encode_dname(Alg),
             TSIGData =
-                <<AlgBin/binary, Time:48, Fudge:16, MS:16, MAC:MS/binary, OrigMsgId:16, Err:16, OLen:16, Other:OLen/binary>>,
+                <<AlgBin/binary, Time:48, Fudge:16, MS:16, MAC:MS/binary, OrigMsgId:16, Err:16,
+                    OLen:16, Other:OLen/binary>>,
             TSIGDataSize = byte_size(TSIGData),
             TSIGRR =
-                <<NameBin/binary, ?DNS_TYPE_TSIG:16, ?DNS_CLASS_ANY:16, 0:32, TSIGDataSize:16, TSIGData/binary>>,
+                <<NameBin/binary, ?DNS_TYPE_TSIG:16, ?DNS_CLASS_ANY:16, 0:32, TSIGDataSize:16,
+                    TSIGData/binary>>,
             MsgBin0 = <<MsgId:16, Head/binary, (ADC + 1):16, Body/binary, TSIGRR/binary>>,
             {MsgBin0, MAC};
         {error, _} ->
             erlang:error(badarg)
     end.
 
+-spec encode_message_tsig_size(binary(), <<_:64, _:_*8>>, bitstring()) -> pos_integer().
 encode_message_tsig_size(Name, Alg, Other) ->
     NameSize = byte_size(encode_dname(Name)),
     AlgSize = byte_size(encode_dname(Alg)),
@@ -479,6 +526,7 @@ encode_message_tsig_size(Name, Alg, Other) ->
     DataSize = AlgSize + 16 + MACSize + OtherSize,
     NameSize + 10 + DataSize.
 
+-spec encode_message_default(message(), number()) -> binary().
 encode_message_default(#dns_message{tc = TC, additional = Ad} = Msg, MaxSize) ->
     BuildHead = fun(TCBool, EncQC, EncANC, EncAUC, EncADC) ->
         Msg0 = Msg#dns_message{
@@ -529,10 +577,13 @@ encode_message_default(#dns_message{tc = TC, additional = Ad} = Msg, MaxSize) ->
             end
     end.
 
+-spec encode_message_d_req(12, number(), message()) -> {_, char(), char(), char(), bitstring()}.
 encode_message_d_req(Pos, SpaceLeft, #dns_message{} = Msg) ->
     Msg0 = Msg#dns_message{qc = 0, anc = 0, auc = 0},
     encode_message_d_req(Pos, SpaceLeft, new_compmap(), <<>>, Msg0).
 
+-spec encode_message_d_req(pos_integer(), number(), _, bitstring(), message()) ->
+    {_, char(), char(), char(), bitstring()}.
 encode_message_d_req(
     Pos,
     SpaceLeft,
@@ -574,17 +625,25 @@ encode_message_d_req(
             end
     end.
 
+-spec encode_message_d_opt(pos_integer(), number(), _, [
+    [{_, _, _, _, _, _}]
+    | optrr()
+    | rr()
+]) -> false | {non_neg_integer(), bitstring()}.
 encode_message_d_opt(Pos, SpaceLeft, CompMap, Recs) ->
     case encode_message_rec_list(Pos, SpaceLeft, CompMap, Recs) of
         {_, Bin, []} -> {length(Recs), Bin};
         _ -> false
     end.
 
+-spec encode_message_axfr(message(), number()) -> binary() | {binary(), message()}.
 encode_message_axfr(#dns_message{} = Msg, MaxSize) ->
     Pos = 12,
     SpaceLeft = MaxSize - Pos,
     encode_message_axfr(Pos, SpaceLeft, new_compmap(), <<>>, Msg).
 
+-spec encode_message_axfr(pos_integer(), number(), _, binary(), message()) ->
+    binary() | {binary(), message()}.
 encode_message_axfr(Pos, SpaceLeft, CompMap, Bin, #dns_message{} = Msg) ->
     {Section, Recs} = encode_message_pop(Msg),
     RecsLen = length(Recs),
@@ -610,11 +669,22 @@ encode_message_axfr(Pos, SpaceLeft, CompMap, Bin, #dns_message{} = Msg) ->
             {<<Head/binary, Bin/binary, NewBin/binary>>, Msg2}
     end.
 
+-spec encode_message_pop(message()) ->
+    {additional, dns:additional()}
+    | {answers, dns:answers()}
+    | {authority, dns:authority()}
+    | {questions, [query()]}.
 encode_message_pop(#dns_message{questions = [_ | _] = Recs}) -> {questions, Recs};
 encode_message_pop(#dns_message{answers = [_ | _] = Recs}) -> {answers, Recs};
 encode_message_pop(#dns_message{authority = [_ | _] = Recs}) -> {authority, Recs};
 encode_message_pop(#dns_message{additional = Recs}) -> {additional, Recs}.
 
+-spec encode_message_put(
+    [[rr()] | query() | optrr() | rr()],
+    additional | answers | authority | questions,
+    message()
+) ->
+    message().
 encode_message_put(Recs, questions, #dns_message{} = Msg) ->
     Msg#dns_message{questions = Recs};
 encode_message_put(Recs, answers, #dns_message{} = Msg) ->
@@ -624,6 +694,7 @@ encode_message_put(Recs, authority, #dns_message{} = Msg) ->
 encode_message_put(Recs, additional, #dns_message{} = Msg) ->
     Msg#dns_message{additional = Recs}.
 
+-spec encode_message_a_setcounts(message()) -> message().
 encode_message_a_setcounts(
     #dns_message{
         questions = Q,
@@ -639,6 +710,10 @@ encode_message_a_setcounts(
         adc = length(Ad)
     }.
 
+-spec encode_message_updatecount(
+    char(), additional | answers | authority | questions, message()
+) ->
+    message().
 encode_message_updatecount(Count, questions, #dns_message{} = Msg) ->
     Msg#dns_message{qc = Count};
 encode_message_updatecount(Count, answers, #dns_message{} = Msg) ->
@@ -648,6 +723,7 @@ encode_message_updatecount(Count, authority, #dns_message{} = Msg) ->
 encode_message_updatecount(Count, additional, #dns_message{} = Msg) ->
     Msg#dns_message{adc = Count}.
 
+-spec encode_message_head(message()) -> <<_:96>>.
 encode_message_head(#dns_message{
     id = Id,
     qr = QR,
@@ -664,9 +740,11 @@ encode_message_head(#dns_message{
     auc = AUC,
     adc = ADC
 }) ->
-    <<Id:16, (encode_bool(QR)):1, OC:4, (encode_bool(AA)):1, (encode_bool(TC)):1, (encode_bool(RD)):1, (encode_bool(RA)):1, 0:1,
-        (encode_bool(AD)):1, (encode_bool(CD)):1, RC:4, QC:16, ANC:16, AUC:16, ADC:16>>.
+    <<Id:16, (encode_bool(QR)):1, OC:4, (encode_bool(AA)):1, (encode_bool(TC)):1,
+        (encode_bool(RD)):1, (encode_bool(RA)):1, 0:1, (encode_bool(AD)):1, (encode_bool(CD)):1,
+        RC:4, QC:16, ANC:16, AUC:16, ADC:16>>.
 
+-spec encode_message_llq(message(), number()) -> binary() | {binary(), message()}.
 encode_message_llq(
     #dns_message{
         questions = Q,
@@ -708,9 +786,21 @@ encode_message_llq(
         false -> {Bin, Msg#dns_message{anc = LeftoverAnC, answers = LeftoverAn}}
     end.
 
+-spec encode_message_rec_list(pos_integer(), number(), _, [
+    [{_, _, _, _, _, _}]
+    | query()
+    | optrr()
+    | rr()
+]) -> {_, bitstring(), [[any()] | {_, _, _, _} | {_, _, _, _, _, _}]}.
 encode_message_rec_list(Pos, SpaceLeft, CompMap, Recs) ->
     encode_message_rec_list(Pos, SpaceLeft, CompMap, <<>>, Recs).
 
+-spec encode_message_rec_list(pos_integer(), number(), _, bitstring(), [
+    [{_, _, _, _, _, _}]
+    | query()
+    | optrr()
+    | rr()
+]) -> {_, bitstring(), [[any()] | {_, _, _, _} | {_, _, _, _, _, _}]}.
 encode_message_rec_list(Pos, SpaceLeft, CompMap, Body, [Rec | Rest] = Recs) ->
     {CompMap0, NewBin} = encode_message_rec(CompMap, Pos, Rec),
     NewBinSize = byte_size(NewBin),
@@ -725,6 +815,7 @@ encode_message_rec_list(Pos, SpaceLeft, CompMap, Body, [Rec | Rest] = Recs) ->
 encode_message_rec_list(_Pos, _SpaceLeft, CompMap, Body, [] = Recs) ->
     {CompMap, Body, Recs}.
 
+-spec encode_message_rec(_, non_neg_integer(), query() | optrr() | rr()) -> {_, <<_:32, _:_*8>>}.
 encode_message_rec(CompMap, Pos, #dns_query{name = N, type = T, class = C}) ->
     {NameBin, CompMap0} = encode_dname(CompMap, Pos, N),
     {CompMap0, <<NameBin/binary, T:16, C:16>>};
@@ -740,7 +831,8 @@ encode_message_rec(CompMap, _Pos, #dns_optrr{
     RRBin = encode_optrrdata(Data),
     RRBinSize = byte_size(RRBin),
     NewBin =
-        <<0, 41:16, IntClass:16, ExtRcode:8, Version:8, DNSSECBit:1, 0:15, RRBinSize:16, RRBin/binary>>,
+        <<0, 41:16, IntClass:16, ExtRcode:8, Version:8, DNSSECBit:1, 0:15, RRBinSize:16,
+            RRBin/binary>>,
     {CompMap, NewBin};
 encode_message_rec(CompMap, Pos, #dns_rr{
     name = N,
@@ -755,6 +847,16 @@ encode_message_rec(CompMap, Pos, #dns_rr{
     DSize = byte_size(DBin),
     {CompMap1, <<NameBin/binary, T:16, C:16, TTL:32, DSize:16, DBin/binary>>}.
 
+-spec encode_message_pop_optrr([
+    [{_, _, _, _, _, _}]
+    | optrr()
+    | rr()
+]) ->
+    {binary(), [
+        [{_, _, _, _, _, _}]
+        | optrr()
+        | rr()
+    ]}.
 encode_message_pop_optrr([
     #dns_optrr{
         udp_payload_size = UPS,
@@ -770,7 +872,8 @@ encode_message_pop_optrr([
     RRBin = encode_optrrdata(Data),
     RRBinSize = byte_size(RRBin),
     Bin =
-        <<0, 41:16, Class:16, ExtRcode:8, Version:8, DNSSECBit:1, 0:15, RRBinSize:16, RRBin/binary>>,
+        <<0, 41:16, Class:16, ExtRcode:8, Version:8, DNSSECBit:1, 0:15, RRBinSize:16,
+            RRBin/binary>>,
     {Bin, Rest};
 encode_message_pop_optrr(Other) ->
     {<<>>, Other}.
@@ -901,14 +1004,17 @@ add_tsig(Msg, Alg, Name, Secret, ErrCode, Options) ->
     NewADC = Msg#dns_message.adc + 1,
     Msg#dns_message{adc = NewADC, additional = NewAdditional}.
 
+-spec strip_tsig(<<_:64, _:_*8>>) -> {<<_:64, _:_*8>>, rr()}.
 strip_tsig(
-    <<_Id:16, _QR:1, _OC:4, _AA:1, _TC:1, _RD:1, _RA:1, _PR:1, _Z:2, _RC:4, _QC:16, _ANC:16, _AUC:16, ADC:16, _HRB/binary>>
+    <<_Id:16, _QR:1, _OC:4, _AA:1, _TC:1, _RD:1, _RA:1, _PR:1, _Z:2, _RC:4, _QC:16, _ANC:16,
+        _AUC:16, ADC:16, _HRB/binary>>
 ) when
     ADC =:= 0
 ->
     throw(no_tsig);
 strip_tsig(
-    <<_Id:16, QR:1, OC:4, AA:1, TC:1, RD:1, RA:1, PR:1, Z:2, RC:4, QC:16, ANC:16, AUC:16, ADC:16, HRB/binary>> = MsgBin
+    <<_Id:16, QR:1, OC:4, AA:1, TC:1, RD:1, RA:1, PR:1, Z:2, RC:4, QC:16, ANC:16, AUC:16, ADC:16,
+        HRB/binary>> = MsgBin
 ) ->
     UnsignedADC = ADC - 1,
     {_Questions, QRB} = decode_message_questions(HRB, QC, MsgBin),
@@ -919,8 +1025,8 @@ strip_tsig(
             MsgBodyLen = byte_size(HRB) - byte_size(TSIGBin),
             {UnsignedBodyBin, TSIGBin} = split_binary(HRB, MsgBodyLen),
             UnsignedMsgBin =
-                <<NewId:16, QR:1, OC:4, AA:1, TC:1, RD:1, RA:1, PR:1, Z:2, RC:4, QC:16, ANC:16, AUC:16, UnsignedADC:16,
-                    UnsignedBodyBin/binary>>,
+                <<NewId:16, QR:1, OC:4, AA:1, TC:1, RD:1, RA:1, PR:1, Z:2, RC:4, QC:16, ANC:16,
+                    AUC:16, UnsignedADC:16, UnsignedBodyBin/binary>>,
             {UnsignedMsgBin, TSIG_RR};
         {[#dns_rr{data = #dns_rrdata_tsig{}}], _} ->
             throw(trailing_garbage);
@@ -928,6 +1034,19 @@ strip_tsig(
             throw(no_tsig)
     end.
 
+-spec gen_tsig_mac(
+    binary(),
+    <<_:64, _:_*8>>,
+    binary(),
+    _,
+    integer(),
+    integer(),
+    _,
+    bitstring(),
+    binary(),
+    boolean()
+) ->
+    {error, 17} | {ok, _}.
 gen_tsig_mac(Alg, Msg, Name, Secret, Time, Fudge, Err, Other, MAC, Tail) ->
     NameBin = encode_dname(dname_to_lower(Name)),
     AlgBin = encode_dname(dname_to_lower(Alg)),
@@ -961,12 +1080,15 @@ gen_tsig_mac(Alg, Msg, Name, Secret, Time, Fudge, Err, Other, MAC, Tail) ->
         {error, bad_alg} -> {error, ?DNS_TSIGERR_BADKEY}
     end.
 
+-spec hmac(binary(), _, [bitstring(), ...]) -> {error, bad_alg} | {ok, _}.
 hmac(TypeBin, Key, Data) ->
     case hmac_type(TypeBin) of
         undefined -> {error, bad_alg};
         TypeAtom -> {ok, crypto:mac(hmac, TypeAtom, Key, Data)}
     end.
 
+-spec hmac_type(binary()) ->
+    md5 | sha | sha224 | sha256 | sha384 | sha512 | undefined.
 hmac_type(?DNS_TSIG_ALG_MD5) ->
     md5;
 hmac_type(?DNS_TSIG_ALG_SHA1) ->
@@ -992,9 +1114,11 @@ hmac_type(Alg) ->
 -define(CLASS_IS_IN(T), (T =:= ?DNS_CLASS_IN orelse T =:= ?DNS_CLASS_NONE)).
 
 %% @private
+-spec decode_rrdata(_, _, _) -> any().
 decode_rrdata(Class, Type, Data) ->
     decode_rrdata(Class, Type, Data, <<>>).
 
+-spec decode_rrdata(_, _, _, binary()) -> any().
 decode_rrdata(_Class, _Type, <<>>, _MsgBin) ->
     <<>>;
 decode_rrdata(Class, ?DNS_TYPE_A, <<A, B, C, D>>, _MsgBin) when
@@ -1185,7 +1309,8 @@ decode_rrdata(
 decode_rrdata(
     _Class,
     ?DNS_TYPE_IPSECKEY,
-    <<Precedence:8, 2:8, Algorithm:8, A:16, B:16, C:16, D:16, E:16, F:16, G:16, H:16, PublicKey/binary>>,
+    <<Precedence:8, 2:8, Algorithm:8, A:16, B:16, C:16, D:16, E:16, F:16, G:16, H:16,
+        PublicKey/binary>>,
     _MsgBin
 ) ->
     #dns_rrdata_ipseckey{
@@ -1225,7 +1350,8 @@ decode_rrdata(_Class, ?DNS_TYPE_KX, <<Preference:16, Bin/binary>>, MsgBin) ->
 decode_rrdata(
     _Class,
     ?DNS_TYPE_LOC,
-    <<0:8, SizeB:4, SizeE:4, HorizB:4, HorizE:4, VertB:4, VertE:4, LatPre:32, LonPre:32, AltPre:32>>,
+    <<0:8, SizeB:4, SizeE:4, HorizB:4, HorizE:4, VertB:4, VertE:4, LatPre:32, LonPre:32,
+        AltPre:32>>,
     _MsgBin
 ) when SizeE < 10 andalso HorizE < 10 andalso VertE < 10 ->
     #dns_rrdata_loc{
@@ -1277,8 +1403,8 @@ decode_rrdata(_Class, ?DNS_TYPE_NSEC, Bin, MsgBin) ->
 decode_rrdata(
     _Class,
     ?DNS_TYPE_NSEC3,
-    <<HashAlg:8, _FlagsZ:7, OptOut:1, Iterations:16, SaltLen:8/unsigned, Salt:SaltLen/binary-unit:8, HashLen:8/unsigned,
-        Hash:HashLen/binary-unit:8, TypeBMP/binary>>,
+    <<HashAlg:8, _FlagsZ:7, OptOut:1, Iterations:16, SaltLen:8/unsigned, Salt:SaltLen/binary-unit:8,
+        HashLen:8/unsigned, Hash:HashLen/binary-unit:8, TypeBMP/binary>>,
     _MsgBin
 ) ->
     #dns_rrdata_nsec3{
@@ -1368,7 +1494,9 @@ decode_rrdata(_Class, ?DNS_TYPE_SVCB, <<SvcPriority:16, Bin/binary>>, MsgBin) ->
     SvcParams = decode_svcb_svc_params(SvcParamsBin),
     #dns_rrdata_svcb{svc_priority = SvcPriority, target_name = TargetName, svc_params = SvcParams};
 decode_rrdata(_Class, ?DNS_TYPE_TSIG, Bin, MsgBin) ->
-    {Alg, <<Time:48, Fudge:16, MS:16, MAC:MS/bytes, MsgID:16, ErrInt:16, OtherLen:16, Other:OtherLen/binary>>} = decode_dname(Bin, MsgBin),
+    {Alg,
+        <<Time:48, Fudge:16, MS:16, MAC:MS/bytes, MsgID:16, ErrInt:16, OtherLen:16,
+            Other:OtherLen/binary>>} = decode_dname(Bin, MsgBin),
     #dns_rrdata_tsig{
         alg = Alg,
         time = Time,
@@ -1384,10 +1512,12 @@ decode_rrdata(_Class, _Type, Bin, _MsgBin) ->
     Bin.
 
 %% @private
+-spec encode_rrdata(_, rrdata()) -> any().
 encode_rrdata(Class, Data) ->
     {Bin, undefined} = encode_rrdata(0, Class, Data, undefined),
     Bin.
 
+-spec encode_rrdata(non_neg_integer(), _, rrdata(), _) -> {_, _}.
 encode_rrdata(_Pos, Class, #dns_rrdata_a{ip = {A, B, C, D}}, CompMap) when
     ?CLASS_IS_IN(Class)
 ->
@@ -1636,7 +1766,8 @@ encode_rrdata(
     CompMap
 ) ->
     {
-        <<Precedence:8, 2:8, Algorithm:8, A:16, B:16, C:16, D:16, E:16, F:16, G:16, H:16, PublicKey/binary>>,
+        <<Precedence:8, 2:8, Algorithm:8, A:16, B:16, C:16, D:16, E:16, F:16, G:16, H:16,
+            PublicKey/binary>>,
         CompMap
     };
 encode_rrdata(
@@ -1696,7 +1827,8 @@ encode_rrdata(
     LatEnc = Lat + 2147483647,
     LonEnc = Lon + 2147483647,
     {
-        <<0:8, SizeEnc:1/binary, HorizEnc:1/binary, VertEnc:1/binary, LatEnc:32, LonEnc:32, (Alt + 10000000):32>>,
+        <<0:8, SizeEnc:1/binary, HorizEnc:1/binary, VertEnc:1/binary, LatEnc:32, LonEnc:32,
+            (Alt + 10000000):32>>,
         CompMap
     };
 encode_rrdata(Pos, _Class, #dns_rrdata_mb{madname = Name}, CompMap) ->
@@ -1773,8 +1905,9 @@ encode_rrdata(
     SaltLength = byte_size(Salt),
     HashLength = byte_size(Hash),
     {
-        <<HashAlg:8, 0:7, OptOutN:1, Iterations:16, SaltLength:8/unsigned, Salt:SaltLength/binary-unit:8, HashLength:8/unsigned,
-            Hash:HashLength/binary-unit:8, TypeBMP/binary>>,
+        <<HashAlg:8, 0:7, OptOutN:1, Iterations:16, SaltLength:8/unsigned,
+            Salt:SaltLength/binary-unit:8, HashLength:8/unsigned, Hash:HashLength/binary-unit:8,
+            TypeBMP/binary>>,
         CompMap
     };
 encode_rrdata(
@@ -1823,7 +1956,8 @@ encode_rrdata(
 ) ->
     SignersNameBin = encode_dname(SignersName),
     {
-        <<TypeCovered:16, Alg:8, Labels:8, OriginalTTL:32, SigExpire:32, SigIncept:32, KeyTag:16, SignersNameBin/binary, Sig/binary>>,
+        <<TypeCovered:16, Alg:8, Labels:8, OriginalTTL:32, SigExpire:32, SigIncept:32, KeyTag:16,
+            SignersNameBin/binary, Sig/binary>>,
         CompMap
     };
 encode_rrdata(
@@ -1908,7 +2042,8 @@ encode_rrdata(
     MACSize = byte_size(MAC),
     OtherLen = byte_size(Other),
     {
-        <<AlgBin/binary, Time:48, Fudge:16, MACSize:16, MAC:MACSize/bytes, MsgID:16, Err:16, OtherLen:16, Other/binary>>,
+        <<AlgBin/binary, Time:48, Fudge:16, MACSize:16, MAC:MACSize/bytes, MsgID:16, Err:16,
+            OtherLen:16, Other/binary>>,
         CompMap
     };
 encode_rrdata(_Pos, _Class, #dns_rrdata_txt{txt = Strings}, CompMap) ->
@@ -1916,6 +2051,7 @@ encode_rrdata(_Pos, _Class, #dns_rrdata_txt{txt = Strings}, CompMap) ->
 encode_rrdata(_Pos, _Class, Bin, CompMap) when is_binary(Bin) ->
     {Bin, CompMap}.
 
+-spec decode_loc_point(non_neg_integer()) -> integer().
 decode_loc_point(P) when is_integer(P) ->
     %% 2^31 - 1, the largest signed 32-bit integer value
     M = 2147483647,
@@ -1924,9 +2060,11 @@ decode_loc_point(P) when is_integer(P) ->
         false -> -1 * (M - P)
     end.
 
+-spec bin_to_key_tag(<<_:32, _:_*8>>) -> char().
 bin_to_key_tag(Binary) when is_binary(Binary) ->
     bin_to_key_tag(Binary, 0).
 
+-spec bin_to_key_tag(binary(), non_neg_integer()) -> char().
 bin_to_key_tag(<<>>, AC) ->
     (AC + ((AC bsr 16) band 16#FFFF)) band 16#FFFF;
 bin_to_key_tag(<<X:16, Rest/binary>>, AC) ->
@@ -1934,9 +2072,11 @@ bin_to_key_tag(<<X:16, Rest/binary>>, AC) ->
 bin_to_key_tag(<<X:8>>, AC) ->
     bin_to_key_tag(<<>>, AC + (X bsl 8)).
 
+-spec encode_loc_size(number()) -> <<_:8>>.
 encode_loc_size(Size) when is_float(Size) -> encode_loc_size(round(Size));
 encode_loc_size(Size) when is_integer(Size) -> encode_loc_size(Size, 0).
 
+-spec encode_loc_size(integer(), non_neg_integer()) -> <<_:8>>.
 encode_loc_size(Size, Exponent) ->
     case Size rem round_pow(10, Exponent + 1) of
         Size ->
@@ -1946,8 +2086,10 @@ encode_loc_size(Size, Exponent) ->
             encode_loc_size(Size, Exponent + 1)
     end.
 
+-spec decode_nsec_types(binary()) -> [non_neg_integer()].
 decode_nsec_types(Bin) when is_binary(Bin) -> decode_nsec_types(Bin, []).
 
+-spec decode_nsec_types(binary(), [non_neg_integer()]) -> [non_neg_integer()].
 decode_nsec_types(<<>>, Types) ->
     lists:reverse(Types);
 decode_nsec_types(<<WindowNum:8, BMPLength:8, BMP:BMPLength/binary, Rest/binary>>, Types) ->
@@ -1955,6 +2097,7 @@ decode_nsec_types(<<WindowNum:8, BMPLength:8, BMP:BMPLength/binary, Rest/binary>
     NewTypes = decode_nsec_types(BaseNo, BMP, Types),
     decode_nsec_types(Rest, NewTypes).
 
+-spec decode_nsec_types(non_neg_integer(), bitstring(), [non_neg_integer()]) -> [non_neg_integer()].
 decode_nsec_types(_Num, <<>>, Types) ->
     Types;
 decode_nsec_types(Num, <<0:1, Rest/bitstring>>, Types) ->
@@ -1962,6 +2105,7 @@ decode_nsec_types(Num, <<0:1, Rest/bitstring>>, Types) ->
 decode_nsec_types(Num, <<1:1, Rest/bitstring>>, Types) ->
     decode_nsec_types(Num + 1, Rest, [Num | Types]).
 
+-spec encode_nsec_types([integer()]) -> binary().
 encode_nsec_types([]) ->
     <<>>;
 encode_nsec_types([_ | _] = UnsortedTypes) ->
@@ -1970,6 +2114,7 @@ encode_nsec_types([_ | _] = UnsortedTypes) ->
     FirstLastType = FirstWindowNum * 256,
     encode_nsec_types(<<>>, <<>>, FirstWindowNum, FirstLastType, Types).
 
+-spec encode_nsec_types(binary(), bitstring(), integer(), number(), [integer()]) -> <<_:16, _:_*8>>.
 encode_nsec_types(Bin, BMP0, WindowNum, _LastType, []) ->
     BMP = pad_bmp(BMP0),
     BMPSize = byte_size(BMP),
@@ -1993,8 +2138,10 @@ encode_nsec_types(Bin, BMP, WindowNum, LastType, [Type | Types]) ->
     NewBMP = <<BMP/bitstring, 0:PadBy/unit:1, 1:1>>,
     encode_nsec_types(Bin, NewBMP, WindowNum, Type, Types).
 
+-spec decode_nxt_bmp(bitstring()) -> [non_neg_integer()].
 decode_nxt_bmp(BMP) -> decode_nxt_bmp(0, BMP, []).
 
+-spec decode_nxt_bmp(non_neg_integer(), bitstring(), [non_neg_integer()]) -> [non_neg_integer()].
 decode_nxt_bmp(_Offset, <<>>, Types) ->
     lists:reverse(Types);
 decode_nxt_bmp(Offset, <<1:1, Rest/bitstring>>, Types) ->
@@ -2002,10 +2149,12 @@ decode_nxt_bmp(Offset, <<1:1, Rest/bitstring>>, Types) ->
 decode_nxt_bmp(Offset, <<0:1, Rest/bitstring>>, Types) ->
     decode_nxt_bmp(Offset + 1, Rest, Types).
 
+-spec encode_nxt_bmp([any()]) -> bitstring().
 encode_nxt_bmp(UnsortedTypes) when is_list(UnsortedTypes) ->
     Types = lists:usort(UnsortedTypes),
     encode_nxt_bmp(0, Types, <<>>).
 
+-spec encode_nxt_bmp(_, [integer()], bitstring()) -> bitstring().
 encode_nxt_bmp(_LastType, [], BMP) ->
     pad_bmp(BMP);
 encode_nxt_bmp(LastType, [Type | Types], BMP) ->
@@ -2017,6 +2166,7 @@ encode_nxt_bmp(LastType, [Type | Types], BMP) ->
     NewBMP = <<BMP/bitstring, 0:PadBy/unit:1, 1:1>>,
     encode_nxt_bmp(Type, Types, NewBMP).
 
+-spec pad_bmp(bitstring()) -> bitstring().
 pad_bmp(BMP) when is_binary(BMP) -> BMP;
 pad_bmp(BMP) when is_bitstring(BMP) ->
     PadBy = 8 - bit_size(BMP) rem 8,
@@ -2025,9 +2175,25 @@ pad_bmp(BMP) when is_bitstring(BMP) ->
 %%%===================================================================
 %%% EDNS data functions
 
+-spec decode_optrrdata(binary()) ->
+    [term()]
+    | opt_nsid()
+    | opt_ul()
+    | opt_unknown()
+    | opt_ecs()
+    | opt_llq()
+    | opt_owner().
 decode_optrrdata(<<>>) -> [];
 decode_optrrdata(Bin) -> decode_optrrdata(Bin, []).
 
+-spec decode_optrrdata(binary() | char(), binary() | _) ->
+    [term()]
+    | opt_nsid()
+    | opt_ul()
+    | opt_unknown()
+    | opt_ecs()
+    | opt_llq()
+    | opt_owner().
 decode_optrrdata(<<EOptNum:16, EOptLen:16, EOptBin:EOptLen/binary, Rest/binary>>, Opts) ->
     NewOpt = decode_optrrdata(EOptNum, EOptBin),
     NewOpts = [NewOpt | Opts],
@@ -2070,6 +2236,15 @@ decode_optrrdata(?DNS_EOPTCODE_ECS, <<FAMILY:16, SRCPL:8, SCOPEPL:8, Payload/bin
 decode_optrrdata(EOpt, Bin) ->
     #dns_opt_unknown{id = EOpt, bin = Bin}.
 
+-spec encode_optrrdata(
+    [any()]
+    | opt_nsid()
+    | opt_ul()
+    | opt_unknown()
+    | opt_ecs()
+    | opt_llq()
+    | opt_owner()
+) -> bitstring() | {integer(), binary()}.
 encode_optrrdata(Opts) when is_list(Opts) ->
     encode_optrrdata(lists:reverse(Opts), <<>>);
 encode_optrrdata(#dns_opt_llq{
@@ -2123,6 +2298,18 @@ encode_optrrdata(#dns_opt_unknown{id = Id, bin = Data}) when
 ->
     {Id, Data}.
 
+-spec encode_optrrdata(
+    [
+        [any()]
+        | opt_nsid()
+        | opt_ul()
+        | opt_unknown()
+        | opt_ecs()
+        | opt_llq()
+        | opt_owner()
+    ],
+    bitstring()
+) -> bitstring().
 encode_optrrdata([], Bin) ->
     Bin;
 encode_optrrdata([Opt | Opts], Bin) ->
@@ -2136,6 +2323,7 @@ encode_optrrdata([Opt | Opts], Bin) ->
 
 %% @doc Compare two domain names insensitive of case.
 -spec compare_dname(dname(), dname()) -> boolean().
+
 compare_dname(Name, Name) ->
     true;
 compare_dname(NameA, NameB) ->
@@ -2143,10 +2331,12 @@ compare_dname(NameA, NameB) ->
     NameBLwr = dname_to_lower(iolist_to_binary(NameB)),
     NameALwr =:= NameBLwr.
 
+-spec decode_dname(nonempty_binary(), binary()) -> {binary(), _}.
 decode_dname(DataBin, MsgBin) ->
     RemBin = DataBin,
     decode_dname(DataBin, MsgBin, RemBin, <<>>, 0).
 
+-spec decode_dname(nonempty_binary(), binary(), _, binary(), non_neg_integer()) -> {binary(), _}.
 decode_dname(_DataBin, MsgBin, _RemBin, _Dname, Count) when
     Count > byte_size(MsgBin)
 ->
@@ -2196,25 +2386,32 @@ decode_dname(<<3:2, Ptr:14, DataRBin/binary>>, MsgBin, RBin, Dname, Count) ->
 -spec escape_label(label()) -> label().
 escape_label(Label) when is_binary(Label) -> escape_label(<<>>, Label).
 
+-spec escape_label(bitstring(), binary()) -> bitstring().
 escape_label(Label, <<>>) -> Label;
 escape_label(Cur, <<$., Rest/binary>>) -> escape_label(<<Cur/binary, "\\.">>, Rest);
 escape_label(Cur, <<C, Rest/binary>>) -> escape_label(<<Cur/binary, C>>, Rest).
 
+-spec decode_dnameonly(nonempty_binary(), binary()) -> binary().
 decode_dnameonly(Bin, MsgBin) ->
     case decode_dname(Bin, MsgBin) of
         {Dname, <<>>} -> Dname;
         _ -> throw(trailing_garbage)
     end.
 
+-spec new_compmap() -> gb_trees:tree(_, _).
 new_compmap() -> gb_trees:empty().
 
 %% @private
+-spec encode_dname(binary()) -> nonempty_binary().
 encode_dname(Name) ->
     Labels = <<<<(byte_size(L)), L/binary>> || L <- dname_to_labels(Name)>>,
     <<Labels/binary, 0>>.
 
-encode_dname(CompMap, Pos, Name) -> encode_dname(<<>>, CompMap, Pos, Name).
+-spec encode_dname(_, non_neg_integer(), binary()) -> {binary(), _}.
+encode_dname(CompMap, Pos, Name) ->
+    encode_dname(<<>>, CompMap, Pos, Name).
 
+-spec encode_dname(binary(), _, non_neg_integer(), binary()) -> {binary(), _}.
 encode_dname(Bin, undefined, _Pos, Name) ->
     DnameBin = encode_dname(Name),
     {<<Bin/binary, DnameBin/binary>>, undefined};
@@ -2223,6 +2420,8 @@ encode_dname(Bin, CompMap, Pos, Name) ->
     LwrLabels = dname_to_labels(dname_to_lower(Name)),
     encode_dname_labels(Bin, CompMap, Pos, Labels, LwrLabels).
 
+-spec encode_dname_labels(binary(), _, non_neg_integer(), [binary()], [binary()]) ->
+    {nonempty_binary(), _}.
 encode_dname_labels(Bin, CompMap, _Pos, [], []) ->
     {<<Bin/binary, 0>>, CompMap};
 encode_dname_labels(Bin, CompMap, Pos, [L | Ls], [_ | LwrLs] = LwrLabels) ->
@@ -2253,6 +2452,8 @@ dname_to_labels(".") -> [];
 dname_to_labels(<<>>) -> [];
 dname_to_labels(<<$.>>) -> [];
 dname_to_labels(Name) -> dname_to_labels(<<>>, iolist_to_binary(Name)).
+
+-spec dname_to_labels(bitstring(), binary()) -> [bitstring(), ...].
 dname_to_labels(Label, <<>>) -> [Label];
 dname_to_labels(Label, <<$.>>) -> [Label];
 dname_to_labels(Label, <<$., Cs/binary>>) -> [Label | dname_to_labels(<<>>, Cs)];
@@ -2274,6 +2475,7 @@ dname_to_upper(Bin) when is_binary(Bin) ->
     <<<<(dname_to_upper_i(C))>> || <<C>> <= Bin>>;
 dname_to_upper(List) when is_list(List) ->
     [dname_to_upper_i(C) || C <- List].
+-spec dname_to_upper_i(integer()) -> integer().
 dname_to_upper_i(Int) when
     is_integer(Int) andalso (Int >= $a) andalso (Int =< $z)
 ->
@@ -2286,6 +2488,7 @@ dname_to_lower(Bin) when is_binary(Bin) ->
     <<<<(dname_to_lower_i(C))>> || <<C>> <= Bin>>;
 dname_to_lower(List) when is_list(List) ->
     [dname_to_lower_i(C) || C <- List].
+-spec dname_to_lower_i(integer()) -> integer().
 dname_to_lower_i(Int) when
     is_integer(Int) andalso (Int >= $A) andalso (Int =< $Z)
 ->
@@ -2488,11 +2691,13 @@ alg_name(Int) when is_integer(Int) ->
 
 %% @doc Return current unix time.
 -spec unix_time() -> unix_time().
+
 unix_time() ->
     unix_time(erlang:timestamp()).
 
 %% @doc Return the unix time from a now or universal time.
 -spec unix_time(erlang:timestamp() | calendar:datetime1970()) -> unix_time().
+
 unix_time({_MegaSecs, _Secs, _MicroSecs} = NowTime) ->
     UniversalTime = calendar:now_to_universal_time(NowTime),
     unix_time(UniversalTime);
@@ -2505,39 +2710,51 @@ unix_time({{_, _, _}, {_, _, _}} = UniversalTime) ->
 %%% Internal functions
 %%%===================================================================
 
+-spec decode_bool(0 | 1) -> boolean().
 decode_bool(0) -> false;
 decode_bool(1) -> true.
 
+-spec encode_bool(boolean() | 0 | 1) -> 0 | 1.
 encode_bool(0) -> 0;
 encode_bool(1) -> 1;
 encode_bool(false) -> 0;
 encode_bool(true) -> 1.
 
+-spec decode_txt(binary()) -> [binary()].
 decode_txt(<<>>) ->
     [];
 decode_txt(Bin) when is_binary(Bin) ->
     {RB, String} = decode_string(Bin),
     [String | decode_txt(RB)].
 
-encode_txt(String) when is_list(String) andalso is_integer(hd(String)) ->
-    encode_txt(<<>>, [String]);
-encode_txt(Strings) ->
+-spec encode_txt(iodata()) -> binary().
+encode_txt(Strings) when is_list(Strings) ->
     encode_txt(<<>>, Strings).
+
+-spec encode_txt(binary(), [binary() | iodata()]) -> binary().
 encode_txt(Bin, []) ->
     Bin;
-encode_txt(Bin, [S | Strings]) when is_binary(Bin) ->
+encode_txt(Bin, [S | Strings]) ->
     encode_txt(encode_string(Bin, iolist_to_binary(S)), Strings).
 
+-spec decode_string(nonempty_binary()) -> {binary(), binary()}.
 decode_string(<<Len, Bin:Len/binary, Rest/binary>>) -> {Rest, Bin}.
 
+-spec encode_string(binary(), binary()) -> nonempty_binary().
 encode_string(Bin, StringBin) when
     byte_size(StringBin) < 256
 ->
     Size = byte_size(StringBin),
     <<Bin/binary, Size, StringBin/binary>>.
 
+-spec decode_svcb_svc_params(binary()) ->
+    #{1 => binary(), 2 => none, 3 => char(), 4 => binary(), 5 => binary(), 6 => binary()}.
 decode_svcb_svc_params(Bin) ->
     decode_svcb_svc_params(Bin, #{}).
+-spec decode_svcb_svc_params(binary(), #{
+    1 => binary(), 2 => none, 3 => char(), 4 => binary(), 5 => binary(), 6 => binary()
+}) ->
+    #{1 => binary(), 2 => none, 3 => char(), 4 => binary(), 5 => binary(), 6 => binary()}.
 decode_svcb_svc_params(<<>>, SvcParams) ->
     SvcParams;
 decode_svcb_svc_params(
@@ -2565,6 +2782,7 @@ decode_svcb_svc_params(
     decode_svcb_svc_params(Rest, SvcParams#{?DNS_SVCB_PARAM_IPV6HINT => SvcParamValueBin}).
 
 -spec encode_svcb_svc_params(map()) -> binary().
+
 encode_svcb_svc_params(SvcParams) ->
     SortedKeys = lists:sort(maps:keys(SvcParams)),
     lists:foldl(
@@ -2575,6 +2793,7 @@ encode_svcb_svc_params(SvcParams) ->
         SortedKeys
     ).
 
+-spec encode_svcb_svc_params_value(_, _, _) -> any().
 encode_svcb_svc_params_value(alpn, V, Bin) ->
     encode_svcb_svc_params_value(?DNS_SVCB_PARAM_ALPN, V, Bin);
 encode_svcb_svc_params_value(K = ?DNS_SVCB_PARAM_ALPN, V, Bin) ->
@@ -2606,19 +2825,23 @@ encode_svcb_svc_params_value(_, _, Bin) ->
 %% @doc Compares two equal sized binaries over their entire length.
 %%      Returns immediately if sizes do not match.
 -spec const_compare(dname(), dname()) -> boolean().
+
 const_compare(A, B) when is_binary(A) andalso is_binary(B) ->
     if
         byte_size(A) =:= byte_size(B) -> const_compare(A, B, 0);
         true -> false
     end.
 
+-spec const_compare(binary(), binary(), byte()) -> boolean().
 const_compare(<<>>, <<>>, Result) ->
     0 =:= Result;
 const_compare(<<C1, A/binary>>, <<C2, B/binary>>, Result) ->
     const_compare(A, B, Result bor (C1 bxor C2)).
 
+-spec round_pow(10, non_neg_integer()) -> integer().
 round_pow(N, E) -> round(math:pow(N, E)).
 
+-spec strip_leading_zeros(binary()) -> binary().
 strip_leading_zeros(<<0, Rest/binary>>) ->
     strip_leading_zeros(Rest);
 strip_leading_zeros(Binary) ->
