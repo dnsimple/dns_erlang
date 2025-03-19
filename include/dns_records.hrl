@@ -2,8 +2,6 @@
 -define('__dns_records.hrl__', ok).
 -include("dns_terms.hrl").
 
--type uint16() :: 0..65535.
-
 -record(dns_message, {
     id = dns:random_id() :: dns:message_id(),
     qr = false :: 0..1 | boolean(),
@@ -15,10 +13,10 @@
     ad = false :: 0..1 | boolean(),
     cd = false :: 0..1 | boolean(),
     rc = ?DNS_RCODE_NOERROR :: dns:rcode(),
-    qc = 0 :: uint16(),
-    anc = 0 :: uint16(),
-    auc = 0 :: uint16(),
-    adc = 0 :: uint16(),
+    qc = 0 :: char(),
+    anc = 0 :: char(),
+    auc = 0 :: char(),
+    adc = 0 :: char(),
     questions = [] :: dns:questions(),
     answers = [] :: dns:answers(),
     authority = [] :: dns:authority(),
@@ -38,248 +36,249 @@
     data :: dns:rrdata()
 }).
 -record(dns_rrdata_a, {
-    ip
+    ip :: inet:ip4_address()
 }).
 -record(dns_rrdata_aaaa, {
-    ip
+    ip :: inet:ip6_address()
 }).
 -record(dns_rrdata_afsdb, {
-    subtype,
-    hostname
+    subtype :: integer(),
+    hostname :: dns:dname()
 }).
 -record(dns_rrdata_caa, {
-    flags,
-    tag,
-    value
+    flags :: integer(),
+    tag :: binary(),
+    value :: binary()
 }).
 -record(dns_rrdata_cert, {
-    type,
-    key_tag,
-    alg,
-    cert
+    type :: integer(),
+    key_tag :: integer(),
+    alg :: integer(),
+    cert :: binary()
 }).
 -record(dns_rrdata_cname, {
-    dname
+    dname :: dns:dname()
 }).
 -record(dns_rrdata_dhcid, {
-    data
+    data :: binary()
 }).
 -record(dns_rrdata_dlv, {
-    keytag,
-    alg,
-    digest_type,
-    digest
+    keytag :: integer(),
+    alg :: integer(),
+    digest_type :: integer(),
+    digest :: binary()
 }).
 -record(dns_rrdata_dname, {
-    dname
+    dname :: dns:dname()
 }).
 -record(dns_rrdata_dnskey, {
-    flags,
-    protocol,
-    alg,
-    public_key,
-    key_tag
+    flags :: integer(),
+    protocol :: integer(),
+    alg :: integer(),
+    public_key :: iodata(),
+    key_tag :: integer()
 }).
 -record(dns_rrdata_cdnskey, {
-    flags,
-    protocol,
-    alg,
-    public_key,
-    key_tag
+    flags :: integer(),
+    protocol :: integer(),
+    alg :: integer(),
+    public_key :: iodata(),
+    key_tag :: integer()
 }).
 -record(dns_rrdata_ds, {
-    keytag,
-    alg,
-    digest_type,
-    digest
+    keytag :: integer(),
+    alg :: integer(),
+    digest_type :: integer(),
+    digest :: binary()
 }).
 -record(dns_rrdata_cds, {
-    keytag,
-    alg,
-    digest_type,
-    digest
+    keytag :: integer(),
+    alg :: integer(),
+    digest_type :: integer(),
+    digest :: binary()
 }).
 -record(dns_rrdata_hinfo, {
-    cpu,
-    os
+    cpu :: binary(),
+    os :: binary()
 }).
 -record(dns_rrdata_https, {
-    svc_priority,
-    target_name,
-    svc_params
+    svc_priority :: integer(),
+    target_name :: dns:dname(),
+    svc_params :: binary()
 }).
 -record(dns_rrdata_ipseckey, {
-    precedence,
-    alg,
-    gateway,
-    public_key
+    precedence :: integer(),
+    alg :: integer(),
+    gateway :: dns:dname() | inet:ip_address(),
+    public_key :: binary()
 }).
 -record(dns_rrdata_key, {
-    type,
-    xt,
-    name_type,
-    sig,
-    protocol,
-    alg,
-    public_key
+    type :: integer(),
+    xt :: integer(),
+    name_type :: integer(),
+    sig :: number(),
+    protocol :: integer(),
+    alg :: integer(),
+    public_key :: binary()
 }).
 -record(dns_rrdata_kx, {
-    preference,
-    exchange
+    preference :: integer(),
+    exchange :: dns:dname()
 }).
 -record(dns_rrdata_loc, {
-    size,
-    horiz,
-    vert,
-    lat,
-    lon,
-    alt
+    size :: integer(),
+    horiz :: number(),
+    vert :: number(),
+    lat :: integer(),
+    lon :: integer(),
+    alt :: integer()
 }).
 -record(dns_rrdata_mb, {
-    madname
+    madname :: dns:dname()
 }).
 -record(dns_rrdata_mg, {
-    madname
+    madname :: dns:dname()
 }).
 -record(dns_rrdata_minfo, {
-    rmailbx,
-    emailbx
+    rmailbx :: dns:dname(),
+    emailbx :: dns:dname()
 }).
 -record(dns_rrdata_mr, {
-    newname
+    newname :: dns:dname()
 }).
 -record(dns_rrdata_mx, {
-    preference,
-    exchange
+    preference :: integer(),
+    exchange :: dns:dname()
 }).
 -record(dns_rrdata_naptr, {
-    order,
-    preference,
-    flags,
-    services,
-    regexp,
-    replacement
+    order :: integer(),
+    preference :: integer(),
+    flags :: binary(),
+    services :: binary(),
+    regexp :: binary(),
+    replacement :: dns:dname()
 }).
 -record(dns_rrdata_ns, {
-    dname
+    dname :: dns:dname()
 }).
 -record(dns_rrdata_nsec, {
-    next_dname,
-    types
+    next_dname :: undefined | dns:dname(),
+    types :: term()
 }).
 -record(dns_rrdata_nsec3, {
-    hash_alg,
-    opt_out,
-    iterations,
-    salt,
-    hash,
-    types
+    hash_alg :: integer(),
+    opt_out :: 0 | 1 | boolean(),
+    iterations :: integer(),
+    salt :: binary(),
+    hash :: binary(),
+    types :: [any()]
 }).
 -record(dns_rrdata_nsec3param, {
-    hash_alg,
-    flags,
-    iterations,
-    salt
+    hash_alg :: integer(),
+    flags :: integer(),
+    iterations :: integer(),
+    salt :: binary()
 }).
 -record(dns_rrdata_nxt, {
-    dname,
-    types
+    dname :: dns:dname(),
+    types :: [non_neg_integer()]
 }).
 -record(dns_rrdata_ptr, {
-    dname
+    dname :: dns:dname()
 }).
 -record(dns_rrdata_rp, {
-    mbox,
-    txt
+    mbox :: dns:dname(),
+    txt :: dns:dname()
 }).
 -record(dns_rrdata_rrsig, {
-    type_covered,
-    alg,
-    labels,
-    original_ttl,
-    expiration,
-    inception,
-    key_tag,
-    signers_name,
-    signature
+    type_covered :: integer(),
+    alg :: 3 | 5 | 6 | 7 | 8 | 10,
+    labels :: non_neg_integer(),
+    original_ttl :: non_neg_integer(),
+    expiration :: integer(),
+    inception :: integer(),
+    key_tag :: integer(),
+    signers_name :: dns:dname(),
+    signature = <<>> :: binary()
 }).
 -record(dns_rrdata_rt, {
-    preference, host
+    preference :: integer(),
+    host :: dns:dname()
 }).
 -record(dns_rrdata_soa, {
-    mname,
-    rname,
-    serial,
-    refresh,
-    retry,
-    expire,
-    minimum
+    mname :: dns:dname(),
+    rname :: dns:dname(),
+    serial :: integer(),
+    refresh :: integer(),
+    retry :: integer(),
+    expire :: integer(),
+    minimum :: integer()
 }).
 -record(dns_rrdata_spf, {
-    spf
+    spf :: [binary()]
 }).
 -record(dns_rrdata_srv, {
-    priority,
-    weight,
-    port,
-    target
+    priority :: integer(),
+    weight :: integer(),
+    port :: integer(),
+    target :: dns:dname()
 }).
 -record(dns_rrdata_sshfp, {
-    alg,
-    fp_type,
-    fp
+    alg :: integer(),
+    fp_type :: integer(),
+    fp :: binary()
 }).
 -record(dns_rrdata_svcb, {
-    svc_priority,
-    target_name,
-    svc_params
+    svc_priority :: integer(),
+    target_name :: dns:dname(),
+    svc_params :: map()
 }).
 -record(dns_rrdata_tsig, {
-    alg,
-    time,
-    fudge,
-    mac,
-    msgid,
-    err,
-    other
+    alg :: dns:tsig_alg(),
+    time :: integer(),
+    fudge :: integer(),
+    mac :: binary(),
+    msgid :: dns:message_id(),
+    err :: integer(),
+    other :: binary()
 }).
 -record(dns_rrdata_txt, {
-    txt
+    txt :: [binary()]
 }).
 -record(dns_optrr, {
-    udp_payload_size = 4096,
-    ext_rcode = ?DNS_ERCODE_NOERROR,
-    version = 0,
-    dnssec = false,
-    data = []
+    udp_payload_size = 4096 :: integer(),
+    ext_rcode = ?DNS_ERCODE_NOERROR :: dns:rcode(),
+    version = 0 :: integer(),
+    dnssec = false :: boolean(),
+    data = [] :: list()
 }).
 -record(dns_opt_llq, {
-    opcode,
-    errorcode,
-    id,
-    leaselife
+    opcode :: char(),
+    errorcode :: char(),
+    id :: non_neg_integer(),
+    leaselife :: non_neg_integer()
 }).
 -record(dns_opt_nsid, {
-    data
+    data :: binary()
 }).
 -record(dns_opt_owner, {
-    seq = 0,
-    primary_mac,
-    wakeup_mac,
-    password
+    seq = 0 :: byte(),
+    primary_mac :: binary(),
+    wakeup_mac :: binary(),
+    password :: binary()
 }).
 -record(dns_opt_ul, {
-    lease
+    lease :: non_neg_integer()
 }).
 -record(dns_opt_ecs, {
-    family,
-    source_prefix_length,
-    scope_prefix_length,
-    address
+    family :: integer(),
+    source_prefix_length :: integer(),
+    scope_prefix_length :: integer(),
+    address :: binary()
 }).
 -record(dns_opt_unknown, {
-    id,
-    bin
+    id :: integer(),
+    bin :: binary()
 }).
 
 -endif.

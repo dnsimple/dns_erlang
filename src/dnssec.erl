@@ -65,18 +65,21 @@
 -type verify_rrsig_opt() :: {now, dns:unix_time()}.
 
 -define(RSASHA1_PREFIX,
-    <<16#30, 16#21, 16#30, 16#09, 16#06, 16#05, 16#2B, 16#0E, 16#03, 16#02, 16#1A, 16#05, 16#00, 16#04, 16#14>>
+    <<16#30, 16#21, 16#30, 16#09, 16#06, 16#05, 16#2B, 16#0E, 16#03, 16#02, 16#1A, 16#05, 16#00,
+        16#04, 16#14>>
 ).
 -define(RSASHA256_PREFIX,
-    <<16#30, 16#31, 16#30, 16#0d, 16#06, 16#09, 16#60, 16#86, 16#48, 16#01, 16#65, 16#03, 16#04, 16#02, 16#01, 16#05, 16#00, 16#04, 16#20>>
+    <<16#30, 16#31, 16#30, 16#0d, 16#06, 16#09, 16#60, 16#86, 16#48, 16#01, 16#65, 16#03, 16#04,
+        16#02, 16#01, 16#05, 16#00, 16#04, 16#20>>
 ).
 -define(RSASHA512_PREFIX,
-    <<16#30, 16#51, 16#30, 16#0d, 16#06, 16#09, 16#60, 16#86, 16#48, 16#01, 16#65, 16#03, 16#04, 16#02, 16#03, 16#05, 16#00, 16#04, 16#40>>
+    <<16#30, 16#51, 16#30, 16#0d, 16#06, 16#09, 16#60, 16#86, 16#48, 16#01, 16#65, 16#03, 16#04,
+        16#02, 16#03, 16#05, 16#00, 16#04, 16#40>>
 ).
 
 %% @doc Generate NSEC records from a list of #dns_rr{}.
-%%      The list must contain a SOA #dns_rr{} which is used to determine
-%%      zone name and TTL.
+%%
+%% The list must contain a SOA #dns_rr{} which is used to determine zone name and TTL.
 -spec gen_nsec([dns:rr()]) -> [dns:rr()].
 gen_nsec(RR) ->
     case lists:keyfind(?DNS_TYPE_SOA, #dns_rr.type, RR) of
@@ -92,8 +95,7 @@ gen_nsec(ZoneName, RR, TTL) ->
     gen_nsec(ZoneName, RR, TTL, []).
 
 %% @doc Generate NSEC records.
--spec gen_nsec(dns:dname(), [dns:rr()], dns:ttl(), [gen_nsec_opt()]) ->
-    [dns:rr()].
+-spec gen_nsec(dns:dname(), [dns:rr()], dns:ttl(), [gen_nsec_opt()]) -> [dns:rr()].
 gen_nsec(ZoneNameM, RR, TTL, Opts) ->
     ZoneName = normalise_dname(ZoneNameM),
     BaseTypes = proplists:get_value(base_types, Opts, [
@@ -114,8 +116,10 @@ gen_nsec(ZoneNameM, RR, TTL, Opts) ->
     Sorted = name_order(Unsorted),
     add_next_dname(Sorted, ZoneName).
 
+-spec add_next_dname([dns:rr(), ...], binary()) -> [dns:rr(), ...].
 add_next_dname(RR, ZoneName) -> add_next_dname([], RR, ZoneName).
 
+-spec add_next_dname([dns:rr()], [dns:rr(), ...], binary()) -> [dns:rr(), ...].
 add_next_dname(
     Added,
     [
@@ -136,9 +140,10 @@ add_next_dname(
     lists:reverse([NewRR | Added]).
 
 %% @doc Generate NSEC3 records from a list of #dns_rr{}.
-%%      The list must contain a SOA #dns_rr{} to source the zone name and
-%%      TTL from as well as as an NSEC3Param #dns_rr{} to source the
-%%      hash algorithm, iterations and salt from.
+%%
+%% The list must contain a SOA #dns_rr{} to source the zone name and
+%% TTL from as well as as an NSEC3Param #dns_rr{} to source the
+%% hash algorithm, iterations and salt from.
 -spec gen_nsec3([dns:rr()]) -> [dns:rr()].
 gen_nsec3(RRs) ->
     case lists:keyfind(?DNS_TYPE_SOA, #dns_rr.type, RRs) of
@@ -242,9 +247,11 @@ ih(H, Salt, X, 0) when is_function(H, 1) -> H([X, Salt]);
 ih(H, Salt, X, I) when is_function(H, 1) -> ih(H, Salt, H([X, Salt]), I - 1);
 ih(?DNSSEC_NSEC3_ALG_SHA1, Salt, X, I) -> ih(fun(Data) -> crypto:hash(sha, Data) end, Salt, X, I).
 
+-spec add_next_hash([dns:rr(), ...]) -> [dns:rr(), ...].
 add_next_hash([#dns_rr{data = #dns_rrdata_nsec3{hash = First}} | _] = Hashes) ->
     add_next_hash(Hashes, [], First).
 
+-spec add_next_hash([dns:rr(), ...], [dns:rr()], _) -> [dns:rr(), ...].
 add_next_hash([#dns_rr{data = Data} = RR], RRs, FirstHash) ->
     NewRR = RR#dns_rr{data = Data#dns_rrdata_nsec3{hash = FirstHash}},
     lists:reverse([NewRR | RRs]);
@@ -259,18 +266,22 @@ add_next_hash(
     NewRR = RR#dns_rr{data = Data#dns_rrdata_nsec3{hash = NextHash}},
     add_next_hash(Hashes, [NewRR | RRs], FirstHash).
 
+-spec normalise_rr(dns:rr()) -> dns:rr().
 normalise_rr(#dns_rr{name = Name} = RR) ->
     RR#dns_rr{name = dns:dname_to_lower(Name)}.
 
+-spec build_rrmap([dns:rr()], _) -> [{_, _}].
 build_rrmap(RR, BaseTypes) ->
     Base = build_rrmap_gbt(RR, BaseTypes),
     gb_trees:to_list(Base).
 
+-spec build_rrmap([dns:rr()], _, _) -> [{_, _}].
 build_rrmap(RR, BaseTypes, ZoneName) ->
     Base = build_rrmap_gbt(RR, BaseTypes),
     WithNonTerm = build_rrmap_nonterm(ZoneName, gb_trees:keys(Base), Base),
     gb_trees:to_list(WithNonTerm).
 
+-spec build_rrmap_nonterm(_, [any()], gb_trees:tree(_, _)) -> gb_trees:tree(_, _).
 build_rrmap_nonterm(_, [], GBT) ->
     GBT;
 build_rrmap_nonterm(ZoneName, [{Name, Class} | Rest], GBT) when
@@ -289,9 +300,11 @@ build_rrmap_nonterm(Class, [Name | Rest], GBT) ->
             build_rrmap_nonterm(Class, Rest, NewGBT)
     end.
 
+-spec build_rrmap_gbt([dns:rr()], _) -> gb_trees:tree(_, _).
 build_rrmap_gbt(RR, BaseTypes) ->
     build_rrmap_gbt(RR, BaseTypes, gb_trees:empty()).
 
+-spec build_rrmap_gbt([dns:rr()], _, gb_trees:tree(_, _)) -> gb_trees:tree(_, _).
 build_rrmap_gbt([], _BaseTypes, GBT) ->
     GBT;
 build_rrmap_gbt([#dns_rr{} = RR | Rest], BaseTypes, GBT) ->
@@ -310,9 +323,16 @@ build_rrmap_gbt([#dns_rr{} = RR | Rest], BaseTypes, GBT) ->
         end,
     build_rrmap_gbt(Rest, BaseTypes, NewGBT).
 
+-type tree_key() :: {dns:dname(), dns:class(), dns:type()}.
+
+-spec rrs_to_rrsets([dns:rr()]) -> [[dns:rr()]].
 rrs_to_rrsets(RR) when is_list(RR) ->
     rrs_to_rrsets(gb_trees:empty(), dict:new(), RR).
 
+-spec rrs_to_rrsets(gb_trees:tree(tree_key(), dns:ttl()), dict:dict(tree_key(), dns:rrdata()), [
+    dns:rr()
+]) ->
+    [[dns:rr()]].
 rrs_to_rrsets(TTLMap, RRSets, []) ->
     [rrs_to_rrsets(TTLMap, RRSet) || RRSet <- dict:to_list(RRSets)];
 rrs_to_rrsets(TTLMap, RRSets, [#dns_rr{} = RR | RRs]) ->
@@ -336,6 +356,8 @@ rrs_to_rrsets(TTLMap, RRSets, [#dns_rr{} = RR | RRs]) ->
     NewRRSets = dict:append(Key, Data, RRSets),
     rrs_to_rrsets(NewTTLMap, NewRRSets, RRs).
 
+-spec rrs_to_rrsets(gb_trees:tree(tree_key(), dns:ttl()), {tree_key(), [dns:rrdata()]}) ->
+    [dns:rr()].
 rrs_to_rrsets(TTLMap, {{Name, Class, Type} = Key, Datas}) ->
     {value, TTL} = gb_trees:lookup(Key, TTLMap),
     [
@@ -525,6 +547,10 @@ verify_rrsig(
             )
     end.
 
+-spec build_sig_input(binary(), integer(), 3 | 5 | 6 | 7 | 8 | 10, integer(), integer(), [
+    dns:rr(), ...
+]) ->
+    {dns:rrdata_rrsig(), binary()}.
 build_sig_input(
     SignersName,
     KeyTag,
@@ -535,6 +561,16 @@ build_sig_input(
 ) ->
     build_sig_input(SignersName, KeyTag, Alg, Incept, Expire, RRs, TTL).
 
+-spec build_sig_input(
+    binary(),
+    integer(),
+    3 | 5 | 6 | 7 | 8 | 10,
+    integer(),
+    integer(),
+    [dns:rr(), ...],
+    non_neg_integer()
+) ->
+    {dns:rrdata_rrsig(), binary()}.
 build_sig_input(
     SignersName,
     KeyTag,
@@ -615,9 +651,11 @@ add_keytag_to_cdnskey(
     NewData = dns:decode_rrdata(?DNS_CLASS_IN, ?DNS_TYPE_CDNSKEY, KeyBin),
     RR#dns_rr{data = NewData}.
 
+-spec rrsig_to_digestable(dns:rrdata_rrsig()) -> any().
 rrsig_to_digestable(#dns_rrdata_rrsig{} = Data) ->
     dns:encode_rrdata(?DNS_CLASS_IN, Data#dns_rrdata_rrsig{signature = <<>>}).
 
+-spec canonical_rrdata_bin(dns:rr()) -> any().
 canonical_rrdata_bin(#dns_rr{class = Class, data = Data0}) ->
     dns:encode_rrdata(Class, canonical_rrdata_form(Data0)).
 
@@ -678,11 +716,14 @@ canonical_rrdata_form(#dns_rrdata_srv{target = Target} = Data) ->
 canonical_rrdata_form(X) ->
     X.
 
+-spec name_ancestors(iodata(), iodata()) -> binary() | [binary()].
 name_ancestors(Name, ZoneName) ->
     NameLwr = dns:dname_to_lower(iolist_to_binary(Name)),
     ZoneNameLwr = dns:dname_to_lower(iolist_to_binary(ZoneName)),
     gen_name_ancestors(NameLwr, ZoneNameLwr).
 
+-spec gen_name_ancestors(binary() | [binary()], binary() | [binary(), ...]) ->
+    binary() | [binary()].
 gen_name_ancestors(ZoneName, ZoneName) when is_binary(ZoneName) -> [];
 gen_name_ancestors(Name, ZoneName) when
     is_binary(Name) andalso
@@ -708,9 +749,11 @@ gen_name_ancestors([Label | Labels], [Parent | _] = Asc) ->
     NewName = <<Label/binary, $., Parent/binary>>,
     gen_name_ancestors(Labels, [NewName | Asc]).
 
+-spec name_order([dns:rr(), ...]) -> [dns:rr(), ...].
 name_order(RRs) when is_list(RRs) ->
     lists:sort(fun name_order/2, RRs).
 
+-spec name_order(_, _) -> boolean().
 name_order(X, X) ->
     true;
 name_order(#dns_rr{name = X}, #dns_rr{name = X}) ->
@@ -728,21 +771,27 @@ name_order([_ | _], []) ->
 name_order([X | _], [Y | _]) ->
     X < Y.
 
+-spec count_labels(binary()) -> non_neg_integer().
 count_labels(Name) ->
     Labels = normalise_dname_to_labels(Name),
     do_count_labels(Labels).
 
+-spec do_count_labels([binary()]) -> non_neg_integer().
 do_count_labels([<<"*">> | Labels]) -> length(Labels);
 do_count_labels(List) when is_list(List) -> length(List).
 
+-spec normalise_dname(iodata()) -> binary().
 normalise_dname(Name) -> dns:dname_to_lower(iolist_to_binary(Name)).
 
+-spec normalise_dname_to_labels(binary()) -> [binary()].
 normalise_dname_to_labels(Name) -> dns:dname_to_labels(normalise_dname(Name)).
 
+-spec decode_asn1_dss_sig(binary()) -> {integer(), integer()}.
 decode_asn1_dss_sig(Bin) when is_binary(Bin) ->
     {ok, #'DSS-Sig'{r = R, s = S}} = 'DNS-ASN1':decode('DSS-Sig', Bin),
     {R, S}.
 
+-spec encode_asn1_dss_sig(non_neg_integer(), non_neg_integer()) -> binary().
 encode_asn1_dss_sig(R, S) when is_integer(R) andalso is_integer(S) ->
     Rec = #'DSS-Sig'{r = R, s = S},
     {ok, List} = 'DNS-ASN1':encode('DSS-Sig', Rec),

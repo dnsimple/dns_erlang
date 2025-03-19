@@ -20,9 +20,11 @@
 -module(dns_record).
 -export([serialise/1, serialise/2, deserialise/1, deserialise/2]).
 
+-spec serialise(binary() | tuple()) -> any().
 serialise(Bin) when is_binary(Bin) -> serialise(Bin, []);
 serialise(Tuple) when is_tuple(Tuple) -> serialise(Tuple, []).
 
+-spec serialise(binary() | tuple(), [any()]) -> any().
 serialise(Term, Opts) when is_list(Opts) ->
     WrapFun = proplists:get_value(wrap_fun, Opts, fun(X) -> X end),
     Term0 =
@@ -41,6 +43,7 @@ serialise(Term, Opts) when is_list(Opts) ->
         end,
     WrapFun(Term0).
 
+-spec serialise(atom(), atom(), _, [any()]) -> {binary(), _}.
 serialise(dns_message, Field, Datas, Opts) when is_list(Datas) ->
     Field0 = atom_to_binary(Field, utf8),
     Datas0 = [serialise(D, Opts) || D <- Datas],
@@ -111,8 +114,10 @@ serialise(dns_opt_unknown, bin, Bin, _Opts) when is_binary(Bin) ->
 serialise(_Tag, Field, Value, _Opts) ->
     {atom_to_binary(Field, utf8), Value}.
 
+-spec deserialise(_) -> bitstring() | tuple().
 deserialise(Term) -> deserialise(Term, []).
 
+-spec deserialise(_, [any()]) -> bitstring() | tuple().
 deserialise(Term, Opts) ->
     UnwrapFun = proplists:get_value(wrap_fun, Opts, fun(X) -> X end),
     case UnwrapFun(Term) of
@@ -128,10 +133,12 @@ deserialise(Term, Opts) ->
             list_to_tuple([Tag | Values])
     end.
 
+-spec deserialise_dnskey_publickey(binary() | [1..255]) -> binary() | [integer()].
 deserialise_dnskey_publickey(PublicKeyB64) ->
     PublicKey = base64:decode(PublicKeyB64),
     deserialise_dnskey_publickey(PublicKey, PublicKey, []).
 
+-spec deserialise_dnskey_publickey(binary(), binary(), [integer()]) -> binary() | [integer()].
 deserialise_dnskey_publickey(_PK, <<>>, Ints) ->
     lists:reverse(Ints);
 deserialise_dnskey_publickey(PK, <<L:32, I:L/unit:8, Rest/binary>>, Ints) ->
@@ -139,6 +146,7 @@ deserialise_dnskey_publickey(PK, <<L:32, I:L/unit:8, Rest/binary>>, Ints) ->
 deserialise_dnskey_publickey(PK, _, _) ->
     PK.
 
+-spec deserialise(atom(), atom(), _, [any()]) -> any().
 deserialise(dns_message, _Field, Terms, Opts) when is_list(Terms) ->
     [deserialise(Term, Opts) || Term <- Terms];
 deserialise(dns_rr, data, Term, Opts) ->
@@ -196,9 +204,11 @@ deserialise(_Tag, _Field, Value, _Opts) ->
 
 %% Internal
 
+-spec bin_to_hex(binary()) -> binary().
 bin_to_hex(Bin) when is_binary(Bin) ->
     iolist_to_binary([io_lib:format("~2.16.0B", [V]) || <<V>> <= Bin]).
 
+-spec hex_to_bin(binary()) -> bitstring().
 hex_to_bin(Bin) when is_binary(Bin) ->
     Fun = fun(A, B) ->
         case io_lib:fread("~16u", [A, B]) of
