@@ -240,15 +240,26 @@ gen_nsec3(RRs, ZoneName, Alg, Salt, Iterations, TTL, Class, Opts) ->
     add_next_hash(Sorted).
 
 %% @doc NSEC3 iterative hash function
--spec ih(
-    nsec3_hashalg() | fun((binary()) -> binary()),
-    nsec3_salt(),
-    binary(),
-    non_neg_integer()
-) -> binary().
-ih(H, Salt, X, 0) when is_function(H, 1) -> H([X, Salt]);
-ih(H, Salt, X, I) when is_function(H, 1) -> ih(H, Salt, H([X, Salt]), I - 1);
-ih(?DNSSEC_NSEC3_ALG_SHA1, Salt, X, I) -> ih(fun(Data) -> crypto:hash(sha, Data) end, Salt, X, I).
+-spec ih(nsec3_hashalg() | fun((iodata()) -> binary()), nsec3_salt(), binary(), nsec3_iterations()) ->
+    binary().
+ih(?DNSSEC_NSEC3_ALG_SHA1, Salt, X, I) when is_binary(Salt), is_binary(X), is_integer(I), 0 =< I ->
+    ih_nsec3(Salt, X, I);
+ih(H, Salt, X, I) when is_function(H, 1), is_binary(Salt), is_binary(X), is_integer(I), 0 =< I ->
+    ih_nsec3_custom(H, Salt, X, I).
+
+%% Optimise for the common case
+-spec ih_nsec3(nsec3_salt(), binary(), nsec3_iterations()) -> binary().
+ih_nsec3(Salt, X, 0) ->
+    crypto:hash(sha, [X, Salt]);
+ih_nsec3(Salt, X, I) ->
+    ih_nsec3(Salt, crypto:hash(sha, [X, Salt]), I - 1).
+
+-spec ih_nsec3_custom(fun((iodata()) -> binary()), nsec3_salt(), binary(), nsec3_iterations()) ->
+    binary().
+ih_nsec3_custom(H, Salt, X, 0) ->
+    H([X, Salt]);
+ih_nsec3_custom(H, Salt, X, I) ->
+    ih_nsec3_custom(H, Salt, H([X, Salt]), I - 1).
 
 -spec add_next_hash([dns:rr(), ...]) -> [dns:rr(), ...].
 add_next_hash([#dns_rr{data = #dns_rrdata_nsec3{hash = First}} | _] = Hashes) ->
