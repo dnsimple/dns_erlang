@@ -32,63 +32,109 @@ message_other_test() ->
     Bin = dns:encode_message(Msg),
     ?assertEqual(Msg, dns:decode_message(Bin)).
 
-message_txt_test() ->
-    QName = <<"lorem.example.org">>,
-    Lorem = ten_lorem_ipsums_in_chunks(),
-    Qs = [#dns_query{name = QName, type = ?DNS_TYPE_TXT}],
-    As = [
-        #dns_rr{
-            name = QName,
-            type = ?DNS_TYPE_TXT,
-            ttl = 0,
-            data = #dns_rrdata_txt{txt = Lorem}
-        }
-    ],
-    QLen = length(Qs),
-    ALen = length(As),
-    Msg = #dns_message{qc = QLen, anc = ALen, questions = Qs, answers = As},
+long_txt_test() ->
+    QName = <<"txt.example.org">>,
+
+    % Create a string longer than 255 bytes
+    LongString = list_to_binary(lists:duplicate(300, $a)),
+    ?assert(byte_size(LongString) > 255),
+
+    % Create a TXT record with the long string TXT record expects a list of strings,
+    % each of which must be ≤ 255 bytes in length
+    LongStringSplit = split_binary_into_chunks(LongString, 255),
+
+    % Create a DNS message
+    Msg = #dns_message{
+        qc = 1,
+        anc = 1,
+        questions = [#dns_query{name = QName, type = ?DNS_TYPE_TXT}],
+        answers = [
+            #dns_rr{
+                name = QName,
+                type = ?DNS_TYPE_TXT,
+                ttl = 0,
+                data = #dns_rrdata_txt{txt = LongStringSplit}
+            }
+        ]
+    },
+
+    % Encode and decode
     Bin = dns:encode_message(Msg),
-    ?assertEqual(Msg, dns:decode_message(Bin)).
+    DecodedMsg = dns:decode_message(Bin),
+
+    % Get the TXT record from the decoded message
+    [DecodedTxtRec] = DecodedMsg#dns_message.answers,
+    DecodedTxt = DecodedTxtRec#dns_rr.data#dns_rrdata_txt.txt,
+
+    % If encoding works correctly for long strings,
+    % the decoded string joined together should match the original
+    ReassembledString = iolist_to_binary(DecodedTxt),
+    ?assertEqual(LongString, ReassembledString).
+
+fail_long_txt_not_split_test() ->
+    QName = <<"txt.example.org">>,
+    % Create a string longer than 255 bytes
+    LongString = list_to_binary(lists:duplicate(300, $a)),
+    ?assert(byte_size(LongString) > 255),
+    % Create a DNS message
+    Msg = #dns_message{
+        qc = 1,
+        anc = 1,
+        questions = [#dns_query{name = QName, type = ?DNS_TYPE_TXT}],
+        answers = [
+            #dns_rr{
+                name = QName,
+                type = ?DNS_TYPE_TXT,
+                ttl = 0,
+                data = #dns_rrdata_txt{txt = LongString}
+            }
+        ]
+    },
+    ?assertError(function_clause, dns:encode_message(Msg)).
 
 truncated_txt_test() ->
-    QName = <<"lorem.example.org">>,
-    Lorem = ten_lorem_ipsums_in_chunks(),
-    Qs = [#dns_query{name = QName, type = ?DNS_TYPE_TXT}],
-    As = [
-        #dns_rr{
-            name = QName,
-            type = ?DNS_TYPE_TXT,
-            ttl = 0,
-            data = #dns_rrdata_txt{txt = Lorem}
-        }
-    ],
-    QLen = length(Qs),
-    ALen = length(As),
-    Msg = #dns_message{qc = QLen, anc = ALen, questions = Qs, answers = As},
+    QName = <<"txt.example.org">>,
+    % Create a string longer than 255 bytes
+    LongString = list_to_binary(lists:duplicate(300, $a)),
+    LongStringSplit = split_binary_into_chunks(LongString, 255),
+    % Create a DNS message
+    Msg = #dns_message{
+        qc = 1,
+        anc = 1,
+        questions = [#dns_query{name = QName, type = ?DNS_TYPE_TXT}],
+        answers = [
+            #dns_rr{
+                name = QName,
+                type = ?DNS_TYPE_TXT,
+                ttl = 0,
+                data = #dns_rrdata_txt{txt = LongStringSplit}
+            }
+        ]
+    },
     Bin = dns:encode_message(Msg),
-    Head = binary:part(Bin, 0, 47),
-    OneLorem = iolist_to_binary(Lorem),
+    Head = binary:part(Bin, 0, 45),
+    OneLorem = iolist_to_binary(LongString),
     NewBin = <<Head/binary, 255, OneLorem/binary>>,
     ?assertMatch({truncated, _, _}, dns:decode_message(NewBin)).
 
 trailing_garbage_txt_test() ->
-    QName = <<"lorem.example.org">>,
+    QName = <<"txt.example.org">>,
     Text = <<"\"Hello\"">>,
-    Qs = [#dns_query{name = QName, type = ?DNS_TYPE_TXT}],
-    As = [
-        #dns_rr{
-            name = QName,
-            type = ?DNS_TYPE_TXT,
-            ttl = 0,
-            data = #dns_rrdata_txt{txt = [Text]}
-        }
-    ],
-    QLen = length(Qs),
-    ALen = length(As),
-    Msg = #dns_message{qc = QLen, anc = ALen, questions = Qs, answers = As},
+    Msg = #dns_message{
+        qc = 1,
+        anc = 1,
+        questions = [#dns_query{name = QName, type = ?DNS_TYPE_TXT}],
+        answers = [
+            #dns_rr{
+                name = QName,
+                type = ?DNS_TYPE_TXT,
+                ttl = 0,
+                data = #dns_rrdata_txt{txt = [Text]}
+            }
+        ]
+    },
     Bin = dns:encode_message(Msg),
-    Head = binary:part(Bin, 0, 48),
-    NewBin = <<Head/binary, "_Hello__">>,
+    NewBin = <<Bin/binary, "_">>,
     ?assertMatch({trailing_garbage, _, _}, dns:decode_message(NewBin)).
 
 message_edns_test() ->
@@ -562,8 +608,6 @@ alg_terms_test_() ->
     ],
     [?_assertEqual(true, is_binary(dns:alg_name(Alg))) || Alg <- Cases].
 
-ten_lorem_ipsums_in_chunks() ->
-    Lorem = "Lorem ipsum dolor sit \"amet\", consectetur adipisicing elit.",
-    RepeatedLorem = lists:duplicate(10, Lorem),
-    BigLorem = lists:flatten(lists:join("\n", RepeatedLorem)),
-    [iolist_to_binary(lists:sublist(BigLorem, X, 255)) || X <- lists:seq(1, length(BigLorem), 255)].
+split_binary_into_chunks(Bin, Chunk) ->
+    List = binary_to_list(Bin),
+    [iolist_to_binary(lists:sublist(List, X, Chunk)) || X <- lists:seq(1, length(List), Chunk)].
