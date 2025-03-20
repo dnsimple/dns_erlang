@@ -63,15 +63,46 @@ long_txt_test() ->
     DecodedMsg = dns:decode_message(Bin),
 
     % Get the TXT record from the decoded message
-    [DecodedTxtRec] = DecodedMsg#dns_message.answers,
-    DecodedTxt = DecodedTxtRec#dns_rr.data#dns_rrdata_txt.txt,
+    [#dns_rr{data = #dns_rrdata_txt{txt = DecodedTxt}}] = DecodedMsg#dns_message.answers,
 
     % If encoding works correctly for long strings,
     % the decoded string joined together should match the original
     ReassembledString = iolist_to_binary(DecodedTxt),
     ?assertEqual(LongString, ReassembledString).
 
-fail_long_txt_not_split_test() ->
+long_txt_not_split_test() ->
+    QName = <<"txt.example.org">>,
+    % Create a string longer than 255 bytes
+    LongStringOfA = list_to_binary(lists:duplicate(300, $a)),
+    LongStringOfB = list_to_binary(lists:duplicate(300, $b)),
+    % Create a DNS message
+    Msg = #dns_message{
+        qc = 1,
+        anc = 1,
+        questions = [#dns_query{name = QName, type = ?DNS_TYPE_TXT}],
+        answers = [
+            #dns_rr{
+                name = QName,
+                type = ?DNS_TYPE_TXT,
+                ttl = 0,
+                data = #dns_rrdata_txt{txt = [LongStringOfA, LongStringOfB]}
+            }
+        ]
+    },
+    % Encode and decode
+    Bin = dns:encode_message(Msg),
+    DecodedMsg = dns:decode_message(Bin),
+    % Get the TXT record from the decoded message
+    [#dns_rr{data = #dns_rrdata_txt{txt = DecodedTxt}}] = DecodedMsg#dns_message.answers,
+    % Assert that all segments in the array are below the 255 byte limit
+    ?assert(lists:all(fun(B) -> byte_size(B) =< 255 end, DecodedTxt)),
+    % If encoding works correctly for long strings,
+    % the decoded string joined together should match the original
+    LongString = iolist_to_binary([LongStringOfA, LongStringOfB]),
+    ReassembledString = iolist_to_binary(DecodedTxt),
+    ?assertEqual(LongString, ReassembledString).
+
+fail_txt_not_list_of_strings_test() ->
     QName = <<"txt.example.org">>,
     % Create a string longer than 255 bytes
     LongString = list_to_binary(lists:duplicate(300, $a)),

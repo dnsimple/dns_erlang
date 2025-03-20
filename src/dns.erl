@@ -2740,25 +2740,35 @@ decode_txt(Bin) when is_binary(Bin) ->
     {RB, String} = decode_string(Bin),
     [String | decode_txt(RB)].
 
--spec encode_txt(iodata()) -> binary().
-encode_txt(Strings) when is_list(Strings) ->
-    encode_txt(<<>>, Strings).
-
--spec encode_txt(binary(), [binary() | iodata()]) -> binary().
-encode_txt(Bin, []) ->
-    Bin;
-encode_txt(Bin, [S | Strings]) ->
-    encode_txt(encode_string(Bin, iolist_to_binary(S)), Strings).
-
 -spec decode_string(nonempty_binary()) -> {binary(), binary()}.
-decode_string(<<Len, Bin:Len/binary, Rest/binary>>) -> {Rest, Bin}.
+decode_string(<<Len, Bin:Len/binary, Rest/binary>>) ->
+    {Rest, Bin}.
 
+%% @doc Encodes a character-string as in RFC1035§3.3
+%%
+%% `<character-string>' is a single length octet followed by that number of characters.
+%% `<character-string>' is treated as binary information, and can be up to 256 characters
+%% in length (including the length octet).
 -spec encode_string(binary(), binary()) -> nonempty_binary().
-encode_string(Bin, StringBin) when
-    byte_size(StringBin) < 256
-->
+encode_string(Bin, StringBin) when byte_size(StringBin) < 256 ->
     Size = byte_size(StringBin),
     <<Bin/binary, Size, StringBin/binary>>.
+
+%% @doc Encodes an array of character-strings as in RFC1035§3.3, splitting any oversized segment
+%%
+%% @see encode_string/2
+-spec encode_txt([binary()]) -> binary().
+encode_txt(Strings) ->
+    encode_txt_1(Strings, <<>>).
+
+-spec encode_txt_1([binary()], binary()) -> binary().
+encode_txt_1([], Bin) ->
+    Bin;
+encode_txt_1([<<Head:255/binary, Tail/binary>> | Strings], Acc) ->
+    encode_txt_1([Tail | Strings], <<Acc/binary, 255, Head/binary>>);
+encode_txt_1([S | Strings], Acc) ->
+    Size = byte_size(S),
+    encode_txt_1(Strings, <<Acc/binary, Size, S/binary>>).
 
 -spec decode_svcb_svc_params(binary()) -> svcb_svc_params().
 decode_svcb_svc_params(Bin) ->
