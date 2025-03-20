@@ -1304,7 +1304,7 @@ decode_rrdata(_Class, ?DNS_TYPE_CDS, <<KeyTag:16, Alg:8, DigestType:8, Digest/bi
         digest = Digest
     };
 decode_rrdata(_Class, ?DNS_TYPE_HINFO, Bin, _BodyBin) ->
-    [CPU, OS] = decode_txt(Bin),
+    [CPU, OS] = decode_text(Bin),
     #dns_rrdata_hinfo{cpu = CPU, os = OS};
 decode_rrdata(
     _Class, ?DNS_TYPE_IPSECKEY, <<Precedence:8, 0:8, Algorithm:8, PublicKey/binary>>, _MsgBin
@@ -1490,7 +1490,7 @@ decode_rrdata(_Class, ?DNS_TYPE_SOA, Bin, MsgBin) ->
         minimum = Min
     };
 decode_rrdata(_Class, ?DNS_TYPE_SPF, Bin, _MsgBin) ->
-    #dns_rrdata_spf{spf = decode_txt(Bin)};
+    #dns_rrdata_spf{spf = decode_text(Bin)};
 decode_rrdata(
     _Class,
     ?DNS_TYPE_SRV,
@@ -1528,7 +1528,7 @@ decode_rrdata(_Class, ?DNS_TYPE_TSIG, Bin, MsgBin) ->
         other = Other
     };
 decode_rrdata(_Class, ?DNS_TYPE_TXT, Bin, _MsgBin) ->
-    #dns_rrdata_txt{txt = decode_txt(Bin)};
+    #dns_rrdata_txt{txt = decode_text(Bin)};
 decode_rrdata(_Class, _Type, Bin, _MsgBin) ->
     Bin.
 
@@ -1750,7 +1750,7 @@ encode_rrdata(
 ) ->
     {<<KeyTag:16, Alg:8, DigestType:8, Digest/binary>>, CompMap};
 encode_rrdata(_Pos, _Class, #dns_rrdata_hinfo{cpu = CPU, os = OS}, CompMap) ->
-    {encode_txt([CPU, OS]), CompMap};
+    {encode_text([CPU, OS]), CompMap};
 encode_rrdata(
     _Pos,
     _Class,
@@ -2007,7 +2007,7 @@ encode_rrdata(
     {RNBin, RNCMap} = encode_dname(MNBin, MNCMap, NewPos, RName),
     {<<RNBin/binary, Serial:32, Refresh:32, Retry:32, Expire:32, Minimum:32>>, RNCMap};
 encode_rrdata(_Pos, _Class, #dns_rrdata_spf{spf = Strings}, CompMap) ->
-    {encode_txt(Strings), CompMap};
+    {encode_text(Strings), CompMap};
 encode_rrdata(
     _Pos,
     _Class,
@@ -2068,7 +2068,7 @@ encode_rrdata(
         CompMap
     };
 encode_rrdata(_Pos, _Class, #dns_rrdata_txt{txt = Strings}, CompMap) ->
-    {encode_txt(Strings), CompMap};
+    {encode_text(Strings), CompMap};
 encode_rrdata(_Pos, _Class, Bin, CompMap) when is_binary(Bin) ->
     {Bin, CompMap}.
 
@@ -2733,12 +2733,12 @@ decode_bool(1) -> true.
 encode_bool(false) -> 0;
 encode_bool(true) -> 1.
 
--spec decode_txt(binary()) -> [binary()].
-decode_txt(<<>>) ->
+-spec decode_text(binary()) -> [binary()].
+decode_text(<<>>) ->
     [];
-decode_txt(Bin) when is_binary(Bin) ->
+decode_text(Bin) when is_binary(Bin) ->
     {RB, String} = decode_string(Bin),
-    [String | decode_txt(RB)].
+    [String | decode_text(RB)].
 
 -spec decode_string(nonempty_binary()) -> {binary(), binary()}.
 decode_string(<<Len, Bin:Len/binary, Rest/binary>>) ->
@@ -2757,18 +2757,18 @@ encode_string(Bin, StringBin) when byte_size(StringBin) < 256 ->
 %% @doc Encodes an array of character-strings as in RFC1035§3.3, splitting any oversized segment
 %%
 %% @see encode_string/2
--spec encode_txt([binary()]) -> binary().
-encode_txt(Strings) ->
-    encode_txt_1(Strings, <<>>).
+-spec encode_text([binary()]) -> binary().
+encode_text(Strings) ->
+    encode_text_1(Strings, <<>>).
 
--spec encode_txt_1([binary()], binary()) -> binary().
-encode_txt_1([], Bin) ->
+-spec encode_text_1([binary()], binary()) -> binary().
+encode_text_1([], Bin) ->
     Bin;
-encode_txt_1([<<Head:255/binary, Tail/binary>> | Strings], Acc) ->
-    encode_txt_1([Tail | Strings], <<Acc/binary, 255, Head/binary>>);
-encode_txt_1([S | Strings], Acc) ->
+encode_text_1([<<Head:255/binary, Tail/binary>> | Strings], Acc) ->
+    encode_text_1([Tail | Strings], <<Acc/binary, 255, Head/binary>>);
+encode_text_1([S | Strings], Acc) ->
     Size = byte_size(S),
-    encode_txt_1(Strings, <<Acc/binary, Size, S/binary>>).
+    encode_text_1(Strings, <<Acc/binary, Size, S/binary>>).
 
 -spec decode_svcb_svc_params(binary()) -> svcb_svc_params().
 decode_svcb_svc_params(Bin) ->
