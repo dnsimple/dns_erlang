@@ -7,6 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## main
 
+- Added xref, dialyzer, and ex_doc
+- Add strict typing and RFC references to all records
+
 ## 2.0.0
 
 ### Changed
@@ -23,4 +26,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## 1.1.0
 
-- ...
+N?a
