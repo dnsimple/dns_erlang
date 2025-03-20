@@ -9,7 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Added xref, dialyzer, and ex_doc
 - Add strict typing and RFC references to all records
-- Add support for TXT splitting of strings over the maximum permitted size
+- Add support for TXT splitting of strings over the maximum permitted size (#57)
 
 ## 2.0.0
 
@@ -27,4 +27,4 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## 1.1.0
 
-- ...
+N?a
