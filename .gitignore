@@ -1,5 +1,5 @@
 .eunit
-doc
+.tool-versions
 ebin
 *.o
 *.beam
@@ -8,6 +8,5 @@ include/DNS-ASN1.hrl
 asngen
 
 # rebar 3
-rebar3
 .rebar3
 /_build
