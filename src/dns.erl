@@ -62,7 +62,7 @@
 
 %% Types
 -type uint2() :: 0..1.
--type uint4() :: 0..3.
+-type uint4() :: 0..15.
 -type uint8() :: 0..((1 bsl 8) - 1).
 -type uint16() :: 0..((1 bsl 16) - 1).
 -type uint32() :: 0..((1 bsl 32) - 1).
