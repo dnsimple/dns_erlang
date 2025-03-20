@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## main
 
+## 3.0.0
+
 - Added xref, dialyzer, and ex_doc
 - Add strict typing and RFC references to all records
 - Add support for TXT splitting of strings over the maximum permitted size
