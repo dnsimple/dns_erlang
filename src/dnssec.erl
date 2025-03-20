@@ -109,7 +109,7 @@ gen_nsec(ZoneNameM, RR, TTL, Opts) ->
             class = Class,
             type = ?DNS_TYPE_NSEC,
             ttl = TTL,
-            data = #dns_rrdata_nsec{types = Types}
+            data = #dns_rrdata_nsec{next_dname = Name, types = Types}
         }
      || {{Name, Class}, Types} <- Map
     ],
