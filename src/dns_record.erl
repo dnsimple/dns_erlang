@@ -29,7 +29,7 @@ serialise(Term, Opts) when is_list(Opts) ->
     WrapFun = proplists:get_value(wrap_fun, Opts, fun(X) -> X end),
     Term0 =
         case Term of
-            Data when is_binary(Data) -> bin_to_hex(Data);
+            Data when is_binary(Data) -> binary:encode_hex(Data);
             Data when is_tuple(Data) ->
                 [Tag | Values] = tuple_to_list(Data),
                 Fields = dns_record_info:fields(Tag),
@@ -77,7 +77,7 @@ serialise(dns_rrdata_dnskey, public_key, PublicKey, _Opts) ->
     ],
     {<<"public_key">>, base64:encode(iolist_to_binary(PKMpint))};
 serialise(dns_rrdata_ds, digest, Digest, _Opts) ->
-    {<<"digest">>, bin_to_hex(Digest)};
+    {<<"digest">>, binary:encode_hex(Digest)};
 serialise(dns_rrdata_ipseckey, gateway, Tuple, _Opts) when is_tuple(Tuple) ->
     {<<"gateway">>, list_to_binary(inet_parse:ntoa(Tuple))};
 serialise(dns_rrdata_ipseckey, public_key, PublicKey, _Opts) ->
@@ -88,7 +88,7 @@ serialise(Tag, salt, Salt, _Opts) when
     Salt0 =
         case Salt of
             <<>> -> <<$->>;
-            Salt -> bin_to_hex(Salt)
+            Salt -> binary:encode_hex(Salt)
         end,
     {<<"salt">>, Salt0};
 serialise(dns_rrdata_nsec3, hash, Hash, _Opts) ->
@@ -96,21 +96,21 @@ serialise(dns_rrdata_nsec3, hash, Hash, _Opts) ->
 serialise(dns_rrdata_rrsig, signature, Sig, _Opts) ->
     {<<"signature">>, base64:encode(Sig)};
 serialise(dns_rrdata_sshfp, fp, FP, _Opts) ->
-    {<<"fp">>, bin_to_hex(FP)};
+    {<<"fp">>, binary:encode_hex(FP)};
 serialise(dns_rrdata_tsig, mac, MAC, _Opts) ->
     {<<"mac">>, base64:encode(MAC)};
 serialise(dns_rrdata_tsig, other, Other, _Opts) ->
-    {<<"other">>, bin_to_hex(Other)};
+    {<<"other">>, binary:encode_hex(Other)};
 serialise(dns_optrr, data, Datas, Opts) when is_list(Datas) ->
     {<<"data">>, [serialise(D, Opts) || D <- Datas]};
 serialise(dns_opt_nsid, data, Data, _Opts) when is_binary(Data) ->
-    {<<"data">>, bin_to_hex(Data)};
+    {<<"data">>, binary:encode_hex(Data)};
 serialise(dns_opt_owner, Field, Data, _Opts) when is_binary(Data) ->
-    {atom_to_binary(Field, utf8), bin_to_hex(Data)};
+    {atom_to_binary(Field, utf8), binary:encode_hex(Data)};
 serialise(dns_opt_ecs, Field, Data, _Opts) when is_binary(Data) ->
-    {atom_to_binary(Field, utf8), bin_to_hex(Data)};
+    {atom_to_binary(Field, utf8), binary:encode_hex(Data)};
 serialise(dns_opt_unknown, bin, Bin, _Opts) when is_binary(Bin) ->
-    {<<"bin">>, bin_to_hex(Bin)};
+    {<<"bin">>, binary:encode_hex(Bin)};
 serialise(_Tag, Field, Value, _Opts) ->
     {atom_to_binary(Field, utf8), Value}.
 
@@ -121,7 +121,7 @@ deserialise(Term) -> deserialise(Term, []).
 deserialise(Term, Opts) ->
     UnwrapFun = proplists:get_value(wrap_fun, Opts, fun(X) -> X end),
     case UnwrapFun(Term) of
-        Bin when is_binary(Bin) -> hex_to_bin(Bin);
+        Bin when is_binary(Bin) -> binary:decode_hex(Bin);
         {TagBin, Props} when is_binary(TagBin) andalso is_list(Props) ->
             Tag = binary_to_existing_atom(TagBin, utf8),
             Fun = fun(Field) ->
@@ -167,7 +167,7 @@ deserialise(dns_rrdata_key, public_key, PublicKeyB64, _Opts) ->
 deserialise(dns_rrdata_dnskey, public_key, PublicKeyB64, _Opts) ->
     deserialise_dnskey_publickey(PublicKeyB64);
 deserialise(dns_rrdata_ds, digest, Digest, _Opts) ->
-    hex_to_bin(Digest);
+    binary:decode_hex(Digest);
 deserialise(dns_rrdata_ipseckey, gateway, Gateway, _Opts) ->
     case inet_parse:address(binary_to_list(Gateway)) of
         {ok, Tuple} -> Tuple;
@@ -175,45 +175,33 @@ deserialise(dns_rrdata_ipseckey, gateway, Gateway, _Opts) ->
     end;
 deserialise(dns_rrdata_ipseckey, public_key, PublicKey, _Opts) ->
     base64:decode(PublicKey);
+deserialise(Tag, salt, <<"-">>, _Opts) when
+    Tag =:= dns_rrdata_nsec3 orelse Tag =:= dns_rrdata_nsec3param
+->
+    <<>>;
 deserialise(Tag, salt, Salt, _Opts) when
     Tag =:= dns_rrdata_nsec3 orelse Tag =:= dns_rrdata_nsec3param
 ->
-    hex_to_bin(Salt);
+    binary:decode_hex(Salt);
 deserialise(dns_rrdata_nsec3, hash, Hash, _Opts) ->
     base32:decode(Hash, [hex]);
 deserialise(dns_rrdata_rrsig, signature, Sig, _Opts) ->
     base64:decode(Sig);
 deserialise(dns_rrdata_sshfp, fp, FP, _Opts) ->
-    hex_to_bin(FP);
+    binary:decode_hex(FP);
 deserialise(dns_rrdata_tsig, mac, MAC, _Opts) ->
     base64:decode(MAC);
 deserialise(dns_rrdata_tsig, other, Other, _Opts) ->
-    hex_to_bin(Other);
+    binary:decode_hex(Other);
 deserialise(dns_optrr, data, Terms, Opts) ->
     [deserialise(Term, Opts) || Term <- Terms];
 deserialise(dns_opt_nsid, data, Data, _Opts) when is_binary(Data) ->
-    hex_to_bin(Data);
+    binary:decode_hex(Data);
 deserialise(dns_opt_owner, _Field, Data, _Opts) when is_binary(Data) ->
-    hex_to_bin(Data);
+    binary:decode_hex(Data);
 deserialise(dns_opt_ecs, _Field, Data, _Opts) when is_binary(Data) ->
-    hex_to_bin(Data);
+    binary:decode_hex(Data);
 deserialise(dns_opt_unknown, bin, Bin, _Opts) when is_binary(Bin) ->
-    hex_to_bin(Bin);
+    binary:decode_hex(Bin);
 deserialise(_Tag, _Field, Value, _Opts) ->
     Value.
-
-%% Internal
-
--spec bin_to_hex(binary()) -> binary().
-bin_to_hex(Bin) when is_binary(Bin) ->
-    iolist_to_binary([io_lib:format("~2.16.0B", [V]) || <<V>> <= Bin]).
-
--spec hex_to_bin(binary()) -> bitstring().
-hex_to_bin(Bin) when is_binary(Bin) ->
-    Fun = fun(A, B) ->
-        case io_lib:fread("~16u", [A, B]) of
-            {ok, [V], []} -> V;
-            _ -> error(badarg)
-        end
-    end,
-    <<<<(Fun(A, B))>> || <<A, B>> <= Bin>>.
