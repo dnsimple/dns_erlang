@@ -601,6 +601,89 @@ dname_to_lower_test_() ->
     Cases = [{"Y", "y"}, {"y", "y"}, {<<"Y">>, <<"y">>}, {<<"y">>, <<"y">>}],
     [?_assertEqual(Expect, dns:dname_to_lower(Arg)) || {Arg, Expect} <- Cases].
 
+dname_case_conversion_test_() ->
+    [
+        %% Basic domain name tests
+        ?_assertEqual(<<"EXAMPLE.COM">>, dns:dname_to_upper(<<"example.com">>)),
+        ?_assertEqual(<<"example.com">>, dns:dname_to_lower(<<"EXAMPLE.COM">>)),
+
+        %% Mixed case input tests
+        ?_assertEqual(<<"EXAMPLE.COM">>, dns:dname_to_upper(<<"ExAmPle.CoM">>)),
+        ?_assertEqual(<<"example.com">>, dns:dname_to_lower(<<"ExAmPle.CoM">>)),
+
+        %% Tests with subdomains
+        ?_assertEqual(<<"WWW.EXAMPLE.COM">>, dns:dname_to_upper(<<"www.example.com">>)),
+        ?_assertEqual(
+            <<"sub.domain.example.com">>, dns:dname_to_lower(<<"SUB.DOMAIN.EXAMPLE.COM">>)
+        ),
+
+        %% Tests with special characters (which should remain unchanged)
+        ?_assertEqual(<<"TEST-1.EXAMPLE.COM">>, dns:dname_to_upper(<<"test-1.example.com">>)),
+        ?_assertEqual(<<"test_2.example.com">>, dns:dname_to_lower(<<"TEST_2.EXAMPLE.COM">>)),
+
+        %% Tests with dots and escaping (common in DNS)
+        ?_assertEqual(
+            <<"ESCAPED\\.DOT.EXAMPLE.COM">>, dns:dname_to_upper(<<"escaped\\.dot.example.com">>)
+        ),
+        ?_assertEqual(
+            <<"label\\.with\\.escaped.dots">>, dns:dname_to_lower(<<"LABEL\\.WITH\\.ESCAPED.DOTS">>)
+        ),
+
+        %% Tests with empty or single character domains
+        ?_assertEqual(<<>>, dns:dname_to_upper(<<>>)),
+        ?_assertEqual(<<"a">>, dns:dname_to_lower(<<"A">>)),
+
+        %% String (list) input tests
+        ?_assertEqual("EXAMPLE.COM", dns:dname_to_upper("example.com")),
+        ?_assertEqual("example.com", dns:dname_to_lower("EXAMPLE.COM")),
+
+        %% Test with long domain name to check chunking behavior
+        ?_assertEqual(
+            <<"THISISAVERYLONGSUBDOMAINNAMEWITHMANYCHARACTERS.EXAMPLE.COM">>,
+            dns:dname_to_upper(<<"thisisaverylongsubdomainnamewithmanycharacters.example.com">>)
+        ),
+
+        %% Test with various lengths to ensure all chunk size code paths are tested
+
+        % 2 chars
+        ?_assertEqual(<<"AB">>, dns:dname_to_upper(<<"ab">>)),
+        % 3 chars
+        ?_assertEqual(<<"abc">>, dns:dname_to_lower(<<"ABC">>)),
+        % 4 chars
+        ?_assertEqual(<<"ABCD">>, dns:dname_to_upper(<<"abcd">>)),
+        % 5 chars
+        ?_assertEqual(<<"abcde">>, dns:dname_to_lower(<<"ABCDE">>)),
+        % 6 chars
+        ?_assertEqual(<<"ABCDEF">>, dns:dname_to_upper(<<"abcdef">>)),
+        % 7 chars
+        ?_assertEqual(<<"abcdefg">>, dns:dname_to_lower(<<"ABCDEFG">>)),
+        % 8 chars
+        ?_assertEqual(<<"ABCDEFGH">>, dns:dname_to_upper(<<"abcdefgh">>)),
+
+        %% DNS specific examples - common DNS record types
+        ?_assertEqual(<<"_SRV._TCP.EXAMPLE.COM">>, dns:dname_to_upper(<<"_srv._tcp.example.com">>)),
+        ?_assertEqual(
+            <<"_xmpp-server._tcp.example.com">>,
+            dns:dname_to_lower(<<"_XMPP-SERVER._TCP.EXAMPLE.COM">>)
+        ),
+
+        %% Real-world examples
+        ?_assertEqual(<<"NS1.DNSPROVIDER.NET">>, dns:dname_to_upper(<<"ns1.dnsprovider.net">>)),
+        ?_assertEqual(<<"mail.example.org">>, dns:dname_to_lower(<<"MAIL.EXAMPLE.ORG">>))
+    ].
+
+%% Test specifically checking that case normalization doesn't affect DNS name comparison
+dns_case_insensitive_comparison_test_() ->
+    [
+        ?_assert(dns:compare_dname(<<"example.com">>, <<"EXAMPLE.COM">>)),
+        ?_assert(dns:compare_dname(<<"www.EXAMPLE.com">>, <<"WWW.example.COM">>)),
+        ?_assert(
+            dns:compare_dname(
+                dns:dname_to_upper(<<"example.com">>), dns:dname_to_lower(<<"EXAMPLE.COM">>)
+            )
+        )
+    ].
+
 dname_preserve_dot_test_() ->
     Query = #dns_query{name = <<"example\\.com">>, class = 1, type = 1},
     Message = #dns_message{qc = 1, questions = [Query]},
