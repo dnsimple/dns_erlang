@@ -2,7 +2,7 @@
 
 An Erlang DNS message library that supports most common record types, TSIG authenticated messages, EDNS0 and DNSSEC.
 
-[![Build Status](https://github.com/dnsimple/dns_erlang/actions/workflows/ci.yml/badge.svg)](https://github.com/dnsimple/dns-_rlang/actions/workflows/ci.yml)
+[![Build Status](https://github.com/dnsimple/dns_erlang/actions/workflows/ci.yml/badge.svg)](https://github.com/dnsimple/dns-erlang/actions/workflows/ci.yml)
 [![Module Version](https://img.shields.io/hexpm/v/dns_erlang.svg)](https://hex.pm/packages/dns_erlang)
 [![Hex Docs](https://img.shields.io/badge/hex-docs-lightgreen.svg)](https://hexdocs.pm/dns_erlang/)
 [![Hex Downloads](https://img.shields.io/hexpm/dt/dns_erlang.svg)](https://hex.pm/packages/dns_erlang)
