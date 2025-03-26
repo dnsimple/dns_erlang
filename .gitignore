@@ -1,12 +1,13 @@
-.eunit
-.tool-versions
-ebin
 *.o
 *.beam
 src/DNS-ASN1.*
 include/DNS-ASN1.hrl
 asngen
 
+# local setup
+.tool-versions
+
 # rebar 3
 .rebar3
-/_build
+_build/
+doc/
