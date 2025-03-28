@@ -2842,6 +2842,8 @@ encode_text_1([], Bin) ->
     Bin;
 encode_text_1([<<Head:255/binary, Tail/binary>> | Strings], Acc) ->
     encode_text_1([Tail | Strings], <<Acc/binary, 255, Head/binary>>);
+encode_text_1([<<>> | Strings], Acc) ->
+    encode_text_1(Strings, Acc);
 encode_text_1([S | Strings], Acc) ->
     Size = byte_size(S),
     encode_text_1(Strings, <<Acc/binary, Size, S/binary>>).

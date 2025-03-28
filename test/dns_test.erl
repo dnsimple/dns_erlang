@@ -65,6 +65,9 @@ long_txt_test() ->
     % Get the TXT record from the decoded message
     [#dns_rr{data = #dns_rrdata_txt{txt = DecodedTxt}}] = DecodedMsg#dns_message.answers,
 
+    %% Test that the string was split in exactly two segments of the given sizes
+    ?assertEqual([255, 45], [byte_size(L) || L <- DecodedTxt]),
+
     % If encoding works correctly for long strings,
     % the decoded string joined together should match the original
     ReassembledString = iolist_to_binary(DecodedTxt),
