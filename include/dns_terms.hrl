@@ -1,5 +1,5 @@
--ifndef('__dns_terms.hrl__').
--define('__dns_terms.hrl__', ok).
+-ifndef('DNS_TERMS').
+-define('DNS_TERMS', ok).
 
 -define(DNS_ALG_DSA, ?DNS_ALG_DSA_NUMBER).
 -define(DNS_ALG_DSA_NUMBER, 3).

@@ -42,6 +42,9 @@
     nsec3_hashalg/0,
     nsec3_salt/0,
     nsec3_iterations/0,
+    gen_nsec_opt/0,
+    sign_rr_opt/0,
+    verify_rrsig_opt/0,
     keytag/0,
     key/0
 ]).
@@ -663,10 +666,10 @@ canonical_rrdata_bin(#dns_rr{class = Class, data = Data0}) ->
 -spec canonical_rrdata_form(dns:rrdata()) -> dns:rrdata().
 canonical_rrdata_form(#dns_rrdata_afsdb{hostname = Hostname} = Data) ->
     Data#dns_rrdata_afsdb{hostname = dns:dname_to_lower(Hostname)};
-canonical_rrdata_form(#dns_rrdata_cname{dname = Dname} = Data) ->
-    Data#dns_rrdata_cname{dname = dns:dname_to_lower(Dname)};
-canonical_rrdata_form(#dns_rrdata_dname{dname = Dname} = Data) ->
-    Data#dns_rrdata_dname{dname = dns:dname_to_lower(Dname)};
+canonical_rrdata_form(#dns_rrdata_cname{dname = DName} = Data) ->
+    Data#dns_rrdata_cname{dname = dns:dname_to_lower(DName)};
+canonical_rrdata_form(#dns_rrdata_dname{dname = DName} = Data) ->
+    Data#dns_rrdata_dname{dname = dns:dname_to_lower(DName)};
 canonical_rrdata_form(#dns_rrdata_kx{exchange = Exchange} = Data) ->
     Data#dns_rrdata_kx{exchange = dns:dname_to_lower(Exchange)};
 canonical_rrdata_form(#dns_rrdata_mb{madname = MaDname} = Data) ->
@@ -689,14 +692,14 @@ canonical_rrdata_form(#dns_rrdata_mx{exchange = Exchange} = Data) ->
     Data#dns_rrdata_mx{exchange = dns:dname_to_lower(Exchange)};
 canonical_rrdata_form(#dns_rrdata_naptr{replacement = Replacement} = Data) ->
     Data#dns_rrdata_naptr{replacement = dns:dname_to_lower(Replacement)};
-canonical_rrdata_form(#dns_rrdata_ns{dname = Dname} = Data) ->
-    Data#dns_rrdata_ns{dname = dns:dname_to_lower(Dname)};
+canonical_rrdata_form(#dns_rrdata_ns{dname = DName} = Data) ->
+    Data#dns_rrdata_ns{dname = dns:dname_to_lower(DName)};
 canonical_rrdata_form(#dns_rrdata_nsec{next_dname = NextDname} = Data) ->
     Data#dns_rrdata_nsec{next_dname = dns:dname_to_lower(NextDname)};
-canonical_rrdata_form(#dns_rrdata_nxt{dname = Dname} = Data) ->
-    Data#dns_rrdata_nxt{dname = dns:dname_to_lower(Dname)};
-canonical_rrdata_form(#dns_rrdata_ptr{dname = Dname} = Data) ->
-    Data#dns_rrdata_ptr{dname = dns:dname_to_lower(Dname)};
+canonical_rrdata_form(#dns_rrdata_nxt{dname = DName} = Data) ->
+    Data#dns_rrdata_nxt{dname = dns:dname_to_lower(DName)};
+canonical_rrdata_form(#dns_rrdata_ptr{dname = DName} = Data) ->
+    Data#dns_rrdata_ptr{dname = dns:dname_to_lower(DName)};
 canonical_rrdata_form(#dns_rrdata_rp{mbox = Mbox, txt = Txt} = Data) ->
     Data#dns_rrdata_rp{
         mbox = dns:dname_to_lower(Mbox),

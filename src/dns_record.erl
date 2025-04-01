@@ -67,14 +67,14 @@ serialise(dns_rrdata_dnskey, public_key, PublicKey, _Opts) when
 ->
     {<<"public_key">>, base64:encode(PublicKey)};
 serialise(dns_rrdata_dnskey, public_key, PublicKey, _Opts) ->
-    PKMpint = [
-        begin
+    PKMpint = lists:map(
+        fun(I) ->
             BI = binary:encode_unsigned(I),
             L = byte_size(BI),
             <<L:32, BI/binary>>
-        end
-     || I <- PublicKey
-    ],
+        end,
+        PublicKey
+    ),
     {<<"public_key">>, base64:encode(iolist_to_binary(PKMpint))};
 serialise(dns_rrdata_ds, digest, Digest, _Opts) ->
     {<<"digest">>, binary:encode_hex(Digest)};
@@ -160,8 +160,8 @@ deserialise(dns_rrdata_cert, cert, CRL, _Opts) ->
     base64:decode(CRL);
 deserialise(dns_rrdata_dhcid, data, Data, _Opts) ->
     base64:decode(Data);
-deserialise(dns_rrdata_dlv, Field, Value, _Opts) ->
-    deserialise(dns_rrdata_ds, Field, Value, _Opts);
+deserialise(dns_rrdata_dlv, Field, Value, Opts) ->
+    deserialise(dns_rrdata_ds, Field, Value, Opts);
 deserialise(dns_rrdata_key, public_key, PublicKeyB64, _Opts) ->
     base64:decode(PublicKeyB64);
 deserialise(dns_rrdata_dnskey, public_key, PublicKeyB64, _Opts) ->

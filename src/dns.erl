@@ -73,6 +73,7 @@
 -export_type([
     message/0,
     message_id/0,
+    message_bin/0,
     opcode/0,
     rcode/0,
     query/0,
@@ -86,6 +87,17 @@
     class/0,
     type/0,
     ttl/0,
+    alg/0,
+    label/0,
+    tsig_mac/0,
+    tsig_error/0,
+    decode_error/0,
+    ercode/0,
+    eoptcode/0,
+    llqopcode/0,
+    llqerrcode/0,
+    tsig_opt/0,
+    encode_message_opt/0,
     rrdata/0,
     tsig_alg/0,
     unix_time/0
@@ -290,29 +302,28 @@ decode_message(finished, _MsgBin, Bin, #dns_message{} = Msg) when
 ->
     {trailing_garbage, Msg, Bin}.
 
--spec decode_message_questions(binary(), char(), <<_:64, _:_*8>>) ->
-    {[{_, _, _, _}], binary()} | {atom(), [{_, _, _, _}], binary()}.
+-spec decode_message_questions(binary(), char(), message_bin()) ->
+    {questions(), binary()} | {decode_error(), questions(), binary()}.
 decode_message_questions(DataBin, Count, MsgBin) ->
     decode_message_questions(DataBin, Count, MsgBin, []).
 
--spec decode_message_questions(binary(), char(), <<_:64, _:_*8>>, [
-    #dns_query{name :: binary(), class :: char(), type :: char()}
-]) ->
-    {[{_, _, _, _}], binary()} | {atom(), [{_, _, _, _}], binary()}.
+-spec decode_message_questions(binary(), char(), message_bin(), questions()) ->
+    {questions(), binary()} | {decode_error(), questions(), binary()}.
 decode_message_questions(DataBin, 0, _MsgBin, Qs) ->
     {lists:reverse(Qs), DataBin};
 decode_message_questions(<<>>, _Count, _MsgBin, Qs) ->
     {truncated, lists:reverse(Qs), <<>>};
 decode_message_questions(DataBin, Count, MsgBin, Qs) ->
-    case catch decode_dname(DataBin, MsgBin) of
+    try decode_dname(DataBin, MsgBin) of
         {Name, <<Type:16, Class:16, RB/binary>>} ->
             Q = #dns_query{name = Name, type = Type, class = Class},
             decode_message_questions(RB, Count - 1, MsgBin, [Q | Qs]);
         {_Name, _Bin} ->
-            {truncated, lists:reverse(Qs), DataBin};
+            {truncated, lists:reverse(Qs), DataBin}
+    catch
         Error when is_atom(Error) ->
             {Error, lists:reverse(Qs), DataBin};
-        _ ->
+        _:_ ->
             {formerr, lists:reverse(Qs), DataBin}
     end.
 
@@ -328,7 +339,7 @@ decode_message_body(<<>>, _Count, _MsgBin, RRs) ->
 decode_message_body(DataBin, 0, _MsgBin, RRs) ->
     {lists:reverse(RRs), DataBin};
 decode_message_body(DataBin, Count, MsgBin, RRs) ->
-    case catch decode_dname(DataBin, MsgBin) of
+    try decode_dname(DataBin, MsgBin) of
         {<<>>,
             <<?DNS_TYPE_OPT:16/unsigned, UPS:16/unsigned, ExtRcode:8, Version:8, DNSSEC:1, _Z:15,
                 EDataLen:16, EDataBin:EDataLen/binary, RemBin/binary>>} ->
@@ -355,10 +366,11 @@ decode_message_body(DataBin, Count, MsgBin, RRs) ->
         {_Name, <<_Type:16/unsigned, _Class:16/unsigned, _TTL:32/signed, Len:16, Data/binary>>} when
             byte_size(Data) < Len
         ->
-            {truncated, lists:reverse(RRs), DataBin};
+            {truncated, lists:reverse(RRs), DataBin}
+    catch
         Error when is_atom(Error) ->
             {Error, lists:reverse(RRs), DataBin};
-        _ ->
+        _:_ ->
             {formerr, lists:reverse(RRs), DataBin}
     end.
 
@@ -399,27 +411,9 @@ encode_message(
     | {true, message_bin(), message()}
     | {false, message_bin(), tsig_mac()}
     | {true, message_bin(), tsig_mac(), message()}.
-encode_message(#dns_message{id = MsgId, additional = Ad} = Msg, Opts) ->
-    TCMode = proplists:get_value(tc_mode, Opts, default),
-    ValidTCMode = lists:member(TCMode, [default, axfr, llq_event]),
-    MaxSizeDefault =
-        case Ad of
-            [#dns_optrr{udp_payload_size = UPS} | _] -> UPS;
-            _ -> 512
-        end,
-    MaxSize = proplists:get_value(max_size, Opts, MaxSizeDefault),
-    if
-        not is_integer(MaxSize) -> erlang:error(badarg);
-        MaxSize < 512 orelse 65535 < MaxSize -> erlang:error(badarg);
-        not ValidTCMode -> erlang:error(badarg);
-        true -> ok
-    end,
-    EncodeFun =
-        case TCMode of
-            default -> fun encode_message_default/2;
-            axfr -> fun encode_message_axfr/2;
-            llq_event -> fun encode_message_llq/2
-        end,
+encode_message(#dns_message{id = MsgId, additional = Additional} = Msg, Opts) ->
+    EncodeFun = get_tc_mode_fun(Opts),
+    MaxSize = get_max_size(Opts, Additional),
     case proplists:get_value(tsig, Opts) of
         undefined ->
             case EncodeFun(Msg, MaxSize) of
@@ -476,6 +470,35 @@ encode_message(#dns_message{id = MsgId, additional = Ad} = Msg, Opts) ->
             end
     end.
 
+-spec get_tc_mode_fun(proplists:proplist()) ->
+    fun((message(), number()) -> message_bin() | {message_bin(), message()}).
+get_tc_mode_fun(Opts) ->
+    case proplists:get_value(tc_mode, Opts, default) of
+        default ->
+            fun encode_message_default/2;
+        llq_event ->
+            fun encode_message_llq/2;
+        axfr ->
+            fun encode_message_axfr/2;
+        _ ->
+            erlang:error(badarg)
+    end.
+
+-spec get_max_size(proplists:proplist(), _) -> 512..65535.
+get_max_size(Opts, Additional) ->
+    case {proplists:get_value(max_size, Opts), Additional} of
+        {MaxSize, _} when
+            is_integer(MaxSize) andalso 512 < MaxSize andalso MaxSize < 65535
+        ->
+            MaxSize;
+        {undefined, [#dns_optrr{udp_payload_size = UPS}]} ->
+            UPS;
+        {undefined, []} ->
+            512;
+        _ ->
+            erlang:error(badarg)
+    end.
+
 -spec encode_message_tsig_add(
     1..1114111,
     binary(),
@@ -525,10 +548,10 @@ encode_message_tsig_add(
                 <<AlgBin/binary, Time:48, Fudge:16, MS:16, MAC:MS/binary, OrigMsgId:16, Err:16,
                     OLen:16, Other:OLen/binary>>,
             TSIGDataSize = byte_size(TSIGData),
-            TSIGRR =
+            TSigRR =
                 <<NameBin/binary, ?DNS_TYPE_TSIG:16, ?DNS_CLASS_ANY:16, 0:32, TSIGDataSize:16,
                     TSIGData/binary>>,
-            MsgBin0 = <<MsgId:16, Head/binary, (ADC + 1):16, Body/binary, TSIGRR/binary>>,
+            MsgBin0 = <<MsgId:16, Head/binary, (ADC + 1):16, Body/binary, TSigRR/binary>>,
             {MsgBin0, MAC};
         {error, _} ->
             erlang:error(badarg)
@@ -552,7 +575,7 @@ encode_message_tsig_size(Name, Alg, Other) ->
     NameSize + 10 + DataSize.
 
 -spec encode_message_default(message(), number()) -> binary().
-encode_message_default(#dns_message{tc = TC, additional = Ad} = Msg, MaxSize) ->
+encode_message_default(#dns_message{tc = TC, additional = Additional} = Msg, MaxSize) ->
     BuildHead = fun(TCBool, EncQC, EncANC, EncAUC, EncADC) ->
         Msg0 = Msg#dns_message{
             qc = EncQC,
@@ -563,7 +586,7 @@ encode_message_default(#dns_message{tc = TC, additional = Ad} = Msg, MaxSize) ->
         },
         encode_message_head(Msg0)
     end,
-    {OptRRBin, Ad0} = encode_message_pop_optrr(Ad),
+    {OptRRBin, Ad0} = encode_message_pop_optrr(Additional),
     Pos = 12,
     SpaceLeft = MaxSize - Pos,
     case encode_message_d_req(Pos, SpaceLeft, Msg) of
@@ -718,16 +741,16 @@ encode_message_put(Recs, additional, #dns_message{} = Msg) ->
 encode_message_a_setcounts(
     #dns_message{
         questions = Q,
-        answers = An,
-        authority = Au,
-        additional = Ad
+        answers = Answers,
+        authority = Authority,
+        additional = Additional
     } = Msg
 ) ->
     Msg#dns_message{
         qc = length(Q),
-        anc = length(An),
-        auc = length(Au),
-        adc = length(Ad)
+        anc = length(Answers),
+        auc = length(Authority),
+        adc = length(Additional)
     }.
 
 -spec encode_message_updatecount(
@@ -768,17 +791,17 @@ encode_message_head(#dns_message{
 encode_message_llq(
     #dns_message{
         questions = Q,
-        answers = An,
-        authority = Au,
-        additional = Ad
+        answers = Answers,
+        authority = Authority,
+        additional = Additional
     } = Msg,
     MaxSize
 ) ->
     QC = length(Q),
-    AnC = length(An),
-    AuC = length(Au),
-    AdC = length(Ad),
-    AuAd = Au ++ Ad,
+    AnswersLen = length(Answers),
+    AuthorityLen = length(Authority),
+    AdditionalLen = length(Additional),
+    AuAd = Authority ++ Additional,
     Pos = 12,
     SpaceLeft = MaxSize - Pos,
     {CompMap0, QBin, []} =
@@ -790,15 +813,15 @@ encode_message_llq(
         encode_message_rec_list(Pos0, SpaceLeft0, CompMap0, AuAd),
     AuAdTmpSize = byte_size(AuAdTmp),
     {CompMap1, AnBin, LeftoverAn} =
-        encode_message_rec_list(Pos0, SpaceLeft0 - AuAdTmpSize, CompMap0, An),
+        encode_message_rec_list(Pos0, SpaceLeft0 - AuAdTmpSize, CompMap0, Answers),
     LeftoverAnC = length(LeftoverAn),
-    EncodedAnC = AnC - LeftoverAnC,
+    EncodedAnC = AnswersLen - LeftoverAnC,
     AnBinSize = byte_size(AnBin),
     Pos1 = Pos0 + AnBinSize,
     SpaceLeft1 = SpaceLeft0 - AnBinSize,
     {_, AuAdBin, []} =
         encode_message_rec_list(Pos1, SpaceLeft1, CompMap1, AuAd),
-    Msg0 = Msg#dns_message{qc = QC, anc = EncodedAnC, auc = AuC, adc = AdC},
+    Msg0 = Msg#dns_message{qc = QC, anc = EncodedAnC, auc = AuthorityLen, adc = AdditionalLen},
     Head = encode_message_head(Msg0),
     Bin = <<Head/binary, QBin/binary, AnBin/binary, AuAdBin/binary>>,
     case LeftoverAnC =:= 0 of
@@ -917,54 +940,55 @@ verify_tsig(MsgBin, Name, Secret) ->
 -spec verify_tsig(message_bin(), dname(), binary(), [tsig_opt()]) ->
     {ok, tsig_mac()} | {error, tsig_error()}.
 verify_tsig(MsgBin, Name, Secret, Options) ->
+    {UnsignedMsgBin, #dns_rr{name = TName, data = TData}} = strip_tsig(MsgBin),
+    case compare_dname(Name, TName) of
+        true ->
+            do_verify_tsig(UnsignedMsgBin, TData, Name, Secret, Options);
+        false ->
+            {error, ?DNS_TSIGERR_BADKEY}
+    end.
+
+do_verify_tsig(UnsignedMsgBin, TData, Name, Secret, Options) ->
     Now = proplists:get_value(time, Options, unix_time()),
     Fudge = proplists:get_value(fudge, Options, ?DEFAULT_TSIG_FUDGE),
     PreviousMAC = proplists:get_value(mac, Options, <<>>),
     Tail = proplists:get_bool(tail, Options),
-    {UnsignedMsgBin, #dns_rr{name = TName, data = TData}} = strip_tsig(MsgBin),
-    case compare_dname(Name, TName) of
-        true ->
-            #dns_rrdata_tsig{
-                alg = Alg,
-                time = Time,
-                fudge = CFudge,
-                mac = CMAC,
-                err = Err,
-                other = Other
-            } = TData,
-            case
-                gen_tsig_mac(
-                    Alg,
-                    UnsignedMsgBin,
-                    Name,
-                    Secret,
-                    Time,
-                    CFudge,
-                    Err,
-                    Other,
-                    PreviousMAC,
-                    Tail
-                )
-            of
-                {ok, SMAC} ->
-                    case const_compare(CMAC, SMAC) of
-                        true ->
-                            if
-                                Now < (Time - Fudge) ->
-                                    {error, ?DNS_TSIGERR_BADTIME};
-                                Now > (Time + Fudge) ->
-                                    {error, ?DNS_TSIGERR_BADTIME};
-                                true ->
-                                    {ok, SMAC}
-                            end;
+    #dns_rrdata_tsig{
+        alg = Alg,
+        time = Time,
+        fudge = CFudge,
+        mac = CMAC,
+        err = Err,
+        other = Other
+    } = TData,
+    case
+        gen_tsig_mac(
+            Alg,
+            UnsignedMsgBin,
+            Name,
+            Secret,
+            Time,
+            CFudge,
+            Err,
+            Other,
+            PreviousMAC,
+            Tail
+        )
+    of
+        {ok, SMAC} ->
+            case const_compare(CMAC, SMAC) of
+                true ->
+                    case (Time - Fudge) =< Now andalso Now =< (Time + Fudge) of
                         false ->
-                            {error, ?DNS_TSIGERR_BADSIG}
+                            {error, ?DNS_TSIGERR_BADTIME};
+                        true ->
+                            {ok, SMAC}
                     end;
-                {error, Error} ->
-                    {error, Error}
+                false ->
+                    {error, ?DNS_TSIGERR_BADSIG}
             end;
-        false ->
-            {error, ?DNS_TSIGERR_BADKEY}
+        {error, Error} ->
+            {error, Error}
     end.
 
 %% @doc Generates and then appends a TSIG RR to a message.
@@ -1042,13 +1066,13 @@ strip_tsig(
     {_Answers, TSIGBin} =
         decode_message_body(QRB, ANC + AUC + UnsignedADC, MsgBin),
     case decode_message_body(TSIGBin, 1, MsgBin) of
-        {[#dns_rr{data = #dns_rrdata_tsig{msgid = NewId}} = TSIG_RR], <<>>} ->
+        {[#dns_rr{data = #dns_rrdata_tsig{msgid = NewId}} = TSigRR], <<>>} ->
             MsgBodyLen = byte_size(HRB) - byte_size(TSIGBin),
             {UnsignedBodyBin, TSIGBin} = split_binary(HRB, MsgBodyLen),
             UnsignedMsgBin =
                 <<NewId:16, QR:1, OC:4, AA:1, TC:1, RD:1, RA:1, PR:1, Z:2, RC:4, QC:16, ANC:16,
                     AUC:16, UnsignedADC:16, UnsignedBodyBin/binary>>,
-            {UnsignedMsgBin, TSIG_RR};
+            {UnsignedMsgBin, TSigRR};
         {[#dns_rr{data = #dns_rrdata_tsig{}}], _} ->
             throw(trailing_garbage);
         _ ->
@@ -1073,15 +1097,15 @@ gen_tsig_mac(Alg, Msg, Name, Secret, Time, Fudge, Err, Other, MAC, Tail) ->
     AlgBin = encode_dname(dname_to_lower(Alg)),
     OLen = byte_size(Other),
     PMAC =
-        if
-            MAC =:= <<>> -> MAC;
-            true -> <<(byte_size(MAC)):16, MAC/binary>>
+        case MAC of
+            <<>> -> MAC;
+            _ -> <<(byte_size(MAC)):16, MAC/binary>>
         end,
     Data =
-        if
-            Tail ->
-                [PMAC, Msg, <<Time:48>>, <<Fudge:16>>];
+        case Tail of
             true ->
+                [PMAC, Msg, <<Time:48>>, <<Fudge:16>>];
+            false ->
                 [
                     PMAC,
                     Msg,
@@ -1142,18 +1166,11 @@ decode_rrdata(Class, Type, Data) ->
 -spec decode_rrdata(uint16(), uint16(), binary(), binary()) -> rrdata().
 decode_rrdata(_Class, _Type, <<>>, _MsgBin) ->
     <<>>;
-decode_rrdata(Class, ?DNS_TYPE_A, <<A, B, C, D>>, _MsgBin) when
-    ?CLASS_IS_IN(Class)
-->
+decode_rrdata(Class, ?DNS_TYPE_A, <<A, B, C, D>>, _MsgBin) when ?CLASS_IS_IN(Class) ->
     #dns_rrdata_a{ip = {A, B, C, D}};
 decode_rrdata(
-    Class,
-    ?DNS_TYPE_AAAA,
-    <<A:16, B:16, C:16, D:16, E:16, F:16, G:16, H:16>>,
-    _MsgBin
-) when
-    ?CLASS_IS_IN(Class)
-->
+    Class, ?DNS_TYPE_AAAA, <<A:16, B:16, C:16, D:16, E:16, F:16, G:16, H:16>>, _MsgBin
+) when ?CLASS_IS_IN(Class) ->
     #dns_rrdata_aaaa{ip = {A, B, C, D, E, F, G, H}};
 decode_rrdata(_Class, ?DNS_TYPE_AFSDB, <<Subtype:16, Bin/binary>>, MsgBin) ->
     #dns_rrdata_afsdb{
@@ -1163,12 +1180,7 @@ decode_rrdata(_Class, ?DNS_TYPE_AFSDB, <<Subtype:16, Bin/binary>>, MsgBin) ->
 decode_rrdata(_Class, ?DNS_TYPE_CAA, <<Flags:8, Len:8, Bin/binary>>, _MsgBin) ->
     <<Tag:Len/binary, Value/binary>> = Bin,
     #dns_rrdata_caa{flags = Flags, tag = Tag, value = Value};
-decode_rrdata(
-    _Class,
-    ?DNS_TYPE_CERT,
-    <<Type:16, KeyTag:16, Alg, Bin/binary>>,
-    _MsgBin
-) ->
+decode_rrdata(_Class, ?DNS_TYPE_CERT, <<Type:16, KeyTag:16, Alg, Bin/binary>>, _MsgBin) ->
     #dns_rrdata_cert{type = Type, key_tag = KeyTag, alg = Alg, cert = Bin};
 decode_rrdata(_Class, ?DNS_TYPE_CNAME, Bin, MsgBin) ->
     #dns_rrdata_cname{dname = decode_dnameonly(Bin, MsgBin)};
@@ -1351,14 +1363,14 @@ decode_rrdata(_Class, ?DNS_TYPE_IPSECKEY, <<Precedence:8, 3:8, Algorithm:8, Bin/
 decode_rrdata(
     _Class,
     ?DNS_TYPE_KEY,
-    <<Type:2, 0:1, XT:1, 0:2, NamType:2, 0:4, SIG:4, Protocol:8, Alg:8, PublicKey/binary>>,
+    <<Type:2, 0:1, XT:1, 0:2, NamType:2, 0:4, Sig:4, Protocol:8, Alg:8, PublicKey/binary>>,
     _MsgBin
 ) ->
     #dns_rrdata_key{
         type = Type,
         xt = XT,
         name_type = NamType,
-        sig = SIG,
+        sig = Sig,
         protocol = Protocol,
         alg = Alg,
         public_key = PublicKey
@@ -1516,14 +1528,14 @@ decode_rrdata(_Class, ?DNS_TYPE_SVCB, <<SvcPriority:16, Bin/binary>>, MsgBin) ->
     #dns_rrdata_svcb{svc_priority = SvcPriority, target_name = TargetName, svc_params = SvcParams};
 decode_rrdata(_Class, ?DNS_TYPE_TSIG, Bin, MsgBin) ->
     {Alg,
-        <<Time:48, Fudge:16, MS:16, MAC:MS/bytes, MsgID:16, ErrInt:16, OtherLen:16,
+        <<Time:48, Fudge:16, MS:16, MAC:MS/bytes, MsgId:16, ErrInt:16, OtherLen:16,
             Other:OtherLen/binary>>} = decode_dname(Bin, MsgBin),
     #dns_rrdata_tsig{
         alg = Alg,
         time = Time,
         fudge = Fudge,
         mac = MAC,
-        msgid = MsgID,
+        msgid = MsgId,
         err = ErrInt,
         other = Other
     };
@@ -1611,12 +1623,12 @@ encode_rrdata(
     EBin = strip_leading_zeros(binary:encode_unsigned(E)),
     ESize = byte_size(EBin),
     PKBin =
-        if
-            ESize =< 16#FF ->
+        case ESize of
+            _ when ESize =< 16#FF ->
                 <<ESize:8, EBin:ESize/binary, MBin/binary>>;
-            ESize =< 16#FFFF ->
+            _ when ESize =< 16#FFFF ->
                 <<0, ESize:16, EBin:ESize/binary, MBin/binary>>;
-            true ->
+            _ ->
                 erlang:error(badarg)
         end,
     {<<Flags:16, Protocol:8, Alg:8, PKBin/binary>>, CompMap};
@@ -1678,12 +1690,12 @@ encode_rrdata(
     EBin = strip_leading_zeros(binary:encode_unsigned(E)),
     ESize = byte_size(EBin),
     PKBin =
-        if
-            ESize =< 16#FF ->
+        case ESize of
+            _ when ESize =< 16#FF ->
                 <<ESize:8, EBin:ESize/binary, MBin/binary>>;
-            ESize =< 16#FFFF ->
+            _ when ESize =< 16#FFFF ->
                 <<0, ESize:16, EBin:ESize/binary, MBin/binary>>;
-            true ->
+            _ ->
                 erlang:error(badarg)
         end,
     {<<Flags:16, Protocol:8, Alg:8, PKBin/binary>>, CompMap};
@@ -1811,7 +1823,7 @@ encode_rrdata(
         type = Type,
         xt = XT,
         name_type = NameType,
-        sig = SIG,
+        sig = Sig,
         protocol = Protocol,
         alg = Alg,
         public_key = PublicKey
@@ -1819,7 +1831,7 @@ encode_rrdata(
     CompMap
 ) ->
     {
-        <<Type:2, 0:1, XT:1, 0:2, NameType:2, 0:4, SIG:4, Protocol:8, Alg:8, PublicKey/binary>>,
+        <<Type:2, 0:1, XT:1, 0:2, NameType:2, 0:4, Sig:4, Protocol:8, Alg:8, PublicKey/binary>>,
         CompMap
     };
 encode_rrdata(
@@ -2053,7 +2065,7 @@ encode_rrdata(
         time = Time,
         fudge = Fudge,
         mac = MAC,
-        msgid = MsgID,
+        msgid = MsgId,
         err = Err,
         other = Other
     },
@@ -2063,7 +2075,7 @@ encode_rrdata(
     MACSize = byte_size(MAC),
     OtherLen = byte_size(Other),
     {
-        <<AlgBin/binary, Time:48, Fudge:16, MACSize:16, MAC:MACSize/bytes, MsgID:16, Err:16,
+        <<AlgBin/binary, Time:48, Fudge:16, MACSize:16, MAC:MACSize/bytes, MsgId:16, Err:16,
             OtherLen:16, Other/binary>>,
         CompMap
     };
@@ -2206,30 +2218,30 @@ decode_optrrdata(Bin) ->
 decode_optrrdata(<<>>, Opts) ->
     lists:reverse(Opts);
 decode_optrrdata(<<EOptNum:16, EOptLen:16, EOptBin:EOptLen/binary, Rest/binary>>, Opts) ->
-    NewOpt = decode_optrrdata_1(EOptNum, EOptBin),
+    NewOpt = do_decode_optrrdata(EOptNum, EOptBin),
     decode_optrrdata(Rest, [NewOpt | Opts]).
 
--spec decode_optrrdata_1(uint16(), binary() | _) ->
+-spec do_decode_optrrdata(uint16(), binary() | _) ->
     opt_nsid()
     | opt_ul()
     | opt_unknown()
     | opt_ecs()
     | opt_llq()
     | opt_owner().
-decode_optrrdata_1(?DNS_EOPTCODE_LLQ, <<1:16, OC:16, EC:16, Id:64, LeaseLife:32>>) ->
+do_decode_optrrdata(?DNS_EOPTCODE_LLQ, <<1:16, OC:16, EC:16, Id:64, LeaseLife:32>>) ->
     #dns_opt_llq{opcode = OC, errorcode = EC, id = Id, leaselife = LeaseLife};
-decode_optrrdata_1(?DNS_EOPTCODE_NSID, <<Data/binary>>) ->
+do_decode_optrrdata(?DNS_EOPTCODE_NSID, <<Data/binary>>) ->
     #dns_opt_nsid{data = Data};
-decode_optrrdata_1(?DNS_EOPTCODE_OWNER, <<0:8, S:8, PMAC:6/binary>>) ->
+do_decode_optrrdata(?DNS_EOPTCODE_OWNER, <<0:8, S:8, PMAC:6/binary>>) ->
     #dns_opt_owner{seq = S, primary_mac = PMAC, _ = <<>>};
-decode_optrrdata_1(?DNS_EOPTCODE_OWNER, <<0:8, S:8, PMAC:6/binary, WMAC:6/binary>>) ->
+do_decode_optrrdata(?DNS_EOPTCODE_OWNER, <<0:8, S:8, PMAC:6/binary, WMAC:6/binary>>) ->
     #dns_opt_owner{
         seq = S,
         primary_mac = PMAC,
         wakeup_mac = WMAC,
         password = <<>>
     };
-decode_optrrdata_1(
+do_decode_optrrdata(
     ?DNS_EOPTCODE_OWNER, <<0:8, S:8, PMAC:6/binary, WMAC:6/binary, Password/binary>>
 ) ->
     #dns_opt_owner{
@@ -2238,16 +2250,16 @@ decode_optrrdata_1(
         wakeup_mac = WMAC,
         password = Password
     };
-decode_optrrdata_1(?DNS_EOPTCODE_UL, <<Time:32>>) ->
+do_decode_optrrdata(?DNS_EOPTCODE_UL, <<Time:32>>) ->
     #dns_opt_ul{lease = Time};
-decode_optrrdata_1(?DNS_EOPTCODE_ECS, <<FAMILY:16, SRCPL:8, SCOPEPL:8, Payload/binary>>) ->
+do_decode_optrrdata(?DNS_EOPTCODE_ECS, <<FAMILY:16, SRCPL:8, SCOPEPL:8, Payload/binary>>) ->
     #dns_opt_ecs{
         family = FAMILY,
         source_prefix_length = SRCPL,
         scope_prefix_length = SCOPEPL,
         address = Payload
     };
-decode_optrrdata_1(EOpt, <<Bin/binary>>) ->
+do_decode_optrrdata(EOpt, <<Bin/binary>>) ->
     #dns_opt_unknown{id = EOpt, bin = Bin}.
 
 -spec encode_optrrdata(
@@ -2352,38 +2364,25 @@ decode_dname(DataBin, MsgBin) ->
 
 -spec decode_dname(nonempty_binary(), binary(), _, binary(), non_neg_integer()) ->
     {binary(), binary()}.
-decode_dname(_DataBin, MsgBin, _RemBin, _Dname, Count) when
+decode_dname(_DataBin, MsgBin, _RemBin, _DName, Count) when
     Count > byte_size(MsgBin)
 ->
     throw(decode_loop);
-decode_dname(<<0, DataRBin/binary>>, _MsgBin, RBin, Dname0, Count) ->
-    NewRemBin =
-        case Count of
-            0 -> DataRBin;
-            _ -> RBin
-        end,
-    NewDname =
-        case Dname0 of
-            <<$., Dname/binary>> -> Dname;
+decode_dname(<<0, DataRBin/binary>>, _MsgBin, RBin, DName0, Count) ->
+    NewRemBin = choose_next_bin(Count, DataRBin, RBin),
+    NewDName =
+        case DName0 of
+            <<$., DName/binary>> -> DName;
             <<>> -> <<>>
         end,
-    {NewDname, NewRemBin};
-decode_dname(
-    <<0:2, Len:6, Label0:Len/binary, DataRemBin/binary>>,
-    MsgBin,
-    RemBin,
-    Dname,
-    Count
-) ->
+    {NewDName, NewRemBin};
+decode_dname(<<0:2, Len:6, Label0:Len/binary, DataRemBin/binary>>, MsgBin, RemBin, DName, Count) ->
     Label = escape_label(Label0),
-    NewRemBin =
-        case Count of
-            0 -> DataRemBin;
-            _ -> RemBin
-        end,
-    NewDname = <<Dname/binary, $., Label/binary>>,
-    decode_dname(DataRemBin, MsgBin, NewRemBin, NewDname, Count);
-decode_dname(<<3:2, Ptr:14, DataRBin/binary>>, MsgBin, RBin, Dname, Count) ->
+    NewRemBin = choose_next_bin(Count, DataRemBin, RemBin),
+    NewDName = <<DName/binary, $., Label/binary>>,
+    decode_dname(DataRemBin, MsgBin, NewRemBin, NewDName, Count);
+decode_dname(<<3:2, Ptr:14, DataRBin/binary>>, MsgBin, RBin, DName, Count) ->
+    NewRemBin = choose_next_bin(Count, DataRBin, RBin),
     NewRemBin =
         case Count of
             0 -> DataRBin;
@@ -2392,10 +2391,15 @@ decode_dname(<<3:2, Ptr:14, DataRBin/binary>>, MsgBin, RBin, Dname, Count) ->
     NewCount = Count + 2,
     case MsgBin of
         <<_:Ptr/binary, NewDataBin/binary>> ->
-            decode_dname(NewDataBin, MsgBin, NewRemBin, Dname, NewCount);
+            decode_dname(NewDataBin, MsgBin, NewRemBin, DName, NewCount);
         _ ->
             throw(bad_pointer)
     end.
+
+choose_next_bin(0, DataRBin, _RBin) ->
+    DataRBin;
+choose_next_bin(_, _DataRBin, RBin) ->
+    RBin.
 
 %% @doc Escapes dots in a DNS label
 -spec escape_label(label()) -> label().
@@ -2409,7 +2413,7 @@ escape_label(Cur, <<C, Rest/binary>>) -> escape_label(<<Cur/binary, C>>, Rest).
 -spec decode_dnameonly(nonempty_binary(), binary()) -> binary().
 decode_dnameonly(Bin, MsgBin) ->
     case decode_dname(Bin, MsgBin) of
-        {Dname, <<>>} -> Dname;
+        {DName, <<>>} -> DName;
         _ -> throw(trailing_garbage)
     end.
 
@@ -2428,8 +2432,8 @@ encode_dname(CompMap, Pos, Name) ->
 
 -spec encode_dname(binary(), _, non_neg_integer(), binary()) -> {binary(), _}.
 encode_dname(Bin, undefined, _Pos, Name) ->
-    DnameBin = encode_dname(Name),
-    {<<Bin/binary, DnameBin/binary>>, undefined};
+    DNameBin = encode_dname(Name),
+    {<<Bin/binary, DNameBin/binary>>, undefined};
 encode_dname(Bin, CompMap, Pos, Name) ->
     Labels = dname_to_labels(Name),
     LwrLabels = dname_to_labels(dname_to_lower(Name)),
@@ -2478,11 +2482,11 @@ dname_to_labels(Label, <<C, Cs/binary>>) -> dname_to_labels(<<Label/binary, C>>,
 %% @doc Joins a list of DNS labels, escaping where necessary.
 -spec labels_to_dname([label()]) -> dname().
 labels_to_dname(Labels) ->
-    <<$., Dname/binary>> = <<
+    <<$., DName/binary>> = <<
         <<$., (escape_label(Label))/binary>>
      || Label <- Labels
     >>,
-    Dname.
+    DName.
 
 -define(UP(X), (upper(X)):8).
 %% @doc Returns provided name with case-insensitive characters in uppercase.
@@ -2835,18 +2839,18 @@ encode_string(Bin, StringBin) when byte_size(StringBin) < 256 ->
 %% @see encode_string/2
 -spec encode_text([binary()]) -> binary().
 encode_text(Strings) ->
-    encode_text_1(Strings, <<>>).
+    do_decode_text(Strings, <<>>).
 
--spec encode_text_1([binary()], binary()) -> binary().
-encode_text_1([], Bin) ->
+-spec do_decode_text([binary()], binary()) -> binary().
+do_decode_text([], Bin) ->
     Bin;
-encode_text_1([<<Head:255/binary, Tail/binary>> | Strings], Acc) ->
-    encode_text_1([Tail | Strings], <<Acc/binary, 255, Head/binary>>);
-encode_text_1([<<>> | Strings], Acc) ->
-    encode_text_1(Strings, Acc);
-encode_text_1([S | Strings], Acc) ->
+do_decode_text([<<Head:255/binary, Tail/binary>> | Strings], Acc) ->
+    do_decode_text([Tail | Strings], <<Acc/binary, 255, Head/binary>>);
+do_decode_text([<<>> | Strings], Acc) ->
+    do_decode_text(Strings, Acc);
+do_decode_text([S | Strings], Acc) ->
     Size = byte_size(S),
-    encode_text_1(Strings, <<Acc/binary, Size, S/binary>>).
+    do_decode_text(Strings, <<Acc/binary, Size, S/binary>>).
 
 -spec decode_svcb_svc_params(binary()) -> svcb_svc_params().
 decode_svcb_svc_params(Bin) ->
@@ -2894,27 +2898,27 @@ encode_svcb_svc_params(SvcParams) ->
 -spec encode_svcb_svc_params_value(_, _, _) -> any().
 encode_svcb_svc_params_value(alpn, V, Bin) ->
     encode_svcb_svc_params_value(?DNS_SVCB_PARAM_ALPN, V, Bin);
-encode_svcb_svc_params_value(K = ?DNS_SVCB_PARAM_ALPN, V, Bin) ->
+encode_svcb_svc_params_value(?DNS_SVCB_PARAM_ALPN = K, V, Bin) ->
     L = byte_size(V),
     <<Bin/binary, K:16/integer, L:16/integer, V/binary>>;
 encode_svcb_svc_params_value(no_default_alpn, V, Bin) ->
     encode_svcb_svc_params_value(?DNS_SVCB_PARAM_NO_DEFAULT_ALPN, V, Bin);
-encode_svcb_svc_params_value(K = ?DNS_SVCB_PARAM_NO_DEFAULT_ALPN, _, Bin) ->
+encode_svcb_svc_params_value(?DNS_SVCB_PARAM_NO_DEFAULT_ALPN = K, _, Bin) ->
     L = 0,
     <<Bin/binary, K:16/integer, L:16/integer>>;
 encode_svcb_svc_params_value(port, V, Bin) ->
     encode_svcb_svc_params_value(?DNS_SVCB_PARAM_PORT, V, Bin);
-encode_svcb_svc_params_value(K = ?DNS_SVCB_PARAM_PORT, V, Bin) ->
+encode_svcb_svc_params_value(?DNS_SVCB_PARAM_PORT = K, V, Bin) ->
     <<Bin/binary, K:16/integer, 2:16/integer, V:16/integer>>;
 encode_svcb_svc_params_value(echconfig, V, Bin) ->
     encode_svcb_svc_params_value(?DNS_SVCB_PARAM_ECHCONFIG, V, Bin);
-encode_svcb_svc_params_value(K = ?DNS_SVCB_PARAM_ECHCONFIG, V, Bin) ->
+encode_svcb_svc_params_value(?DNS_SVCB_PARAM_ECHCONFIG = K, V, Bin) ->
     L = byte_size(V),
     <<Bin/binary, K:16/integer, L:16/integer, V/binary>>;
-encode_svcb_svc_params_value(K = ?DNS_SVCB_PARAM_IPV4HINT, V, Bin) ->
+encode_svcb_svc_params_value(?DNS_SVCB_PARAM_IPV4HINT = K, V, Bin) ->
     L = byte_size(V),
     <<Bin/binary, K:16/integer, L:16/integer, V/binary>>;
-encode_svcb_svc_params_value(K = ?DNS_SVCB_PARAM_IPV6HINT, V, Bin) ->
+encode_svcb_svc_params_value(?DNS_SVCB_PARAM_IPV6HINT = K, V, Bin) ->
     L = byte_size(V),
     <<Bin/binary, K:16/integer, L:16/integer, V/binary>>;
 encode_svcb_svc_params_value(_, _, Bin) ->

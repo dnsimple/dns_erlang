@@ -10,4 +10,5 @@ asngen
 # rebar 3
 .rebar3
 _build/
+_checkouts/
 doc/
