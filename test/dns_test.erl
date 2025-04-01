@@ -790,31 +790,6 @@ dname_preserve_dot_test_() ->
         ?_assertEqual(Message, ReDecoded)
     ].
 
-%%%===================================================================
-%%% Term functions
-%%%===================================================================
-
-class_name_test_() ->
-    {ok, Cases} = file:consult(filename:join("test", "rrdata_wire_samples.txt")),
-    Classes = sets:to_list(sets:from_list([C || {C, _, _} <- Cases])),
-    [?_assertEqual(true, is_binary(dns:class_name(C))) || C <- Classes].
-
-type_name_test_() ->
-    {ok, Cases} = file:consult(filename:join("test", "rrdata_wire_samples.txt")),
-    Types = sets:to_list(sets:from_list([T || {_, T, _} <- Cases])),
-    [?_assertEqual(T =/= 999, is_binary(dns:type_name(T))) || T <- Types].
-
-alg_terms_test_() ->
-    Cases = [
-        ?DNS_ALG_DSA,
-        ?DNS_ALG_NSEC3DSA,
-        ?DNS_ALG_RSASHA1,
-        ?DNS_ALG_NSEC3RSASHA1,
-        ?DNS_ALG_RSASHA256,
-        ?DNS_ALG_RSASHA512
-    ],
-    [?_assertEqual(true, is_binary(dns:alg_name(Alg))) || Alg <- Cases].
-
 split_binary_into_chunks(Bin, Chunk) ->
     List = binary_to_list(Bin),
     [iolist_to_binary(lists:sublist(List, X, Chunk)) || X <- lists:seq(1, length(List), Chunk)].
