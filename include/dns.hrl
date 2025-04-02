@@ -1,5 +1,5 @@
--ifndef('__dns.hrl__').
--define('__dns.hrl__', ok).
+-ifndef('DNS_HEADER').
+-define('DNS_HEADER', ok).
 
 -include("dns_terms.hrl").
 -include("dns_records.hrl").

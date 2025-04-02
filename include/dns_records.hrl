@@ -1,5 +1,5 @@
--ifndef('__dns_records.hrl__').
--define('__dns_records.hrl__', ok).
+-ifndef('DNS_RECORDS').
+-define('DNS_RECORDS', ok).
 -include("dns_terms.hrl").
 
 %% DNS Message format. See RFC 1035: §4.1.1.
