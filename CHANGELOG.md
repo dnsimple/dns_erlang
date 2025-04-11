@@ -7,9 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## main
 
-## 3.0.1
+## 3.0.5
 
 - Fix `max_size` in encode_message opts
+
+## 3.0.4
+
+- Upgrade dependencies
+- Apply linter specs
+
+## 3.0.3
+
+- Performance improvements in string manipulations
+
+## 3.0.2
+
+- Fix type definitions
+
+## 3.0.1
+
+- Ensure ASN1 compilation before building package
 
 ## 3.0.0
 
