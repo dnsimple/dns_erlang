@@ -1,9 +1,0 @@
--*- html -*-
-@headerfile "dns_records.hrl"
-@title dns_erlang
-@copyright 2010 Andrew Tunnell-Jones
-@author Andrew Tunnell-Jones [http://andrew.tj.id.au/]
-@reference <a target="_top" href="http://andrewtj.github.com/dns_erlang/">Documentation</a>
-@reference <a target="_top" href="http://github.com/andrewtj/dns_erlang/">Source Code Repository</a>
-@doc
-<p>dns_erlang is a DNS message library for Erlang. It supports most common record types, TSIG authenticated messages, EDNS0 and DNSSEC. Functionality for constructing or querying a nameserver beyond interpreting wire messages is not provided.</p>

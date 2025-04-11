@@ -266,7 +266,7 @@ dnskey_pubkey_gen_test_() ->
     ].
 
 helper_test_samples() ->
-    Path = filename:join("priv", "dnssec_samples.txt"),
+    Path = filename:join("test", "dnssec_samples.txt"),
     {ok, Terms} = file:consult(Path),
     DecodeKeyProplistTuple = fun
         ({alg, _} = Tuple) ->
