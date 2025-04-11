@@ -20,6 +20,8 @@ If you'd like to see a full example of `dns_erlang` in use, please have a look a
 
 The following section explains what is contained in the library in greater detail.
 
+For more details, see [Hex Docs](https://hexdocs.pm/dns_erlang/).
+
 ### dns\_terms.hrl
 
 This file defines various terms, defined as Erlang macros, that are used in DNS packets. It includes a term for each DNS type, including one term for the numeric value and one term for the binary version. For example:
@@ -64,23 +66,3 @@ Each of the record fields in `dns_message` corresponds to the elements defined i
 Other records defined include `dns_query`, which represents a single question in the `#dns_message.questions` field, `dns_rr` which corresponds to a single resource record (RR), which appears in the `answers`, `authority`, `additional` section of the `dns_message`, and so on.
 
 Note that all support RR types must include a `dns_rrdata_` record definition, used to store the parts of the RDATA for that RR type.
-
-### dns.erl
-
-The `dns` module is the primary entry point for the functionality in this library. The module exports various types used in type specs, such as `message()`, which indicates a `#dns_message` record, `query()` which represents a single `#dns_query` record, `questions()`, which represents a list of queries, etc.
-
-It also exports functions for encoding and decoding messages, TSIG supporting functions, and various utility functions for comparing domain names, converting domain names into different cases, converting to and from label lists, etc.
-
-### dns\_record.erl
-
-The `dns_record` module exports `serialise` and `deserialise` functions for serialising and deserialising messages. You will generally not use these functions directly, rather you will use the functions for encoding and decoding messages exported by `dns.erl`.
-
-### dns\_record\_info.erl
-
-This module exports utility functions used to inspect records. You will generally not use these functions directly.
-
-### dnssec.erl
-
-The `dnssec` module exports functions used for generating NSEC responses, signing and verifying RRSIGs, and adding keytags to DNSKEY records.
-
-For example, the `sign_rr/6` function can be given a collection of resource records, the signer name, keytag, signing algorithm, private key, and a collection of options and it will return a list of RRSIG records. Currently only DSA and RSA algorithms are supported for signing RRSETs.
