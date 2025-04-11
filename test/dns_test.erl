@@ -15,6 +15,13 @@ message_query_test() ->
     Bin = dns:encode_message(Msg),
     ?assertEqual(Msg, dns:decode_message(Bin)).
 
+message_query_with_opts_test() ->
+    Qs = [#dns_query{name = <<"example">>, type = ?DNS_TYPE_A}],
+    QLen = length(Qs),
+    Msg = #dns_message{qc = QLen, questions = Qs},
+    {false, Bin} = dns:encode_message(Msg, [{max_size, 512}]),
+    ?assertEqual(Msg, dns:decode_message(Bin)).
+
 message_other_test() ->
     QName = <<"i            .txt.example.org">>,
     Qs = [#dns_query{name = QName, type = ?DNS_TYPE_TXT}],
