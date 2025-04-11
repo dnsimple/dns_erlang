@@ -18,6 +18,22 @@
 %%
 %% -------------------------------------------------------------------
 -module(dnssec).
+-if(?OTP_RELEASE >= 27).
+-define(MODULEDOC(Str), -moduledoc(Str)).
+-define(DOC(Str), -doc(Str)).
+-else.
+-define(MODULEDOC(Str), -compile([])).
+-define(DOC(Str), -compile([])).
+-endif.
+?MODULEDOC("""
+The `dnssec` module exports functions used for generating NSEC responses,
+signing and verifying RRSIGs, and adding keytags to DNSKEY records.
+
+For example, the `sign_rr/6` function can be given a collection of resource records,
+the signer name, keytag, signing algorithm, private key, and a collection of options
+and it will return a list of RRSIG records. Currently only DSA and RSA algorithms are
+supported for signing RRSETs.
+""").
 
 %% API
 -export([gen_nsec/1, gen_nsec/3, gen_nsec/4]).

@@ -18,6 +18,21 @@
 %%
 %% -------------------------------------------------------------------
 -module(dns_record).
+-if(?OTP_RELEASE >= 27).
+-define(MODULEDOC(Str), -moduledoc(Str)).
+-define(DOC(Str), -doc(Str)).
+-else.
+-define(MODULEDOC(Str), -compile([])).
+-define(DOC(Str), -compile([])).
+-endif.
+?MODULEDOC("""
+The `dns_record` module exports `serialise` and `deserialise` functions
+for serialising and deserialising messages.
+
+You will generally not use these functions directly, rather you will use
+the functions for encoding and decoding messages exported by `m:dns`.
+""").
+
 -export([serialise/1, serialise/2, deserialise/1, deserialise/2]).
 
 -spec serialise(binary() | tuple()) -> any().
