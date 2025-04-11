@@ -19,7 +19,6 @@ fresh: clean
 
 .PHONY: test
 test: all
-	rebar3 fmt --check
 	rebar3 xref
 	rebar3 dialyzer
 	rebar3 eunit

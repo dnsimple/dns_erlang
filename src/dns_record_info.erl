@@ -18,6 +18,17 @@
 %%
 %% -------------------------------------------------------------------
 -module(dns_record_info).
+-if(?OTP_RELEASE >= 27).
+-define(MODULEDOC(Str), -moduledoc(Str)).
+-define(DOC(Str), -doc(Str)).
+-else.
+-define(MODULEDOC(Str), -compile([])).
+-define(DOC(Str), -compile([])).
+-endif.
+?MODULEDOC("""
+This module exports utility functions used to inspect records.
+You will generally not use these functions directly.
+""").
 
 -include("dns_records.hrl").
 

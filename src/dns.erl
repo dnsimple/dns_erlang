@@ -18,7 +18,24 @@
 %%
 %% -------------------------------------------------------------------
 -module(dns).
-%% API
+-if(?OTP_RELEASE >= 27).
+-define(MODULEDOC(Str), -moduledoc(Str)).
+-define(DOC(Str), -doc(Str)).
+-else.
+-define(MODULEDOC(Str), -compile([])).
+-define(DOC(Str), -compile([])).
+-endif.
+?MODULEDOC("""
+The `dns` module is the primary entry point for the functionality in this library.
+The module exports various types used in type specs, such as `t:message/0`, which indicates
+a `#dns_message{}` record, `t:query/0` which represents a single `#dns_query{}` record,
+`t:questions/0`, which represents a list of queries, etc.
+
+It also exports functions for encoding and decoding messages,
+TSIG supporting functions, and various utility functions for comparing domain names, converting
+domain names into different cases, converting to and from label lists, etc.
+""").
+
 -export([decode_message/1, encode_message/1, encode_message/2]).
 -export([verify_tsig/3, verify_tsig/4]).
 -export([add_tsig/5, add_tsig/6]).
