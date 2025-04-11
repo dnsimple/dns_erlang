@@ -488,7 +488,7 @@ get_tc_mode_fun(Opts) ->
 get_max_size(Opts, Additional) ->
     case {proplists:get_value(max_size, Opts), Additional} of
         {MaxSize, _} when
-            is_integer(MaxSize) andalso 512 < MaxSize andalso MaxSize < 65535
+            is_integer(MaxSize) andalso 512 =< MaxSize andalso MaxSize =< 65535
         ->
             MaxSize;
         {undefined, [#dns_optrr{udp_payload_size = UPS}]} ->

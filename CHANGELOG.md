@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## main
 
+## 3.0.1
+
+- Fix `max_size` in encode_message opts
+
 ## 3.0.0
 
 - Added xref, dialyzer, and ex_doc
