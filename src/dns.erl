@@ -27,9 +27,9 @@
 -endif.
 ?MODULEDOC("""
 The `dns` module is the primary entry point for the functionality in this library.
-The module exports various types used in type specs, such as `message()`, which indicates
-a `#dns_message{}` record, `query()` which represents a single `#dns_query{}` record,
-`questions()`, which represents a list of queries, etc.
+The module exports various types used in type specs, such as `t:message/0`, which indicates
+a `#dns_message{}` record, `t:query/0` which represents a single `#dns_query{}` record,
+`t:questions/0`, which represents a list of queries, etc.
 
 It also exports functions for encoding and decoding messages,
 TSIG supporting functions, and various utility functions for comparing domain names, converting
