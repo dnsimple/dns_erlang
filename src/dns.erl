@@ -159,7 +159,7 @@ domain names into different cases, converting to and from label lists, etc.
 
 -type answers() :: [rr()].
 -type authority() :: [rr()].
--type additional() :: [optrr() | [rr()]] | [rr()].
+-type additional() :: [optrr() | rr()].
 -type dname() :: binary().
 -type label() :: binary().
 -type class() :: uint16().
@@ -882,8 +882,8 @@ encode_message_rec_list(Pos, SpaceLeft, CompMap, Body, [Rec | Rest] = Recs) ->
         _ ->
             {CompMap, Body, Recs}
     end;
-encode_message_rec_list(_Pos, _SpaceLeft, CompMap, Body, [] = Recs) ->
-    {CompMap, Body, Recs}.
+encode_message_rec_list(_Pos, _SpaceLeft, CompMap, Body, []) ->
+    {CompMap, Body, []}.
 
 -spec encode_message_rec(compmap(), non_neg_integer(), query() | optrr() | rr()) ->
     {compmap(), <<_:32, _:_*8>>}.
@@ -897,13 +897,11 @@ encode_message_rec(CompMap, _Pos, #dns_optrr{
     dnssec = DNSSEC,
     data = Data
 }) ->
-    IntClass = UPS,
     DNSSECBit = encode_bool(DNSSEC),
     RRBin = encode_optrrdata(Data),
     RRBinSize = byte_size(RRBin),
     NewBin =
-        <<0, 41:16, IntClass:16, ExtRcode:8, Version:8, DNSSECBit:1, 0:15, RRBinSize:16,
-            RRBin/binary>>,
+        <<0, 41:16, UPS:16, ExtRcode:8, Version:8, DNSSECBit:1, 0:15, RRBinSize:16, RRBin/binary>>,
     {CompMap, NewBin};
 encode_message_rec(CompMap, Pos, #dns_rr{
     name = N,
@@ -929,13 +927,11 @@ encode_message_pop_optrr([
     }
     | Rest
 ]) ->
-    Class = UPS,
     DNSSECBit = encode_bool(DNSSEC),
     RRBin = encode_optrrdata(Data),
     RRBinSize = byte_size(RRBin),
     Bin =
-        <<0, 41:16, Class:16, ExtRcode:8, Version:8, DNSSECBit:1, 0:15, RRBinSize:16,
-            RRBin/binary>>,
+        <<0, 41:16, UPS:16, ExtRcode:8, Version:8, DNSSECBit:1, 0:15, RRBinSize:16, RRBin/binary>>,
     {Bin, Rest};
 encode_message_pop_optrr(Other) ->
     {<<>>, Other}.

@@ -237,13 +237,10 @@ message_edns_test() ->
             data = [LLQ, ECS]
         }
     ],
-    QLen = length(Qs),
-    AnsLen = length(Ans),
-    AdsLen = length(Ads),
     Msg = #dns_message{
-        qc = QLen,
-        anc = AnsLen,
-        adc = AdsLen,
+        qc = length(Qs),
+        anc = length(Ans),
+        adc = length(Ads),
         questions = Qs,
         answers = Ans,
         additional = Ads
