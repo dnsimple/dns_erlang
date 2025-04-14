@@ -15,12 +15,37 @@ message_query_test() ->
     Bin = dns:encode_message(Msg),
     ?assertEqual(Msg, dns:decode_message(Bin)).
 
-message_query_with_opts_test() ->
+encode_message_max_size_test_() ->
     Qs = [#dns_query{name = <<"example">>, type = ?DNS_TYPE_A}],
     QLen = length(Qs),
     Msg = #dns_message{qc = QLen, questions = Qs},
-    {false, Bin} = dns:encode_message(Msg, [{max_size, 512}]),
-    ?assertEqual(Msg, dns:decode_message(Bin)).
+    Msg3 = Msg#dns_message{adc = 1, additional = [#dns_optrr{udp_payload_size = 512}]},
+    [
+        ?_assert(begin
+            {false, Bin} = dns:encode_message(Msg3, []),
+            Msg3 =:= dns:decode_message(Bin)
+        end),
+        ?_assert(begin
+            {false, Bin} = dns:encode_message(Msg, [{max_size, 512}]),
+            Msg =:= dns:decode_message(Bin)
+        end),
+        ?_assert(begin
+            {false, Bin} = dns:encode_message(Msg, []),
+            Msg =:= dns:decode_message(Bin)
+        end)
+    ].
+
+encode_message_invalid_size_test_() ->
+    Qs = [#dns_query{name = <<"example">>, type = ?DNS_TYPE_A}],
+    QLen = length(Qs),
+    Msg = #dns_message{qc = QLen, questions = Qs},
+    Msg3 = Msg#dns_message{adc = 1, additional = [#dns_optrr{udp_payload_size = 99999999}]},
+    [
+        ?_assertError(badarg, dns:encode_message(Msg3, [])),
+        ?_assertError(badarg, dns:encode_message(Msg, [{max_size, 999999}])),
+        ?_assertError(badarg, dns:encode_message(Msg, [{max_size, 413}])),
+        ?_assertError(badarg, dns:encode_message(Msg, [{max_size, not_an_integer}]))
+    ].
 
 message_other_test() ->
     QName = <<"i            .txt.example.org">>,

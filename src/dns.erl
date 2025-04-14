@@ -508,8 +508,10 @@ get_max_size(Opts, Additional) ->
             is_integer(MaxSize) andalso 512 =< MaxSize andalso MaxSize =< 65535
         ->
             MaxSize;
-        {undefined, [#dns_optrr{udp_payload_size = UPS}]} ->
-            UPS;
+        {undefined, [#dns_optrr{udp_payload_size = MaxSize}]} when
+            is_integer(MaxSize) andalso 512 =< MaxSize andalso MaxSize =< 65535
+        ->
+            MaxSize;
         {undefined, []} ->
             512;
         _ ->
