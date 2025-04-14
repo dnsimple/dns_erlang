@@ -594,23 +594,13 @@ encode_message_tsig_size(Name, Alg, Other) ->
     NameSize + 10 + DataSize.
 
 -spec encode_message_default(message(), number()) -> binary().
-encode_message_default(#dns_message{tc = TC, additional = Additional} = Msg, MaxSize) ->
-    BuildHead = fun(TCBool, EncQC, EncANC, EncAUC, EncADC) ->
-        Msg0 = Msg#dns_message{
-            qc = EncQC,
-            anc = EncANC,
-            auc = EncAUC,
-            adc = EncADC,
-            tc = TC orelse TCBool
-        },
-        encode_message_head(Msg0)
-    end,
+encode_message_default(#dns_message{additional = Additional} = Msg, MaxSize) ->
     {OptRRBin, Ad0} = encode_message_pop_optrr(Additional),
     Pos = 12,
     SpaceLeft = MaxSize - Pos,
     case encode_message_d_req(Pos, SpaceLeft, Msg) of
         {false, QC, ANC, AUC, Body} ->
-            Head = BuildHead(true, QC, ANC, AUC, 0),
+            Head = build_head(Msg, true, QC, ANC, AUC, 0),
             <<Head/binary, Body/binary>>;
         {CompMap, QC, ANC, AUC, Body} ->
             BodySize = byte_size(Body),
@@ -618,7 +608,7 @@ encode_message_default(#dns_message{tc = TC, additional = Additional} = Msg, Max
             Pos0 = BodySize + Pos,
             case SpaceLeft - BodySize of
                 SpaceLeft0 when SpaceLeft0 < OptRRBinSize ->
-                    Head = BuildHead(true, QC, ANC, AUC, 0),
+                    Head = build_head(Msg, true, QC, ANC, AUC, 0),
                     <<Head/binary, Body/binary>>;
                 SpaceLeft0 ->
                     Pos1 = Pos0 + OptRRBinSize,
@@ -630,14 +620,25 @@ encode_message_default(#dns_message{tc = TC, additional = Additional} = Msg, Max
                         end,
                     case encode_message_d_opt(Pos1, SpaceLeft1, CompMap, Ad0) of
                         false ->
-                            Head = BuildHead(false, QC, ANC, AUC, OptC),
+                            Head = build_head(Msg, false, QC, ANC, AUC, OptC),
                             <<Head/binary, Body/binary, OptRRBin/binary>>;
                         {ADC, AdBin} ->
-                            Head = BuildHead(false, QC, ANC, AUC, OptC + ADC),
+                            Head = build_head(Msg, false, QC, ANC, AUC, OptC + ADC),
                             <<Head/binary, Body/binary, OptRRBin/binary, AdBin/binary>>
                     end
             end
     end.
+
+-spec build_head(message(), boolean(), uint16(), uint16(), uint16(), uint16()) -> message_bin().
+build_head(#dns_message{tc = TC} = Msg, TCBool, EncQC, EncANC, EncAUC, EncADC) ->
+    Msg0 = Msg#dns_message{
+        qc = EncQC,
+        anc = EncANC,
+        auc = EncAUC,
+        adc = EncADC,
+        tc = TC orelse TCBool
+    },
+    encode_message_head(Msg0).
 
 -spec encode_message_d_req(12, number(), message()) -> {_, char(), char(), char(), bitstring()}.
 encode_message_d_req(Pos, SpaceLeft, #dns_message{} = Msg) ->
