@@ -70,6 +70,7 @@ domain names into different cases, converting to and from label lists, etc.
 -export([encode_svcb_svc_params/1, decode_svcb_svc_params/1]).
 -export([encode_optrrdata/1, decode_optrrdata/1]).
 -export([encode_dname/3, encode_dname/4, decode_dname/2]).
+-export([new_compmap/0]).
 -endif.
 
 -include("dns.hrl").
@@ -117,6 +118,7 @@ domain names into different cases, converting to and from label lists, etc.
     encode_message_opt/0,
     rrdata/0,
     tsig_alg/0,
+    compmap/0,
     unix_time/0
 ]).
 -export_type([
@@ -136,6 +138,8 @@ domain names into different cases, converting to and from label lists, etc.
 -type opcode() :: uint4().
 -type rcode() :: uint4().
 -type questions() :: [query()].
+-type records() :: additional() | answers() | authority() | questions().
+-opaque compmap() :: #{[binary()] => non_neg_integer()}.
 
 -type message() :: #dns_message{}.
 -type query() :: #dns_query{}.
@@ -640,13 +644,14 @@ build_head(#dns_message{tc = TC} = Msg, TCBool, EncQC, EncANC, EncAUC, EncADC) -
     },
     encode_message_head(Msg0).
 
--spec encode_message_d_req(12, number(), message()) -> {_, char(), char(), char(), bitstring()}.
+-spec encode_message_d_req(12, number(), message()) ->
+    {false | compmap(), char(), char(), char(), bitstring()}.
 encode_message_d_req(Pos, SpaceLeft, #dns_message{} = Msg) ->
     Msg0 = Msg#dns_message{qc = 0, anc = 0, auc = 0},
     encode_message_d_req(Pos, SpaceLeft, new_compmap(), <<>>, Msg0).
 
--spec encode_message_d_req(pos_integer(), number(), _, bitstring(), message()) ->
-    {_, char(), char(), char(), bitstring()}.
+-spec encode_message_d_req(pos_integer(), number(), compmap(), bitstring(), message()) ->
+    {false | compmap(), char(), char(), char(), bitstring()}.
 encode_message_d_req(
     Pos,
     SpaceLeft,
@@ -688,11 +693,12 @@ encode_message_d_req(
             end
     end.
 
--spec encode_message_d_opt(pos_integer(), number(), _, [
-    [{_, _, _, _, _, _}]
-    | optrr()
-    | rr()
-]) -> false | {non_neg_integer(), bitstring()}.
+-spec encode_message_d_opt(
+    pos_integer(),
+    number(),
+    compmap(),
+    records()
+) -> false | {non_neg_integer(), bitstring()}.
 encode_message_d_opt(Pos, SpaceLeft, CompMap, Recs) ->
     case encode_message_rec_list(Pos, SpaceLeft, CompMap, Recs) of
         {_, Bin, []} -> {length(Recs), Bin};
@@ -705,7 +711,7 @@ encode_message_axfr(#dns_message{} = Msg, MaxSize) ->
     SpaceLeft = MaxSize - Pos,
     encode_message_axfr(Pos, SpaceLeft, new_compmap(), <<>>, Msg).
 
--spec encode_message_axfr(pos_integer(), number(), _, binary(), message()) ->
+-spec encode_message_axfr(pos_integer(), number(), compmap(), binary(), message()) ->
     binary() | {binary(), message()}.
 encode_message_axfr(Pos, SpaceLeft, CompMap, Bin, #dns_message{} = Msg) ->
     {Section, Recs} = encode_message_pop(Msg),
@@ -849,21 +855,22 @@ encode_message_llq(
         false -> {Bin, Msg#dns_message{anc = LeftoverAnC, answers = LeftoverAn}}
     end.
 
--spec encode_message_rec_list(pos_integer(), number(), _, [
-    [{_, _, _, _, _, _}]
-    | query()
-    | optrr()
-    | rr()
-]) -> {_, bitstring(), [[any()] | {_, _, _, _} | {_, _, _, _, _, _}]}.
+-spec encode_message_rec_list(
+    pos_integer(),
+    number(),
+    compmap(),
+    records()
+) -> {compmap(), bitstring(), records()}.
 encode_message_rec_list(Pos, SpaceLeft, CompMap, Recs) ->
     encode_message_rec_list(Pos, SpaceLeft, CompMap, <<>>, Recs).
 
--spec encode_message_rec_list(pos_integer(), number(), _, bitstring(), [
-    [{_, _, _, _, _, _}]
-    | query()
-    | optrr()
-    | rr()
-]) -> {_, bitstring(), [[any()] | {_, _, _, _} | {_, _, _, _, _, _}]}.
+-spec encode_message_rec_list(
+    pos_integer(),
+    number(),
+    _,
+    bitstring(),
+    records()
+) -> {compmap(), bitstring(), records()}.
 encode_message_rec_list(Pos, SpaceLeft, CompMap, Body, [Rec | Rest] = Recs) ->
     {CompMap0, NewBin} = encode_message_rec(CompMap, Pos, Rec),
     NewBinSize = byte_size(NewBin),
@@ -878,7 +885,8 @@ encode_message_rec_list(Pos, SpaceLeft, CompMap, Body, [Rec | Rest] = Recs) ->
 encode_message_rec_list(_Pos, _SpaceLeft, CompMap, Body, [] = Recs) ->
     {CompMap, Body, Recs}.
 
--spec encode_message_rec(_, non_neg_integer(), query() | optrr() | rr()) -> {_, <<_:32, _:_*8>>}.
+-spec encode_message_rec(compmap(), non_neg_integer(), query() | optrr() | rr()) ->
+    {compmap(), <<_:32, _:_*8>>}.
 encode_message_rec(CompMap, Pos, #dns_query{name = N, type = T, class = C}) ->
     {NameBin, CompMap0} = encode_dname(CompMap, Pos, N),
     {CompMap0, <<NameBin/binary, T:16, C:16>>};
@@ -910,16 +918,7 @@ encode_message_rec(CompMap, Pos, #dns_rr{
     DSize = byte_size(DBin),
     {CompMap1, <<NameBin/binary, T:16, C:16, TTL:32, DSize:16, DBin/binary>>}.
 
--spec encode_message_pop_optrr([
-    [{_, _, _, _, _, _}]
-    | optrr()
-    | rr()
-]) ->
-    {binary(), [
-        [{_, _, _, _, _, _}]
-        | optrr()
-        | rr()
-    ]}.
+-spec encode_message_pop_optrr(additional()) -> {binary(), additional()}.
 encode_message_pop_optrr([
     #dns_optrr{
         udp_payload_size = UPS,
@@ -1565,12 +1564,13 @@ decode_rrdata(_Class, _Type, Bin, _MsgBin) ->
     Bin.
 
 %% @private
--spec encode_rrdata(_, rrdata()) -> any().
+-spec encode_rrdata(_, rrdata()) -> binary().
 encode_rrdata(Class, Data) ->
     {Bin, undefined} = encode_rrdata(0, Class, Data, undefined),
     Bin.
 
--spec encode_rrdata(non_neg_integer(), _, rrdata(), _) -> {_, _}.
+-spec encode_rrdata(non_neg_integer(), _, rrdata(), undefined | compmap()) ->
+    {binary(), undefined | compmap()}.
 encode_rrdata(_Pos, Class, #dns_rrdata_a{ip = {A, B, C, D}}, CompMap) when
     ?CLASS_IS_IN(Class)
 ->
@@ -2437,8 +2437,9 @@ decode_dnameonly(Bin, MsgBin) ->
         _ -> throw(trailing_garbage)
     end.
 
--spec new_compmap() -> gb_trees:tree(_, _).
-new_compmap() -> gb_trees:empty().
+-spec new_compmap() -> compmap().
+new_compmap() ->
+    #{}.
 
 %% @private
 -spec encode_dname(binary()) -> nonempty_binary().
@@ -2446,11 +2447,12 @@ encode_dname(Name) ->
     Labels = <<<<(byte_size(L)), L/binary>> || L <- dname_to_labels(Name)>>,
     <<Labels/binary, 0>>.
 
--spec encode_dname(_, non_neg_integer(), binary()) -> {binary(), _}.
+-spec encode_dname(compmap(), non_neg_integer(), binary()) -> {binary(), undefined | compmap()}.
 encode_dname(CompMap, Pos, Name) ->
     encode_dname(<<>>, CompMap, Pos, Name).
 
--spec encode_dname(binary(), _, non_neg_integer(), binary()) -> {binary(), _}.
+-spec encode_dname(binary(), undefined | compmap(), non_neg_integer(), binary()) ->
+    {binary(), undefined | compmap()}.
 encode_dname(Bin, undefined, _Pos, Name) ->
     DNameBin = encode_dname(Name),
     {<<Bin/binary, DNameBin/binary>>, undefined};
@@ -2459,18 +2461,16 @@ encode_dname(Bin, CompMap, Pos, Name) ->
     LwrLabels = dname_to_labels(dname_to_lower(Name)),
     encode_dname_labels(Bin, CompMap, Pos, Labels, LwrLabels).
 
--spec encode_dname_labels(binary(), _, non_neg_integer(), [binary()], [binary()]) ->
-    {nonempty_binary(), _}.
+-spec encode_dname_labels(binary(), compmap(), non_neg_integer(), [binary()], [binary()]) ->
+    {nonempty_binary(), compmap()}.
 encode_dname_labels(Bin, CompMap, _Pos, [], []) ->
     {<<Bin/binary, 0>>, CompMap};
 encode_dname_labels(Bin, CompMap, Pos, [L | Ls], [_ | LwrLs] = LwrLabels) ->
-    case gb_trees:lookup(LwrLabels, CompMap) of
-        {value, Ptr} ->
-            {<<Bin/binary, 3:2, Ptr:14>>, CompMap};
-        none ->
+    case maps:get(LwrLabels, CompMap, undefined) of
+        undefined ->
             NewCompMap =
                 case Pos < (1 bsl 14) of
-                    true -> gb_trees:insert(LwrLabels, Pos, CompMap);
+                    true -> CompMap#{LwrLabels => Pos};
                     false -> CompMap
                 end,
             Size = byte_size(L),
@@ -2481,7 +2481,9 @@ encode_dname_labels(Bin, CompMap, Pos, [L | Ls], [_ | LwrLs] = LwrLabels) ->
                 NewPos,
                 Ls,
                 LwrLs
-            )
+            );
+        Ptr ->
+            {<<Bin/binary, 3:2, Ptr:14>>, CompMap}
     end.
 
 %% @doc Splits a dname into a list of labels and removes unneeded escapes.
