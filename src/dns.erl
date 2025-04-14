@@ -597,9 +597,9 @@ encode_message_tsig_size(Name, Alg, Other) ->
     DataSize = AlgSize + 16 + MACSize + OtherSize,
     NameSize + 10 + DataSize.
 
+-define(LOC, {?MODULE, ?FUNCTION_NAME, ?FUNCTION_ARITY, ?LINE}).
 -spec encode_message_default(message(), number()) -> binary().
 encode_message_default(#dns_message{additional = Additional} = Msg, MaxSize) ->
-    {OptRRBin, Ad0} = encode_message_pop_optrr(Additional),
     Pos = 12,
     SpaceLeft = MaxSize - Pos,
     case encode_message_d_req(Pos, SpaceLeft, Msg) of
@@ -607,6 +607,7 @@ encode_message_default(#dns_message{additional = Additional} = Msg, MaxSize) ->
             Head = build_head(Msg, true, QC, ANC, AUC, 0),
             <<Head/binary, Body/binary>>;
         {CompMap, QC, ANC, AUC, Body} ->
+            {OptRRBin, Ad0} = encode_message_pop_optrr(Additional),
             BodySize = byte_size(Body),
             OptRRBinSize = byte_size(OptRRBin),
             Pos0 = BodySize + Pos,
