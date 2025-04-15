@@ -903,11 +903,12 @@ encode_message_rec(CompMap, Pos, #dns_query{name = N, type = T, class = C}) ->
     {CompMap0, <<NameBin/binary, T:16, C:16>>};
 encode_message_rec(CompMap, _Pos, #dns_optrr{
     udp_payload_size = UPS,
-    ext_rcode = ExtRcode,
-    version = Version,
+    ext_rcode = ExtRcode0,
+    version = Version0,
     dnssec = DNSSEC,
     data = Data
 }) ->
+    {Version, ExtRcode} = ensure_edns_version(Version0, ExtRcode0),
     DNSSECBit = encode_bool(DNSSEC),
     RRBin = encode_optrrdata(Data),
     RRBinSize = byte_size(RRBin),
@@ -932,33 +933,35 @@ encode_message_rec(CompMap, Pos, #dns_rr{
 ensure_optrr([
     #dns_optrr{
         udp_payload_size = UPS,
-        ext_rcode = ExtRcode,
-        version = Version,
+        ext_rcode = ExtRcode0,
+        version = Version0,
         dnssec = DNSSEC,
         data = Data
     }
     | _
 ]) ->
+    {Version, ExtRcode} = ensure_edns_version(Version0, ExtRcode0),
     DNSSECBit = encode_bool(DNSSEC),
     RRBin = encode_optrrdata(Data),
     RRBinSize = byte_size(RRBin),
     <<0, ?DNS_TYPE_OPT_NUMBER:16, UPS:16, ExtRcode:8, Version:8, DNSSECBit:1, 0:15, RRBinSize:16,
         RRBin/binary>>;
 ensure_optrr(_) ->
-    <<0, ?DNS_TYPE_OPT_NUMBER:16, 512:16, ?DNS_ERCODE_NOERROR_NUMBER:8, ?DNS_EDNS_VERSION:8, 0:1,
-        0:15, 0:16>>.
+    <<0, ?DNS_TYPE_OPT_NUMBER:16, 512:16, ?DNS_ERCODE_NOERROR_NUMBER:8, ?DNS_EDNS_MAX_VERSION:8,
+        0:1, 0:15, 0:16>>.
 
 -spec encode_message_pop_optrr(additional()) -> {binary(), additional()}.
 encode_message_pop_optrr([
     #dns_optrr{
         udp_payload_size = UPS,
-        ext_rcode = ExtRcode,
-        version = Version,
+        ext_rcode = ExtRcode0,
+        version = Version0,
         dnssec = DNSSEC,
         data = Data
     }
     | Rest
 ]) ->
+    {Version, ExtRcode} = ensure_edns_version(Version0, ExtRcode0),
     DNSSECBit = encode_bool(DNSSEC),
     RRBin = encode_optrrdata(Data),
     RRBinSize = byte_size(RRBin),
@@ -968,6 +971,13 @@ encode_message_pop_optrr([
     {Bin, Rest};
 encode_message_pop_optrr(Other) ->
     {<<>>, Other}.
+
+ensure_edns_version(Version, ExtRcode) when
+    ?DNS_EDNS_MIN_VERSION =< Version andalso Version =< ?DNS_EDNS_MAX_VERSION
+->
+    {Version, ExtRcode};
+ensure_edns_version(_, _) ->
+    {?DNS_EDNS_MAX_VERSION, ?DNS_ERCODE_BADVERS_NUMBER}.
 
 %% @doc Returns a random integer suitable for use as DNS message identifier.
 -spec random_id() -> message_id().

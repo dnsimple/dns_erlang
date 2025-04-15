@@ -293,6 +293,23 @@ message_edns_test() ->
     Bin = dns:encode_message(Msg),
     ?assertEqual(Msg, dns:decode_message(Bin)).
 
+edns_badvers_test() ->
+    QName = <<"example.com">>,
+    Query = #dns_query{name = QName, type = ?DNS_TYPE_A},
+    BadVersion = #dns_optrr{
+        udp_payload_size = 4096,
+        version = 42
+    },
+    Msg = #dns_message{
+        qc = 1,
+        adc = 1,
+        questions = [Query],
+        additional = [BadVersion]
+    },
+    Encoded = dns:encode_message(Msg),
+    Decoded = dns:decode_message(Encoded),
+    ?assertMatch([#dns_optrr{ext_rcode = 1, version = 0} | _], Decoded#dns_message.additional).
+
 tsig_no_tsig_test() ->
     MsgBin = dns:encode_message(#dns_message{}),
     Name = <<"name">>,

@@ -1,7 +1,8 @@
 -ifndef('DNS_TERMS').
 -define('DNS_TERMS', ok).
 
--define(DNS_EDNS_VERSION, 0).
+-define(DNS_EDNS_MIN_VERSION, 0).
+-define(DNS_EDNS_MAX_VERSION, 0).
 
 -define(DNS_ALG_DSA, ?DNS_ALG_DSA_NUMBER).
 -define(DNS_ALG_DSA_NUMBER, 3).
