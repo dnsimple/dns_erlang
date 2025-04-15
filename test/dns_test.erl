@@ -15,12 +15,37 @@ message_query_test() ->
     Bin = dns:encode_message(Msg),
     ?assertEqual(Msg, dns:decode_message(Bin)).
 
-message_query_with_opts_test() ->
+encode_message_max_size_test_() ->
     Qs = [#dns_query{name = <<"example">>, type = ?DNS_TYPE_A}],
     QLen = length(Qs),
     Msg = #dns_message{qc = QLen, questions = Qs},
-    {false, Bin} = dns:encode_message(Msg, [{max_size, 512}]),
-    ?assertEqual(Msg, dns:decode_message(Bin)).
+    Msg3 = Msg#dns_message{adc = 1, additional = [#dns_optrr{udp_payload_size = 512}]},
+    [
+        ?_assert(begin
+            {false, Bin} = dns:encode_message(Msg3, []),
+            Msg3 =:= dns:decode_message(Bin)
+        end),
+        ?_assert(begin
+            {false, Bin} = dns:encode_message(Msg, [{max_size, 512}]),
+            Msg =:= dns:decode_message(Bin)
+        end),
+        ?_assert(begin
+            {false, Bin} = dns:encode_message(Msg, []),
+            Msg =:= dns:decode_message(Bin)
+        end)
+    ].
+
+encode_message_invalid_size_test_() ->
+    Qs = [#dns_query{name = <<"example">>, type = ?DNS_TYPE_A}],
+    QLen = length(Qs),
+    Msg = #dns_message{qc = QLen, questions = Qs},
+    Msg3 = Msg#dns_message{adc = 1, additional = [#dns_optrr{udp_payload_size = 99999999}]},
+    [
+        ?_assertError(badarg, dns:encode_message(Msg3, [])),
+        ?_assertError(badarg, dns:encode_message(Msg, [{max_size, 999999}])),
+        ?_assertError(badarg, dns:encode_message(Msg, [{max_size, 413}])),
+        ?_assertError(badarg, dns:encode_message(Msg, [{max_size, not_an_integer}]))
+    ].
 
 message_other_test() ->
     QName = <<"i            .txt.example.org">>,
@@ -212,13 +237,10 @@ message_edns_test() ->
             data = [LLQ, ECS]
         }
     ],
-    QLen = length(Qs),
-    AnsLen = length(Ans),
-    AdsLen = length(Ads),
     Msg = #dns_message{
-        qc = QLen,
-        anc = AnsLen,
-        adc = AdsLen,
+        qc = length(Qs),
+        anc = length(Ans),
+        adc = length(Ads),
         questions = Qs,
         answers = Ans,
         additional = Ads
@@ -388,7 +410,7 @@ decode_encode_rrdata_wire_samples_test_() ->
                                     0,
                                     Class,
                                     Record,
-                                    gb_trees:empty()
+                                    dns:new_compmap()
                                 ),
                                 Bin
                         end,
@@ -456,7 +478,7 @@ decode_encode_rrdata_test_() ->
                     0,
                     ?DNS_CLASS_IN,
                     Data,
-                    gb_trees:empty()
+                    dns:new_compmap()
                 ),
                 Decoded = dns:decode_rrdata(?DNS_CLASS_IN, Type, Encoded, Encoded),
                 ?assertEqual(Data, Decoded)
@@ -563,21 +585,21 @@ encode_dname_1_test_() ->
     [?_assertEqual(Expect, dns:encode_dname(Input)) || {Input, Expect} <- Cases].
 
 encode_dname_3_test_() ->
-    {Bin, _CompMap} = dns:encode_dname(gb_trees:empty(), 0, <<"example">>),
+    {Bin, _CompMap} = dns:encode_dname(dns:new_compmap(), 0, <<"example">>),
     ?_assertEqual(<<7, 101, 120, 97, 109, 112, 108, 101, 0>>, Bin).
 
 encode_dname_4_test_() ->
-    {Bin0, CM0} = dns:encode_dname(<<>>, gb_trees:empty(), 0, <<"example">>),
+    {Bin0, CM0} = dns:encode_dname(<<>>, dns:new_compmap(), 0, <<"example">>),
     {Bin1, _} = dns:encode_dname(Bin0, CM0, byte_size(Bin0), <<"example">>),
     {Bin2, _} = dns:encode_dname(Bin0, CM0, byte_size(Bin0), <<"EXAMPLE">>),
     MP = (1 bsl 14),
     MPB = <<0:MP/unit:8>>,
-    {_, CM1} = dns:encode_dname(MPB, gb_trees:empty(), MP, <<"example">>),
+    {_, CM1} = dns:encode_dname(MPB, dns:new_compmap(), MP, <<"example">>),
     Cases = [
         {<<7, 101, 120, 97, 109, 112, 108, 101, 0>>, Bin0},
         {<<7, 101, 120, 97, 109, 112, 108, 101, 0, 192, 0>>, Bin1},
         {Bin1, Bin2},
-        {gb_trees:empty(), CM1}
+        {dns:new_compmap(), CM1}
     ],
     [?_assertEqual(Expect, Result) || {Expect, Result} <- Cases].
 
