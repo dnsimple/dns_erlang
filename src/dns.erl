@@ -597,7 +597,6 @@ encode_message_tsig_size(Name, Alg, Other) ->
     DataSize = AlgSize + 16 + MACSize + OtherSize,
     NameSize + 10 + DataSize.
 
--define(LOC, {?MODULE, ?FUNCTION_NAME, ?FUNCTION_ARITY, ?LINE}).
 -spec encode_message_default(message(), number()) -> binary().
 encode_message_default(#dns_message{additional = Additional} = Msg, MaxSize) ->
     Pos = 12,
@@ -645,13 +644,14 @@ build_head(#dns_message{tc = TC} = Msg, TCBool, EncQC, EncANC, EncAUC, EncADC) -
     },
     encode_message_head(Msg0).
 
--spec encode_message_d_req(12, number(), message()) ->
+%% Encodes questions, authorities, and answers, for as long as there is space
+-spec encode_message_d_req(12, integer(), message()) ->
     {false | compmap(), char(), char(), char(), bitstring()}.
 encode_message_d_req(Pos, SpaceLeft, #dns_message{} = Msg) ->
     Msg0 = Msg#dns_message{qc = 0, anc = 0, auc = 0},
     encode_message_d_req(Pos, SpaceLeft, new_compmap(), <<>>, Msg0).
 
--spec encode_message_d_req(pos_integer(), number(), compmap(), bitstring(), message()) ->
+-spec encode_message_d_req(pos_integer(), integer(), compmap(), bitstring(), message()) ->
     {false | compmap(), char(), char(), char(), bitstring()}.
 encode_message_d_req(
     Pos,
