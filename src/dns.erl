@@ -901,21 +901,8 @@ encode_message_rec_list(_Pos, _SpaceLeft, CompMap, Body, []) ->
 encode_message_rec(CompMap, Pos, #dns_query{name = N, type = T, class = C}) ->
     {NameBin, CompMap0} = encode_dname(CompMap, Pos, N),
     {CompMap0, <<NameBin/binary, T:16, C:16>>};
-encode_message_rec(CompMap, _Pos, #dns_optrr{
-    udp_payload_size = UPS,
-    ext_rcode = ExtRcode0,
-    version = Version0,
-    dnssec = DNSSEC,
-    data = Data
-}) ->
-    {Version, ExtRcode} = ensure_edns_version(Version0, ExtRcode0),
-    DNSSECBit = encode_bool(DNSSEC),
-    RRBin = encode_optrrdata(Data),
-    RRBinSize = byte_size(RRBin),
-    NewBin =
-        <<0, ?DNS_TYPE_OPT_NUMBER:16, UPS:16, ExtRcode:8, Version:8, DNSSECBit:1, 0:15,
-            RRBinSize:16, RRBin/binary>>,
-    {CompMap, NewBin};
+encode_message_rec(CompMap, _Pos, #dns_optrr{} = OptRR) ->
+    {CompMap, encode_optrr(OptRR)};
 encode_message_rec(CompMap, Pos, #dns_rr{
     name = N,
     type = T,
@@ -929,48 +916,35 @@ encode_message_rec(CompMap, Pos, #dns_rr{
     DSize = byte_size(DBin),
     {CompMap1, <<NameBin/binary, T:16, C:16, TTL:32, DSize:16, DBin/binary>>}.
 
--spec ensure_optrr(additional()) -> binary().
-ensure_optrr([
-    #dns_optrr{
-        udp_payload_size = UPS,
-        ext_rcode = ExtRcode0,
-        version = Version0,
-        dnssec = DNSSEC,
-        data = Data
-    }
-    | _
-]) ->
-    {Version, ExtRcode} = ensure_edns_version(Version0, ExtRcode0),
-    DNSSECBit = encode_bool(DNSSEC),
-    RRBin = encode_optrrdata(Data),
-    RRBinSize = byte_size(RRBin),
-    <<0, ?DNS_TYPE_OPT_NUMBER:16, UPS:16, ExtRcode:8, Version:8, DNSSECBit:1, 0:15, RRBinSize:16,
-        RRBin/binary>>;
-ensure_optrr(_) ->
-    <<0, ?DNS_TYPE_OPT_NUMBER:16, 512:16, ?DNS_ERCODE_NOERROR_NUMBER:8, ?DNS_EDNS_MAX_VERSION:8,
-        0:1, 0:15, 0:16>>.
-
 -spec encode_message_pop_optrr(additional()) -> {binary(), additional()}.
-encode_message_pop_optrr([
-    #dns_optrr{
-        udp_payload_size = UPS,
-        ext_rcode = ExtRcode0,
-        version = Version0,
-        dnssec = DNSSEC,
-        data = Data
-    }
-    | Rest
-]) ->
-    {Version, ExtRcode} = ensure_edns_version(Version0, ExtRcode0),
-    DNSSECBit = encode_bool(DNSSEC),
-    RRBin = encode_optrrdata(Data),
-    RRBinSize = byte_size(RRBin),
-    Bin =
-        <<0, ?DNS_TYPE_OPT_NUMBER:16, UPS:16, ExtRcode:8, Version:8, DNSSECBit:1, 0:15,
-            RRBinSize:16, RRBin/binary>>,
-    {Bin, Rest};
+encode_message_pop_optrr([#dns_optrr{} = OptRR | Rest]) ->
+    {encode_optrr(OptRR), Rest};
 encode_message_pop_optrr(Other) ->
     {<<>>, Other}.
+
+-spec ensure_optrr(additional()) -> binary().
+ensure_optrr([#dns_optrr{} = OptRR | _]) ->
+    encode_optrr(OptRR);
+ensure_optrr(_) ->
+    encode_optrr(undefined).
+
+-spec encode_optrr(undefined | optrr()) -> binary().
+encode_optrr(#dns_optrr{
+    udp_payload_size = UPS,
+    ext_rcode = ExtRcode0,
+    version = Version0,
+    dnssec = DNSSEC,
+    data = Data
+}) ->
+    {Version, ExtRcode} = ensure_edns_version(Version0, ExtRcode0),
+    DNSSECBit = encode_bool(DNSSEC),
+    RRBin = encode_optrrdata(Data),
+    RRBinSize = byte_size(RRBin),
+    <<0, ?DNS_TYPE_OPT:16, UPS:16, ExtRcode:8, Version:8, DNSSECBit:1, 0:15, RRBinSize:16,
+        RRBin/binary>>;
+encode_optrr(undefined) ->
+    <<0, ?DNS_TYPE_OPT:16, 512:16, ?DNS_ERCODE_NOERROR_NUMBER:8, ?DNS_EDNS_MAX_VERSION:8, 0:1, 0:15,
+        0:16>>.
 
 ensure_edns_version(Version, ExtRcode) when
     ?DNS_EDNS_MIN_VERSION =< Version andalso Version =< ?DNS_EDNS_MAX_VERSION
