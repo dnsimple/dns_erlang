@@ -256,7 +256,12 @@ gen_nsec3(RRs, ZoneName, Alg, Salt, Iterations, TTL, Class, Opts) ->
     add_next_hash(Sorted).
 
 %% @doc NSEC3 iterative hash function
--spec ih(nsec3_hashalg() | fun((iodata()) -> binary()), nsec3_salt(), binary(), nsec3_iterations()) ->
+-spec ih(
+    nsec3_hashalg() | fun((iodata()) -> binary()),
+    nsec3_salt(),
+    binary(),
+    nsec3_iterations()
+) ->
     binary().
 ih(?DNSSEC_NSEC3_ALG_SHA1, Salt, X, I) when is_binary(Salt), is_binary(X), is_integer(I), 0 =< I ->
     ih_nsec3(Salt, X, I);

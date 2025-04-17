@@ -76,7 +76,9 @@ domain names into different cases, converting to and from label lists, etc.
 -include("dns.hrl").
 
 %% 2^31 - 1, the largest signed 32-bit integer value
+-define(DEFAULT_TSIG_FUDGE, 5 * 60).
 -define(MAX_INT32, ((1 bsl 31) - 1)).
+-define(HEADER_SIZE, 12).
 
 %% Types
 -type uint2() :: 0..1.
@@ -239,8 +241,6 @@ domain names into different cases, converting to and from label lists, etc.
 -type ercode() :: 0 | 16.
 -type llqerrcode() :: 0..6.
 -type llqopcode() :: 1..3.
-
--define(DEFAULT_TSIG_FUDGE, 5 * 60).
 
 %%%===================================================================
 %%% Message body functions
@@ -599,17 +599,27 @@ encode_message_tsig_size(Name, Alg, Other) ->
 
 -spec encode_message_default(message(), number()) -> binary().
 encode_message_default(#dns_message{additional = Additional} = Msg, MaxSize) ->
-    Pos = 12,
-    SpaceLeft = MaxSize - Pos,
-    case encode_message_d_req(Pos, SpaceLeft, Msg) of
+    SpaceLeft = MaxSize - ?HEADER_SIZE,
+    case encode_message_d_req(?HEADER_SIZE, SpaceLeft, Msg) of
         {false, QC, ANC, AUC, Body} ->
-            Head = build_head(Msg, true, QC, ANC, AUC, 0),
-            <<Head/binary, Body/binary>>;
-        {CompMap, QC, ANC, AUC, Body} ->
-            {OptRRBin, Ad0} = encode_message_pop_optrr(Additional),
+            %% We ran out of space, we MUST append a OptRR EDNS0 record,
+            %% and this takes precedence over the body
             BodySize = byte_size(Body),
+            OptRRBin = ensure_optrr(Additional),
             OptRRBinSize = byte_size(OptRRBin),
-            Pos0 = BodySize + Pos,
+            case SpaceLeft - BodySize of
+                SpaceLeft0 when SpaceLeft0 < OptRRBinSize ->
+                    Head = build_head(Msg, true, 0, 0, 0, 1),
+                    <<Head/binary, OptRRBin/binary>>;
+                _SpaceLeft0 ->
+                    Head = build_head(Msg, true, QC, ANC, AUC, 1),
+                    <<Head/binary, Body/binary, OptRRBin/binary>>
+            end;
+        {CompMap, QC, ANC, AUC, Body} ->
+            BodySize = byte_size(Body),
+            {OptRRBin, Ad0} = encode_message_pop_optrr(Additional),
+            OptRRBinSize = byte_size(OptRRBin),
+            Pos0 = BodySize + ?HEADER_SIZE,
             case SpaceLeft - BodySize of
                 SpaceLeft0 when SpaceLeft0 < OptRRBinSize ->
                     Head = build_head(Msg, true, QC, ANC, AUC, 0),
@@ -891,19 +901,8 @@ encode_message_rec_list(_Pos, _SpaceLeft, CompMap, Body, []) ->
 encode_message_rec(CompMap, Pos, #dns_query{name = N, type = T, class = C}) ->
     {NameBin, CompMap0} = encode_dname(CompMap, Pos, N),
     {CompMap0, <<NameBin/binary, T:16, C:16>>};
-encode_message_rec(CompMap, _Pos, #dns_optrr{
-    udp_payload_size = UPS,
-    ext_rcode = ExtRcode,
-    version = Version,
-    dnssec = DNSSEC,
-    data = Data
-}) ->
-    DNSSECBit = encode_bool(DNSSEC),
-    RRBin = encode_optrrdata(Data),
-    RRBinSize = byte_size(RRBin),
-    NewBin =
-        <<0, 41:16, UPS:16, ExtRcode:8, Version:8, DNSSECBit:1, 0:15, RRBinSize:16, RRBin/binary>>,
-    {CompMap, NewBin};
+encode_message_rec(CompMap, _Pos, #dns_optrr{} = OptRR) ->
+    {CompMap, encode_optrr(OptRR)};
 encode_message_rec(CompMap, Pos, #dns_rr{
     name = N,
     type = T,
@@ -918,24 +917,42 @@ encode_message_rec(CompMap, Pos, #dns_rr{
     {CompMap1, <<NameBin/binary, T:16, C:16, TTL:32, DSize:16, DBin/binary>>}.
 
 -spec encode_message_pop_optrr(additional()) -> {binary(), additional()}.
-encode_message_pop_optrr([
-    #dns_optrr{
-        udp_payload_size = UPS,
-        ext_rcode = ExtRcode,
-        version = Version,
-        dnssec = DNSSEC,
-        data = Data
-    }
-    | Rest
-]) ->
+encode_message_pop_optrr([#dns_optrr{} = OptRR | Rest]) ->
+    {encode_optrr(OptRR), Rest};
+encode_message_pop_optrr(Other) ->
+    {<<>>, Other}.
+
+-spec ensure_optrr(additional()) -> binary().
+ensure_optrr([#dns_optrr{} = OptRR | _]) ->
+    encode_optrr(OptRR);
+ensure_optrr(_) ->
+    encode_optrr(undefined).
+
+-spec encode_optrr(undefined | optrr()) -> binary().
+encode_optrr(#dns_optrr{
+    udp_payload_size = UPS,
+    ext_rcode = ExtRcode0,
+    version = Version0,
+    dnssec = DNSSEC,
+    data = Data
+}) ->
+    %% TODO: if returning BADVERS, we want to avoid returning any answer in the top #dns_message{}
+    {Version, ExtRcode} = ensure_edns_version(Version0, ExtRcode0),
     DNSSECBit = encode_bool(DNSSEC),
     RRBin = encode_optrrdata(Data),
     RRBinSize = byte_size(RRBin),
-    Bin =
-        <<0, 41:16, UPS:16, ExtRcode:8, Version:8, DNSSECBit:1, 0:15, RRBinSize:16, RRBin/binary>>,
-    {Bin, Rest};
-encode_message_pop_optrr(Other) ->
-    {<<>>, Other}.
+    <<0, ?DNS_TYPE_OPT:16, UPS:16, ExtRcode:8, Version:8, DNSSECBit:1, 0:15, RRBinSize:16,
+        RRBin/binary>>;
+encode_optrr(undefined) ->
+    <<0, ?DNS_TYPE_OPT:16, 512:16, ?DNS_ERCODE_NOERROR_NUMBER:8, ?DNS_EDNS_MAX_VERSION:8, 0:1, 0:15,
+        0:16>>.
+
+ensure_edns_version(Version, ExtRcode) when
+    ?DNS_EDNS_MIN_VERSION =< Version andalso Version =< ?DNS_EDNS_MAX_VERSION
+->
+    {Version, ExtRcode};
+ensure_edns_version(_, _) ->
+    {?DNS_EDNS_MAX_VERSION, ?DNS_ERCODE_BADVERS_NUMBER}.
 
 %% @doc Returns a random integer suitable for use as DNS message identifier.
 -spec random_id() -> message_id().

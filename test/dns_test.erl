@@ -47,6 +47,51 @@ encode_message_invalid_size_test_() ->
         ?_assertError(badarg, dns:encode_message(Msg, [{max_size, not_an_integer}]))
     ].
 
+truncated_query_enforces_opt_record_test_() ->
+    QName = <<"txt.example.org">>,
+    StringSplit = split_binary_into_chunks(list_to_binary(lists:duplicate(480, $a)), 255),
+    TxtRecord = #dns_rr{
+        name = QName,
+        type = ?DNS_TYPE_TXT,
+        ttl = 0,
+        data = #dns_rrdata_txt{txt = StringSplit}
+    },
+    Ads = [
+        #dns_optrr{
+            udp_payload_size = 512,
+            ext_rcode = 0,
+            version = 0,
+            dnssec = false,
+            data = [#dns_opt_nsid{data = binary:encode_hex(crypto:strong_rand_bytes(234))}]
+        }
+    ],
+    Question = #dns_query{name = QName, type = ?DNS_TYPE_TXT},
+    MsgBig = #dns_message{
+        qc = 1,
+        anc = 1,
+        questions = [Question],
+        answers = [TxtRecord]
+    },
+    MsgSmall = MsgBig#dns_message{additional = Ads},
+    [
+        %% Test that the answer was truncated but the body could still fit the original query
+        ?_assert(begin
+            {false, Encoded} = dns:encode_message(MsgBig, [{max_size, 512}]),
+            Decoded = dns:decode_message(Encoded),
+            byte_size(Encoded) =< 512 andalso
+                ok =:= ?assertMatch([#dns_query{} | _], Decoded#dns_message.questions) andalso
+                ok =:= ?assertMatch([#dns_optrr{} | _], Decoded#dns_message.additional)
+        end),
+        %% Test that the opt_rr took precedence over the body and the query had to be removed
+        ?_assert(begin
+            {false, Encoded} = dns:encode_message(MsgSmall, [{max_size, 512}]),
+            Decoded = dns:decode_message(Encoded),
+            byte_size(Encoded) =< 512 andalso
+                ok =:= ?assertMatch([], Decoded#dns_message.questions) andalso
+                ok =:= ?assertMatch([#dns_optrr{data = [_]} | _], Decoded#dns_message.additional)
+        end)
+    ].
+
 message_other_test() ->
     QName = <<"i            .txt.example.org">>,
     Qs = [#dns_query{name = QName, type = ?DNS_TYPE_TXT}],
@@ -247,6 +292,23 @@ message_edns_test() ->
     },
     Bin = dns:encode_message(Msg),
     ?assertEqual(Msg, dns:decode_message(Bin)).
+
+edns_badvers_test() ->
+    QName = <<"example.com">>,
+    Query = #dns_query{name = QName, type = ?DNS_TYPE_A},
+    BadVersion = #dns_optrr{
+        udp_payload_size = 4096,
+        version = 42
+    },
+    Msg = #dns_message{
+        qc = 1,
+        adc = 1,
+        questions = [Query],
+        additional = [BadVersion]
+    },
+    Encoded = dns:encode_message(Msg),
+    Decoded = dns:decode_message(Encoded),
+    ?assertMatch([#dns_optrr{ext_rcode = 1, version = 0} | _], Decoded#dns_message.additional).
 
 tsig_no_tsig_test() ->
     MsgBin = dns:encode_message(#dns_message{}),
