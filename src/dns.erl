@@ -936,6 +936,7 @@ encode_optrr(#dns_optrr{
     dnssec = DNSSEC,
     data = Data
 }) ->
+    %% TODO: if returning BADVERS, we want to avoid returning any answer in the top #dns_message{}
     {Version, ExtRcode} = ensure_edns_version(Version0, ExtRcode0),
     DNSSECBit = encode_bool(DNSSEC),
     RRBin = encode_optrrdata(Data),
