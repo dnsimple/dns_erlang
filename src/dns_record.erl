@@ -35,13 +35,23 @@ the functions for encoding and decoding messages exported by `m:dns`.
 
 -export([serialise/1, serialise/2, deserialise/1, deserialise/2]).
 
--spec serialise(binary() | tuple()) -> any().
-serialise(Bin) when is_binary(Bin) -> serialise(Bin, []);
-serialise(Tuple) when is_tuple(Tuple) -> serialise(Tuple, []).
+?DOC("Module's core type.").
+-type t() :: binary() | {binary(), proplists:proplist()}.
+?DOC("Options available for serialisation and deserialisation.").
+-type opts() :: #{wrap_fun => fun((t()) -> t())}.
+-export_type([t/0, opts/0]).
 
--spec serialise(binary() | tuple(), [any()]) -> any().
-serialise(Term, Opts) when is_list(Opts) ->
-    WrapFun = proplists:get_value(wrap_fun, Opts, fun(X) -> X end),
+?DOC(#{equiv => serialise(Bin, #{})}).
+-spec serialise(binary() | tuple()) -> any().
+serialise(Bin) when is_binary(Bin) ->
+    serialise(Bin, #{});
+serialise(Tuple) when is_tuple(Tuple) ->
+    serialise(Tuple, #{}).
+
+?DOC("Serialise a dns record.").
+-spec serialise(binary() | tuple(), opts()) -> any().
+serialise(Term, Opts) when is_map(Opts) ->
+    WrapFun = maps:get(wrap_fun, Opts, fun(X) -> X end),
     Term0 =
         case Term of
             Data when is_binary(Data) -> binary:encode_hex(Data);
@@ -58,7 +68,7 @@ serialise(Term, Opts) when is_list(Opts) ->
         end,
     WrapFun(Term0).
 
--spec serialise(atom(), atom(), _, [any()]) -> {binary(), _}.
+-spec serialise(atom(), atom(), tuple() | [binary() | tuple()], opts()) -> {binary(), _}.
 serialise(dns_message, Field, Datas, Opts) when is_list(Datas) ->
     Field0 = atom_to_binary(Field, utf8),
     Datas0 = [serialise(D, Opts) || D <- Datas],
@@ -77,9 +87,7 @@ serialise(dns_rrdata_dlv, Field, Value, Opts) ->
     serialise(dns_rrdata_ds, Field, Value, Opts);
 serialise(dns_rrdata_key, public_key, PublicKey, _Opts) ->
     {<<"public_key">>, base64:encode(iolist_to_binary(PublicKey))};
-serialise(dns_rrdata_dnskey, public_key, PublicKey, _Opts) when
-    is_binary(PublicKey)
-->
+serialise(dns_rrdata_dnskey, public_key, PublicKey, _Opts) when is_binary(PublicKey) ->
     {<<"public_key">>, base64:encode(PublicKey)};
 serialise(dns_rrdata_dnskey, public_key, PublicKey, _Opts) ->
     PKMpint = lists:map(
@@ -129,12 +137,15 @@ serialise(dns_opt_unknown, bin, Bin, _Opts) when is_binary(Bin) ->
 serialise(_Tag, Field, Value, _Opts) ->
     {atom_to_binary(Field, utf8), Value}.
 
--spec deserialise(_) -> bitstring() | tuple().
-deserialise(Term) -> deserialise(Term, []).
+?DOC(#{equiv => deserialise(Bin, #{})}).
+-spec deserialise(t()) -> bitstring() | tuple().
+deserialise(Term) ->
+    deserialise(Term, #{}).
 
--spec deserialise(_, [any()]) -> bitstring() | tuple().
+?DOC("Deserialise a given term into a dns record").
+-spec deserialise(t(), opts()) -> bitstring() | tuple().
 deserialise(Term, Opts) ->
-    UnwrapFun = proplists:get_value(wrap_fun, Opts, fun(X) -> X end),
+    UnwrapFun = maps:get(wrap_fun, Opts, fun(X) -> X end),
     case UnwrapFun(Term) of
         Bin when is_binary(Bin) -> binary:decode_hex(Bin);
         {TagBin, Props} when is_binary(TagBin) andalso is_list(Props) ->
@@ -148,7 +159,7 @@ deserialise(Term, Opts) ->
             list_to_tuple([Tag | Values])
     end.
 
--spec deserialise_dnskey_publickey(binary() | [1..255]) -> binary() | [integer()].
+-spec deserialise_dnskey_publickey(binary() | [dns:uint8()]) -> binary() | [integer()].
 deserialise_dnskey_publickey(PublicKeyB64) ->
     PublicKey = base64:decode(PublicKeyB64),
     deserialise_dnskey_publickey(PublicKey, PublicKey, []).
@@ -161,14 +172,12 @@ deserialise_dnskey_publickey(PK, <<L:32, I:L/unit:8, Rest/binary>>, Ints) ->
 deserialise_dnskey_publickey(PK, _, _) ->
     PK.
 
--spec deserialise(atom(), atom(), _, [any()]) -> any().
+-spec deserialise(atom(), atom(), tuple() | [binary() | tuple()], opts()) -> any().
 deserialise(dns_message, _Field, Terms, Opts) when is_list(Terms) ->
     [deserialise(Term, Opts) || Term <- Terms];
 deserialise(dns_rr, data, Term, Opts) ->
     deserialise(Term, Opts);
-deserialise(Tag, ip, IP, _Opts) when
-    Tag =:= dns_rrdata_a orelse Tag =:= dns_rrdata_aaaa
-->
+deserialise(Tag, ip, IP, _Opts) when Tag =:= dns_rrdata_a orelse Tag =:= dns_rrdata_aaaa ->
     {ok, Tuple} = inet_parse:address(binary_to_list(IP)),
     Tuple;
 deserialise(dns_rrdata_cert, cert, CRL, _Opts) ->

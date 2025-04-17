@@ -1,6 +1,16 @@
 -module(dns_names).
+-if(?OTP_RELEASE >= 27).
+-define(MODULEDOC(Str), -moduledoc(Str)).
+-define(DOC(Str), -doc(Str)).
+-else.
+-define(MODULEDOC(Str), -compile([])).
+-define(DOC(Str), -compile([])).
+-endif.
+?MODULEDOC("""
+Helpers to convert between DNS codes and their names.
+""").
 
--include("dns.hrl").
+-include_lib("dns_erlang/include/dns.hrl").
 
 -type ercode() :: 0 | 16.
 -type eoptcode() :: 0..65535.
@@ -31,7 +41,7 @@
 %%% DNS terms
 %%%===================================================================
 
-%% @doc Returns the name of the class as a binary string.
+?DOC("Returns the name of the class as a binary string.").
 -spec class_name(dns:class()) -> binary() | undefined.
 class_name(Int) when is_integer(Int) ->
     case Int of
@@ -44,7 +54,7 @@ class_name(Int) when is_integer(Int) ->
         _ -> undefined
     end.
 
-%% @doc Returns the name of the type as a binary string.
+?DOC("Returns the name of the type as a binary string.").
 -spec type_name(dns:type()) -> binary() | undefined.
 type_name(Int) when is_integer(Int) ->
     case Int of
@@ -121,7 +131,7 @@ type_name(Int) when is_integer(Int) ->
         _ -> undefined
     end.
 
-%% @doc Returns the name of an rcode as a binary string.
+?DOC("Returns the name of an rcode as a binary string.").
 -spec rcode_name(dns:rcode()) -> binary() | undefined.
 rcode_name(Int) when is_integer(Int) ->
     case Int of
@@ -139,7 +149,7 @@ rcode_name(Int) when is_integer(Int) ->
         _ -> undefined
     end.
 
-%% @doc Returns the name of an opcode as a binary string.
+?DOC("Returns the name of an opcode as a binary string.").
 -spec opcode_name(dns:opcode()) -> binary() | undefined.
 opcode_name(Int) when is_integer(Int) ->
     case Int of
@@ -150,7 +160,7 @@ opcode_name(Int) when is_integer(Int) ->
         _ -> undefined
     end.
 
-%% @doc Returns the name of a DNS algorithm as a binary string.
+?DOC("Returns the name of a DNS algorithm as a binary string.").
 -spec alg_name(dns:alg()) -> binary() | undefined.
 alg_name(Int) when is_integer(Int) ->
     case Int of
@@ -163,7 +173,7 @@ alg_name(Int) when is_integer(Int) ->
         _ -> undefined
     end.
 
-%% @doc Returns the name of a TSIG error as a binary string.
+?DOC("Returns the name of a TSIG error as a binary string.").
 -spec tsigerr_name(dns:tsig_error()) -> binary() | undefined.
 tsigerr_name(Int) when is_integer(Int) ->
     case Int of
@@ -174,7 +184,7 @@ tsigerr_name(Int) when is_integer(Int) ->
         _ -> undefined
     end.
 
-%% @doc Returns the name of an extended rcode as a binary string.
+?DOC("Returns the name of an extended rcode as a binary string.").
 -spec ercode_name(ercode()) -> binary() | undefined.
 ercode_name(Int) when is_integer(Int) ->
     case Int of
@@ -183,7 +193,7 @@ ercode_name(Int) when is_integer(Int) ->
         _ -> undefined
     end.
 
-%% @doc Returns the name of an extended option as a binary string.
+?DOC("Returns the name of an extended option as a binary string.").
 -spec eoptcode_name(eoptcode()) -> binary() | undefined.
 eoptcode_name(Int) when is_integer(Int) ->
     case Int of
@@ -194,7 +204,7 @@ eoptcode_name(Int) when is_integer(Int) ->
         _ -> undefined
     end.
 
-%% @doc Returns the name of an LLQ opcode as a binary string.
+?DOC("Returns the name of an LLQ opcode as a binary string.").
 -spec llqopcode_name(llqopcode()) -> binary() | undefined.
 llqopcode_name(Int) when is_integer(Int) ->
     case Int of
@@ -204,7 +214,7 @@ llqopcode_name(Int) when is_integer(Int) ->
         _ -> undefined
     end.
 
-%% @doc Returns the name of an LLQ error code as a binary string.
+?DOC("Returns the name of an LLQ error code as a binary string.").
 -spec llqerrcode_name(llqerrcode()) -> binary() | undefined.
 llqerrcode_name(Int) when is_integer(Int) ->
     case Int of

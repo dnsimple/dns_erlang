@@ -1,7 +1,7 @@
 -module(dns_record_test).
 
--include("dns.hrl").
 -include_lib("eunit/include/eunit.hrl").
+-include_lib("dns_erlang/include/dns.hrl").
 
 dnssec_cases() ->
     {ok, Cases} = file:consult(filename:join("test", "dnssec_samples.txt")),
@@ -34,7 +34,10 @@ optrr_cases() ->
 rrdata_cases() ->
     {ok, Cases} = file:consult(filename:join("test", "rrdata_wire_samples.txt")),
     [
-        {lists:flatten(io_lib:format("~p/~p", [Class, Type])), dns:decode_rrdata(Class, Type, Bin)}
+        {
+            lists:flatten(io_lib:format("~p/~p", [Class, Type])),
+            dns_decode:decode_rrdata(Bin, Class, Type)
+        }
      || {Class, Type, Bin} <- Cases
     ].
 
@@ -63,7 +66,7 @@ ejson_serialise(Term) ->
         ({K, V}) -> {[{<<"_tag">>, K} | V]};
         (Bin) when is_binary(Bin) -> Bin
     end,
-    ejson:encode(dns_record:serialise(Term, [{wrap_fun, Fun}])).
+    ejson:encode(dns_record:serialise(Term, #{wrap_fun => Fun})).
 
 ejson_deserialise(Term) ->
     Fun = fun
@@ -72,7 +75,7 @@ ejson_deserialise(Term) ->
         (Term0) ->
             Term0
     end,
-    dns_record:deserialise(ejson:decode(Term), [{wrap_fun, Fun}]).
+    dns_record:deserialise(ejson:decode(Term), #{wrap_fun => Fun}).
 
 json_tests(Cases) ->
     Serialise = fun ejson_serialise/1,

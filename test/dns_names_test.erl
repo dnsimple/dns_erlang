@@ -1,7 +1,7 @@
 -module(dns_names_test).
 
 -include_lib("eunit/include/eunit.hrl").
--include("dns.hrl").
+-include_lib("dns_erlang/include/dns.hrl").
 
 -define(UNKNOWN_INT, ((1 bsl 32) - 1)).
 
