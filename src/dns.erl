@@ -602,7 +602,7 @@ encode_message_tsig_size(Name, Alg, Other) ->
 -spec encode_message_default(message(), number()) -> binary().
 encode_message_default(#dns_message{additional = Additional} = Msg, MaxSize) ->
     SpaceLeft = MaxSize - ?HEADER_SIZE,
-    case encode_message_d_req(?HEADER_SIZE, SpaceLeft, Msg) of
+    case encode_message_d_req(Msg, SpaceLeft) of
         {false, QC, ANC, AUC, Body} ->
             %% We ran out of space, we MUST append a OptRR EDNS0 record,
             %% and this takes precedence over the body
@@ -657,49 +657,37 @@ build_head(#dns_message{tc = TC} = Msg, TCBool, EncQC, EncANC, EncAUC, EncADC) -
     encode_message_head(Msg0).
 
 %% Encodes questions, authorities, and answers, for as long as there is space
--spec encode_message_d_req(12, integer(), message()) ->
-    {false | compmap(), char(), char(), char(), bitstring()}.
-encode_message_d_req(Pos, SpaceLeft, #dns_message{} = Msg) ->
+-spec encode_message_d_req(message(), integer()) ->
+    {false | compmap(), uint16(), uint16(), uint16(), bitstring()}.
+encode_message_d_req(Msg, SpaceLeft) ->
     Msg0 = Msg#dns_message{qc = 0, anc = 0, auc = 0},
-    encode_message_d_req(Pos, SpaceLeft, new_compmap(), <<>>, Msg0).
+    encode_message_d_req(Msg0, ?HEADER_SIZE, SpaceLeft, new_compmap(), <<>>).
 
--spec encode_message_d_req(pos_integer(), integer(), compmap(), bitstring(), message()) ->
-    {false | compmap(), char(), char(), char(), bitstring()}.
+-spec encode_message_d_req(message(), pos_integer(), integer(), compmap(), bitstring()) ->
+    {false | compmap(), uint16(), uint16(), uint16(), bitstring()}.
 encode_message_d_req(
+    #dns_message{qc = QC, anc = ANC, auc = AUC} = Msg,
     Pos,
     SpaceLeft,
     CompMap,
-    Bin,
-    #dns_message{qc = QC, anc = ANC, auc = AUC} = Msg
+    Bin
 ) ->
     case encode_message_pop(Msg) of
         {additional, _} ->
             {CompMap, QC, ANC, AUC, Bin};
         {Section, Recs} ->
             RecsLen = length(Recs),
-            {CompMap0, NewBin, Recs0} = encode_message_rec_list(
-                Pos,
-                SpaceLeft,
-                CompMap,
-                Recs
-            ),
+            {CompMap0, NewBin, Recs0} = encode_message_rec_list(Pos, SpaceLeft, CompMap, Recs),
             Recs0Len = length(Recs0),
             EncodedLen = RecsLen - Recs0Len,
-            Msg0 = encode_message_put(Recs0, Section, Msg),
-            Msg1 = encode_message_updatecount(EncodedLen, Section, Msg0),
+            Msg1 = encode_message_put(Msg, Recs0, EncodedLen, Section),
             Bin0 = <<Bin/binary, NewBin/binary>>,
             case Recs0Len of
                 0 ->
                     NewBinSize = byte_size(NewBin),
                     Pos0 = Pos + NewBinSize,
                     SpaceLeft0 = SpaceLeft - NewBinSize,
-                    encode_message_d_req(
-                        Pos0,
-                        SpaceLeft0,
-                        CompMap0,
-                        Bin0,
-                        Msg1
-                    );
+                    encode_message_d_req(Msg1, Pos0, SpaceLeft0, CompMap0, Bin0);
                 _ ->
                     #dns_message{qc = QC0, anc = ANC0, auc = AUC0} = Msg1,
                     {false, QC0, ANC0, AUC0, Bin0}
@@ -720,21 +708,19 @@ encode_message_d_opt(Pos, SpaceLeft, CompMap, Recs) ->
 
 -spec encode_message_axfr(message(), number()) -> binary() | {binary(), message()}.
 encode_message_axfr(#dns_message{} = Msg, MaxSize) ->
-    Pos = 12,
+    Pos = ?HEADER_SIZE,
     SpaceLeft = MaxSize - Pos,
-    encode_message_axfr(Pos, SpaceLeft, new_compmap(), <<>>, Msg).
+    encode_message_axfr(Msg, Pos, SpaceLeft, new_compmap(), <<>>).
 
--spec encode_message_axfr(pos_integer(), number(), compmap(), binary(), message()) ->
+-spec encode_message_axfr(message(), pos_integer(), number(), compmap(), binary()) ->
     binary() | {binary(), message()}.
-encode_message_axfr(Pos, SpaceLeft, CompMap, Bin, #dns_message{} = Msg) ->
+encode_message_axfr(Msg, Pos, SpaceLeft, CompMap, Bin) ->
     {Section, Recs} = encode_message_pop(Msg),
     RecsLen = length(Recs),
-    {CompMap0, NewBin, Recs0} =
-        encode_message_rec_list(Pos, SpaceLeft, CompMap, Recs),
+    {CompMap0, NewBin, Recs0} = encode_message_rec_list(Pos, SpaceLeft, CompMap, Recs),
     Recs0Len = length(Recs0),
     EncodedLen = RecsLen - Recs0Len,
-    Msg0 = encode_message_put(Recs0, Section, Msg),
-    Msg1 = encode_message_updatecount(EncodedLen, Section, Msg0),
+    Msg1 = encode_message_put(Msg, Recs0, EncodedLen, Section),
     case Recs0Len of
         0 when Section =:= additional ->
             Head = encode_message_head(Msg1),
@@ -744,7 +730,7 @@ encode_message_axfr(Pos, SpaceLeft, CompMap, Bin, #dns_message{} = Msg) ->
             Pos0 = Pos + NewBinSize,
             SpaceLeft0 = SpaceLeft - NewBinSize,
             Bin0 = <<Bin/binary, NewBin/binary>>,
-            encode_message_axfr(Pos0, SpaceLeft0, CompMap0, Bin0, Msg1);
+            encode_message_axfr(Msg1, Pos0, SpaceLeft0, CompMap0, Bin0);
         _ ->
             Head = encode_message_head(Msg1),
             Msg2 = encode_message_a_setcounts(Msg1),
@@ -761,20 +747,19 @@ encode_message_pop(#dns_message{answers = [_ | _] = Recs}) -> {answers, Recs};
 encode_message_pop(#dns_message{authority = [_ | _] = Recs}) -> {authority, Recs};
 encode_message_pop(#dns_message{additional = Recs}) -> {additional, Recs}.
 
--spec encode_message_put(
-    [[rr()] | query() | optrr() | rr()],
-    additional | answers | authority | questions,
-    message()
-) ->
-    message().
-encode_message_put(Recs, questions, #dns_message{} = Msg) ->
-    Msg#dns_message{questions = Recs};
-encode_message_put(Recs, answers, #dns_message{} = Msg) ->
-    Msg#dns_message{answers = Recs};
-encode_message_put(Recs, authority, #dns_message{} = Msg) ->
-    Msg#dns_message{authority = Recs};
-encode_message_put(Recs, additional, #dns_message{} = Msg) ->
-    Msg#dns_message{additional = Recs}.
+-spec encode_message_put
+    (message(), questions(), uint16(), questions) -> message();
+    (message(), answers(), uint16(), answers) -> message();
+    (message(), authority(), uint16(), authority) -> message();
+    (message(), additional(), uint16(), additional) -> message().
+encode_message_put(Msg, Recs, Count, questions) ->
+    Msg#dns_message{qc = Count, questions = Recs};
+encode_message_put(Msg, Recs, Count, answers) ->
+    Msg#dns_message{anc = Count, answers = Recs};
+encode_message_put(Msg, Recs, Count, authority) ->
+    Msg#dns_message{auc = Count, authority = Recs};
+encode_message_put(Msg, Recs, Count, additional) ->
+    Msg#dns_message{adc = Count, additional = Recs}.
 
 -spec encode_message_a_setcounts(message()) -> message().
 encode_message_a_setcounts(
@@ -791,19 +776,6 @@ encode_message_a_setcounts(
         auc = length(Authority),
         adc = length(Additional)
     }.
-
--spec encode_message_updatecount(
-    char(), additional | answers | authority | questions, message()
-) ->
-    message().
-encode_message_updatecount(Count, questions, #dns_message{} = Msg) ->
-    Msg#dns_message{qc = Count};
-encode_message_updatecount(Count, answers, #dns_message{} = Msg) ->
-    Msg#dns_message{anc = Count};
-encode_message_updatecount(Count, authority, #dns_message{} = Msg) ->
-    Msg#dns_message{auc = Count};
-encode_message_updatecount(Count, additional, #dns_message{} = Msg) ->
-    Msg#dns_message{adc = Count}.
 
 -spec encode_message_head(message()) -> <<_:96>>.
 encode_message_head(#dns_message{
@@ -841,7 +813,7 @@ encode_message_llq(
     AuthorityLen = length(Authority),
     AdditionalLen = length(Additional),
     AuAd = Authority ++ Additional,
-    Pos = 12,
+    Pos = ?HEADER_SIZE,
     SpaceLeft = MaxSize - Pos,
     {CompMap0, QBin, []} =
         encode_message_rec_list(Pos, SpaceLeft, new_compmap(), Q),
