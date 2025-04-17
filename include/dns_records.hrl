@@ -330,7 +330,7 @@
 
 %% OPT pseudo-RR for EDNS. See RFC 6891: §6.1.2.
 -record(dns_optrr, {
-    udp_payload_size = 4096 :: integer(),
+    udp_payload_size = 4096 :: dns:uint16(),
     ext_rcode = ?DNS_ERCODE_NOERROR :: dns:uint8(),
     version = 0 :: dns:uint8(),
     dnssec = false :: boolean(),
