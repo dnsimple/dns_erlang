@@ -2892,8 +2892,7 @@ decode_svcb_svc_params(
 ) ->
     decode_svcb_svc_params(Rest, SvcParams#{?DNS_SVCB_PARAM_IPV6HINT => SvcParamValueBin}).
 
--spec encode_svcb_svc_params(map()) -> binary().
-
+-spec encode_svcb_svc_params(svcb_svc_params()) -> binary().
 encode_svcb_svc_params(SvcParams) ->
     SortedKeys = lists:sort(maps:keys(SvcParams)),
     lists:foldl(
@@ -2904,7 +2903,7 @@ encode_svcb_svc_params(SvcParams) ->
         SortedKeys
     ).
 
--spec encode_svcb_svc_params_value(_, _, _) -> any().
+-spec encode_svcb_svc_params_value(atom() | 1..6, none | char() | binary(), binary()) -> binary().
 encode_svcb_svc_params_value(alpn, V, Bin) ->
     encode_svcb_svc_params_value(?DNS_SVCB_PARAM_ALPN, V, Bin);
 encode_svcb_svc_params_value(?DNS_SVCB_PARAM_ALPN = K, V, Bin) ->
