@@ -2216,22 +2216,21 @@ decode_nxt_bmp(<<1:1, Rest/bitstring>>, Offset, Types) ->
 decode_nxt_bmp(<<0:1, Rest/bitstring>>, Offset, Types) ->
     decode_nxt_bmp(Rest, Offset + 1, Types).
 
--spec encode_nxt_bmp([any()]) -> bitstring().
+-spec encode_nxt_bmp([non_neg_integer()]) -> bitstring().
 encode_nxt_bmp(UnsortedTypes) when is_list(UnsortedTypes) ->
     Types = lists:usort(UnsortedTypes),
-    encode_nxt_bmp(0, Types, <<>>).
+    encode_nxt_bmp(Types, 0, <<>>).
 
--spec encode_nxt_bmp(_, [integer()], bitstring()) -> bitstring().
-encode_nxt_bmp(_LastType, [], BMP) ->
+-spec encode_nxt_bmp([non_neg_integer()], non_neg_integer(), bitstring()) -> bitstring().
+encode_nxt_bmp([], _LastType, BMP) ->
     pad_bmp(BMP);
-encode_nxt_bmp(LastType, [Type | Types], BMP) ->
-    PadBy =
-        case LastType of
-            0 -> Type;
-            LastType -> Type - LastType - 1
-        end,
+encode_nxt_bmp([Type | Types], 0, BMP) ->
+    NewBMP = <<BMP/bitstring, 0:Type/unit:1, 1:1>>,
+    encode_nxt_bmp(Types, Type, NewBMP);
+encode_nxt_bmp([Type | Types], LastType, BMP) ->
+    PadBy = Type - LastType - 1,
     NewBMP = <<BMP/bitstring, 0:PadBy/unit:1, 1:1>>,
-    encode_nxt_bmp(Type, Types, NewBMP).
+    encode_nxt_bmp(Types, Type, NewBMP).
 
 -spec pad_bmp(bitstring()) -> bitstring().
 pad_bmp(BMP) when is_binary(BMP) -> BMP;
