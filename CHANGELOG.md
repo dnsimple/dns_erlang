@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## main
 
+## 3.0.6
+
+- Fix EDNS0 compliance for truncated records and unsupported versions
+
 ## 3.0.5
 
 - Fix `max_size` in encode_message opts
