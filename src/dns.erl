@@ -121,6 +121,7 @@ domain names into different cases, converting to and from label lists, etc.
     rrdata/0,
     tsig_alg/0,
     compmap/0,
+    optrr_elem/0,
     unix_time/0
 ]).
 -export_type([
@@ -141,6 +142,7 @@ domain names into different cases, converting to and from label lists, etc.
 -type rcode() :: uint4().
 -type questions() :: [query()].
 -type records() :: additional() | answers() | authority() | questions().
+-type optrr_elem() :: opt_nsid() | opt_ul() | opt_unknown() | opt_ecs() | opt_llq() | opt_owner().
 -opaque compmap() :: #{[binary()] => non_neg_integer()}.
 
 -type message() :: #dns_message{}.
@@ -2240,28 +2242,20 @@ pad_bmp(BMP) when is_bitstring(BMP) ->
 %%%===================================================================
 %%% EDNS data functions
 
--spec decode_optrrdata(binary()) -> [Elem] when
-    Elem :: opt_nsid() | opt_ul() | opt_unknown() | opt_ecs() | opt_llq() | opt_owner().
+-spec decode_optrrdata(binary()) -> [optrr_elem()].
 decode_optrrdata(<<>>) ->
     [];
 decode_optrrdata(Bin) ->
     decode_optrrdata(Bin, []).
 
--spec decode_optrrdata(binary(), [Elem]) -> [Elem] when
-    Elem :: opt_nsid() | opt_ul() | opt_unknown() | opt_ecs() | opt_llq() | opt_owner().
+-spec decode_optrrdata(binary(), [optrr_elem()]) -> [optrr_elem()].
 decode_optrrdata(<<>>, Opts) ->
     lists:reverse(Opts);
 decode_optrrdata(<<EOptNum:16, EOptLen:16, EOptBin:EOptLen/binary, Rest/binary>>, Opts) ->
     NewOpt = do_decode_optrrdata(EOptNum, EOptBin),
     decode_optrrdata(Rest, [NewOpt | Opts]).
 
--spec do_decode_optrrdata(uint16(), binary() | _) ->
-    opt_nsid()
-    | opt_ul()
-    | opt_unknown()
-    | opt_ecs()
-    | opt_llq()
-    | opt_owner().
+-spec do_decode_optrrdata(uint16(), binary()) -> optrr_elem().
 do_decode_optrrdata(?DNS_EOPTCODE_LLQ, <<1:16, OC:16, EC:16, Id:64, LeaseLife:32>>) ->
     #dns_opt_llq{opcode = OC, errorcode = EC, id = Id, leaselife = LeaseLife};
 do_decode_optrrdata(?DNS_EOPTCODE_NSID, <<Data/binary>>) ->
@@ -2296,18 +2290,19 @@ do_decode_optrrdata(?DNS_EOPTCODE_ECS, <<FAMILY:16, SRCPL:8, SCOPEPL:8, Payload/
 do_decode_optrrdata(EOpt, <<Bin/binary>>) ->
     #dns_opt_unknown{id = EOpt, bin = Bin}.
 
--spec encode_optrrdata(
-    [any()]
-    | opt_nsid()
-    | opt_ul()
-    | opt_unknown()
-    | opt_ecs()
-    | opt_llq()
-    | opt_owner()
-) -> bitstring() | {integer(), binary()}.
+-spec encode_optrrdata([optrr_elem()]) -> bitstring() | {integer(), binary()}.
 encode_optrrdata(Opts) when is_list(Opts) ->
-    encode_optrrdata(lists:reverse(Opts), <<>>);
-encode_optrrdata(#dns_opt_llq{
+    encode_optrrdata(Opts, <<>>).
+
+-spec encode_optrrdata([optrr_elem()], bitstring()) -> bitstring().
+encode_optrrdata([], Bin) ->
+    Bin;
+encode_optrrdata([Opt | Opts], Bin) ->
+    {Id, NewBin} = do_encode_optrrdata(Opt),
+    Len = byte_size(NewBin),
+    encode_optrrdata(Opts, <<Bin/binary, Id:16, Len:16, NewBin/binary>>).
+
+do_encode_optrrdata(#dns_opt_llq{
     opcode = OC,
     errorcode = EC,
     id = Id,
@@ -2315,11 +2310,11 @@ encode_optrrdata(#dns_opt_llq{
 }) ->
     Data = <<1:16, OC:16, EC:16, Id:64, Length:32>>,
     {?DNS_EOPTCODE_LLQ, Data};
-encode_optrrdata(#dns_opt_ul{lease = Lease}) ->
+do_encode_optrrdata(#dns_opt_ul{lease = Lease}) ->
     {?DNS_EOPTCODE_UL, <<Lease:32>>};
-encode_optrrdata(#dns_opt_nsid{data = Data}) when is_binary(Data) ->
+do_encode_optrrdata(#dns_opt_nsid{data = Data}) when is_binary(Data) ->
     {?DNS_EOPTCODE_NSID, Data};
-encode_optrrdata(#dns_opt_owner{
+do_encode_optrrdata(#dns_opt_owner{
     seq = S,
     primary_mac = PMAC,
     wakeup_mac = WMAC,
@@ -2330,7 +2325,7 @@ encode_optrrdata(#dns_opt_owner{
 ->
     Bin = <<0:8, S:8, PMAC/binary, WMAC/binary, Password/binary>>,
     {?DNS_EOPTCODE_OWNER, Bin};
-encode_optrrdata(#dns_opt_owner{
+do_encode_optrrdata(#dns_opt_owner{
     seq = S,
     primary_mac = PMAC,
     wakeup_mac = WMAC,
@@ -2339,11 +2334,11 @@ encode_optrrdata(#dns_opt_owner{
     byte_size(PMAC) =:= 6 andalso byte_size(WMAC) =:= 6
 ->
     {?DNS_EOPTCODE_OWNER, <<0:8, S:8, PMAC/binary, WMAC/binary>>};
-encode_optrrdata(#dns_opt_owner{seq = S, primary_mac = PMAC, _ = <<>>}) when
+do_encode_optrrdata(#dns_opt_owner{seq = S, primary_mac = PMAC, _ = <<>>}) when
     byte_size(PMAC) =:= 6
 ->
     {?DNS_EOPTCODE_OWNER, <<0:8, S:8, PMAC/binary>>};
-encode_optrrdata(
+do_encode_optrrdata(
     #dns_opt_ecs{
         family = FAMILY,
         source_prefix_length = SRCPL,
@@ -2353,29 +2348,10 @@ encode_optrrdata(
 ) ->
     Data = <<FAMILY:16, SRCPL:8, SCOPEPL:8, ADDRESS/binary>>,
     {?DNS_EOPTCODE_ECS, Data};
-encode_optrrdata(#dns_opt_unknown{id = Id, bin = Data}) when
+do_encode_optrrdata(#dns_opt_unknown{id = Id, bin = Data}) when
     is_integer(Id) andalso is_binary(Data)
 ->
     {Id, Data}.
-
--spec encode_optrrdata(
-    [
-        [any()]
-        | opt_nsid()
-        | opt_ul()
-        | opt_unknown()
-        | opt_ecs()
-        | opt_llq()
-        | opt_owner()
-    ],
-    bitstring()
-) -> bitstring().
-encode_optrrdata([], Bin) ->
-    Bin;
-encode_optrrdata([Opt | Opts], Bin) ->
-    {Id, NewBin} = encode_optrrdata(Opt),
-    Len = byte_size(NewBin),
-    encode_optrrdata(Opts, <<Id:16, Len:16, NewBin/binary, Bin/binary>>).
 
 %%%===================================================================
 %%% Domain name functions

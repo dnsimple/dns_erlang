@@ -334,14 +334,7 @@
     ext_rcode = ?DNS_ERCODE_NOERROR :: dns:uint8(),
     version = 0 :: dns:uint8(),
     dnssec = false :: boolean(),
-    data = [] :: [
-        dns:opt_nsid()
-        | dns:opt_ul()
-        | dns:opt_unknown()
-        | dns:opt_ecs()
-        | dns:opt_llq()
-        | dns:opt_owner()
-    ]
+    data = [] :: [dns:optrr_elem()]
 }).
 
 %% LLQ EDNS option. See RFC 8764: §3.2.
