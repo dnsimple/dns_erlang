@@ -7,7 +7,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## main
 
-## 3.0.6
+## 3.1.0
 
 - Fix EDNS0 compliance for truncated records and unsupported versions
 
