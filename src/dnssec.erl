@@ -56,6 +56,7 @@ supported for signing RRSETs.
 -export_type([
     sigalg/0,
     nsec3_hashalg/0,
+    nsec3_hashalg_fun/0,
     nsec3_salt/0,
     nsec3_iterations/0,
     gen_nsec_opt/0,
@@ -74,6 +75,7 @@ supported for signing RRSETs.
     | ?DNS_ALG_RSASHA256
     | ?DNS_ALG_RSASHA512.
 -type nsec3_hashalg() :: ?DNSSEC_NSEC3_ALG_SHA1.
+-type nsec3_hashalg_fun() :: fun((iodata()) -> binary()).
 -type nsec3_salt() :: binary().
 -type nsec3_iterations() :: non_neg_integer().
 -type gen_nsec_opt() :: {base_types, [dns:type()]}.
@@ -256,12 +258,7 @@ gen_nsec3(RRs, ZoneName, Alg, Salt, Iterations, TTL, Class, Opts) ->
     add_next_hash(Sorted).
 
 %% @doc NSEC3 iterative hash function
--spec ih(
-    nsec3_hashalg() | fun((iodata()) -> binary()),
-    nsec3_salt(),
-    binary(),
-    nsec3_iterations()
-) ->
+-spec ih(nsec3_hashalg() | nsec3_hashalg_fun(), nsec3_salt(), binary(), nsec3_iterations()) ->
     binary().
 ih(?DNSSEC_NSEC3_ALG_SHA1, Salt, X, I) when is_binary(Salt), is_binary(X), is_integer(I), 0 =< I ->
     ih_nsec3(Salt, X, I);
