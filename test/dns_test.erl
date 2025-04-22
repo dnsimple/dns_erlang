@@ -56,39 +56,38 @@ truncated_query_enforces_opt_record_test_() ->
         ttl = 0,
         data = #dns_rrdata_txt{txt = StringSplit}
     },
-    Ads = [
-        #dns_optrr{
-            udp_payload_size = 512,
-            ext_rcode = 0,
-            version = 0,
-            dnssec = false,
-            data = [#dns_opt_nsid{data = binary:encode_hex(crypto:strong_rand_bytes(234))}]
-        }
-    ],
     Question = #dns_query{name = QName, type = ?DNS_TYPE_TXT},
-    MsgBig = #dns_message{
+    OptRR = #dns_optrr{udp_payload_size = 512},
+    Msg0 = #dns_message{
         qc = 1,
         anc = 1,
         questions = [Question],
         answers = [TxtRecord]
     },
-    MsgSmall = MsgBig#dns_message{additional = Ads},
     [
-        %% Test that the answer was truncated but the body could still fit the original query
+        %% Answers are truncated but body and optrr are present in full
         ?_assert(begin
-            {false, Encoded} = dns:encode_message(MsgBig, [{max_size, 512}]),
+            NSID = #dns_opt_nsid{data = binary:encode_hex(crypto:strong_rand_bytes(8))},
+            Ads = [OptRR#dns_optrr{data = [NSID]}],
+            Msg = Msg0#dns_message{additional = Ads},
+            {false, Encoded} = dns:encode_message(Msg, [{max_size, 512}]),
             Decoded = dns:decode_message(Encoded),
-            byte_size(Encoded) =< 512 andalso
-                ok =:= ?assertMatch([#dns_query{} | _], Decoded#dns_message.questions) andalso
-                ok =:= ?assertMatch([#dns_optrr{} | _], Decoded#dns_message.additional)
-        end),
-        %% Test that the opt_rr took precedence over the body and the query had to be removed
-        ?_assert(begin
-            {false, Encoded} = dns:encode_message(MsgSmall, [{max_size, 512}]),
-            Decoded = dns:decode_message(Encoded),
-            byte_size(Encoded) =< 512 andalso
-                ok =:= ?assertMatch([], Decoded#dns_message.questions) andalso
+            byte_size(Encoded) =< 512 andalso Decoded#dns_message.tc andalso
+                ok =:= ?assertMatch([], Decoded#dns_message.answers) andalso
+                ok =:= ?assertMatch([Question], Decoded#dns_message.questions) andalso
                 ok =:= ?assertMatch([#dns_optrr{data = [_]} | _], Decoded#dns_message.additional)
+        end),
+        %% A too large NSID is dropped, prioritising questions and a bare OptRR record
+        ?_assert(begin
+            NSID = #dns_opt_nsid{data = binary:encode_hex(crypto:strong_rand_bytes(234))},
+            Msg = Msg0#dns_message{additional = [OptRR#dns_optrr{data = [NSID]}]},
+            {false, Encoded} = dns:encode_message(Msg, [{max_size, 512}]),
+            Decoded = dns:decode_message(Encoded),
+            ct:pal("Value ~B:~p~n", [byte_size(Encoded), Decoded]),
+            byte_size(Encoded) =< 512 andalso Decoded#dns_message.tc andalso
+                ok =:= ?assertMatch([], Decoded#dns_message.answers) andalso
+                ok =:= ?assertMatch([Question], Decoded#dns_message.questions) andalso
+                ok =:= ?assertMatch([#dns_optrr{data = []} | _], Decoded#dns_message.additional)
         end)
     ].
 
