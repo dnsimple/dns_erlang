@@ -79,6 +79,8 @@ domain names into different cases, converting to and from label lists, etc.
 -define(DEFAULT_TSIG_FUDGE, 5 * 60).
 -define(MAX_INT32, ((1 bsl 31) - 1)).
 -define(HEADER_SIZE, 12).
+%% Minimal size of an OptRR record without any data
+-define(OPTRR_MIN_SIZE, 88).
 
 %% Types
 -type uint2() :: 0..1.
@@ -601,21 +603,26 @@ encode_message_tsig_size(Name, Alg, Other) ->
 
 -spec encode_message_default(message(), number()) -> binary().
 encode_message_default(#dns_message{additional = Additional} = Msg, MaxSize) ->
-    SpaceLeft = MaxSize - ?HEADER_SIZE,
+    %% If EDNS0 is used, we need to reserve space for appending the OptRR record at its minimal
+    PreservedOptRRBinSize = preserve_optrr_size(Additional),
+    SpaceLeft = MaxSize - ?HEADER_SIZE - PreservedOptRRBinSize,
     case encode_message_d_req(Msg, SpaceLeft) of
         {false, QC, ANC, AUC, Body} ->
+            BodySize = byte_size(Body),
             %% We ran out of space, we MUST append a OptRR EDNS0 record,
             %% and this takes precedence over the body
-            BodySize = byte_size(Body),
-            OptRRBin = ensure_optrr(Additional),
-            OptRRBinSize = byte_size(OptRRBin),
-            case SpaceLeft - BodySize of
-                SpaceLeft0 when SpaceLeft0 < OptRRBinSize ->
-                    Head = build_head(Msg, true, 0, 0, 0, 1),
-                    <<Head/binary, OptRRBin/binary>>;
-                _SpaceLeft0 ->
-                    Head = build_head(Msg, true, QC, ANC, AUC, 1),
-                    <<Head/binary, Body/binary, OptRRBin/binary>>
+            %% Note however that according to RFC6891 §7, the question section MUST be present
+            OptRRBinMin = ensure_optrr(Additional, minimal),
+            OptRRBinSizeMin = byte_size(OptRRBinMin),
+            OptRRBinFull = ensure_optrr(Additional, full),
+            OptRRBinSizeFull = byte_size(OptRRBinFull),
+            Head = build_head(Msg, true, QC, ANC, AUC, 1),
+            SpaceForOptRR = SpaceLeft - BodySize,
+            case {OptRRBinSizeFull =< SpaceForOptRR, OptRRBinSizeMin =< SpaceForOptRR} of
+                {false, true} ->
+                    <<Head/binary, Body/binary, OptRRBinMin/binary>>;
+                {true, _} ->
+                    <<Head/binary, Body/binary, OptRRBinFull/binary>>
             end;
         {CompMap, QC, ANC, AUC, Body} ->
             BodySize = byte_size(Body),
@@ -896,13 +903,21 @@ encode_message_pop_optrr([#dns_optrr{} = OptRR | Rest]) ->
 encode_message_pop_optrr(Other) ->
     {<<>>, Other}.
 
--spec ensure_optrr(additional()) -> binary().
-ensure_optrr([#dns_optrr{} = OptRR | _]) ->
+-spec ensure_optrr(additional(), minimal | full) -> binary().
+ensure_optrr([#dns_optrr{} = OptRR | _], full) ->
     encode_optrr(OptRR);
-ensure_optrr(_) ->
-    encode_optrr(undefined).
+ensure_optrr([#dns_optrr{} = OptRR | _], minimal) ->
+    encode_optrr(OptRR#dns_optrr{data = []});
+ensure_optrr(_, _) ->
+    <<>>.
 
--spec encode_optrr(undefined | optrr()) -> binary().
+-spec preserve_optrr_size(additional()) -> non_neg_integer().
+preserve_optrr_size([#dns_optrr{} | _]) ->
+    ?OPTRR_MIN_SIZE;
+preserve_optrr_size(_) ->
+    0.
+
+-spec encode_optrr(optrr()) -> binary().
 encode_optrr(#dns_optrr{
     udp_payload_size = UPS,
     ext_rcode = ExtRcode0,
@@ -916,10 +931,7 @@ encode_optrr(#dns_optrr{
     RRBin = encode_optrrdata(Data),
     RRBinSize = byte_size(RRBin),
     <<0, ?DNS_TYPE_OPT:16, UPS:16, ExtRcode:8, Version:8, DNSSECBit:1, 0:15, RRBinSize:16,
-        RRBin/binary>>;
-encode_optrr(undefined) ->
-    <<0, ?DNS_TYPE_OPT:16, 512:16, ?DNS_ERCODE_NOERROR_NUMBER:8, ?DNS_EDNS_MAX_VERSION:8, 0:1, 0:15,
-        0:16>>.
+        RRBin/binary>>.
 
 ensure_edns_version(Version, ExtRcode) when
     ?DNS_EDNS_MIN_VERSION =< Version andalso Version =< ?DNS_EDNS_MAX_VERSION
