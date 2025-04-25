@@ -201,7 +201,8 @@ encode_message_default(#dns_message{qc = QC, additional = Additional} = Msg0, Ma
     {Msg1, CompMap1, Bin1} = encode_message_questions(Msg0, SpaceLeft0, ?HEADER_SIZE, #{}, <<>>),
     SpaceLeft1 = SpaceLeft0 - byte_size(Bin1),
     Pos1 = ?HEADER_SIZE + byte_size(Bin1),
-    case encode_message_d_req(Msg1, Pos1, SpaceLeft1, CompMap1, Bin1) of
+    MsgTmp = Msg1#dns_message{anc = 0, auc = 0},
+    case encode_message_d_req(MsgTmp, Pos1, SpaceLeft1, CompMap1, Bin1) of
         truncated ->
             %% We ran out of space, we MUST append a OptRR EDNS0 record,
             %% and this takes precedence over the body
@@ -210,7 +211,7 @@ encode_message_default(#dns_message{qc = QC, additional = Additional} = Msg0, Ma
             OptRRBinFull = ensure_optrr(Additional, full),
             OptRRBinSizeFull = byte_size(OptRRBinFull),
             Head = build_head(Msg0, true, QC, 0, 0, 1),
-            SpaceForOptRR = SpaceLeft0 - byte_size(Bin1),
+            SpaceForOptRR = SpaceLeft1 - byte_size(Bin1),
             case {OptRRBinSizeFull =< SpaceForOptRR, OptRRBinSizeMin =< SpaceForOptRR} of
                 {false, true} ->
                     <<Head/binary, Bin1/binary, OptRRBinMin/binary>>;
@@ -221,20 +222,20 @@ encode_message_default(#dns_message{qc = QC, additional = Additional} = Msg0, Ma
             BodySize = byte_size(Body),
             {OptRRBin, Ad0} = encode_message_pop_optrr(Additional),
             OptRRBinSize = byte_size(OptRRBin),
-            Pos1 = BodySize + ?HEADER_SIZE,
-            case SpaceLeft0 - BodySize of
-                SpaceLeft1 when SpaceLeft1 < OptRRBinSize ->
-                    Head = build_head(Msg0, true, QC, ANC, AUC, 0),
+            Pos2 = BodySize,
+            case SpaceLeft1 - BodySize of
+                SpaceLeft2 when SpaceLeft2 < OptRRBinSize ->
+                    Head = build_head(Msg0, false, QC, ANC, AUC, 0),
                     <<Head/binary, Body/binary>>;
-                SpaceLeft1 ->
-                    Pos2 = Pos1 + OptRRBinSize,
-                    SpaceLeft2 = SpaceLeft1 - OptRRBinSize,
+                SpaceLeft2 ->
+                    Pos3 = Pos2 + OptRRBinSize,
+                    SpaceLeft3 = SpaceLeft2 - OptRRBinSize,
                     OptC =
                         case OptRRBinSize of
                             0 -> 0;
                             _ -> 1
                         end,
-                    case encode_message_d_opt(Pos2, SpaceLeft2, CompMap, Ad0) of
+                    case encode_message_d_opt(Pos3, SpaceLeft3, CompMap, Ad0) of
                         false ->
                             Head = build_head(Msg0, false, QC, ANC, AUC, OptC),
                             <<Head/binary, Body/binary, OptRRBin/binary>>;
@@ -284,7 +285,7 @@ encode_message_questions(
             {Msg, CompMap, Bin}
     end.
 
-%% Encodes questions, authorities, and answers, for as long as there is space
+%% Encodes authorities, and answers, for as long as there is space
 %% Will return a false tag if there wasn't enough space
 -spec encode_message_d_req(dns:message(), pos_integer(), integer(), compmap(), bitstring()) ->
     truncated | {compmap(), dns:uint16(), dns:uint16(), bitstring()}.
