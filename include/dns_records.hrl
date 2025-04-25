@@ -66,7 +66,7 @@
 %% CERT record for storing certificates in DNS. See RFC 4398.
 -record(dns_rrdata_cert, {
     type :: dns:uint16(),
-    key_tag :: dns:uint16(),
+    keytag :: dns:uint16(),
     alg :: dns:uint8(),
     cert :: binary()
 }).
@@ -100,7 +100,7 @@
     protocol :: dns:uint8(),
     alg :: dns:uint8(),
     public_key :: iodata(),
-    key_tag :: integer()
+    keytag :: integer()
 }).
 
 %% CDNSKEY record for Child DNSKEY. See RFC 7344.
@@ -109,7 +109,7 @@
     protocol :: dns:uint8(),
     alg :: dns:uint8(),
     public_key :: iodata(),
-    key_tag :: integer()
+    keytag :: integer()
 }).
 
 %% DS record for Delegation Signer. See RFC 4034: §5.1.
@@ -261,7 +261,7 @@
     original_ttl :: dns:uint32(),
     expiration :: dns:uint32(),
     inception :: dns:uint32(),
-    key_tag :: dns:uint16(),
+    keytag :: dns:uint16(),
     signers_name :: dns:dname(),
     signature = <<>> :: binary()
 }).

@@ -22,15 +22,15 @@ encode_message_max_size_test_() ->
     Msg3 = Msg#dns_message{adc = 1, additional = [#dns_optrr{udp_payload_size = 512}]},
     [
         ?_assert(begin
-            {false, Bin} = dns:encode_message(Msg3, []),
+            {false, Bin} = dns:encode_message(Msg3, #{}),
             Msg3 =:= dns:decode_message(Bin)
         end),
         ?_assert(begin
-            {false, Bin} = dns:encode_message(Msg, [{max_size, 512}]),
+            {false, Bin} = dns:encode_message(Msg, #{max_size => 512}),
             Msg =:= dns:decode_message(Bin)
         end),
         ?_assert(begin
-            {false, Bin} = dns:encode_message(Msg, []),
+            {false, Bin} = dns:encode_message(Msg, #{}),
             Msg =:= dns:decode_message(Bin)
         end)
     ].
@@ -41,10 +41,10 @@ encode_message_invalid_size_test_() ->
     Msg = #dns_message{qc = QLen, questions = Qs},
     Msg3 = Msg#dns_message{adc = 1, additional = [#dns_optrr{udp_payload_size = 99999999}]},
     [
-        ?_assertError(badarg, dns:encode_message(Msg3, [])),
-        ?_assertError(badarg, dns:encode_message(Msg, [{max_size, 999999}])),
-        ?_assertError(badarg, dns:encode_message(Msg, [{max_size, 413}])),
-        ?_assertError(badarg, dns:encode_message(Msg, [{max_size, not_an_integer}]))
+        ?_assertError(badarg, dns:encode_message(Msg3, #{})),
+        ?_assertError(badarg, dns:encode_message(Msg, #{max_size => 999999})),
+        ?_assertError(badarg, dns:encode_message(Msg, #{max_size => 413})),
+        ?_assertError(badarg, dns:encode_message(Msg, #{max_size => not_an_integer}))
     ].
 
 truncated_query_enforces_opt_record_test_() ->
@@ -56,6 +56,7 @@ truncated_query_enforces_opt_record_test_() ->
         ttl = 0,
         data = #dns_rrdata_txt{txt = StringSplit}
     },
+    TxtRecordSmall = TxtRecord#dns_rr{data = #dns_rrdata_txt{txt = [<<"hello world">>]}},
     Question = #dns_query{name = QName, type = ?DNS_TYPE_TXT},
     OptRR = #dns_optrr{udp_payload_size = 512},
     Msg0 = #dns_message{
@@ -70,7 +71,21 @@ truncated_query_enforces_opt_record_test_() ->
             NSID = #dns_opt_nsid{data = binary:encode_hex(crypto:strong_rand_bytes(8))},
             Ads = [OptRR#dns_optrr{data = [NSID]}],
             Msg = Msg0#dns_message{additional = Ads},
-            {false, Encoded} = dns:encode_message(Msg, [{max_size, 512}]),
+            {false, Encoded} = dns:encode_message(Msg, #{max_size => 512}),
+            Decoded = dns:decode_message(Encoded),
+            byte_size(Encoded) =< 512 andalso Decoded#dns_message.tc andalso
+                ok =:= ?assertMatch([], Decoded#dns_message.answers) andalso
+                ok =:= ?assertMatch([Question], Decoded#dns_message.questions) andalso
+                ok =:= ?assertMatch([#dns_optrr{data = [_]} | _], Decoded#dns_message.additional)
+        end),
+        %% Small answers are too truncated
+        ?_assert(begin
+            NSID = #dns_opt_nsid{data = binary:encode_hex(crypto:strong_rand_bytes(8))},
+            Ads = [OptRR#dns_optrr{data = [NSID]}],
+            Msg = Msg0#dns_message{
+                anc = 2, answers = [TxtRecordSmall, TxtRecord], additional = Ads
+            },
+            {false, Encoded} = dns:encode_message(Msg, #{max_size => 512}),
             Decoded = dns:decode_message(Encoded),
             byte_size(Encoded) =< 512 andalso Decoded#dns_message.tc andalso
                 ok =:= ?assertMatch([], Decoded#dns_message.answers) andalso
@@ -81,9 +96,8 @@ truncated_query_enforces_opt_record_test_() ->
         ?_assert(begin
             NSID = #dns_opt_nsid{data = binary:encode_hex(crypto:strong_rand_bytes(234))},
             Msg = Msg0#dns_message{additional = [OptRR#dns_optrr{data = [NSID]}]},
-            {false, Encoded} = dns:encode_message(Msg, [{max_size, 512}]),
+            {false, Encoded} = dns:encode_message(Msg, #{max_size => 512}),
             Decoded = dns:decode_message(Encoded),
-            ct:pal("Value ~B:~p~n", [byte_size(Encoded), Decoded]),
             byte_size(Encoded) =< 512 andalso Decoded#dns_message.tc andalso
                 ok =:= ?assertMatch([], Decoded#dns_message.answers) andalso
                 ok =:= ?assertMatch([Question], Decoded#dns_message.questions) andalso
@@ -134,7 +148,7 @@ long_txt_test() ->
         ]
     },
 
-    % Encode and decode
+    % Encode and decode_message
     Bin = dns:encode_message(Msg),
     DecodedMsg = dns:decode_message(Bin),
 
@@ -168,7 +182,7 @@ long_txt_not_split_test() ->
             }
         ]
     },
-    % Encode and decode
+    % Encode and decode_message
     Bin = dns:encode_message(Msg),
     DecodedMsg = dns:decode_message(Bin),
     % Get the TXT record from the decoded message
@@ -384,7 +398,7 @@ tsig_badtime_test_() ->
         ?_test(
             begin
                 BadNow = Now + (Throwoff * Fudge),
-                Options = [{fudge, 30}, {time, BadNow}],
+                Options = #{fudge => 30, time => BadNow},
                 Result = dns:verify_tsig(SignedMsgBin, Name, Secret, Options),
                 ?assertEqual({error, ?DNS_TSIGERR_BADTIME}, Result)
             end
@@ -406,7 +420,7 @@ tsig_ok_test_() ->
         ?DNS_TSIG_ALG_SHA512
     ],
     Msg = #dns_message{id = MsgId},
-    Options = [{time, dns:unix_time()}, {fudge, 30}],
+    Options = #{time => dns:unix_time(), fudge => 30},
     [
         {Alg,
             ?_test(
@@ -435,7 +449,7 @@ tsig_wire_test_() ->
             ?_test(
                 begin
                     Result =
-                        case dns:verify_tsig(Msg, Keyname, Secret, [{time, Now}]) of
+                        case dns:verify_tsig(Msg, Keyname, Secret, #{time => Now}) of
                             {ok, MAC} when is_binary(MAC) -> ok;
                             X -> X
                         end,
@@ -462,16 +476,16 @@ decode_encode_rrdata_wire_samples_test_() ->
             ?_test(
                 begin
                     NewBin =
-                        case dns:decode_rrdata(Class, Type, TestBin, TestBin) of
+                        case dns_decode:decode_rrdata(TestBin, Class, Type, TestBin) of
                             TestBin when Type =:= 999 -> TestBin;
                             TestBin ->
                                 throw(not_decoded);
                             Record ->
-                                {Bin, _} = dns:encode_rrdata(
+                                {Bin, _} = dns_encode:encode_rrdata(
                                     0,
                                     Class,
                                     Record,
-                                    dns:new_compmap()
+                                    #{}
                                 ),
                                 Bin
                         end,
@@ -535,13 +549,13 @@ decode_encode_rrdata_test_() ->
     [
         ?_test(
             begin
-                {Encoded, _NewCompMap} = dns:encode_rrdata(
+                {Encoded, _NewCompMap} = dns_encode:encode_rrdata(
                     0,
                     ?DNS_CLASS_IN,
                     Data,
-                    dns:new_compmap()
+                    #{}
                 ),
-                Decoded = dns:decode_rrdata(?DNS_CLASS_IN, Type, Encoded, Encoded),
+                Decoded = dns_decode:decode_rrdata(Encoded, ?DNS_CLASS_IN, Type, Encoded),
                 ?assertEqual(Data, Decoded)
             end
         )
@@ -571,7 +585,7 @@ decode_encode_optdata_test_() ->
         #dns_opt_unknown{id = 999, bin = <<"hi">>}
     ],
     [
-        ?_assertEqual([Case], dns:decode_optrrdata(dns:encode_optrrdata([Case])))
+        ?_assertEqual([Case], dns_decode:decode_optrrdata(dns_encode:encode_optrrdata([Case])))
      || Case <- Cases
     ].
 
@@ -603,7 +617,7 @@ decode_encode_optdata_owner_test_() ->
         }
     ],
     [
-        ?_assertEqual([Case], dns:decode_optrrdata(dns:encode_optrrdata([Case])))
+        ?_assertEqual([Case], dns_decode:decode_optrrdata(dns_encode:encode_optrrdata([Case])))
      || Case <- Cases
     ].
 
@@ -615,7 +629,9 @@ decode_encode_svcb_params_test() ->
     ],
 
     [
-        ?assertEqual(Expected, dns:decode_svcb_svc_params(dns:encode_svcb_svc_params(Input)))
+        ?assertEqual(
+            Expected, dns_decode:decode_svcb_svc_params(dns_encode:encode_svcb_svc_params(Input))
+        )
      || {Input, Expected} <- Cases
     ].
 
@@ -626,55 +642,49 @@ decode_encode_svcb_params_test() ->
 decode_dname_2_ptr_test_() ->
     Cases = [{<<7, 101, 120, 97, 109, 112, 108, 101, 0>>, <<3:2, 0:14>>}],
     [
-        ?_assertEqual({<<"example">>, <<>>}, dns:decode_dname(DataBin, MsgBin))
+        ?_assertEqual({<<"example">>, <<>>}, dns_decode:decode_dname(DataBin, MsgBin))
      || {MsgBin, DataBin} <- Cases
     ].
 
 decode_dname_decode_loop_test() ->
     Bin = <<3:2, 0:14>>,
-    ?assertException(throw, decode_loop, dns:decode_dname(Bin, Bin)).
+    ?assertException(throw, decode_loop, dns_decode:decode_dname(Bin, Bin)).
 
 decode_dname_bad_pointer_test() ->
     Case = <<3:2, 42:14>>,
-    ?assertException(throw, bad_pointer, dns:decode_dname(Case, Case)).
+    ?assertException(throw, bad_pointer, dns_decode:decode_dname(Case, Case)).
 
 encode_dname_1_test_() ->
     Cases = [
-        {"example", <<7, 101, 120, 97, 109, 112, 108, 101, 0>>},
         {<<"example">>, <<7, 101, 120, 97, 109, 112, 108, 101, 0>>}
     ],
-    [?_assertEqual(Expect, dns:encode_dname(Input)) || {Input, Expect} <- Cases].
+    [?_assertEqual(Expect, dns_encode:encode_dname(Input)) || {Input, Expect} <- Cases].
 
 encode_dname_3_test_() ->
-    {Bin, _CompMap} = dns:encode_dname(dns:new_compmap(), 0, <<"example">>),
+    {Bin, _CompMap} = dns_encode:encode_dname(#{}, 0, <<"example">>),
     ?_assertEqual(<<7, 101, 120, 97, 109, 112, 108, 101, 0>>, Bin).
 
 encode_dname_4_test_() ->
-    {Bin0, CM0} = dns:encode_dname(<<>>, dns:new_compmap(), 0, <<"example">>),
-    {Bin1, _} = dns:encode_dname(Bin0, CM0, byte_size(Bin0), <<"example">>),
-    {Bin2, _} = dns:encode_dname(Bin0, CM0, byte_size(Bin0), <<"EXAMPLE">>),
+    {Bin0, CM0} = dns_encode:encode_dname(<<>>, #{}, 0, <<"example">>),
+    {Bin1, _} = dns_encode:encode_dname(Bin0, CM0, byte_size(Bin0), <<"example">>),
+    {Bin2, _} = dns_encode:encode_dname(Bin0, CM0, byte_size(Bin0), <<"EXAMPLE">>),
     MP = (1 bsl 14),
     MPB = <<0:MP/unit:8>>,
-    {_, CM1} = dns:encode_dname(MPB, dns:new_compmap(), MP, <<"example">>),
+    {_, CM1} = dns_encode:encode_dname(MPB, #{}, MP, <<"example">>),
     Cases = [
         {<<7, 101, 120, 97, 109, 112, 108, 101, 0>>, Bin0},
         {<<7, 101, 120, 97, 109, 112, 108, 101, 0, 192, 0>>, Bin1},
         {Bin1, Bin2},
-        {dns:new_compmap(), CM1}
+        {#{}, CM1}
     ],
     [?_assertEqual(Expect, Result) || {Expect, Result} <- Cases].
 
 dname_to_labels_test_() ->
     Cases = [
-        {"", []},
-        {".", []},
         {<<>>, []},
         {<<".">>, []},
-        {"a.b.c", [<<"a">>, <<"b">>, <<"c">>]},
         {<<"a.b.c">>, [<<"a">>, <<"b">>, <<"c">>]},
-        {"a.b.c.", [<<"a">>, <<"b">>, <<"c">>]},
         {<<"a.b.c.">>, [<<"a">>, <<"b">>, <<"c">>]},
-        {"a\\.b.c", [<<"a.b">>, <<"c">>]},
         {<<"a\\.b.c">>, [<<"a.b">>, <<"c">>]}
     ],
     [?_assertEqual(Expect, dns:dname_to_labels(Arg)) || {Arg, Expect} <- Cases].
@@ -687,11 +697,11 @@ labels_to_dname_test_() ->
     [?_assertEqual(Expect, dns:labels_to_dname(Arg)) || {Arg, Expect} <- Cases].
 
 dname_to_upper_test_() ->
-    Cases = [{"Y", "Y"}, {"y", "Y"}, {<<"Y">>, <<"Y">>}, {<<"y">>, <<"Y">>}],
+    Cases = [{<<"Y">>, <<"Y">>}, {<<"y">>, <<"Y">>}],
     [?_assertEqual(Expect, dns:dname_to_upper(Arg)) || {Arg, Expect} <- Cases].
 
 dname_to_lower_test_() ->
-    Cases = [{"Y", "y"}, {"y", "y"}, {<<"Y">>, <<"y">>}, {<<"y">>, <<"y">>}],
+    Cases = [{<<"Y">>, <<"y">>}, {<<"y">>, <<"y">>}],
     [?_assertEqual(Expect, dns:dname_to_lower(Arg)) || {Arg, Expect} <- Cases].
 
 dname_case_conversion_test_() ->
@@ -725,10 +735,6 @@ dname_case_conversion_test_() ->
         %% Tests with empty or single character domains
         ?_assertEqual(<<>>, dns:dname_to_upper(<<>>)),
         ?_assertEqual(<<"a">>, dns:dname_to_lower(<<"A">>)),
-
-        %% String (list) input tests
-        ?_assertEqual("EXAMPLE.COM", dns:dname_to_upper("example.com")),
-        ?_assertEqual("example.com", dns:dname_to_lower("EXAMPLE.COM")),
 
         %% Test with long domain name to check chunking behavior
         ?_assertEqual(
@@ -789,31 +795,6 @@ dname_preserve_dot_test_() ->
         ?_assertEqual(Encoded, ReEncoded),
         ?_assertEqual(Message, ReDecoded)
     ].
-
-%%%===================================================================
-%%% Term functions
-%%%===================================================================
-
-class_name_test_() ->
-    {ok, Cases} = file:consult(filename:join("test", "rrdata_wire_samples.txt")),
-    Classes = sets:to_list(sets:from_list([C || {C, _, _} <- Cases])),
-    [?_assertEqual(true, is_binary(dns:class_name(C))) || C <- Classes].
-
-type_name_test_() ->
-    {ok, Cases} = file:consult(filename:join("test", "rrdata_wire_samples.txt")),
-    Types = sets:to_list(sets:from_list([T || {_, T, _} <- Cases])),
-    [?_assertEqual(T =/= 999, is_binary(dns:type_name(T))) || T <- Types].
-
-alg_terms_test_() ->
-    Cases = [
-        ?DNS_ALG_DSA,
-        ?DNS_ALG_NSEC3DSA,
-        ?DNS_ALG_RSASHA1,
-        ?DNS_ALG_NSEC3RSASHA1,
-        ?DNS_ALG_RSASHA256,
-        ?DNS_ALG_RSASHA512
-    ],
-    [?_assertEqual(true, is_binary(dns:alg_name(Alg))) || Alg <- Cases].
 
 split_binary_into_chunks(Bin, Chunk) ->
     List = binary_to_list(Bin),
