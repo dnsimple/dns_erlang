@@ -53,29 +53,25 @@ The following instructions uses `$VERSION` as a placeholder, where `$VERSION` is
 
 1. Run the test suite and ensure all the tests pass.
 
-1. Set the version in `src/dns_erlang.app.src`
+2. Finalize the `## main` section in `CHANGELOG.md` assigning the version.
 
-1. Run the test suite and ensure all the tests pass.
-
-1. Finalize the `## main` section in `CHANGELOG.md` assigning the version.
-
-1. Commit and push the changes
+3. Commit and push the changes
 
     ```shell
     git commit -a -m "Release $VERSION"
     git push origin main
     ```
 
-1. Wait for CI to complete.
+4. Wait for CI to complete.
 
-1. Create a signed tag.
+5. Create a signed tag.
 
     ```shell
     git tag -a v$VERSION -s -m "Release $VERSION"
     git push origin --tags
     ```
 
-1. GitHub actions will take it from there and release to <https://hex.pm/packages/dns_erlang>
+6. GitHub actions will take it from there and release to <https://hex.pm/packages/dns_erlang>
 
 ## Tests
 

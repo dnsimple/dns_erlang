@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## main
 
+## 3.1.3
+
+- Fix: now using the reserved space for the OPT RR records during the encoding of the message (#74)
+
 ## 3.1.2
 
 - Add NXNAME type to terms types.
