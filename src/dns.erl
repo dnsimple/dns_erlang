@@ -617,7 +617,7 @@ encode_message_default(#dns_message{additional = Additional} = Msg, MaxSize) ->
             OptRRBinFull = ensure_optrr(Additional, full),
             OptRRBinSizeFull = byte_size(OptRRBinFull),
             Head = build_head(Msg, true, QC, ANC, AUC, 1),
-            SpaceForOptRR = SpaceLeft - BodySize,
+            SpaceForOptRR = SpaceLeft + PreservedOptRRBinSize - BodySize,
             case {OptRRBinSizeFull =< SpaceForOptRR, OptRRBinSizeMin =< SpaceForOptRR} of
                 {false, true} ->
                     <<Head/binary, Body/binary, OptRRBinMin/binary>>;
@@ -629,7 +629,7 @@ encode_message_default(#dns_message{additional = Additional} = Msg, MaxSize) ->
             {OptRRBin, Ad0} = encode_message_pop_optrr(Additional),
             OptRRBinSize = byte_size(OptRRBin),
             Pos0 = BodySize + ?HEADER_SIZE,
-            case SpaceLeft - BodySize of
+            case SpaceLeft + PreservedOptRRBinSize - BodySize of
                 SpaceLeft0 when SpaceLeft0 < OptRRBinSize ->
                     Head = build_head(Msg, true, QC, ANC, AUC, 0),
                     <<Head/binary, Body/binary>>;
