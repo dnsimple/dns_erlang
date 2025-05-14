@@ -18,7 +18,24 @@
 %%
 %% -------------------------------------------------------------------
 -module(dns).
-%% API
+-if(?OTP_RELEASE >= 27).
+-define(MODULEDOC(Str), -moduledoc(Str)).
+-define(DOC(Str), -doc(Str)).
+-else.
+-define(MODULEDOC(Str), -compile([])).
+-define(DOC(Str), -compile([])).
+-endif.
+?MODULEDOC("""
+The `dns` module is the primary entry point for the functionality in this library.
+The module exports various types used in type specs, such as `t:message/0`, which indicates
+a `#dns_message{}` record, `t:query/0` which represents a single `#dns_query{}` record,
+`t:questions/0`, which represents a list of queries, etc.
+
+It also exports functions for encoding and decoding messages,
+TSIG supporting functions, and various utility functions for comparing domain names, converting
+domain names into different cases, converting to and from label lists, etc.
+""").
+
 -export([decode_message/1, encode_message/1, encode_message/2]).
 -export([verify_tsig/3, verify_tsig/4]).
 -export([add_tsig/5, add_tsig/6]).
@@ -53,12 +70,17 @@
 -export([encode_svcb_svc_params/1, decode_svcb_svc_params/1]).
 -export([encode_optrrdata/1, decode_optrrdata/1]).
 -export([encode_dname/3, encode_dname/4, decode_dname/2]).
+-export([new_compmap/0]).
 -endif.
 
 -include("dns.hrl").
 
 %% 2^31 - 1, the largest signed 32-bit integer value
+-define(DEFAULT_TSIG_FUDGE, 5 * 60).
 -define(MAX_INT32, ((1 bsl 31) - 1)).
+-define(HEADER_SIZE, 12).
+%% Minimal size of an OptRR record without any data
+-define(OPTRR_MIN_SIZE, 88).
 
 %% Types
 -type uint2() :: 0..1.
@@ -100,6 +122,8 @@
     encode_message_opt/0,
     rrdata/0,
     tsig_alg/0,
+    compmap/0,
+    optrr_elem/0,
     unix_time/0
 ]).
 -export_type([
@@ -119,6 +143,9 @@
 -type opcode() :: uint4().
 -type rcode() :: uint4().
 -type questions() :: [query()].
+-type records() :: additional() | answers() | authority() | questions().
+-type optrr_elem() :: opt_nsid() | opt_ul() | opt_unknown() | opt_ecs() | opt_llq() | opt_owner().
+-opaque compmap() :: #{[binary()] => non_neg_integer()}.
 
 -type message() :: #dns_message{}.
 -type query() :: #dns_query{}.
@@ -138,7 +165,7 @@
 
 -type answers() :: [rr()].
 -type authority() :: [rr()].
--type additional() :: [optrr() | [rr()]] | [rr()].
+-type additional() :: [optrr() | rr()].
 -type dname() :: binary().
 -type label() :: binary().
 -type class() :: uint16().
@@ -218,8 +245,6 @@
 -type ercode() :: 0 | 16.
 -type llqerrcode() :: 0..6.
 -type llqopcode() :: 1..3.
-
--define(DEFAULT_TSIG_FUDGE, 5 * 60).
 
 %%%===================================================================
 %%% Message body functions
@@ -491,8 +516,10 @@ get_max_size(Opts, Additional) ->
             is_integer(MaxSize) andalso 512 =< MaxSize andalso MaxSize =< 65535
         ->
             MaxSize;
-        {undefined, [#dns_optrr{udp_payload_size = UPS}]} ->
-            UPS;
+        {undefined, [#dns_optrr{udp_payload_size = MaxSize}]} when
+            is_integer(MaxSize) andalso 512 =< MaxSize andalso MaxSize =< 65535
+        ->
+            MaxSize;
         {undefined, []} ->
             512;
         _ ->
@@ -575,31 +602,36 @@ encode_message_tsig_size(Name, Alg, Other) ->
     NameSize + 10 + DataSize.
 
 -spec encode_message_default(message(), number()) -> binary().
-encode_message_default(#dns_message{tc = TC, additional = Additional} = Msg, MaxSize) ->
-    BuildHead = fun(TCBool, EncQC, EncANC, EncAUC, EncADC) ->
-        Msg0 = Msg#dns_message{
-            qc = EncQC,
-            anc = EncANC,
-            auc = EncAUC,
-            adc = EncADC,
-            tc = TC orelse TCBool
-        },
-        encode_message_head(Msg0)
-    end,
-    {OptRRBin, Ad0} = encode_message_pop_optrr(Additional),
-    Pos = 12,
-    SpaceLeft = MaxSize - Pos,
-    case encode_message_d_req(Pos, SpaceLeft, Msg) of
+encode_message_default(#dns_message{additional = Additional} = Msg, MaxSize) ->
+    %% If EDNS0 is used, we need to reserve space for appending the OptRR record at its minimal
+    PreservedOptRRBinSize = preserve_optrr_size(Additional),
+    SpaceLeft = MaxSize - ?HEADER_SIZE - PreservedOptRRBinSize,
+    case encode_message_d_req(Msg, SpaceLeft) of
         {false, QC, ANC, AUC, Body} ->
-            Head = BuildHead(true, QC, ANC, AUC, 0),
-            <<Head/binary, Body/binary>>;
+            BodySize = byte_size(Body),
+            %% We ran out of space, we MUST append a OptRR EDNS0 record,
+            %% and this takes precedence over the body
+            %% Note however that according to RFC6891 §7, the question section MUST be present
+            OptRRBinMin = ensure_optrr(Additional, minimal),
+            OptRRBinSizeMin = byte_size(OptRRBinMin),
+            OptRRBinFull = ensure_optrr(Additional, full),
+            OptRRBinSizeFull = byte_size(OptRRBinFull),
+            Head = build_head(Msg, true, QC, ANC, AUC, 1),
+            SpaceForOptRR = SpaceLeft + PreservedOptRRBinSize - BodySize,
+            case {OptRRBinSizeFull =< SpaceForOptRR, OptRRBinSizeMin =< SpaceForOptRR} of
+                {false, true} ->
+                    <<Head/binary, Body/binary, OptRRBinMin/binary>>;
+                {true, _} ->
+                    <<Head/binary, Body/binary, OptRRBinFull/binary>>
+            end;
         {CompMap, QC, ANC, AUC, Body} ->
             BodySize = byte_size(Body),
+            {OptRRBin, Ad0} = encode_message_pop_optrr(Additional),
             OptRRBinSize = byte_size(OptRRBin),
-            Pos0 = BodySize + Pos,
-            case SpaceLeft - BodySize of
+            Pos0 = BodySize + ?HEADER_SIZE,
+            case SpaceLeft + PreservedOptRRBinSize - BodySize of
                 SpaceLeft0 when SpaceLeft0 < OptRRBinSize ->
-                    Head = BuildHead(true, QC, ANC, AUC, 0),
+                    Head = build_head(Msg, true, QC, ANC, AUC, 0),
                     <<Head/binary, Body/binary>>;
                 SpaceLeft0 ->
                     Pos1 = Pos0 + OptRRBinSize,
@@ -611,68 +643,70 @@ encode_message_default(#dns_message{tc = TC, additional = Additional} = Msg, Max
                         end,
                     case encode_message_d_opt(Pos1, SpaceLeft1, CompMap, Ad0) of
                         false ->
-                            Head = BuildHead(false, QC, ANC, AUC, OptC),
+                            Head = build_head(Msg, false, QC, ANC, AUC, OptC),
                             <<Head/binary, Body/binary, OptRRBin/binary>>;
                         {ADC, AdBin} ->
-                            Head = BuildHead(false, QC, ANC, AUC, OptC + ADC),
+                            Head = build_head(Msg, false, QC, ANC, AUC, OptC + ADC),
                             <<Head/binary, Body/binary, OptRRBin/binary, AdBin/binary>>
                     end
             end
     end.
 
--spec encode_message_d_req(12, number(), message()) -> {_, char(), char(), char(), bitstring()}.
-encode_message_d_req(Pos, SpaceLeft, #dns_message{} = Msg) ->
-    Msg0 = Msg#dns_message{qc = 0, anc = 0, auc = 0},
-    encode_message_d_req(Pos, SpaceLeft, new_compmap(), <<>>, Msg0).
+-spec build_head(message(), boolean(), uint16(), uint16(), uint16(), uint16()) -> message_bin().
+build_head(#dns_message{tc = TC} = Msg, TCBool, EncQC, EncANC, EncAUC, EncADC) ->
+    Msg0 = Msg#dns_message{
+        qc = EncQC,
+        anc = EncANC,
+        auc = EncAUC,
+        adc = EncADC,
+        tc = TC orelse TCBool
+    },
+    encode_message_head(Msg0).
 
--spec encode_message_d_req(pos_integer(), number(), _, bitstring(), message()) ->
-    {_, char(), char(), char(), bitstring()}.
+%% Encodes questions, authorities, and answers, for as long as there is space
+-spec encode_message_d_req(message(), integer()) ->
+    {false | compmap(), uint16(), uint16(), uint16(), bitstring()}.
+encode_message_d_req(Msg, SpaceLeft) ->
+    Msg0 = Msg#dns_message{qc = 0, anc = 0, auc = 0},
+    encode_message_d_req(Msg0, ?HEADER_SIZE, SpaceLeft, new_compmap(), <<>>).
+
+-spec encode_message_d_req(message(), pos_integer(), integer(), compmap(), bitstring()) ->
+    {false | compmap(), uint16(), uint16(), uint16(), bitstring()}.
 encode_message_d_req(
+    #dns_message{qc = QC, anc = ANC, auc = AUC} = Msg,
     Pos,
     SpaceLeft,
     CompMap,
-    Bin,
-    #dns_message{qc = QC, anc = ANC, auc = AUC} = Msg
+    Bin
 ) ->
     case encode_message_pop(Msg) of
         {additional, _} ->
             {CompMap, QC, ANC, AUC, Bin};
         {Section, Recs} ->
             RecsLen = length(Recs),
-            {CompMap0, NewBin, Recs0} = encode_message_rec_list(
-                Pos,
-                SpaceLeft,
-                CompMap,
-                Recs
-            ),
+            {CompMap0, NewBin, Recs0} = encode_message_rec_list(Pos, SpaceLeft, CompMap, Recs),
             Recs0Len = length(Recs0),
             EncodedLen = RecsLen - Recs0Len,
-            Msg0 = encode_message_put(Recs0, Section, Msg),
-            Msg1 = encode_message_updatecount(EncodedLen, Section, Msg0),
+            Msg1 = encode_message_put(Msg, Recs0, EncodedLen, Section),
             Bin0 = <<Bin/binary, NewBin/binary>>,
             case Recs0Len of
                 0 ->
                     NewBinSize = byte_size(NewBin),
                     Pos0 = Pos + NewBinSize,
                     SpaceLeft0 = SpaceLeft - NewBinSize,
-                    encode_message_d_req(
-                        Pos0,
-                        SpaceLeft0,
-                        CompMap0,
-                        Bin0,
-                        Msg1
-                    );
+                    encode_message_d_req(Msg1, Pos0, SpaceLeft0, CompMap0, Bin0);
                 _ ->
                     #dns_message{qc = QC0, anc = ANC0, auc = AUC0} = Msg1,
                     {false, QC0, ANC0, AUC0, Bin0}
             end
     end.
 
--spec encode_message_d_opt(pos_integer(), number(), _, [
-    [{_, _, _, _, _, _}]
-    | optrr()
-    | rr()
-]) -> false | {non_neg_integer(), bitstring()}.
+-spec encode_message_d_opt(
+    pos_integer(),
+    number(),
+    compmap(),
+    records()
+) -> false | {non_neg_integer(), bitstring()}.
 encode_message_d_opt(Pos, SpaceLeft, CompMap, Recs) ->
     case encode_message_rec_list(Pos, SpaceLeft, CompMap, Recs) of
         {_, Bin, []} -> {length(Recs), Bin};
@@ -681,21 +715,19 @@ encode_message_d_opt(Pos, SpaceLeft, CompMap, Recs) ->
 
 -spec encode_message_axfr(message(), number()) -> binary() | {binary(), message()}.
 encode_message_axfr(#dns_message{} = Msg, MaxSize) ->
-    Pos = 12,
+    Pos = ?HEADER_SIZE,
     SpaceLeft = MaxSize - Pos,
-    encode_message_axfr(Pos, SpaceLeft, new_compmap(), <<>>, Msg).
+    encode_message_axfr(Msg, Pos, SpaceLeft, new_compmap(), <<>>).
 
--spec encode_message_axfr(pos_integer(), number(), _, binary(), message()) ->
+-spec encode_message_axfr(message(), pos_integer(), number(), compmap(), binary()) ->
     binary() | {binary(), message()}.
-encode_message_axfr(Pos, SpaceLeft, CompMap, Bin, #dns_message{} = Msg) ->
+encode_message_axfr(Msg, Pos, SpaceLeft, CompMap, Bin) ->
     {Section, Recs} = encode_message_pop(Msg),
     RecsLen = length(Recs),
-    {CompMap0, NewBin, Recs0} =
-        encode_message_rec_list(Pos, SpaceLeft, CompMap, Recs),
+    {CompMap0, NewBin, Recs0} = encode_message_rec_list(Pos, SpaceLeft, CompMap, Recs),
     Recs0Len = length(Recs0),
     EncodedLen = RecsLen - Recs0Len,
-    Msg0 = encode_message_put(Recs0, Section, Msg),
-    Msg1 = encode_message_updatecount(EncodedLen, Section, Msg0),
+    Msg1 = encode_message_put(Msg, Recs0, EncodedLen, Section),
     case Recs0Len of
         0 when Section =:= additional ->
             Head = encode_message_head(Msg1),
@@ -705,7 +737,7 @@ encode_message_axfr(Pos, SpaceLeft, CompMap, Bin, #dns_message{} = Msg) ->
             Pos0 = Pos + NewBinSize,
             SpaceLeft0 = SpaceLeft - NewBinSize,
             Bin0 = <<Bin/binary, NewBin/binary>>,
-            encode_message_axfr(Pos0, SpaceLeft0, CompMap0, Bin0, Msg1);
+            encode_message_axfr(Msg1, Pos0, SpaceLeft0, CompMap0, Bin0);
         _ ->
             Head = encode_message_head(Msg1),
             Msg2 = encode_message_a_setcounts(Msg1),
@@ -722,20 +754,19 @@ encode_message_pop(#dns_message{answers = [_ | _] = Recs}) -> {answers, Recs};
 encode_message_pop(#dns_message{authority = [_ | _] = Recs}) -> {authority, Recs};
 encode_message_pop(#dns_message{additional = Recs}) -> {additional, Recs}.
 
--spec encode_message_put(
-    [[rr()] | query() | optrr() | rr()],
-    additional | answers | authority | questions,
-    message()
-) ->
-    message().
-encode_message_put(Recs, questions, #dns_message{} = Msg) ->
-    Msg#dns_message{questions = Recs};
-encode_message_put(Recs, answers, #dns_message{} = Msg) ->
-    Msg#dns_message{answers = Recs};
-encode_message_put(Recs, authority, #dns_message{} = Msg) ->
-    Msg#dns_message{authority = Recs};
-encode_message_put(Recs, additional, #dns_message{} = Msg) ->
-    Msg#dns_message{additional = Recs}.
+-spec encode_message_put
+    (message(), questions(), uint16(), questions) -> message();
+    (message(), answers(), uint16(), answers) -> message();
+    (message(), authority(), uint16(), authority) -> message();
+    (message(), additional(), uint16(), additional) -> message().
+encode_message_put(Msg, Recs, Count, questions) ->
+    Msg#dns_message{qc = Count, questions = Recs};
+encode_message_put(Msg, Recs, Count, answers) ->
+    Msg#dns_message{anc = Count, answers = Recs};
+encode_message_put(Msg, Recs, Count, authority) ->
+    Msg#dns_message{auc = Count, authority = Recs};
+encode_message_put(Msg, Recs, Count, additional) ->
+    Msg#dns_message{adc = Count, additional = Recs}.
 
 -spec encode_message_a_setcounts(message()) -> message().
 encode_message_a_setcounts(
@@ -752,19 +783,6 @@ encode_message_a_setcounts(
         auc = length(Authority),
         adc = length(Additional)
     }.
-
--spec encode_message_updatecount(
-    char(), additional | answers | authority | questions, message()
-) ->
-    message().
-encode_message_updatecount(Count, questions, #dns_message{} = Msg) ->
-    Msg#dns_message{qc = Count};
-encode_message_updatecount(Count, answers, #dns_message{} = Msg) ->
-    Msg#dns_message{anc = Count};
-encode_message_updatecount(Count, authority, #dns_message{} = Msg) ->
-    Msg#dns_message{auc = Count};
-encode_message_updatecount(Count, additional, #dns_message{} = Msg) ->
-    Msg#dns_message{adc = Count}.
 
 -spec encode_message_head(message()) -> <<_:96>>.
 encode_message_head(#dns_message{
@@ -802,7 +820,7 @@ encode_message_llq(
     AuthorityLen = length(Authority),
     AdditionalLen = length(Additional),
     AuAd = Authority ++ Additional,
-    Pos = 12,
+    Pos = ?HEADER_SIZE,
     SpaceLeft = MaxSize - Pos,
     {CompMap0, QBin, []} =
         encode_message_rec_list(Pos, SpaceLeft, new_compmap(), Q),
@@ -829,21 +847,22 @@ encode_message_llq(
         false -> {Bin, Msg#dns_message{anc = LeftoverAnC, answers = LeftoverAn}}
     end.
 
--spec encode_message_rec_list(pos_integer(), number(), _, [
-    [{_, _, _, _, _, _}]
-    | query()
-    | optrr()
-    | rr()
-]) -> {_, bitstring(), [[any()] | {_, _, _, _} | {_, _, _, _, _, _}]}.
+-spec encode_message_rec_list(
+    pos_integer(),
+    number(),
+    compmap(),
+    records()
+) -> {compmap(), bitstring(), records()}.
 encode_message_rec_list(Pos, SpaceLeft, CompMap, Recs) ->
     encode_message_rec_list(Pos, SpaceLeft, CompMap, <<>>, Recs).
 
--spec encode_message_rec_list(pos_integer(), number(), _, bitstring(), [
-    [{_, _, _, _, _, _}]
-    | query()
-    | optrr()
-    | rr()
-]) -> {_, bitstring(), [[any()] | {_, _, _, _} | {_, _, _, _, _, _}]}.
+-spec encode_message_rec_list(
+    pos_integer(),
+    number(),
+    _,
+    bitstring(),
+    records()
+) -> {compmap(), bitstring(), records()}.
 encode_message_rec_list(Pos, SpaceLeft, CompMap, Body, [Rec | Rest] = Recs) ->
     {CompMap0, NewBin} = encode_message_rec(CompMap, Pos, Rec),
     NewBinSize = byte_size(NewBin),
@@ -855,28 +874,16 @@ encode_message_rec_list(Pos, SpaceLeft, CompMap, Body, [Rec | Rest] = Recs) ->
         _ ->
             {CompMap, Body, Recs}
     end;
-encode_message_rec_list(_Pos, _SpaceLeft, CompMap, Body, [] = Recs) ->
-    {CompMap, Body, Recs}.
+encode_message_rec_list(_Pos, _SpaceLeft, CompMap, Body, []) ->
+    {CompMap, Body, []}.
 
--spec encode_message_rec(_, non_neg_integer(), query() | optrr() | rr()) -> {_, <<_:32, _:_*8>>}.
+-spec encode_message_rec(compmap(), non_neg_integer(), query() | optrr() | rr()) ->
+    {compmap(), <<_:32, _:_*8>>}.
 encode_message_rec(CompMap, Pos, #dns_query{name = N, type = T, class = C}) ->
     {NameBin, CompMap0} = encode_dname(CompMap, Pos, N),
     {CompMap0, <<NameBin/binary, T:16, C:16>>};
-encode_message_rec(CompMap, _Pos, #dns_optrr{
-    udp_payload_size = UPS,
-    ext_rcode = ExtRcode,
-    version = Version,
-    dnssec = DNSSEC,
-    data = Data
-}) ->
-    IntClass = UPS,
-    DNSSECBit = encode_bool(DNSSEC),
-    RRBin = encode_optrrdata(Data),
-    RRBinSize = byte_size(RRBin),
-    NewBin =
-        <<0, 41:16, IntClass:16, ExtRcode:8, Version:8, DNSSECBit:1, 0:15, RRBinSize:16,
-            RRBin/binary>>,
-    {CompMap, NewBin};
+encode_message_rec(CompMap, _Pos, #dns_optrr{} = OptRR) ->
+    {CompMap, encode_optrr(OptRR)};
 encode_message_rec(CompMap, Pos, #dns_rr{
     name = N,
     type = T,
@@ -890,36 +897,48 @@ encode_message_rec(CompMap, Pos, #dns_rr{
     DSize = byte_size(DBin),
     {CompMap1, <<NameBin/binary, T:16, C:16, TTL:32, DSize:16, DBin/binary>>}.
 
--spec encode_message_pop_optrr([
-    [{_, _, _, _, _, _}]
-    | optrr()
-    | rr()
-]) ->
-    {binary(), [
-        [{_, _, _, _, _, _}]
-        | optrr()
-        | rr()
-    ]}.
-encode_message_pop_optrr([
-    #dns_optrr{
-        udp_payload_size = UPS,
-        ext_rcode = ExtRcode,
-        version = Version,
-        dnssec = DNSSEC,
-        data = Data
-    }
-    | Rest
-]) ->
-    Class = UPS,
+-spec encode_message_pop_optrr(additional()) -> {binary(), additional()}.
+encode_message_pop_optrr([#dns_optrr{} = OptRR | Rest]) ->
+    {encode_optrr(OptRR), Rest};
+encode_message_pop_optrr(Other) ->
+    {<<>>, Other}.
+
+-spec ensure_optrr(additional(), minimal | full) -> binary().
+ensure_optrr([#dns_optrr{} = OptRR | _], full) ->
+    encode_optrr(OptRR);
+ensure_optrr([#dns_optrr{} = OptRR | _], minimal) ->
+    encode_optrr(OptRR#dns_optrr{data = []});
+ensure_optrr(_, _) ->
+    <<>>.
+
+-spec preserve_optrr_size(additional()) -> non_neg_integer().
+preserve_optrr_size([#dns_optrr{} | _]) ->
+    ?OPTRR_MIN_SIZE;
+preserve_optrr_size(_) ->
+    0.
+
+-spec encode_optrr(optrr()) -> binary().
+encode_optrr(#dns_optrr{
+    udp_payload_size = UPS,
+    ext_rcode = ExtRcode0,
+    version = Version0,
+    dnssec = DNSSEC,
+    data = Data
+}) ->
+    %% TODO: if returning BADVERS, we want to avoid returning any answer in the top #dns_message{}
+    {Version, ExtRcode} = ensure_edns_version(Version0, ExtRcode0),
     DNSSECBit = encode_bool(DNSSEC),
     RRBin = encode_optrrdata(Data),
     RRBinSize = byte_size(RRBin),
-    Bin =
-        <<0, 41:16, Class:16, ExtRcode:8, Version:8, DNSSECBit:1, 0:15, RRBinSize:16,
-            RRBin/binary>>,
-    {Bin, Rest};
-encode_message_pop_optrr(Other) ->
-    {<<>>, Other}.
+    <<0, ?DNS_TYPE_OPT:16, UPS:16, ExtRcode:8, Version:8, DNSSECBit:1, 0:15, RRBinSize:16,
+        RRBin/binary>>.
+
+ensure_edns_version(Version, ExtRcode) when
+    ?DNS_EDNS_MIN_VERSION =< Version andalso Version =< ?DNS_EDNS_MAX_VERSION
+->
+    {Version, ExtRcode};
+ensure_edns_version(_, _) ->
+    {?DNS_EDNS_MAX_VERSION, ?DNS_ERCODE_BADVERS_NUMBER}.
 
 %% @doc Returns a random integer suitable for use as DNS message identifier.
 -spec random_id() -> message_id().
@@ -1545,12 +1564,13 @@ decode_rrdata(_Class, _Type, Bin, _MsgBin) ->
     Bin.
 
 %% @private
--spec encode_rrdata(_, rrdata()) -> any().
+-spec encode_rrdata(_, rrdata()) -> binary().
 encode_rrdata(Class, Data) ->
     {Bin, undefined} = encode_rrdata(0, Class, Data, undefined),
     Bin.
 
--spec encode_rrdata(non_neg_integer(), _, rrdata(), _) -> {_, _}.
+-spec encode_rrdata(non_neg_integer(), _, rrdata(), undefined | compmap()) ->
+    {binary(), undefined | compmap()}.
 encode_rrdata(_Pos, Class, #dns_rrdata_a{ip = {A, B, C, D}}, CompMap) when
     ?CLASS_IS_IN(Class)
 ->
@@ -2180,22 +2200,21 @@ decode_nxt_bmp(<<1:1, Rest/bitstring>>, Offset, Types) ->
 decode_nxt_bmp(<<0:1, Rest/bitstring>>, Offset, Types) ->
     decode_nxt_bmp(Rest, Offset + 1, Types).
 
--spec encode_nxt_bmp([any()]) -> bitstring().
+-spec encode_nxt_bmp([non_neg_integer()]) -> bitstring().
 encode_nxt_bmp(UnsortedTypes) when is_list(UnsortedTypes) ->
     Types = lists:usort(UnsortedTypes),
-    encode_nxt_bmp(0, Types, <<>>).
+    encode_nxt_bmp(Types, 0, <<>>).
 
--spec encode_nxt_bmp(_, [integer()], bitstring()) -> bitstring().
-encode_nxt_bmp(_LastType, [], BMP) ->
+-spec encode_nxt_bmp([non_neg_integer()], non_neg_integer(), bitstring()) -> bitstring().
+encode_nxt_bmp([], _LastType, BMP) ->
     pad_bmp(BMP);
-encode_nxt_bmp(LastType, [Type | Types], BMP) ->
-    PadBy =
-        case LastType of
-            0 -> Type;
-            LastType -> Type - LastType - 1
-        end,
+encode_nxt_bmp([Type | Types], 0, BMP) ->
+    NewBMP = <<BMP/bitstring, 0:Type/unit:1, 1:1>>,
+    encode_nxt_bmp(Types, Type, NewBMP);
+encode_nxt_bmp([Type | Types], LastType, BMP) ->
+    PadBy = Type - LastType - 1,
     NewBMP = <<BMP/bitstring, 0:PadBy/unit:1, 1:1>>,
-    encode_nxt_bmp(Type, Types, NewBMP).
+    encode_nxt_bmp(Types, Type, NewBMP).
 
 -spec pad_bmp(bitstring()) -> bitstring().
 pad_bmp(BMP) when is_binary(BMP) -> BMP;
@@ -2206,28 +2225,20 @@ pad_bmp(BMP) when is_bitstring(BMP) ->
 %%%===================================================================
 %%% EDNS data functions
 
--spec decode_optrrdata(binary()) -> [Elem] when
-    Elem :: opt_nsid() | opt_ul() | opt_unknown() | opt_ecs() | opt_llq() | opt_owner().
+-spec decode_optrrdata(binary()) -> [optrr_elem()].
 decode_optrrdata(<<>>) ->
     [];
 decode_optrrdata(Bin) ->
     decode_optrrdata(Bin, []).
 
--spec decode_optrrdata(binary(), [Elem]) -> [Elem] when
-    Elem :: opt_nsid() | opt_ul() | opt_unknown() | opt_ecs() | opt_llq() | opt_owner().
+-spec decode_optrrdata(binary(), [optrr_elem()]) -> [optrr_elem()].
 decode_optrrdata(<<>>, Opts) ->
     lists:reverse(Opts);
 decode_optrrdata(<<EOptNum:16, EOptLen:16, EOptBin:EOptLen/binary, Rest/binary>>, Opts) ->
     NewOpt = do_decode_optrrdata(EOptNum, EOptBin),
     decode_optrrdata(Rest, [NewOpt | Opts]).
 
--spec do_decode_optrrdata(uint16(), binary() | _) ->
-    opt_nsid()
-    | opt_ul()
-    | opt_unknown()
-    | opt_ecs()
-    | opt_llq()
-    | opt_owner().
+-spec do_decode_optrrdata(uint16(), binary()) -> optrr_elem().
 do_decode_optrrdata(?DNS_EOPTCODE_LLQ, <<1:16, OC:16, EC:16, Id:64, LeaseLife:32>>) ->
     #dns_opt_llq{opcode = OC, errorcode = EC, id = Id, leaselife = LeaseLife};
 do_decode_optrrdata(?DNS_EOPTCODE_NSID, <<Data/binary>>) ->
@@ -2262,18 +2273,19 @@ do_decode_optrrdata(?DNS_EOPTCODE_ECS, <<FAMILY:16, SRCPL:8, SCOPEPL:8, Payload/
 do_decode_optrrdata(EOpt, <<Bin/binary>>) ->
     #dns_opt_unknown{id = EOpt, bin = Bin}.
 
--spec encode_optrrdata(
-    [any()]
-    | opt_nsid()
-    | opt_ul()
-    | opt_unknown()
-    | opt_ecs()
-    | opt_llq()
-    | opt_owner()
-) -> bitstring() | {integer(), binary()}.
+-spec encode_optrrdata([optrr_elem()]) -> bitstring() | {integer(), binary()}.
 encode_optrrdata(Opts) when is_list(Opts) ->
-    encode_optrrdata(lists:reverse(Opts), <<>>);
-encode_optrrdata(#dns_opt_llq{
+    encode_optrrdata(Opts, <<>>).
+
+-spec encode_optrrdata([optrr_elem()], bitstring()) -> bitstring().
+encode_optrrdata([], Bin) ->
+    Bin;
+encode_optrrdata([Opt | Opts], Bin) ->
+    {Id, NewBin} = do_encode_optrrdata(Opt),
+    Len = byte_size(NewBin),
+    encode_optrrdata(Opts, <<Bin/binary, Id:16, Len:16, NewBin/binary>>).
+
+do_encode_optrrdata(#dns_opt_llq{
     opcode = OC,
     errorcode = EC,
     id = Id,
@@ -2281,11 +2293,11 @@ encode_optrrdata(#dns_opt_llq{
 }) ->
     Data = <<1:16, OC:16, EC:16, Id:64, Length:32>>,
     {?DNS_EOPTCODE_LLQ, Data};
-encode_optrrdata(#dns_opt_ul{lease = Lease}) ->
+do_encode_optrrdata(#dns_opt_ul{lease = Lease}) ->
     {?DNS_EOPTCODE_UL, <<Lease:32>>};
-encode_optrrdata(#dns_opt_nsid{data = Data}) when is_binary(Data) ->
+do_encode_optrrdata(#dns_opt_nsid{data = Data}) when is_binary(Data) ->
     {?DNS_EOPTCODE_NSID, Data};
-encode_optrrdata(#dns_opt_owner{
+do_encode_optrrdata(#dns_opt_owner{
     seq = S,
     primary_mac = PMAC,
     wakeup_mac = WMAC,
@@ -2296,7 +2308,7 @@ encode_optrrdata(#dns_opt_owner{
 ->
     Bin = <<0:8, S:8, PMAC/binary, WMAC/binary, Password/binary>>,
     {?DNS_EOPTCODE_OWNER, Bin};
-encode_optrrdata(#dns_opt_owner{
+do_encode_optrrdata(#dns_opt_owner{
     seq = S,
     primary_mac = PMAC,
     wakeup_mac = WMAC,
@@ -2305,11 +2317,11 @@ encode_optrrdata(#dns_opt_owner{
     byte_size(PMAC) =:= 6 andalso byte_size(WMAC) =:= 6
 ->
     {?DNS_EOPTCODE_OWNER, <<0:8, S:8, PMAC/binary, WMAC/binary>>};
-encode_optrrdata(#dns_opt_owner{seq = S, primary_mac = PMAC, _ = <<>>}) when
+do_encode_optrrdata(#dns_opt_owner{seq = S, primary_mac = PMAC, _ = <<>>}) when
     byte_size(PMAC) =:= 6
 ->
     {?DNS_EOPTCODE_OWNER, <<0:8, S:8, PMAC/binary>>};
-encode_optrrdata(
+do_encode_optrrdata(
     #dns_opt_ecs{
         family = FAMILY,
         source_prefix_length = SRCPL,
@@ -2319,29 +2331,10 @@ encode_optrrdata(
 ) ->
     Data = <<FAMILY:16, SRCPL:8, SCOPEPL:8, ADDRESS/binary>>,
     {?DNS_EOPTCODE_ECS, Data};
-encode_optrrdata(#dns_opt_unknown{id = Id, bin = Data}) when
+do_encode_optrrdata(#dns_opt_unknown{id = Id, bin = Data}) when
     is_integer(Id) andalso is_binary(Data)
 ->
     {Id, Data}.
-
--spec encode_optrrdata(
-    [
-        [any()]
-        | opt_nsid()
-        | opt_ul()
-        | opt_unknown()
-        | opt_ecs()
-        | opt_llq()
-        | opt_owner()
-    ],
-    bitstring()
-) -> bitstring().
-encode_optrrdata([], Bin) ->
-    Bin;
-encode_optrrdata([Opt | Opts], Bin) ->
-    {Id, NewBin} = encode_optrrdata(Opt),
-    Len = byte_size(NewBin),
-    encode_optrrdata(Opts, <<Id:16, Len:16, NewBin/binary, Bin/binary>>).
 
 %%%===================================================================
 %%% Domain name functions
@@ -2417,8 +2410,9 @@ decode_dnameonly(Bin, MsgBin) ->
         _ -> throw(trailing_garbage)
     end.
 
--spec new_compmap() -> gb_trees:tree(_, _).
-new_compmap() -> gb_trees:empty().
+-spec new_compmap() -> compmap().
+new_compmap() ->
+    #{}.
 
 %% @private
 -spec encode_dname(binary()) -> nonempty_binary().
@@ -2426,11 +2420,12 @@ encode_dname(Name) ->
     Labels = <<<<(byte_size(L)), L/binary>> || L <- dname_to_labels(Name)>>,
     <<Labels/binary, 0>>.
 
--spec encode_dname(_, non_neg_integer(), binary()) -> {binary(), _}.
+-spec encode_dname(compmap(), non_neg_integer(), binary()) -> {binary(), undefined | compmap()}.
 encode_dname(CompMap, Pos, Name) ->
     encode_dname(<<>>, CompMap, Pos, Name).
 
--spec encode_dname(binary(), _, non_neg_integer(), binary()) -> {binary(), _}.
+-spec encode_dname(binary(), undefined | compmap(), non_neg_integer(), binary()) ->
+    {binary(), undefined | compmap()}.
 encode_dname(Bin, undefined, _Pos, Name) ->
     DNameBin = encode_dname(Name),
     {<<Bin/binary, DNameBin/binary>>, undefined};
@@ -2439,18 +2434,16 @@ encode_dname(Bin, CompMap, Pos, Name) ->
     LwrLabels = dname_to_labels(dname_to_lower(Name)),
     encode_dname_labels(Bin, CompMap, Pos, Labels, LwrLabels).
 
--spec encode_dname_labels(binary(), _, non_neg_integer(), [binary()], [binary()]) ->
-    {nonempty_binary(), _}.
+-spec encode_dname_labels(binary(), compmap(), non_neg_integer(), [binary()], [binary()]) ->
+    {nonempty_binary(), compmap()}.
 encode_dname_labels(Bin, CompMap, _Pos, [], []) ->
     {<<Bin/binary, 0>>, CompMap};
 encode_dname_labels(Bin, CompMap, Pos, [L | Ls], [_ | LwrLs] = LwrLabels) ->
-    case gb_trees:lookup(LwrLabels, CompMap) of
-        {value, Ptr} ->
-            {<<Bin/binary, 3:2, Ptr:14>>, CompMap};
-        none ->
+    case maps:get(LwrLabels, CompMap, undefined) of
+        undefined ->
             NewCompMap =
                 case Pos < (1 bsl 14) of
-                    true -> gb_trees:insert(LwrLabels, Pos, CompMap);
+                    true -> CompMap#{LwrLabels => Pos};
                     false -> CompMap
                 end,
             Size = byte_size(L),
@@ -2461,7 +2454,9 @@ encode_dname_labels(Bin, CompMap, Pos, [L | Ls], [_ | LwrLs] = LwrLabels) ->
                 NewPos,
                 Ls,
                 LwrLs
-            )
+            );
+        Ptr ->
+            {<<Bin/binary, 3:2, Ptr:14>>, CompMap}
     end.
 
 %% @doc Splits a dname into a list of labels and removes unneeded escapes.
@@ -2672,6 +2667,7 @@ type_name(Int) when is_integer(Int) ->
         ?DNS_TYPE_UID_NUMBER -> ?DNS_TYPE_UID_BSTR;
         ?DNS_TYPE_GID_NUMBER -> ?DNS_TYPE_GID_BSTR;
         ?DNS_TYPE_UNSPEC_NUMBER -> ?DNS_TYPE_UNSPEC_BSTR;
+        ?DNS_TYPE_NXNAME_NUMBER -> ?DNS_TYPE_NXNAME_BSTR;
         ?DNS_TYPE_TKEY_NUMBER -> ?DNS_TYPE_TKEY_BSTR;
         ?DNS_TYPE_TSIG_NUMBER -> ?DNS_TYPE_TSIG_BSTR;
         ?DNS_TYPE_IXFR_NUMBER -> ?DNS_TYPE_IXFR_BSTR;
@@ -2786,13 +2782,11 @@ alg_name(Int) when is_integer(Int) ->
 
 %% @doc Return current unix time.
 -spec unix_time() -> unix_time().
-
 unix_time() ->
     unix_time(erlang:timestamp()).
 
 %% @doc Return the unix time from a now or universal time.
 -spec unix_time(erlang:timestamp() | calendar:datetime1970()) -> unix_time().
-
 unix_time({_MegaSecs, _Secs, _MicroSecs} = NowTime) ->
     UniversalTime = calendar:now_to_universal_time(NowTime),
     unix_time(UniversalTime);
@@ -2883,8 +2877,7 @@ decode_svcb_svc_params(
 ) ->
     decode_svcb_svc_params(Rest, SvcParams#{?DNS_SVCB_PARAM_IPV6HINT => SvcParamValueBin}).
 
--spec encode_svcb_svc_params(map()) -> binary().
-
+-spec encode_svcb_svc_params(svcb_svc_params()) -> binary().
 encode_svcb_svc_params(SvcParams) ->
     SortedKeys = lists:sort(maps:keys(SvcParams)),
     lists:foldl(
@@ -2895,7 +2888,7 @@ encode_svcb_svc_params(SvcParams) ->
         SortedKeys
     ).
 
--spec encode_svcb_svc_params_value(_, _, _) -> any().
+-spec encode_svcb_svc_params_value(atom() | 1..6, none | char() | binary(), binary()) -> binary().
 encode_svcb_svc_params_value(alpn, V, Bin) ->
     encode_svcb_svc_params_value(?DNS_SVCB_PARAM_ALPN, V, Bin);
 encode_svcb_svc_params_value(?DNS_SVCB_PARAM_ALPN = K, V, Bin) ->

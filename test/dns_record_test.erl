@@ -4,7 +4,7 @@
 -include_lib("eunit/include/eunit.hrl").
 
 dnssec_cases() ->
-    {ok, Cases} = file:consult(filename:join("priv", "dnssec_samples.txt")),
+    {ok, Cases} = file:consult(filename:join("test", "dnssec_samples.txt")),
     [
         {ZoneName, dns:decode_message(Bin)}
      || {ZoneName, _RawKeys, Bin} <- Cases
@@ -32,14 +32,14 @@ optrr_cases() ->
     ].
 
 rrdata_cases() ->
-    {ok, Cases} = file:consult(filename:join("priv", "rrdata_wire_samples.txt")),
+    {ok, Cases} = file:consult(filename:join("test", "rrdata_wire_samples.txt")),
     [
         {lists:flatten(io_lib:format("~p/~p", [Class, Type])), dns:decode_rrdata(Class, Type, Bin)}
      || {Class, Type, Bin} <- Cases
     ].
 
 tsig_cases() ->
-    {ok, Cases} = file:consult(filename:join("priv", "tsig_wire_samples.txt")),
+    {ok, Cases} = file:consult(filename:join("test", "tsig_wire_samples.txt")),
     [{Name, dns:decode_message(Msg)} || {Name, Msg} <- Cases].
 
 tests(Cases, Serialise, Deserialise) ->

@@ -18,6 +18,22 @@
 %%
 %% -------------------------------------------------------------------
 -module(dnssec).
+-if(?OTP_RELEASE >= 27).
+-define(MODULEDOC(Str), -moduledoc(Str)).
+-define(DOC(Str), -doc(Str)).
+-else.
+-define(MODULEDOC(Str), -compile([])).
+-define(DOC(Str), -compile([])).
+-endif.
+?MODULEDOC("""
+The `dnssec` module exports functions used for generating NSEC responses,
+signing and verifying RRSIGs, and adding keytags to DNSKEY records.
+
+For example, the `sign_rr/6` function can be given a collection of resource records,
+the signer name, keytag, signing algorithm, private key, and a collection of options
+and it will return a list of RRSIG records. Currently only DSA and RSA algorithms are
+supported for signing RRSETs.
+""").
 
 %% API
 -export([gen_nsec/1, gen_nsec/3, gen_nsec/4]).
@@ -40,6 +56,7 @@
 -export_type([
     sigalg/0,
     nsec3_hashalg/0,
+    nsec3_hashalg_fun/0,
     nsec3_salt/0,
     nsec3_iterations/0,
     gen_nsec_opt/0,
@@ -58,6 +75,7 @@
     | ?DNS_ALG_RSASHA256
     | ?DNS_ALG_RSASHA512.
 -type nsec3_hashalg() :: ?DNSSEC_NSEC3_ALG_SHA1.
+-type nsec3_hashalg_fun() :: fun((iodata()) -> binary()).
 -type nsec3_salt() :: binary().
 -type nsec3_iterations() :: non_neg_integer().
 -type gen_nsec_opt() :: {base_types, [dns:type()]}.
@@ -240,15 +258,26 @@ gen_nsec3(RRs, ZoneName, Alg, Salt, Iterations, TTL, Class, Opts) ->
     add_next_hash(Sorted).
 
 %% @doc NSEC3 iterative hash function
--spec ih(
-    nsec3_hashalg() | fun((binary()) -> binary()),
-    nsec3_salt(),
-    binary(),
-    non_neg_integer()
-) -> binary().
-ih(H, Salt, X, 0) when is_function(H, 1) -> H([X, Salt]);
-ih(H, Salt, X, I) when is_function(H, 1) -> ih(H, Salt, H([X, Salt]), I - 1);
-ih(?DNSSEC_NSEC3_ALG_SHA1, Salt, X, I) -> ih(fun(Data) -> crypto:hash(sha, Data) end, Salt, X, I).
+-spec ih(nsec3_hashalg() | nsec3_hashalg_fun(), nsec3_salt(), binary(), nsec3_iterations()) ->
+    binary().
+ih(?DNSSEC_NSEC3_ALG_SHA1, Salt, X, I) when is_binary(Salt), is_binary(X), is_integer(I), 0 =< I ->
+    ih_nsec3(Salt, X, I);
+ih(H, Salt, X, I) when is_function(H, 1), is_binary(Salt), is_binary(X), is_integer(I), 0 =< I ->
+    ih_nsec3_custom(H, Salt, X, I).
+
+%% Optimise for the common case
+-spec ih_nsec3(nsec3_salt(), binary(), nsec3_iterations()) -> binary().
+ih_nsec3(Salt, X, 0) ->
+    crypto:hash(sha, [X, Salt]);
+ih_nsec3(Salt, X, I) ->
+    ih_nsec3(Salt, crypto:hash(sha, [X, Salt]), I - 1).
+
+-spec ih_nsec3_custom(fun((iodata()) -> binary()), nsec3_salt(), binary(), nsec3_iterations()) ->
+    binary().
+ih_nsec3_custom(H, Salt, X, 0) ->
+    H([X, Salt]);
+ih_nsec3_custom(H, Salt, X, I) ->
+    ih_nsec3_custom(H, Salt, H([X, Salt]), I - 1).
 
 -spec add_next_hash([dns:rr(), ...]) -> [dns:rr(), ...].
 add_next_hash([#dns_rr{data = #dns_rrdata_nsec3{hash = First}} | _] = Hashes) ->
@@ -273,72 +302,72 @@ add_next_hash(
 normalise_rr(#dns_rr{name = Name} = RR) ->
     RR#dns_rr{name = dns:dname_to_lower(Name)}.
 
--spec build_rrmap([dns:rr()], _) -> [{_, _}].
+-spec build_rrmap([dns:rr()], [integer()]) -> [{_, _}].
 build_rrmap(RR, BaseTypes) ->
     Base = build_rrmap_gbt(RR, BaseTypes),
-    gb_trees:to_list(Base).
+    maps:to_list(Base).
 
--spec build_rrmap([dns:rr()], _, _) -> [{_, _}].
+-spec build_rrmap([dns:rr()], [integer()], _) -> [{_, _}].
 build_rrmap(RR, BaseTypes, ZoneName) ->
     Base = build_rrmap_gbt(RR, BaseTypes),
-    WithNonTerm = build_rrmap_nonterm(ZoneName, gb_trees:keys(Base), Base),
-    gb_trees:to_list(WithNonTerm).
+    WithNonTerm = build_rrmap_nonterm(ZoneName, maps:keys(Base), Base),
+    maps:to_list(WithNonTerm).
 
--spec build_rrmap_nonterm(_, [any()], gb_trees:tree(_, _)) -> gb_trees:tree(_, _).
-build_rrmap_nonterm(_, [], GBT) ->
-    GBT;
-build_rrmap_nonterm(ZoneName, [{Name, Class} | Rest], GBT) when
-    is_binary(ZoneName)
-->
+-spec build_rrmap_nonterm(_, [{dns:dname(), dns:class()} | binary()], #{
+    {dns:dname(), dns:class()} => [integer()]
+}) ->
+    #{{dns:dname(), dns:class()} => [integer()]}.
+build_rrmap_nonterm(_, [], Map) ->
+    Map;
+build_rrmap_nonterm(ZoneName, [{Name, Class} | Rest], Map) when is_binary(ZoneName) ->
     NameAncs = name_ancestors(Name, ZoneName),
-    NewGBT = build_rrmap_nonterm(Class, NameAncs, GBT),
-    build_rrmap_nonterm(ZoneName, Rest, NewGBT);
-build_rrmap_nonterm(Class, [Name | Rest], GBT) ->
+    NewMap = build_rrmap_nonterm(Class, NameAncs, Map),
+    build_rrmap_nonterm(ZoneName, Rest, NewMap);
+build_rrmap_nonterm(Class, [Name | Rest], Map) ->
     Key = {Name, Class},
-    case gb_trees:is_defined(Key, GBT) of
+    case maps:is_key(Key, Map) of
         true ->
-            GBT;
+            Map;
         false ->
-            NewGBT = gb_trees:insert(Key, [], GBT),
-            build_rrmap_nonterm(Class, Rest, NewGBT)
+            NewMap = Map#{Key => []},
+            build_rrmap_nonterm(Class, Rest, NewMap)
     end.
 
--spec build_rrmap_gbt([dns:rr()], _) -> gb_trees:tree(_, _).
+-spec build_rrmap_gbt([dns:rr()], [integer()]) -> #{{dns:dname(), dns:class()} => [integer()]}.
 build_rrmap_gbt(RR, BaseTypes) ->
-    build_rrmap_gbt(RR, BaseTypes, gb_trees:empty()).
+    build_rrmap_gbt(RR, BaseTypes, #{}).
 
--spec build_rrmap_gbt([dns:rr()], _, gb_trees:tree(_, _)) -> gb_trees:tree(_, _).
-build_rrmap_gbt([], _BaseTypes, GBT) ->
-    GBT;
-build_rrmap_gbt([#dns_rr{} = RR | Rest], BaseTypes, GBT) ->
+-spec build_rrmap_gbt([dns:rr()], [integer()], #{{dns:dname(), dns:class()} => [integer()]}) ->
+    #{{dns:dname(), dns:class()} => [integer()]}.
+build_rrmap_gbt([], _BaseTypes, Map) ->
+    Map;
+build_rrmap_gbt([#dns_rr{} = RR | Rest], BaseTypes, Map) ->
     #dns_rr{name = Name, class = Class, type = Type} = normalise_rr(RR),
     Key = {Name, Class},
-    NewGBT =
-        case gb_trees:lookup(Key, GBT) of
-            {value, Types} ->
-                case lists:member(Type, Types) of
-                    true -> GBT;
-                    false -> gb_trees:update(Key, [Type | Types], GBT)
-                end;
-            none ->
-                Types = [Type | BaseTypes],
-                gb_trees:insert(Key, Types, GBT)
+    NewMap = maps:update_with(
+        Key,
+        fun(Types) ->
+            case lists:member(Type, Types) of
+                true -> Types;
+                false -> [Type | Types]
+            end
         end,
-    build_rrmap_gbt(Rest, BaseTypes, NewGBT).
+        [Type | BaseTypes],
+        Map
+    ),
+    build_rrmap_gbt(Rest, BaseTypes, NewMap).
 
 -type tree_key() :: {dns:dname(), dns:class(), dns:type()}.
 
 -spec rrs_to_rrsets([dns:rr()]) -> [[dns:rr()]].
 rrs_to_rrsets(RR) when is_list(RR) ->
-    rrs_to_rrsets(gb_trees:empty(), dict:new(), RR).
+    rrs_to_rrsets(RR, #{}, #{}).
 
--spec rrs_to_rrsets(gb_trees:tree(tree_key(), dns:ttl()), dict:dict(tree_key(), dns:rrdata()), [
-    dns:rr()
-]) ->
+-spec rrs_to_rrsets([dns:rr()], #{tree_key() => dns:ttl()}, #{tree_key() => [dns:rrdata()]}) ->
     [[dns:rr()]].
-rrs_to_rrsets(TTLMap, RRSets, []) ->
-    [rrs_to_rrsets(TTLMap, RRSet) || RRSet <- dict:to_list(RRSets)];
-rrs_to_rrsets(TTLMap, RRSets, [#dns_rr{} = RR | RRs]) ->
+rrs_to_rrsets([], TTLMap, RRSets) ->
+    [rrs_to_rrsets(TTLMap, RRSet) || RRSet <- maps:to_list(RRSets)];
+rrs_to_rrsets([#dns_rr{} = RR | RRs], TTLMap, RRSets) ->
     #dns_rr{
         name = Name,
         class = Class,
@@ -347,22 +376,14 @@ rrs_to_rrsets(TTLMap, RRSets, [#dns_rr{} = RR | RRs]) ->
         data = Data
     } = normalise_rr(RR),
     Key = {Name, Class, Type},
-    NewTTLMap =
-        case gb_trees:lookup(Key, TTLMap) of
-            {value, LowerTTL} when LowerTTL =< TTL ->
-                TTLMap;
-            {value, _LargerTTL} ->
-                gb_trees:update(Key, TTL, TTLMap);
-            none ->
-                gb_trees:insert(Key, TTL, TTLMap)
-        end,
-    NewRRSets = dict:append(Key, Data, RRSets),
-    rrs_to_rrsets(NewTTLMap, NewRRSets, RRs).
+    NewTTLMap = maps:update_with(Key, fun(OldTTL) -> max(OldTTL, TTL) end, TTL, TTLMap),
+    NewRRSets = maps:update_with(Key, fun(OldData) -> [Data | OldData] end, [Data], RRSets),
+    rrs_to_rrsets(RRs, NewTTLMap, NewRRSets).
 
--spec rrs_to_rrsets(gb_trees:tree(tree_key(), dns:ttl()), {tree_key(), [dns:rrdata()]}) ->
+-spec rrs_to_rrsets(#{tree_key() => dns:ttl()}, {tree_key(), [dns:rrdata()]}) ->
     [dns:rr()].
 rrs_to_rrsets(TTLMap, {{Name, Class, Type} = Key, Datas}) ->
-    {value, TTL} = gb_trees:lookup(Key, TTLMap),
+    TTL = maps:get(Key, TTLMap),
     [
         #dns_rr{
             name = Name,
