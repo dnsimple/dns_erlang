@@ -1,6 +1,6 @@
 -ifndef('DNS_RECORDS').
 -define('DNS_RECORDS', ok).
--include("dns_terms.hrl").
+-include("./dns_terms.hrl").
 
 %% DNS Message format. See RFC 1035: §4.1.1.
 -record(dns_message, {
@@ -66,7 +66,7 @@
 %% CERT record for storing certificates in DNS. See RFC 4398.
 -record(dns_rrdata_cert, {
     type :: dns:uint16(),
-    key_tag :: dns:uint16(),
+    keytag :: dns:uint16(),
     alg :: dns:uint8(),
     cert :: binary()
 }).
@@ -100,7 +100,7 @@
     protocol :: dns:uint8(),
     alg :: dns:uint8(),
     public_key :: iodata(),
-    key_tag :: integer()
+    keytag :: integer()
 }).
 
 %% CDNSKEY record for Child DNSKEY. See RFC 7344.
@@ -109,7 +109,7 @@
     protocol :: dns:uint8(),
     alg :: dns:uint8(),
     public_key :: iodata(),
-    key_tag :: integer()
+    keytag :: integer()
 }).
 
 %% DS record for Delegation Signer. See RFC 4034: §5.1.
@@ -261,7 +261,7 @@
     original_ttl :: dns:uint32(),
     expiration :: dns:uint32(),
     inception :: dns:uint32(),
-    key_tag :: dns:uint16(),
+    keytag :: dns:uint16(),
     signers_name :: dns:dname(),
     signature = <<>> :: binary()
 }).
@@ -353,9 +353,9 @@
 %% OWNER EDNS option. See RFC draft-cheshire-edns0-owner-option-00: §3.1.
 -record(dns_opt_owner, {
     seq = 0 :: dns:uint8(),
-    primary_mac :: <<_:6 * 8>>,
-    wakeup_mac :: <<>> | <<_:6 * 8>>,
-    password :: <<>> | <<_:6 * 8>>
+    primary_mac :: <<_:48>>,
+    wakeup_mac :: <<>> | <<_:48>>,
+    password :: <<>> | <<_:48>>
 }).
 
 %% UL EDNS option. See RFC draft-sekar-dns-ul-01: §4.

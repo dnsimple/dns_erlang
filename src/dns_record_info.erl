@@ -30,11 +30,11 @@ This module exports utility functions used to inspect records.
 You will generally not use these functions directly.
 """).
 
--include("dns_records.hrl").
+-include_lib("dns_erlang/include/dns_records.hrl").
 
 -export([fields/1, size/1, atom_for_type/1, type_for_atom/1]).
 
-%% @doc Returns the fields that make up a given record.
+?DOC("Returns the fields that make up a given record.").
 -spec fields(atom()) -> [atom(), ...].
 fields(dns_message) -> record_info(fields, dns_message);
 fields(dns_query) -> record_info(fields, dns_query);
@@ -86,7 +86,7 @@ fields(dns_opt_ul) -> record_info(fields, dns_opt_ul);
 fields(dns_opt_ecs) -> record_info(fields, dns_opt_ecs);
 fields(dns_opt_unknown) -> record_info(fields, dns_opt_unknown).
 
-%% @doc Returns the size of a given record.
+?DOC("Returns the size of a given record.").
 -spec size(atom()) -> non_neg_integer().
 size(dns_message) -> record_info(size, dns_message);
 size(dns_query) -> record_info(size, dns_query);
@@ -138,7 +138,7 @@ size(dns_opt_ul) -> record_info(size, dns_opt_ul);
 size(dns_opt_ecs) -> record_info(size, dns_opt_ecs);
 size(dns_opt_unknown) -> record_info(size, dns_opt_unknown).
 
-%% @doc Returns the record tag atom for the given record type.
+?DOC("Returns the record tag atom for the given record type.").
 -spec atom_for_type(dns:type()) -> atom() | undefined.
 atom_for_type(?DNS_TYPE_A) -> dns_rrdata_a;
 atom_for_type(?DNS_TYPE_AFSDB) -> dns_rrdata_afsdb;
@@ -183,7 +183,7 @@ atom_for_type(?DNS_TYPE_CERT) -> dns_rrdata_cert;
 atom_for_type(?DNS_TYPE_TSIG) -> dns_rrdata_tsig;
 atom_for_type(_) -> undefined.
 
-%% @doc Returns the record type for the given record tag atom.
+?DOC("Returns the record type for the given record tag atom.").
 -spec type_for_atom(atom()) -> dns:type() | undefined.
 type_for_atom(dns_rrdata_a) -> ?DNS_TYPE_A;
 type_for_atom(dns_rrdata_afsdb) -> ?DNS_TYPE_AFSDB;
