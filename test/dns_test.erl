@@ -675,14 +675,16 @@ dname_to_labels_test_() ->
         {"a.b.c.", [<<"a">>, <<"b">>, <<"c">>]},
         {<<"a.b.c.">>, [<<"a">>, <<"b">>, <<"c">>]},
         {"a\\.b.c", [<<"a.b">>, <<"c">>]},
-        {<<"a\\.b.c">>, [<<"a.b">>, <<"c">>]}
+        {<<"a\\.b.c">>, [<<"a.b">>, <<"c">>]},
+        {<<"a\\\\.b.c">>, [<<"a\\">>, <<"b">>, <<"c">>]}
     ],
     [?_assertEqual(Expect, dns:dname_to_labels(Arg)) || {Arg, Expect} <- Cases].
 
 labels_to_dname_test_() ->
     Cases = [
         {[<<"a">>, <<"b">>, <<"c">>], <<"a.b.c">>},
-        {[<<"a.b">>, <<"c">>], <<"a\\.b.c">>}
+        {[<<"a.b">>, <<"c">>], <<"a\\.b.c">>},
+        {[<<"a\\">>, <<"b">>, <<"c">>], <<"a\\\\.b.c">>}
     ],
     [?_assertEqual(Expect, dns:labels_to_dname(Arg)) || {Arg, Expect} <- Cases].
 
