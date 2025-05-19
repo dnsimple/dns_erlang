@@ -318,7 +318,7 @@ add_tsig(Msg, Alg, Name, Secret, ErrCode, Options) ->
 %%% Domain name functions
 %%%===================================================================
 
-%% @doc Splits a dname into a list of labels and removes unneeded escapes.
+?DOC("Splits a dname into a list of labels and removes unneeded escapes.").
 -spec dname_to_labels(dns:dname()) -> [dns:label()].
 dname_to_labels(<<>>) ->
     [];
@@ -341,7 +341,7 @@ do_dname_to_labels(Label, <<"\\\\", Cs/binary>>) ->
 do_dname_to_labels(Label, <<C, Cs/binary>>) ->
     do_dname_to_labels(<<Label/binary, C>>, Cs).
 
-%% @doc Compare two domain names insensitive of case.
+?DOC("Compare two domain names insensitive of case.").
 -spec compare_dname(dname(), dname()) -> boolean().
 compare_dname(Name, Name) ->
     true;
@@ -350,7 +350,7 @@ compare_dname(NameA, NameB) ->
     NameBLwr = dname_to_lower(iolist_to_binary(NameB)),
     NameALwr =:= NameBLwr.
 
-%% @doc Escapes dots in a DNS label
+?DOC("Escapes dots in a DNS label").
 -spec escape_label(label()) -> label().
 escape_label(Label) when is_binary(Label) ->
     do_escape_label(<<>>, Label).
@@ -365,15 +365,14 @@ do_escape_label(Cur, <<$., Rest/binary>>) ->
 do_escape_label(Cur, <<C, Rest/binary>>) ->
     do_escape_label(<<Cur/binary, C>>, Rest).
 
-%% @private
-%% @doc Joins a list of DNS labels, escaping where necessary.
+?DOC(false).
 -spec labels_to_dname([label()]) -> dname().
 labels_to_dname(Labels) ->
     <<$., DName/binary>> = <<<<$., (escape_label(Label))/binary>> || Label <- Labels>>,
     DName.
 
 -define(UP(X), (upper(X)):8).
-%% @doc Returns provided name with case-insensitive characters in uppercase.
+?DOC("Returns provided name with case-insensitive characters in uppercase.").
 -spec dname_to_upper(dname()) -> dname().
 dname_to_upper(Data) when byte_size(Data) rem 8 =:= 0 ->
     <<
@@ -399,7 +398,7 @@ dname_to_upper(Data) ->
     <<<<?UP(N)>> || <<N>> <= Data>>.
 
 -define(LOW(X), (lower(X)):8).
-%% @doc Returns provided name with case-insensitive characters in lowercase.
+?DOC("Returns provided name with case-insensitive characters in lowercase.").
 -spec dname_to_lower(dname()) -> dname().
 dname_to_lower(Data) when byte_size(Data) rem 8 =:= 0 ->
     <<
@@ -466,12 +465,12 @@ upper(X) ->
 %%% Time functions
 %%%===================================================================
 
-%% @doc Return current unix time.
+?DOC("Return current unix time.").
 -spec unix_time() -> unix_time().
 unix_time() ->
     unix_time(erlang:timestamp()).
 
-%% @doc Return the unix time from a now or universal time.
+?DOC("Return the unix time from a now or universal time.").
 -spec unix_time(erlang:timestamp() | calendar:datetime1970()) -> unix_time().
 unix_time({_MegaSecs, _Secs, _MicroSecs} = NowTime) ->
     UniversalTime = calendar:now_to_universal_time(NowTime),
