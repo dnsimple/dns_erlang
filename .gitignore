@@ -8,6 +8,7 @@ asngen
 .tool-versions
 
 # rebar 3
+rebar3.crashdump
 .rebar3
 _build/
 _checkouts/
