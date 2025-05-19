@@ -12,18 +12,6 @@ Helpers to convert between DNS codes and their names.
 
 -include_lib("dns_erlang/include/dns.hrl").
 
--type ercode() :: 0 | 16.
--type eoptcode() :: 0..65535.
--type llqerrcode() :: 0..6.
--type llqopcode() :: 1..3.
-
--export_type([
-    ercode/0,
-    eoptcode/0,
-    llqopcode/0,
-    llqerrcode/0
-]).
-
 -export([
     class_name/1,
     type_name/1,
@@ -185,7 +173,7 @@ tsigerr_name(Int) when is_integer(Int) ->
     end.
 
 ?DOC("Returns the name of an extended rcode as a binary string.").
--spec ercode_name(ercode()) -> binary() | undefined.
+-spec ercode_name(dns:ercode()) -> binary() | undefined.
 ercode_name(Int) when is_integer(Int) ->
     case Int of
         ?DNS_ERCODE_NOERROR_NUMBER -> ?DNS_ERCODE_NOERROR_BSTR;
@@ -194,7 +182,7 @@ ercode_name(Int) when is_integer(Int) ->
     end.
 
 ?DOC("Returns the name of an extended option as a binary string.").
--spec eoptcode_name(eoptcode()) -> binary() | undefined.
+-spec eoptcode_name(dns:eoptcode()) -> binary() | undefined.
 eoptcode_name(Int) when is_integer(Int) ->
     case Int of
         ?DNS_EOPTCODE_LLQ_NUMBER -> ?DNS_EOPTCODE_LLQ_BSTR;
@@ -205,7 +193,7 @@ eoptcode_name(Int) when is_integer(Int) ->
     end.
 
 ?DOC("Returns the name of an LLQ opcode as a binary string.").
--spec llqopcode_name(llqopcode()) -> binary() | undefined.
+-spec llqopcode_name(dns:llqopcode()) -> binary() | undefined.
 llqopcode_name(Int) when is_integer(Int) ->
     case Int of
         ?DNS_LLQOPCODE_SETUP_NUMBER -> ?DNS_LLQOPCODE_SETUP_BSTR;
@@ -215,7 +203,7 @@ llqopcode_name(Int) when is_integer(Int) ->
     end.
 
 ?DOC("Returns the name of an LLQ error code as a binary string.").
--spec llqerrcode_name(llqerrcode()) -> binary() | undefined.
+-spec llqerrcode_name(dns:llqerrcode()) -> binary() | undefined.
 llqerrcode_name(Int) when is_integer(Int) ->
     case Int of
         ?DNS_LLQERRCODE_NOERROR_NUMBER -> ?DNS_LLQERRCODE_NOERROR_BSTR;

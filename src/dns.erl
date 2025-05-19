@@ -49,108 +49,129 @@ domain names into different cases, converting to and from label lists, etc.
 %% 2^31 - 1, the largest signed 32-bit integer value
 -define(MAX_INT32, ((1 bsl 31) - 1)).
 
-%% Types
+?DOC(#{group => <<"Types: integer codes">>}).
 ?DOC("Unsigned 2-bits integer").
 -type uint2() :: 0..1.
+?DOC(#{group => <<"Types: integer codes">>}).
 ?DOC("Unsigned 4-bits integer").
 -type uint4() :: 0..15.
+?DOC(#{group => <<"Types: integer codes">>}).
 ?DOC("Unsigned 8-bits integer").
 -type uint8() :: 0..((1 bsl 8) - 1).
+?DOC(#{group => <<"Types: integer codes">>}).
 ?DOC("Unsigned 16-bits integer").
 -type uint16() :: 0..((1 bsl 16) - 1).
+?DOC(#{group => <<"Types: integer codes">>}).
 ?DOC("Unsigned 32-bits integer").
 -type uint32() :: 0..((1 bsl 32) - 1).
+?DOC(#{group => <<"Types: integer codes">>}).
 ?DOC("Unsigned 48-bits integer").
 -type uint48() :: 0..((1 bsl 48) - 1).
+?DOC(#{group => <<"Types: integer codes">>}).
 ?DOC("Unsigned 64-bits integer").
 -type uint64() :: 0..((1 bsl 64) - 1).
--export_type([uint2/0, uint4/0, uint8/0, uint16/0, uint32/0, uint48/0, uint64/0]).
-
+?DOC(#{group => <<"Types: integer codes">>}).
+-type opcode() :: uint4().
+?DOC(#{group => <<"Types: integer codes">>}).
+-type rcode() :: uint4().
+?DOC(#{group => <<"Types: integer codes">>}).
+-type eoptcode() :: uint16().
+?DOC(#{group => <<"Types: integer codes">>}).
+-type ercode() :: 0 | 16.
+?DOC(#{group => <<"Types: integer codes">>}).
+-type llqerrcode() :: 0..6.
+?DOC(#{group => <<"Types: integer codes">>}).
+-type llqopcode() :: 1..3.
 -export_type([
-    message/0,
-    message_id/0,
-    message_bin/0,
+    uint2/0,
+    uint4/0,
+    uint8/0,
+    uint16/0,
+    uint32/0,
+    uint48/0,
+    uint64/0,
     opcode/0,
     rcode/0,
-    query/0,
-    questions/0,
-    rr/0,
-    optrr/0,
-    answers/0,
-    authority/0,
-    additional/0,
+    ercode/0,
+    eoptcode/0,
+    llqopcode/0,
+    llqerrcode/0
+]).
+
+?DOC("""
+DNS wire message format.
+
+The general form is a 96bits header, followed by a variable number of questions,
+answers, authorities, and additional records.
+""").
+-type message_bin() :: <<_:96, _:_*8>>.
+?DOC("DNS Message ID. See RFC 1035: §4.1.1.").
+-type message_id() :: uint16().
+?DOC("""
+Decoding errors.
+
+Can be one of the following:
+- `formerr`: the message was malformed.
+- `truncated`: the message was partially decoded, as data was found missing from the message.
+- `trailing_garbage`: the message was successfully decoded,
+    but there was trailing garbage at the end of the message.
+""").
+-type decode_error() :: formerr | truncated | trailing_garbage.
+?DOC("Domain name, expressed as a sequence of `t:label/0`, as defined in RFC 1035: §3.1.").
+-type dname() :: binary().
+?DOC("""
+DNS labels. See RFC 1035: §2.3.1.
+
+The labels must follow the rules for ARPANET host names. They must
+start with a letter, end with a letter or digit, and have as interior
+characters only letters, digits, and hyphen. There are also some
+restrictions on the length. Labels must be 63 characters or less.
+""").
+-type label() :: binary().
+?DOC("DNS Message class. See RFC 1035: §4.1.2.").
+-type class() :: uint16().
+?DOC("DNS Message class. See RFC 1035: §4.1.2.").
+-type type() :: uint16().
+?DOC("DNS Message class. See RFC 1035: §4.1.3.").
+-type ttl() :: 0..?MAX_INT32.
+?DOC("Unix timestamp in seconds.").
+-type unix_time() :: 0..4294967295.
+-export_type([
+    message_bin/0,
+    message_id/0,
+    decode_error/0,
     dname/0,
     class/0,
     type/0,
     ttl/0,
-    alg/0,
     label/0,
-    tsig_mac/0,
-    tsig_error/0,
-    decode_error/0,
-    ercode/0,
-    eoptcode/0,
-    llqopcode/0,
-    llqerrcode/0,
-    tsig_opt/0,
-    encode_message_opt/0,
-    rrdata/0,
-    tsig_alg/0,
-    optrr_elem/0,
-    records/0,
     unix_time/0
 ]).
 
--export_type([
-    opt_nsid/0,
-    opt_ul/0,
-    opt_ecs/0,
-    opt_llq/0,
-    opt_owner/0,
-    opt_unknown/0,
-    rrdata_rrsig/0,
-    svcb_svc_params/0
-]).
-
--export_type([
-    encode_message_opts/0,
-    encode_tsig_opts/0,
-    tsig_opts/0
-]).
-
--type decode_error() :: formerr | truncated | trailing_garbage.
--type message_bin() :: <<_:64, _:_*8>>.
--type message_id() :: uint16().
--type opcode() :: uint4().
--type rcode() :: uint4().
--type questions() :: [query()].
--type records() :: additional() | answers() | authority() | questions().
--type optrr_elem() :: opt_nsid() | opt_ul() | opt_unknown() | opt_ecs() | opt_llq() | opt_owner().
-
+?DOC(#{group => <<"Types: records">>}).
+?DOC("Main DNS message structure.").
 -type message() :: #dns_message{}.
+?DOC(#{group => <<"Types: records">>}).
 -type query() :: #dns_query{}.
+?DOC(#{group => <<"Types: records">>}).
 -type rr() :: #dns_rr{}.
+?DOC(#{group => <<"Types: records">>}).
 -type optrr() :: #dns_optrr{}.
+?DOC(#{group => <<"Types: records">>}).
 -type opt_nsid() :: #dns_opt_nsid{}.
+?DOC(#{group => <<"Types: records">>}).
 -type opt_ul() :: #dns_opt_ul{}.
+?DOC(#{group => <<"Types: records">>}).
 -type opt_ecs() :: #dns_opt_ecs{}.
+?DOC(#{group => <<"Types: records">>}).
 -type opt_llq() :: #dns_opt_llq{}.
+?DOC(#{group => <<"Types: records">>}).
 -type opt_owner() :: #dns_opt_owner{}.
+?DOC(#{group => <<"Types: records">>}).
 -type opt_unknown() :: #dns_opt_unknown{}.
+?DOC(#{group => <<"Types: records">>}).
 -type rrdata_rrsig() :: #dns_rrdata_rrsig{}.
-
--type svcb_svc_params() :: #{
-    1..6 => none | char() | binary()
-}.
-
--type answers() :: [rr()].
--type authority() :: [rr()].
--type additional() :: [optrr() | rr()].
--type dname() :: binary().
--type label() :: binary().
--type class() :: uint16().
--type type() :: uint16().
--type ttl() :: 0..?MAX_INT32.
+?DOC(#{group => <<"Types: records">>}).
 -type rrdata() ::
     binary()
     | #dns_rrdata_a{}
@@ -193,28 +214,46 @@ domain names into different cases, converting to and from label lists, etc.
     | #dns_rrdata_sshfp{}
     | #dns_rrdata_tsig{}
     | #dns_rrdata_txt{}.
--type encode_message_opt() ::
-    {max_size, 512..65535}
-    | {tc_mode, default | axfr | llq_event}
-    | {tsig, [encode_message_tsig_opt()]}.
--type encode_message_tsig_opt() ::
-    {msgid, message_id()}
-    | {alg, tsig_alg()}
-    | {name, dname()}
-    | {secret, binary()}
-    | {errcode, tsig_error()}
-    | {other, binary()}
-    | tsig_opt().
-?DOC("Unix timestamp in seconds.").
--type unix_time() :: 0..4294967295.
+?DOC(#{group => <<"Types: records">>}).
+-type records() :: additional() | answers() | authority() | questions().
+?DOC(#{group => <<"Types: records">>}).
+-type optrr_elem() :: opt_nsid() | opt_ul() | opt_unknown() | opt_ecs() | opt_llq() | opt_owner().
+?DOC(#{group => <<"Types: records">>}).
+-type questions() :: [query()].
+?DOC(#{group => <<"Types: records">>}).
+-type answers() :: [rr()].
+?DOC(#{group => <<"Types: records">>}).
+-type authority() :: [rr()].
+?DOC(#{group => <<"Types: records">>}).
+-type additional() :: [optrr() | rr()].
+-export_type([
+    message/0,
+    records/0,
+    query/0,
+    rr/0,
+    optrr/0,
+    questions/0,
+    answers/0,
+    authority/0,
+    additional/0,
+    rrdata/0,
+    opt_nsid/0,
+    opt_ul/0,
+    opt_ecs/0,
+    opt_llq/0,
+    opt_owner/0,
+    opt_unknown/0,
+    optrr_elem/0,
+    rrdata_rrsig/0
+]).
+
+?DOC(#{group => <<"Types: TSIG">>}).
 -type tsig_mac() :: binary().
+?DOC(#{group => <<"Types: TSIG">>}).
 -type tsig_error() :: 0 | 16..18.
--type tsig_opt() ::
-    {time, unix_time()}
-    | {fudge, non_neg_integer()}
-    | {mac, tsig_mac()}
-    | {tail, boolean()}.
+?DOC(#{group => <<"Types: TSIG">>}).
 -type tsig_alg() :: binary().
+?DOC(#{group => <<"Types: TSIG">>}).
 -type alg() ::
     ?DNS_ALG_DSA
     | ?DNS_ALG_NSEC3DSA
@@ -222,17 +261,24 @@ domain names into different cases, converting to and from label lists, etc.
     | ?DNS_ALG_NSEC3RSASHA1
     | ?DNS_ALG_RSASHA256
     | ?DNS_ALG_RSASHA512.
--type eoptcode() :: 0..65535.
--type ercode() :: 0 | 16.
--type llqerrcode() :: 0..6.
--type llqopcode() :: 1..3.
+-export_type([
+    alg/0,
+    tsig_mac/0,
+    tsig_error/0,
+    tsig_alg/0
+]).
 
+?DOC(#{group => <<"Types: options">>}).
+-type svcb_svc_params() :: #{
+    1..6 => none | char() | binary()
+}.
+?DOC(#{group => <<"Types: options">>}).
 -type encode_message_opts() :: #{
     max_size => 512..65535,
     tc_mode => default | axfr | llq_event,
     tsig => encode_tsig_opts()
 }.
-
+?DOC(#{group => <<"Types: options">>}).
 -type encode_tsig_opts() :: #{
     name := dname(),
     alg := tsig_alg(),
@@ -245,7 +291,7 @@ domain names into different cases, converting to and from label lists, etc.
     mac => tsig_mac(),
     tail => boolean()
 }.
-
+?DOC(#{group => <<"Types: options">>}).
 -type tsig_opts() :: #{
     time => unix_time(),
     fudge => non_neg_integer(),
@@ -253,22 +299,31 @@ domain names into different cases, converting to and from label lists, etc.
     tail => boolean(),
     atom() => _
 }.
+-export_type([
+    svcb_svc_params/0,
+    encode_message_opts/0,
+    encode_tsig_opts/0,
+    tsig_opts/0
+]).
 
 %%%===================================================================
 %%% Message body functions
 %%%===================================================================
 
+?DOC(#{group => <<"Functions: parsing">>}).
 ?DOC("Decode a binary DNS message.").
 -spec decode_message(message_bin()) ->
     {decode_error(), message() | undefined, binary()} | message().
 decode_message(MsgBin) ->
     dns_decode:decode(MsgBin).
 
-?DOC("Encode a dns_message record.").
+?DOC(#{group => <<"Functions: parsing">>}).
+?DOC("Encode a `t:message/0` record.").
 -spec encode_message(message()) -> message_bin().
 encode_message(Msg) ->
     dns_encode:encode(Msg).
 
+?DOC(#{group => <<"Functions: parsing">>}).
 ?DOC("Encode a dns_message record - will truncate the message as needed.").
 -spec encode_message(message(), encode_message_opts()) ->
     {false, message_bin()}
@@ -278,33 +333,32 @@ encode_message(Msg) ->
 encode_message(Msg, Opts) ->
     dns_encode:encode(Msg, Opts).
 
-?DOC("Returns a random integer suitable for use as DNS message identifier.").
--spec random_id() -> message_id().
-random_id() ->
-    rand:uniform(65535).
-
 %%%===================================================================
 %%% TSIG functions
 %%%===================================================================
 
-?DOC(#{equiv => verify_tsig(MsgBin, Name, Secret, [])}).
+?DOC(#{group => <<"Functions: TSIG">>}).
+?DOC(#{equiv => verify_tsig(MsgBin, Name, Secret, #{})}).
 -spec verify_tsig(message_bin(), dname(), binary()) ->
     {ok, tsig_mac()} | {error, tsig_error()}.
 verify_tsig(MsgBin, Name, Secret) ->
     dns_tsig:verify_tsig(MsgBin, Name, Secret).
 
+?DOC(#{group => <<"Functions: TSIG">>}).
 ?DOC("Verifies a TSIG message signature.").
 -spec verify_tsig(message_bin(), dname(), binary(), tsig_opts()) ->
     {ok, tsig_mac()} | {error, tsig_error()}.
 verify_tsig(MsgBin, Name, Secret, Options) ->
     dns_tsig:verify_tsig(MsgBin, Name, Secret, Options).
 
-?DOC(#{equiv => add_tsig(Msg, Alg, Name, Secret, ErrCode, [])}).
+?DOC(#{group => <<"Functions: TSIG">>}).
+?DOC(#{equiv => add_tsig(Msg, Alg, Name, Secret, ErrCode, #{name => Name, alg => Alg})}).
 -spec add_tsig(message(), tsig_alg(), dname(), binary(), tsig_error()) ->
     message().
 add_tsig(Msg, Alg, Name, Secret, ErrCode) ->
     dns_tsig:add_tsig(Msg, Alg, Name, Secret, ErrCode, #{name => Name, alg => Alg}).
 
+?DOC(#{group => <<"Functions: TSIG">>}).
 ?DOC("""
 Generates and then appends a TSIG RR to a message.
 
@@ -319,6 +373,7 @@ add_tsig(Msg, Alg, Name, Secret, ErrCode, Options) ->
 %%% Domain name functions
 %%%===================================================================
 
+?DOC(#{group => <<"Functions: utilities">>}).
 ?DOC("Splits a dname into a list of labels and removes unneeded escapes.").
 -spec dname_to_labels(dns:dname()) -> [dns:label()].
 dname_to_labels(<<>>) ->
@@ -342,6 +397,7 @@ do_dname_to_labels(Label, <<"\\\\", Cs/binary>>) ->
 do_dname_to_labels(Label, <<C, Cs/binary>>) ->
     do_dname_to_labels(<<Label/binary, C>>, Cs).
 
+?DOC(#{group => <<"Functions: utilities">>}).
 ?DOC("Compare two domain names insensitive of case.").
 -spec compare_dname(dname(), dname()) -> boolean().
 compare_dname(Name, Name) ->
@@ -351,6 +407,7 @@ compare_dname(NameA, NameB) ->
     NameBLwr = dname_to_lower(iolist_to_binary(NameB)),
     NameALwr =:= NameBLwr.
 
+?DOC(#{group => <<"Functions: utilities">>}).
 ?DOC("Escapes dots in a DNS label").
 -spec escape_label(label()) -> label().
 escape_label(Label) when is_binary(Label) ->
@@ -373,6 +430,7 @@ labels_to_dname(Labels) ->
     DName.
 
 -define(UP(X), (upper(X)):8).
+?DOC(#{group => <<"Functions: utilities">>}).
 ?DOC("Returns provided name with case-insensitive characters in uppercase.").
 -spec dname_to_upper(dname()) -> dname().
 dname_to_upper(Data) when byte_size(Data) rem 8 =:= 0 ->
@@ -399,6 +457,7 @@ dname_to_upper(Data) ->
     <<<<?UP(N)>> || <<N>> <= Data>>.
 
 -define(LOW(X), (lower(X)):8).
+?DOC(#{group => <<"Functions: utilities">>}).
 ?DOC("Returns provided name with case-insensitive characters in lowercase.").
 -spec dname_to_lower(dname()) -> dname().
 dname_to_lower(Data) when byte_size(Data) rem 8 =:= 0 ->
@@ -463,14 +522,22 @@ upper(X) ->
     ).
 
 %%%===================================================================
-%%% Time functions
+%%% Miscellaneous functions
 %%%===================================================================
 
+?DOC(#{group => <<"Functions: utilities">>}).
+?DOC("Returns a random integer suitable for use as DNS message identifier.").
+-spec random_id() -> message_id().
+random_id() ->
+    rand:uniform(65535).
+
+?DOC(#{group => <<"Functions: utilities">>}).
 ?DOC("Return current unix time in seconds.").
 -spec unix_time() -> unix_time().
 unix_time() ->
     erlang:system_time(second).
 
+?DOC(#{group => <<"Functions: utilities">>}).
 ?DOC("Return the unix time in seconds from a timestamp or universal time.").
 -spec unix_time(erlang:timestamp() | calendar:datetime1970()) -> unix_time().
 unix_time({_MegaSecs, _Secs, _MicroSecs} = NowTime) ->

@@ -14,13 +14,13 @@
 
 -define(DEFAULT_TSIG_FUDGE, 5 * 60).
 
-%% @equiv verify_tsig(MsgBin, Name, Secret, [])
+%% equiv verify_tsig(MsgBin, Name, Secret, #{})
 -spec verify_tsig(dns:message_bin(), dns:dname(), binary()) ->
     {ok, dns:tsig_mac()} | {error, dns:tsig_error()}.
 verify_tsig(MsgBin, Name, Secret) ->
     verify_tsig(MsgBin, Name, Secret, #{}).
 
-%% @doc Verifies a TSIG message signature.
+%% Verifies a TSIG message signature.
 -spec verify_tsig(dns:message_bin(), dns:dname(), binary(), dns:tsig_opts()) ->
     {ok, dns:tsig_mac()} | {error, dns:tsig_error()}.
 verify_tsig(MsgBin, Name, Secret, Options) ->
@@ -62,15 +62,15 @@ do_verify_tsig(UnsignedMsgBin, TData, Name, Secret, Options) ->
             {error, Error}
     end.
 
-%% @doc Generates and then appends a TSIG RR to a message.
+%% Generates and then appends a TSIG RR to a message.
 %%      Supports MD5, SHA1, SHA224, SHA256, SHA384 and SHA512 algorithms.
-%% @equiv add_tsig(Msg, Alg, Name, Secret, ErrCode, [])
+%% equiv add_tsig(Msg, Alg, Name, Secret, ErrCode, #{})
 -spec add_tsig(dns:message(), dns:tsig_alg(), dns:dname(), binary(), dns:tsig_error()) ->
     dns:message().
 add_tsig(Msg, Alg, Name, Secret, ErrCode) ->
     add_tsig(Msg, Alg, Name, Secret, ErrCode, #{name => Name, alg => Alg}).
 
-%% @doc Generates and then appends a TSIG RR to a message.
+%% Generates and then appends a TSIG RR to a message.
 %%      Supports MD5, SHA1, SHA224, SHA256, SHA384 and SHA512 algorithms.
 -spec add_tsig(
     dns:message(), dns:tsig_alg(), dns:dname(), binary(), dns:tsig_error(), dns:encode_tsig_opts()
@@ -262,7 +262,7 @@ hmac_type(Alg) ->
         AlgLower -> hmac_type(AlgLower)
     end.
 
-%% @doc Compares two equal sized binaries over their entire length.
+%% Compares two equal sized binaries over their entire length.
 %%      Returns immediately if sizes do not match.
 -spec const_compare(dns:dname(), dns:dname()) -> boolean().
 const_compare(A, B) when is_binary(A) andalso is_binary(B) andalso byte_size(A) =:= byte_size(B) ->
