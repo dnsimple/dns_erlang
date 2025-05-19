@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## main
 
+## 4.0.0
+
+- Use `erlang:system_time/1` for timestamps.
+- Use maps instead of proplists for options to be passed to
+    encoding, decoding, TSIG, and DNSSEC functions.
+- Encoding logic builds responses that contain the full question section,
+    and optionally drop the answers if the response is to be truncated.
+- Use consistent record names.
+- Split names functions into a standalone `dns_names` module.
+- Extends and reorganise documentation.
+
 ## 3.1.3
 
 - Fix: now using the reserved space for the OPT RR records during the encoding of the message (#74)
