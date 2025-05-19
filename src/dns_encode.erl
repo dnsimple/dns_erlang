@@ -148,16 +148,17 @@ encode_message_default(#dns_message{qc = QC, additional = Additional} = Msg0, Ma
         truncated ->
             %% We ran out of space, we MUST append a OptRR EDNS0 record,
             %% and this takes precedence over the body
-            OptRRBinMin = ensure_optrr(Additional, minimal),
+            {AddCountMin, OptRRBinMin} = ensure_optrr(Additional, minimal),
             OptRRBinSizeMin = byte_size(OptRRBinMin),
-            OptRRBinFull = ensure_optrr(Additional, full),
+            {AddCountFull, OptRRBinFull} = ensure_optrr(Additional, full),
             OptRRBinSizeFull = byte_size(OptRRBinFull),
-            Head = build_head(Msg0, true, QC, 0, 0, 1),
             SpaceForOptRR = SpaceLeft1 + PreservedOptRRBinSize - byte_size(Bin1),
             case {OptRRBinSizeFull =< SpaceForOptRR, OptRRBinSizeMin =< SpaceForOptRR} of
                 {false, true} ->
+                    Head = build_head(Msg0, true, QC, 0, 0, AddCountMin),
                     <<Head/binary, Bin1/binary, OptRRBinMin/binary>>;
                 {true, _} ->
+                    Head = build_head(Msg0, true, QC, 0, 0, AddCountFull),
                     <<Head/binary, Bin1/binary, OptRRBinFull/binary>>
             end;
         {CompMap, ANC, AUC, Body} ->
@@ -463,13 +464,13 @@ encode_message_pop_optrr([#dns_optrr{} = OptRR | Rest]) ->
 encode_message_pop_optrr(Other) ->
     {<<>>, Other}.
 
--spec ensure_optrr(dns:additional(), minimal | full) -> binary().
+-spec ensure_optrr(dns:additional(), minimal | full) -> {0 | 1, binary()}.
 ensure_optrr([#dns_optrr{} = OptRR | _], full) ->
-    encode_optrr(OptRR);
+    {1, encode_optrr(OptRR)};
 ensure_optrr([#dns_optrr{} = OptRR | _], minimal) ->
-    encode_optrr(OptRR#dns_optrr{data = []});
+    {1, encode_optrr(OptRR#dns_optrr{data = []})};
 ensure_optrr(_, _) ->
-    <<>>.
+    {0, <<>>}.
 
 -spec preserve_optrr_size(dns:additional()) -> non_neg_integer().
 preserve_optrr_size([#dns_optrr{} | _]) ->
