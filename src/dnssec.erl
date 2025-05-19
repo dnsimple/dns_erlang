@@ -37,7 +37,7 @@ supported for signing RRSETs.
 
 %% API
 -export([gen_nsec/1, gen_nsec/3, gen_nsec/4]).
--export([gen_nsec3/1, gen_nsec3/6, gen_nsec3/7]).
+-export([gen_nsec3/1, gen_nsec3/2]).
 -export([sign_rr/5, sign_rr/6]).
 -export([sign_rrset/5, sign_rrset/6]).
 -export([verify_rrsig/4]).
@@ -60,6 +60,7 @@ supported for signing RRSETs.
     nsec3_salt/0,
     nsec3_iterations/0,
     gen_nsec_opts/0,
+    gen_nsec3_opts/0,
     sign_rr_opts/0,
     verify_rrsig_opts/0,
     keytag/0,
@@ -114,7 +115,7 @@ gen_nsec(RR) ->
             gen_nsec(ZoneName, RR, TTL)
     end.
 
-?DOC(#{equiv => gen_nsec(ZoneName, RR, TTL, [])}).
+?DOC(#{equiv => gen_nsec(ZoneName, RR, TTL, #{})}).
 -spec gen_nsec(dns:dname(), [dns:rr()], dns:ttl()) -> [dns:rr()].
 gen_nsec(ZoneName, RR, TTL) ->
     gen_nsec(ZoneName, RR, TTL, #{}).
@@ -147,6 +148,11 @@ add_next_dname(Added, [#dns_rr{type = ?DNS_TYPE_NSEC, data = Data} = RR], ZoneNa
     NewRR = RR#dns_rr{data = Data#dns_rrdata_nsec{next_dname = ZoneName}},
     lists:reverse([NewRR | Added]).
 
+?DOC(#{equiv => gen_nsec3(RRs, #{})}).
+-spec gen_nsec3([dns:rr()]) -> [dns:rr()].
+gen_nsec3(RRs) ->
+    gen_nsec3(RRs, #{}).
+
 ?DOC("""
 Generate NSEC3 records from a list of `t:dns:rr/0`.
 
@@ -154,8 +160,8 @@ The list must contain a SOA `t:dns:rr/0` to source the zone name and
 TTL from as well as as an NSEC3Param `t:dns:rr/0` to source the
 hash algorithm, iterations and salt from.
 """).
--spec gen_nsec3([dns:rr()]) -> [dns:rr()].
-gen_nsec3(RRs) ->
+-spec gen_nsec3([dns:rr()], gen_nsec3_opts()) -> [dns:rr()].
+gen_nsec3(RRs, Opts) ->
     case lists:keyfind(?DNS_TYPE_SOA, #dns_rr.type, RRs) of
         false ->
             erlang:error(badarg);
@@ -171,35 +177,11 @@ gen_nsec3(RRs) ->
                         salt = Salt
                     }
                 } ->
-                    gen_nsec3(RRs, ZoneName, HashAlg, Salt, Iter, TTL, Class)
+                    gen_nsec3(RRs, ZoneName, HashAlg, Salt, Iter, TTL, Class, Opts)
             end
     end.
 
-?DOC(#{equiv => gen_nsec3(RR, ZoneName, Alg, Salt, Iterations, TTL, ?DNS_CLASS_IN)}).
--spec gen_nsec3(
-    [dns:rr()],
-    dns:dname(),
-    nsec3_hashalg(),
-    nsec3_salt(),
-    nsec3_iterations(),
-    dns:ttl()
-) -> [dns:rr()].
-gen_nsec3(RR, ZoneName, Alg, Salt, Iterations, TTL) ->
-    gen_nsec3(RR, ZoneName, Alg, Salt, Iterations, TTL, ?DNS_CLASS_IN, #{}).
-
 ?DOC("Generate NSEC3 records.").
--spec gen_nsec3(
-    [dns:rr()],
-    dns:dname(),
-    nsec3_hashalg(),
-    nsec3_salt(),
-    nsec3_iterations(),
-    dns:ttl(),
-    dns:class()
-) -> [dns:rr()].
-gen_nsec3(RRs, ZoneName, Alg, Salt, Iterations, TTL, Class) ->
-    gen_nsec3(RRs, ZoneName, Alg, Salt, Iterations, TTL, Class, #{}).
-
 -spec gen_nsec3(
     [dns:rr()],
     dns:dname(),
