@@ -336,6 +336,8 @@ do_dname_to_labels(Label, <<$., Cs/binary>>) ->
     [Label | do_dname_to_labels(<<>>, Cs)];
 do_dname_to_labels(Label, <<"\\.", Cs/binary>>) ->
     do_dname_to_labels(<<Label/binary, $.>>, Cs);
+do_dname_to_labels(Label, <<"\\\\", Cs/binary>>) ->
+    do_dname_to_labels(<<Label/binary, $\\>>, Cs);
 do_dname_to_labels(Label, <<C, Cs/binary>>) ->
     do_dname_to_labels(<<Label/binary, C>>, Cs).
 
@@ -356,6 +358,8 @@ escape_label(Label) when is_binary(Label) ->
 -spec do_escape_label(binary(), binary()) -> binary().
 do_escape_label(Label, <<>>) ->
     Label;
+do_escape_label(Cur, <<$\\, Rest/binary>>) ->
+    do_escape_label(<<Cur/binary, "\\\\">>, Rest);
 do_escape_label(Cur, <<$., Rest/binary>>) ->
     do_escape_label(<<Cur/binary, "\\.">>, Rest);
 do_escape_label(Cur, <<C, Rest/binary>>) ->

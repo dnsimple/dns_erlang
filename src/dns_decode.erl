@@ -146,10 +146,10 @@ decode_message_additional(MsgBin, DataBin, Count) when
 
 -spec do_decode_message_additional(dns:message_bin(), binary(), integer(), dns:additional()) ->
     {dns:additional(), binary()} | {dns:decode_error(), [dns:optrr() | dns:rr()], binary()}.
-do_decode_message_additional(_MsgBin, <<>>, _Count, RRs) ->
-    {lists:reverse(RRs), <<>>};
 do_decode_message_additional(_MsgBin, DataBin, 0, RRs) ->
     {lists:reverse(RRs), DataBin};
+do_decode_message_additional(_MsgBin, <<>>, _Count, Qs) ->
+    {truncated, lists:reverse(Qs), <<>>};
 do_decode_message_additional(MsgBin, DataBin, Count, RRs) ->
     try decode_dname(MsgBin, DataBin) of
         {<<>>,
@@ -195,10 +195,10 @@ decode_message_body(MsgBin, DataBin, Count) when
 
 -spec do_decode_message_body(dns:message_bin(), binary(), integer(), [dns:rr()]) ->
     {[dns:rr()], binary()} | {dns:decode_error(), [dns:rr()], binary()}.
-do_decode_message_body(_MsgBin, <<>>, _Count, RRs) ->
-    {lists:reverse(RRs), <<>>};
 do_decode_message_body(_MsgBin, DataBin, 0, RRs) ->
     {lists:reverse(RRs), DataBin};
+do_decode_message_body(_MsgBin, <<>>, _Count, Qs) ->
+    {truncated, lists:reverse(Qs), <<>>};
 do_decode_message_body(MsgBin, DataBin, Count, RRs) ->
     try decode_dname(MsgBin, DataBin) of
         {Name,
