@@ -1,7 +1,7 @@
 -module(dnssec_test).
 
 -include_lib("eunit/include/eunit.hrl").
--include("dns.hrl").
+-include_lib("dns_erlang/include/dns.hrl").
 
 -record(dnssec_test_sample, {
     zonename,
@@ -30,11 +30,11 @@ gen_nsec_test_() ->
                     NSEC = lists:sort(
                         lists:foldr(
                             fun(#dns_rr{data = Data} = RR, Acc) ->
-                                Bin = dns:encode_rrdata(?DNS_CLASS_IN, Data),
-                                NewData = dns:decode_rrdata(
+                                Bin = dns_encode:encode_rrdata(?DNS_CLASS_IN, Data),
+                                NewData = dns_decode:decode_rrdata(
+                                    Bin,
                                     ?DNS_CLASS_IN,
-                                    ?DNS_TYPE_NSEC,
-                                    Bin
+                                    ?DNS_TYPE_NSEC
                                 ),
                                 [RR#dns_rr{data = NewData} | Acc]
                             end,
@@ -131,20 +131,18 @@ zone_test_() ->
                                 data = Data
                             } = RR
                         ) ->
-                            Bin = dns:encode_rrdata(?DNS_CLASS_IN, Data),
-                            NewData = dns:decode_rrdata(
-                                Class, Type, Bin
-                            ),
+                            Bin = dns_encode:encode_rrdata(?DNS_CLASS_IN, Data),
+                            NewData = dns_decode:decode_rrdata(Bin, Class, Type),
                             RR#dns_rr{data = NewData}
                         end,
                         RRNSEC
                     ),
                     %% Add RRSIG
-                    Opts = [{inception, I}, {expiration, E}],
+                    Opts = #{inception => I, expiration => E},
                     RRSigsZSK = dnssec:sign_rr(
                         RRDECENC,
                         ZoneNameB,
-                        ZSKKey#dns_rrdata_dnskey.key_tag,
+                        ZSKKey#dns_rrdata_dnskey.keytag,
                         ZSKAlg,
                         ZSKPrivKey,
                         Opts
@@ -156,7 +154,7 @@ zone_test_() ->
                     RRSigsKSK = dnssec:sign_rr(
                         RRDNSKeys,
                         ZoneNameB,
-                        KSKKey#dns_rrdata_dnskey.key_tag,
+                        KSKKey#dns_rrdata_dnskey.keytag,
                         KSKAlg,
                         KSKPrivKey,
                         Opts
@@ -355,7 +353,7 @@ helper_verify_rrset_test_cases() ->
     lists:flatten(
         [
             begin
-                Opts = [{now, Now}],
+                Opts = #{now => Now},
                 DNSKeys = [RR || #dns_rr{type = dnskey} = RR <- RRs],
                 Dict = lists:foldl(
                     fun
