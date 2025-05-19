@@ -205,6 +205,7 @@ domain names into different cases, converting to and from label lists, etc.
     | {errcode, tsig_error()}
     | {other, binary()}
     | tsig_opt().
+?DOC("Unix timestamp in seconds.").
 -type unix_time() :: 0..4294967295.
 -type tsig_mac() :: binary().
 -type tsig_error() :: 0 | 16..18.
@@ -465,18 +466,18 @@ upper(X) ->
 %%% Time functions
 %%%===================================================================
 
-?DOC("Return current unix time.").
+?DOC("Return current unix time in seconds.").
 -spec unix_time() -> unix_time().
 unix_time() ->
-    unix_time(erlang:timestamp()).
+    erlang:system_time(second).
 
-?DOC("Return the unix time from a now or universal time.").
+?DOC("Return the unix time in seconds from a timestamp or universal time.").
 -spec unix_time(erlang:timestamp() | calendar:datetime1970()) -> unix_time().
 unix_time({_MegaSecs, _Secs, _MicroSecs} = NowTime) ->
     UniversalTime = calendar:now_to_universal_time(NowTime),
     unix_time(UniversalTime);
 unix_time({{_, _, _}, {_, _, _}} = UniversalTime) ->
-    % calendar:universal_time_to_system_time(UniversalTime),
+    % From OTP28, we can use calendar:universal_time_to_system_time(UniversalTime),
     Epoch = {{1970, 1, 1}, {0, 0, 0}},
     (calendar:datetime_to_gregorian_seconds(UniversalTime) -
         calendar:datetime_to_gregorian_seconds(Epoch)).
