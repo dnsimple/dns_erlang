@@ -37,7 +37,7 @@ jobs:
     name: OTP ${{matrix.otp}}
     strategy:
       matrix:
-        otp: ['27', '26']
+        otp: ['28', '27', '26']
         rebar3: ['3.24']
     runs-on: ubuntu-latest
     steps:
