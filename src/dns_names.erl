@@ -178,6 +178,7 @@ ercode_name(Int) when is_integer(Int) ->
     case Int of
         ?DNS_ERCODE_NOERROR_NUMBER -> ?DNS_ERCODE_NOERROR_BSTR;
         ?DNS_ERCODE_BADVERS_NUMBER -> ?DNS_ERCODE_BADVERS_BSTR;
+        ?DNS_ERCODE_BADCOOKIE_NUMBER -> ?DNS_ERCODE_BADCOOKIE_BSTR;
         _ -> undefined
     end.
 

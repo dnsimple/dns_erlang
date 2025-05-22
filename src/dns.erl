@@ -168,6 +168,8 @@ restrictions on the length. Labels must be 63 characters or less.
 ?DOC(#{group => <<"Types: records">>}).
 -type opt_owner() :: #dns_opt_owner{}.
 ?DOC(#{group => <<"Types: records">>}).
+-type opt_cookie() :: #dns_opt_cookie{}.
+?DOC(#{group => <<"Types: records">>}).
 -type opt_unknown() :: #dns_opt_unknown{}.
 ?DOC(#{group => <<"Types: records">>}).
 -type rrdata_rrsig() :: #dns_rrdata_rrsig{}.
@@ -217,7 +219,14 @@ restrictions on the length. Labels must be 63 characters or less.
 ?DOC(#{group => <<"Types: records">>}).
 -type records() :: additional() | answers() | authority() | questions().
 ?DOC(#{group => <<"Types: records">>}).
--type optrr_elem() :: opt_nsid() | opt_ul() | opt_unknown() | opt_ecs() | opt_llq() | opt_owner().
+-type optrr_elem() ::
+    opt_nsid()
+    | opt_ul()
+    | opt_unknown()
+    | opt_ecs()
+    | opt_llq()
+    | opt_owner()
+    | opt_cookie().
 ?DOC(#{group => <<"Types: records">>}).
 -type questions() :: [query()].
 ?DOC(#{group => <<"Types: records">>}).

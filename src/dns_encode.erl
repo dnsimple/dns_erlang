@@ -1172,6 +1172,16 @@ do_encode_optrrdata(
 ) ->
     Data = <<FAMILY:16, SRCPL:8, SCOPEPL:8, ADDRESS/binary>>,
     {?DNS_EOPTCODE_ECS, Data};
+do_encode_optrrdata(#dns_opt_cookie{client = <<ClientCookie:8/binary>>, server = undefined}) ->
+    {?DNS_EOPTCODE_COOKIE, ClientCookie};
+do_encode_optrrdata(#dns_opt_cookie{
+    client = <<ClientCookie:8/binary>>, server = <<ServerCookie/binary>>
+}) when
+    8 =< byte_size(ServerCookie), byte_size(ServerCookie) =< 32
+->
+    {?DNS_EOPTCODE_COOKIE, <<ClientCookie/binary, ServerCookie/binary>>};
+do_encode_optrrdata(#dns_opt_cookie{}) ->
+    erlang:error(bad_cookie);
 do_encode_optrrdata(#dns_opt_unknown{id = Id, bin = Data}) when
     is_integer(Id) andalso is_binary(Data)
 ->

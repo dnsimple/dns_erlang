@@ -328,6 +328,34 @@ edns_badvers_test() ->
     Decoded = dns:decode_message(Encoded),
     ?assertMatch([#dns_optrr{ext_rcode = 1, version = 0} | _], Decoded#dns_message.additional).
 
+edns_cookie_test_() ->
+    Query = #dns_query{name = <<"example.com">>, type = ?DNS_TYPE_A},
+    Msg = #dns_message{qc = 1, adc = 1, questions = [Query]},
+    ClientMsg = Msg#dns_message{
+        additional = [#dns_optrr{data = [#dns_opt_cookie{client = <<"abcdefgh">>}]}]
+    },
+    ServerMsg = Msg#dns_message{
+        additional = [
+            #dns_optrr{
+                data = [#dns_opt_cookie{client = <<"abcdefgh">>, server = <<"ijklmnopqrs">>}]
+            }
+        ]
+    },
+    BadMsg = Msg#dns_message{
+        additional = [#dns_optrr{data = [#dns_opt_cookie{server = <<"ijklmnopqrs">>}]}]
+    },
+    %% Msg as above but client cookie set to <<"small">>
+    TooSmallCookie =
+        <<66, 248, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 7, 101, 120, 97, 109, 112, 108, 101, 3, 99, 111,
+            109, 0, 0, 1, 0, 1, 0, 0, 41, 16, 0, 0, 0, 0, 0, 0, 9, 0, 10, 0, 5, 115, 109, 97, 108,
+            108>>,
+    [
+        ?_assertEqual(ClientMsg, dns:decode_message(dns:encode_message(ClientMsg))),
+        ?_assertEqual(ServerMsg, dns:decode_message(dns:encode_message(ServerMsg))),
+        ?_assertError(bad_cookie, dns:decode_message(TooSmallCookie)),
+        ?_assertError(bad_cookie, dns:decode_message(dns:encode_message(BadMsg)))
+    ].
+
 %%%===================================================================
 %%% Record data functions
 %%%===================================================================

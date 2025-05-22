@@ -371,6 +371,12 @@
     address :: binary()
 }).
 
+%% EDNS Cookie. See RFC 7873: §4
+-record(dns_opt_cookie, {
+    client :: <<_:64>>,
+    server :: undefined | <<_:64, _:_*8>>
+}).
+
 %% Unknown EDNS option.
 -record(dns_opt_unknown, {
     id :: integer(),
