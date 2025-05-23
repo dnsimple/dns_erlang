@@ -311,7 +311,7 @@ do_decode_optrrdata(?DNS_EOPTCODE_COOKIE, <<ClientCookie:8/binary, ServerCookie/
 ->
     #dns_opt_cookie{client = ClientCookie, server = ServerCookie};
 do_decode_optrrdata(?DNS_EOPTCODE_COOKIE, _) ->
-    error(bad_cookie);
+    erlang:error(bad_cookie);
 do_decode_optrrdata(EOpt, <<Bin/binary>>) ->
     #dns_opt_unknown{id = EOpt, bin = Bin}.
 
