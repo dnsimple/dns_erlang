@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## main
 
+## 4.1.0
+
+- Add support for RFC7873 EDNS cookies encoding and decoding
+
 ## 4.0.1
 
 - Fix additional count when truncating a message

@@ -151,7 +151,8 @@ tsigerr_terms_test_() ->
 ercode_name_test_() ->
     Cases = [
         ?DNS_ERCODE_NOERROR_NUMBER,
-        ?DNS_ERCODE_BADVERS_NUMBER
+        ?DNS_ERCODE_BADVERS_NUMBER,
+        ?DNS_ERCODE_BADCOOKIE_NUMBER
     ],
     L = [?_assert(is_binary(dns_names:ercode_name(Number))) || Number <- Cases],
     [?_assertEqual(undefined, dns_names:ercode_name(?UNKNOWN_INT)) | L].

@@ -304,6 +304,14 @@ do_decode_optrrdata(?DNS_EOPTCODE_ECS, <<FAMILY:16, SRCPL:8, SCOPEPL:8, Payload/
         scope_prefix_length = SCOPEPL,
         address = Payload
     };
+do_decode_optrrdata(?DNS_EOPTCODE_COOKIE, <<ClientCookie:8/binary>>) ->
+    #dns_opt_cookie{client = ClientCookie};
+do_decode_optrrdata(?DNS_EOPTCODE_COOKIE, <<ClientCookie:8/binary, ServerCookie/binary>>) when
+    8 =< byte_size(ServerCookie), byte_size(ServerCookie) =< 32
+->
+    #dns_opt_cookie{client = ClientCookie, server = ServerCookie};
+do_decode_optrrdata(?DNS_EOPTCODE_COOKIE, _) ->
+    erlang:error(bad_cookie);
 do_decode_optrrdata(EOpt, <<Bin/binary>>) ->
     #dns_opt_unknown{id = EOpt, bin = Bin}.
 
