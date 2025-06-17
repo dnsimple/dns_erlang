@@ -123,13 +123,13 @@ get_max_size(#{max_size := Value}, _) when
     not is_integer(Value) orelse Value < 512 orelse 65535 < Value
 ->
     erlang:error(badarg);
-get_max_size(_, [#dns_optrr{udp_payload_size = Value}]) when
+get_max_size(_, [#dns_optrr{udp_payload_size = Value} | _]) when
     not is_integer(Value) orelse Value < 512 orelse 65535 < Value
 ->
     erlang:error(badarg);
 get_max_size(#{max_size := Value}, _) ->
     Value;
-get_max_size(_, [#dns_optrr{udp_payload_size = Value}]) ->
+get_max_size(_, [#dns_optrr{udp_payload_size = Value} | _]) ->
     Value;
 get_max_size(_, _) ->
     512.
