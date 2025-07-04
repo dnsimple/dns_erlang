@@ -128,6 +128,8 @@ characters only letters, digits, and hyphen. There are also some
 restrictions on the length. Labels must be 63 characters or less.
 """).
 -type label() :: binary().
+?DOC("A list of `t:dns:label/0`").
+-type labels() :: [label()].
 ?DOC("DNS Message class. See RFC 1035: §4.1.2.").
 -type class() :: uint16().
 ?DOC("DNS Message class. See RFC 1035: §4.1.2.").
@@ -145,6 +147,7 @@ restrictions on the length. Labels must be 63 characters or less.
     type/0,
     ttl/0,
     label/0,
+    labels/0,
     unix_time/0
 ]).
 
@@ -384,7 +387,7 @@ add_tsig(Msg, Alg, Name, Secret, ErrCode, Options) ->
 
 ?DOC(#{group => <<"Functions: utilities">>}).
 ?DOC("Splits a dname into a list of labels and removes unneeded escapes.").
--spec dname_to_labels(dns:dname()) -> [dns:label()].
+-spec dname_to_labels(dname()) -> labels().
 dname_to_labels(<<>>) ->
     [];
 dname_to_labels(<<$.>>) ->
@@ -433,7 +436,7 @@ do_escape_label(Cur, <<C, Rest/binary>>) ->
     do_escape_label(<<Cur/binary, C>>, Rest).
 
 ?DOC(false).
--spec labels_to_dname([label()]) -> dname().
+-spec labels_to_dname(labels()) -> dname().
 labels_to_dname(Labels) ->
     <<$., DName/binary>> = <<<<$., (escape_label(Label))/binary>> || Label <- Labels>>,
     DName.

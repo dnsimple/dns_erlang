@@ -31,7 +31,7 @@
 
 -compile({inline, [encode_bool/1]}).
 
--type compmap() :: #{[binary()] => non_neg_integer()}.
+-type compmap() :: #{dns:labels() => non_neg_integer()}.
 -export_type([compmap/0]).
 
 -spec encode(dns:message()) -> dns:message_bin().
@@ -1187,17 +1187,18 @@ do_encode_optrrdata(#dns_opt_unknown{id = Id, bin = Data}) when
 ->
     {Id, Data}.
 
--spec encode_dname(binary()) -> nonempty_binary().
+-spec encode_dname(dns:dname()) -> nonempty_binary().
 encode_dname(Name) when is_binary(Name) ->
     Labels = <<<<(byte_size(L)), L/binary>> || L <- dns:dname_to_labels(Name)>>,
     <<Labels/binary, 0>>.
 
--spec encode_dname(compmap(), non_neg_integer(), binary()) -> {binary(), undefined | compmap()}.
+-spec encode_dname(compmap(), non_neg_integer(), dns:dname()) ->
+    {dns:dname(), undefined | compmap()}.
 encode_dname(CompMap, Pos, Name) ->
     encode_dname(<<>>, CompMap, Pos, Name).
 
--spec encode_dname(binary(), undefined | compmap(), non_neg_integer(), binary()) ->
-    {binary(), undefined | compmap()}.
+-spec encode_dname(dns:dname(), undefined | compmap(), non_neg_integer(), dns:dname()) ->
+    {dns:dname(), undefined | compmap()}.
 encode_dname(Bin, undefined, _Pos, Name) ->
     DNameBin = encode_dname(Name),
     {<<Bin/binary, DNameBin/binary>>, undefined};
@@ -1206,7 +1207,7 @@ encode_dname(Bin, CompMap, Pos, Name) ->
     LwrLabels = dns:dname_to_labels(dns:dname_to_lower(Name)),
     encode_dname_labels(Bin, CompMap, Pos, Labels, LwrLabels).
 
--spec encode_dname_labels(binary(), compmap(), non_neg_integer(), [binary()], [binary()]) ->
+-spec encode_dname_labels(dns:dname(), compmap(), non_neg_integer(), dns:labels(), dns:labels()) ->
     {nonempty_binary(), compmap()}.
 encode_dname_labels(Bin, CompMap, _Pos, [], []) ->
     {<<Bin/binary, 0>>, CompMap};
