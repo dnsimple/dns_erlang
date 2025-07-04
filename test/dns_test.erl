@@ -662,6 +662,28 @@ dns_case_insensitive_comparison_test_() ->
             dns:compare_dname(
                 dns:dname_to_upper(<<"example.com">>), dns:dname_to_lower(<<"EXAMPLE.COM">>)
             )
+        ),
+        ?_assert(dns:compare_labels([<<"example">>, <<"com">>], [<<"EXAMPLE">>, <<"COM">>])),
+        ?_assert(
+            dns:compare_labels([<<"www">>, <<"example">>, <<"com">>], [
+                <<"WWW">>, <<"example">>, <<"COM">>
+            ])
+        ),
+        ?_assert(
+            dns:compare_labels([<<"www">>, <<"EXAMPLE">>, <<"com">>], [
+                <<"WWW">>, <<"example">>, <<"COM">>
+            ])
+        ),
+        ?_assertNot(
+            dns:compare_labels([<<"www">>, <<"different">>, <<"com">>], [
+                <<"WWW">>, <<"example">>, <<"COM">>
+            ])
+        ),
+        ?_assertNot(
+            dns:compare_labels([<<"www">>, <<"example">>], [<<"www">>, <<"example">>, <<"com">>])
+        ),
+        ?_assertNot(
+            dns:compare_labels([<<"www">>, <<"example">>, <<"com">>], [<<"www">>, <<"example">>])
         )
     ].
 
