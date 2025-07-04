@@ -39,8 +39,13 @@ domain names into different cases, converting to and from label lists, etc.
 -export([decode_message/1, encode_message/1, encode_message/2]).
 -export([verify_tsig/3, verify_tsig/4, add_tsig/5, add_tsig/6]).
 -export([compare_dname/2, escape_label/1]).
--export([dname_to_upper/1, dname_to_lower/1]).
--export([dname_to_labels/1, labels_to_dname/1]).
+-export([
+    dname_to_upper/1,
+    dname_to_lower/1,
+    dname_to_labels/1,
+    labels_to_dname/1,
+    dname_to_lower_labels/1
+]).
 -export([unix_time/0, unix_time/1]).
 -export([random_id/0]).
 
@@ -384,6 +389,12 @@ add_tsig(Msg, Alg, Name, Secret, ErrCode, Options) ->
 %%%===================================================================
 %%% Domain name functions
 %%%===================================================================
+
+?DOC(#{group => <<"Functions: utilities">>}).
+?DOC("Splits a dname into a list of labels in lowercase and removes unneeded escapes.").
+-spec dname_to_lower_labels(dname()) -> labels().
+dname_to_lower_labels(Name) ->
+    dname_to_labels(dname_to_lower(Name)).
 
 ?DOC(#{group => <<"Functions: utilities">>}).
 ?DOC("Splits a dname into a list of labels and removes unneeded escapes.").

@@ -548,6 +548,17 @@ encode_dname_4_test_() ->
     ],
     [?_assertEqual(Expect, Result) || {Expect, Result} <- Cases].
 
+dname_to_lower_labels_test_() ->
+    Cases = [
+        {<<>>, []},
+        {<<".">>, []},
+        {<<"A.B.C">>, [<<"a">>, <<"b">>, <<"c">>]},
+        {<<"A.B.C.">>, [<<"a">>, <<"b">>, <<"c">>]},
+        {<<"A\\.B.c">>, [<<"a.b">>, <<"c">>]},
+        {<<"A\\\\.b.C">>, [<<"a\\">>, <<"b">>, <<"c">>]}
+    ],
+    [?_assertEqual(Expect, dns:dname_to_lower_labels(Arg)) || {Arg, Expect} <- Cases].
+
 dname_to_labels_test_() ->
     Cases = [
         {<<>>, []},
