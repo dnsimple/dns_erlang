@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## main
 
+## 4.2.0
+
+- Add shortcuts for normalizing and converting domains into labels.
+- Add a helper for comparing label lists.
+- Add helpers to convert from and to codes into their string representation.
+
 ## 4.1.0
 
 - Add support for RFC7873 EDNS cookies encoding and decoding

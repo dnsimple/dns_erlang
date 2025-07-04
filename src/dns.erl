@@ -38,9 +38,14 @@ domain names into different cases, converting to and from label lists, etc.
 
 -export([decode_message/1, encode_message/1, encode_message/2]).
 -export([verify_tsig/3, verify_tsig/4, add_tsig/5, add_tsig/6]).
--export([compare_dname/2, escape_label/1]).
--export([dname_to_upper/1, dname_to_lower/1]).
--export([dname_to_labels/1, labels_to_dname/1]).
+-export([compare_dname/2, compare_labels/2, escape_label/1]).
+-export([
+    dname_to_upper/1,
+    dname_to_lower/1,
+    dname_to_labels/1,
+    labels_to_dname/1,
+    dname_to_lower_labels/1
+]).
 -export([unix_time/0, unix_time/1]).
 -export([random_id/0]).
 
@@ -128,6 +133,8 @@ characters only letters, digits, and hyphen. There are also some
 restrictions on the length. Labels must be 63 characters or less.
 """).
 -type label() :: binary().
+?DOC("A list of `t:dns:label/0`").
+-type labels() :: [label()].
 ?DOC("DNS Message class. See RFC 1035: §4.1.2.").
 -type class() :: uint16().
 ?DOC("DNS Message class. See RFC 1035: §4.1.2.").
@@ -145,6 +152,7 @@ restrictions on the length. Labels must be 63 characters or less.
     type/0,
     ttl/0,
     label/0,
+    labels/0,
     unix_time/0
 ]).
 
@@ -383,8 +391,14 @@ add_tsig(Msg, Alg, Name, Secret, ErrCode, Options) ->
 %%%===================================================================
 
 ?DOC(#{group => <<"Functions: utilities">>}).
+?DOC("Splits a dname into a list of labels in lowercase and removes unneeded escapes.").
+-spec dname_to_lower_labels(dname()) -> labels().
+dname_to_lower_labels(Name) ->
+    dname_to_labels(dname_to_lower(Name)).
+
+?DOC(#{group => <<"Functions: utilities">>}).
 ?DOC("Splits a dname into a list of labels and removes unneeded escapes.").
--spec dname_to_labels(dns:dname()) -> [dns:label()].
+-spec dname_to_labels(dname()) -> labels().
 dname_to_labels(<<>>) ->
     [];
 dname_to_labels(<<$.>>) ->
@@ -412,9 +426,24 @@ do_dname_to_labels(Label, <<C, Cs/binary>>) ->
 compare_dname(Name, Name) ->
     true;
 compare_dname(NameA, NameB) ->
-    NameALwr = dname_to_lower(iolist_to_binary(NameA)),
-    NameBLwr = dname_to_lower(iolist_to_binary(NameB)),
-    NameALwr =:= NameBLwr.
+    dname_to_lower(NameA) =:= dname_to_lower(NameB).
+
+?DOC(#{group => <<"Functions: utilities">>}).
+?DOC("Compare two domain names insensitive of case.").
+-spec compare_labels(labels(), labels()) -> boolean().
+compare_labels(LabelsA, LabelsB) when is_list(LabelsA), is_list(LabelsB) ->
+    do_compare_labels(LabelsA, LabelsB).
+
+do_compare_labels([], []) ->
+    true;
+do_compare_labels([LA | LabelsA], [LA | LabelsB]) ->
+    do_compare_labels(LabelsA, LabelsB);
+do_compare_labels([LA | LabelsA], [LB | LabelsB]) ->
+    dname_to_lower(LA) =:= dname_to_lower(LB) andalso do_compare_labels(LabelsA, LabelsB);
+do_compare_labels([], [_ | _]) ->
+    false;
+do_compare_labels([_ | _], []) ->
+    false.
 
 ?DOC(#{group => <<"Functions: utilities">>}).
 ?DOC("Escapes dots in a DNS label").
@@ -433,7 +462,7 @@ do_escape_label(Cur, <<C, Rest/binary>>) ->
     do_escape_label(<<Cur/binary, C>>, Rest).
 
 ?DOC(false).
--spec labels_to_dname([label()]) -> dname().
+-spec labels_to_dname(labels()) -> dname().
 labels_to_dname(Labels) ->
     <<$., DName/binary>> = <<<<$., (escape_label(Label))/binary>> || Label <- Labels>>,
     DName.

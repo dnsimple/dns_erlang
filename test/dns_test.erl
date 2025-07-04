@@ -548,6 +548,17 @@ encode_dname_4_test_() ->
     ],
     [?_assertEqual(Expect, Result) || {Expect, Result} <- Cases].
 
+dname_to_lower_labels_test_() ->
+    Cases = [
+        {<<>>, []},
+        {<<".">>, []},
+        {<<"A.B.C">>, [<<"a">>, <<"b">>, <<"c">>]},
+        {<<"A.B.C.">>, [<<"a">>, <<"b">>, <<"c">>]},
+        {<<"A\\.B.c">>, [<<"a.b">>, <<"c">>]},
+        {<<"A\\\\.b.C">>, [<<"a\\">>, <<"b">>, <<"c">>]}
+    ],
+    [?_assertEqual(Expect, dns:dname_to_lower_labels(Arg)) || {Arg, Expect} <- Cases].
+
 dname_to_labels_test_() ->
     Cases = [
         {<<>>, []},
@@ -651,6 +662,28 @@ dns_case_insensitive_comparison_test_() ->
             dns:compare_dname(
                 dns:dname_to_upper(<<"example.com">>), dns:dname_to_lower(<<"EXAMPLE.COM">>)
             )
+        ),
+        ?_assert(dns:compare_labels([<<"example">>, <<"com">>], [<<"EXAMPLE">>, <<"COM">>])),
+        ?_assert(
+            dns:compare_labels([<<"www">>, <<"example">>, <<"com">>], [
+                <<"WWW">>, <<"example">>, <<"COM">>
+            ])
+        ),
+        ?_assert(
+            dns:compare_labels([<<"www">>, <<"EXAMPLE">>, <<"com">>], [
+                <<"WWW">>, <<"example">>, <<"COM">>
+            ])
+        ),
+        ?_assertNot(
+            dns:compare_labels([<<"www">>, <<"different">>, <<"com">>], [
+                <<"WWW">>, <<"example">>, <<"COM">>
+            ])
+        ),
+        ?_assertNot(
+            dns:compare_labels([<<"www">>, <<"example">>], [<<"www">>, <<"example">>, <<"com">>])
+        ),
+        ?_assertNot(
+            dns:compare_labels([<<"www">>, <<"example">>, <<"com">>], [<<"www">>, <<"example">>])
         )
     ].
 
