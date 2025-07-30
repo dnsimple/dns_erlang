@@ -413,6 +413,14 @@ decode_encode_rrdata_test_() ->
                 ?DNS_SVCB_PARAM_IPV6HINT =>
                     <<"2001:0db8:85a3:0000:0000:8a2e:0370:7334,2001:0db8:85a3:0000:0000:8a2e:0370:7335">>
             }
+        }},
+        % https://datatracker.ietf.org/doc/html/rfc6698#section-2.3 Example 2
+        {?DNS_TYPE_TLSA, #dns_rrdata_tlsa{
+            usage = 1,
+            selector = 1,
+            matching_type = 2,
+            certificate_association_data =
+                <<"92003ba34942dc74152e2f2c408d29eca5a520e7f2e06bb944f4dca346baf63c1b177615d466f6c4b71c216a50292bd58c9ebdd2f74e38fe51ffd48c43326cbc">>
         }}
     ],
     [

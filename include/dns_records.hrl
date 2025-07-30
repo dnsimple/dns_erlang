@@ -236,6 +236,14 @@
     salt :: binary()
 }).
 
+%% TLSA record for DANE TLS. See RFC 6698.
+-record(dns_rrdata_tlsa, {
+    usage :: dns:uint8(),
+    selector :: dns:uint8(),
+    matching_type :: dns:uint8(),
+    certificate_association_data :: binary()
+}).
+
 %% NXT record for next domain (obsoleted by NSEC). See RFC 2535.
 -record(dns_rrdata_nxt, {
     dname :: dns:dname(),

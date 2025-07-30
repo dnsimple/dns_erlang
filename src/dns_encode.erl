@@ -914,6 +914,18 @@ encode_rrdata(
     SaltLength = byte_size(Salt),
     {<<HashAlg:8, Flags:8, Iterations:16, SaltLength:8/unsigned, Salt:SaltLength/binary>>, CompMap};
 encode_rrdata(
+    _Pos,
+    _Class,
+    #dns_rrdata_tlsa{
+        usage = Usage,
+        selector = Selector,
+        matching_type = MatchingType,
+        certificate_association_data = CAData
+    },
+    CompMap
+) ->
+    {<<Usage:8, Selector:8, MatchingType:8, CAData/binary>>, CompMap};
+encode_rrdata(
     Pos,
     _Class,
     #dns_rrdata_nxt{dname = NxtDName, types = Types},
