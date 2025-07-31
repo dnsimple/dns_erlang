@@ -241,7 +241,7 @@
     usage :: dns:uint8(),
     selector :: dns:uint8(),
     matching_type :: dns:uint8(),
-    certificate_association_data :: binary()
+    certificate :: binary()
 }).
 
 %% NXT record for next domain (obsoleted by NSEC). See RFC 2535.

@@ -920,11 +920,11 @@ encode_rrdata(
         usage = Usage,
         selector = Selector,
         matching_type = MatchingType,
-        certificate_association_data = CAData
+        certificate = Certificate
     },
     CompMap
 ) ->
-    {<<Usage:8, Selector:8, MatchingType:8, CAData/binary>>, CompMap};
+    {<<Usage:8, Selector:8, MatchingType:8, Certificate/binary>>, CompMap};
 encode_rrdata(
     Pos,
     _Class,
