@@ -222,6 +222,7 @@ restrictions on the length. Labels must be 63 characters or less.
     | #dns_rrdata_srv{}
     | #dns_rrdata_svcb{}
     | #dns_rrdata_sshfp{}
+    | #dns_rrdata_tlsa{}
     | #dns_rrdata_tsig{}
     | #dns_rrdata_txt{}.
 ?DOC(#{group => <<"Types: records">>}).

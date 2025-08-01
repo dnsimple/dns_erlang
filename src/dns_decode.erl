@@ -624,6 +624,15 @@ decode_rrdata(
         iterations = Iterations,
         salt = Salt
     };
+decode_rrdata(
+    _MsgBin, _Class, ?DNS_TYPE_TLSA, <<Usage:8, Selector:8, MatchingType:8, Certificate/binary>>
+) ->
+    #dns_rrdata_tlsa{
+        usage = Usage,
+        selector = Selector,
+        matching_type = MatchingType,
+        certificate = Certificate
+    };
 decode_rrdata(MsgBin, _Class, ?DNS_TYPE_NXT, Bin) ->
     {NxtDName, BMP} = decode_dname(MsgBin, Bin),
     #dns_rrdata_nxt{dname = NxtDName, types = decode_nxt_bmp(BMP)};
