@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## main
 
+## 4.3.0
+
+- Add support for TLSA records.
+
 ## 4.2.0
 
 - Add shortcuts for normalizing and converting domains into labels.
