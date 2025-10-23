@@ -28,7 +28,7 @@
 ]).
 -endif.
 
--compile({inline, [decode_bool/1, round_pow/1]}).
+-compile({inline, [decode_bool/1, round_pow/1, choose_next_bin/3]}).
 
 -spec decode(dns:message_bin()) ->
     dns:message() | {dns:decode_error(), dns:message() | undefined, binary()}.
@@ -119,28 +119,28 @@ decode_message_questions(MsgBin, DataBin, Count) ->
 
 -spec decode_message_questions(dns:message_bin(), binary(), dns:uint16(), dns:questions()) ->
     {dns:questions(), binary()} | {dns:decode_error(), dns:questions(), binary()}.
-decode_message_questions(_MsgBin, DataBin, 0, Qs) ->
-    {lists:reverse(Qs), DataBin};
-decode_message_questions(_MsgBin, <<>>, _Count, Qs) ->
-    {truncated, lists:reverse(Qs), <<>>};
-decode_message_questions(MsgBin, DataBin, Count, Qs) ->
+decode_message_questions(_MsgBin, DataBin, 0, RRs) ->
+    {lists:reverse(RRs), DataBin};
+decode_message_questions(_MsgBin, <<>>, _Count, RRs) ->
+    {truncated, lists:reverse(RRs), <<>>};
+decode_message_questions(MsgBin, DataBin, Count, RRs) ->
     try decode_dname(MsgBin, DataBin) of
         {Name, <<Type:16, Class:16, RB/binary>>} ->
-            Q = #dns_query{name = Name, type = Type, class = Class},
-            decode_message_questions(MsgBin, RB, Count - 1, [Q | Qs]);
+            R = #dns_query{name = Name, type = Type, class = Class},
+            decode_message_questions(MsgBin, RB, Count - 1, [R | RRs]);
         {_Name, _Bin} ->
-            {truncated, lists:reverse(Qs), DataBin}
+            {truncated, lists:reverse(RRs), DataBin}
     catch
         Error when is_atom(Error) ->
-            {Error, lists:reverse(Qs), DataBin};
+            {Error, lists:reverse(RRs), DataBin};
         _:_ ->
-            {formerr, lists:reverse(Qs), DataBin}
+            {formerr, lists:reverse(RRs), DataBin}
     end.
 
 -spec decode_message_additional(dns:message_bin(), binary(), dns:uint16()) ->
     {dns:additional(), binary()} | {dns:decode_error(), [dns:optrr() | dns:rr()], binary()}.
 decode_message_additional(MsgBin, DataBin, Count) when
-    is_binary(MsgBin), is_binary(MsgBin), is_integer(Count), 0 =< Count, Count =< 65535
+    is_binary(MsgBin), is_binary(DataBin), is_integer(Count), 0 =< Count, Count =< 65535
 ->
     do_decode_message_additional(MsgBin, DataBin, Count, []).
 
@@ -148,8 +148,8 @@ decode_message_additional(MsgBin, DataBin, Count) when
     {dns:additional(), binary()} | {dns:decode_error(), [dns:optrr() | dns:rr()], binary()}.
 do_decode_message_additional(_MsgBin, DataBin, 0, RRs) ->
     {lists:reverse(RRs), DataBin};
-do_decode_message_additional(_MsgBin, <<>>, _Count, Qs) ->
-    {truncated, lists:reverse(Qs), <<>>};
+do_decode_message_additional(_MsgBin, <<>>, _Count, RRs) ->
+    {truncated, lists:reverse(RRs), <<>>};
 do_decode_message_additional(MsgBin, DataBin, Count, RRs) ->
     try decode_dname(MsgBin, DataBin) of
         {<<>>,
@@ -197,8 +197,8 @@ decode_message_body(MsgBin, DataBin, Count) when
     {[dns:rr()], binary()} | {dns:decode_error(), [dns:rr()], binary()}.
 do_decode_message_body(_MsgBin, DataBin, 0, RRs) ->
     {lists:reverse(RRs), DataBin};
-do_decode_message_body(_MsgBin, <<>>, _Count, Qs) ->
-    {truncated, lists:reverse(Qs), <<>>};
+do_decode_message_body(_MsgBin, <<>>, _Count, RRs) ->
+    {truncated, lists:reverse(RRs), <<>>};
 do_decode_message_body(MsgBin, DataBin, Count, RRs) ->
     try decode_dname(MsgBin, DataBin) of
         {Name,
