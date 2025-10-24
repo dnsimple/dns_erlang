@@ -1303,18 +1303,18 @@ encode_string(Bin, StringBin) when byte_size(StringBin) < 256 ->
 %% @see encode_string/2
 -spec encode_text([binary()]) -> binary().
 encode_text(Strings) ->
-    do_decode_text(Strings, <<>>).
+    do_encode_text(Strings, <<>>).
 
--spec do_decode_text([binary()], binary()) -> binary().
-do_decode_text([], Bin) ->
+-spec do_encode_text([binary()], binary()) -> binary().
+do_encode_text([], Bin) ->
     Bin;
-do_decode_text([<<Head:255/binary, Tail/binary>> | Strings], Acc) ->
-    do_decode_text([Tail | Strings], <<Acc/binary, 255, Head/binary>>);
-do_decode_text([<<>> | Strings], Acc) ->
-    do_decode_text(Strings, Acc);
-do_decode_text([S | Strings], Acc) ->
+do_encode_text([<<Head:255/binary, Tail/binary>> | Strings], Acc) ->
+    do_encode_text([Tail | Strings], <<Acc/binary, 255, Head/binary>>);
+do_encode_text([<<>> | Strings], Acc) ->
+    do_encode_text(Strings, Acc);
+do_encode_text([S | Strings], Acc) ->
     Size = byte_size(S),
-    do_decode_text(Strings, <<Acc/binary, Size, S/binary>>).
+    do_encode_text(Strings, <<Acc/binary, Size, S/binary>>).
 
 -spec encode_svcb_svc_params(dns:svcb_svc_params()) -> binary().
 encode_svcb_svc_params(SvcParams) ->
