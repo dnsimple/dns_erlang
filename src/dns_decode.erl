@@ -359,14 +359,7 @@ decode_rrdata(
         AlgNum =:= ?DNS_ALG_RSASHA256 orelse
         AlgNum =:= ?DNS_ALG_RSASHA512
 ->
-    Key =
-        case PublicKey of
-            <<0, Len:16, Exp:Len/unit:8, ModBin/binary>> ->
-                [Exp, binary:decode_unsigned(ModBin)];
-            <<Len:8, Exp:Len/unit:8, ModBin/binary>> ->
-                [Exp, binary:decode_unsigned(ModBin)]
-        end,
-    KeyTag = bin_to_key_tag(Bin),
+    {Key, KeyTag} = decode_rsa_key(PublicKey, Bin),
     #dns_rrdata_dnskey{
         flags = Flags,
         protocol = Protocol,
@@ -383,10 +376,7 @@ decode_rrdata(
     (AlgNum =:= ?DNS_ALG_DSA orelse AlgNum =:= ?DNS_ALG_NSEC3DSA) andalso
         T =< 8
 ->
-    S = 64 + T * 8,
-    <<P:S/unit:8, G:S/unit:8, Y:S/unit:8>> = KeyBin,
-    Key = [P, Q, G, Y],
-    KeyTag = bin_to_key_tag(Bin),
+    {Key, KeyTag} = decode_dsa_key(T, Q, KeyBin, Bin),
     #dns_rrdata_dnskey{
         flags = Flags,
         protocol = Protocol,
@@ -428,14 +418,7 @@ decode_rrdata(
         AlgNum =:= ?DNS_ALG_RSASHA256 orelse
         AlgNum =:= ?DNS_ALG_RSASHA512
 ->
-    Key =
-        case PublicKey of
-            <<0, Len:16, Exp:Len/unit:8, ModBin/binary>> ->
-                [Exp, binary:decode_unsigned(ModBin)];
-            <<Len:8, Exp:Len/unit:8, ModBin/binary>> ->
-                [Exp, binary:decode_unsigned(ModBin)]
-        end,
-    KeyTag = bin_to_key_tag(Bin),
+    {Key, KeyTag} = decode_rsa_key(PublicKey, Bin),
     #dns_rrdata_cdnskey{
         flags = Flags,
         protocol = Protocol,
@@ -452,10 +435,7 @@ decode_rrdata(
     (AlgNum =:= ?DNS_ALG_DSA orelse AlgNum =:= ?DNS_ALG_NSEC3DSA) andalso
         T =< 8
 ->
-    S = 64 + T * 8,
-    <<P:S/unit:8, G:S/unit:8, Y:S/unit:8>> = KeyBin,
-    Key = [P, Q, G, Y],
-    KeyTag = bin_to_key_tag(Bin),
+    {Key, KeyTag} = decode_dsa_key(T, Q, KeyBin, Bin),
     #dns_rrdata_cdnskey{
         flags = Flags,
         protocol = Protocol,
@@ -752,6 +732,28 @@ decode_dnameonly(MsgBin, Bin) ->
         {DName, <<>>} -> DName;
         _ -> throw(trailing_garbage)
     end.
+
+%% Helper function to decode RSA keys for DNSKEY and CDNSKEY records
+-spec decode_rsa_key(binary(), binary()) -> {list(), char()}.
+decode_rsa_key(PublicKey, Bin) ->
+    Key =
+        case PublicKey of
+            <<0, Len:16, Exp:Len/unit:8, ModBin/binary>> ->
+                [Exp, binary:decode_unsigned(ModBin)];
+            <<Len:8, Exp:Len/unit:8, ModBin/binary>> ->
+                [Exp, binary:decode_unsigned(ModBin)]
+        end,
+    KeyTag = bin_to_key_tag(Bin),
+    {Key, KeyTag}.
+
+%% Helper function to decode DSA keys for DNSKEY and CDNSKEY records
+-spec decode_dsa_key(byte(), non_neg_integer(), binary(), binary()) -> {list(), char()}.
+decode_dsa_key(T, Q, KeyBin, Bin) ->
+    S = 64 + T * 8,
+    <<P:S/unit:8, G:S/unit:8, Y:S/unit:8>> = KeyBin,
+    Key = [P, Q, G, Y],
+    KeyTag = bin_to_key_tag(Bin),
+    {Key, KeyTag}.
 
 -spec decode_text(binary()) -> [binary()].
 decode_text(<<>>) ->
