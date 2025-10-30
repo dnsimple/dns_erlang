@@ -393,6 +393,12 @@
     server :: undefined | <<_:64, _:_*8>>
 }).
 
+%% Extended DNS Error. See RFC 8914: §2
+-record(dns_opt_ede, {
+    info_code :: dns:uint16(),
+    extra_text = <<>> :: binary()
+}).
+
 %% Unknown EDNS option.
 -record(dns_opt_unknown, {
     id :: integer(),
