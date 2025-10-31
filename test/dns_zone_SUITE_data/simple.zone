@@ -1,0 +1,9 @@
+$ORIGIN example.com.
+$TTL 1h
+example.com. IN  SOA ns1.dnsimple.com. admin.dnsimple.com. 2011092001 86400 7200 604800 300
+example.com. IN NS  ns1.dnsimple.com.
+example.com. IN NS  ns2.dnsimple.com.
+example.com. IN NS  ns3.dnsimple.com.
+example.com. IN NS  ns4.dnsimple.com.
+ds1.example.com. 3600 IN  A 10.1.2.3
+index.example.com. 3600 IN  NS ds1.example.com.

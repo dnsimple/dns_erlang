@@ -1,0 +1,8 @@
+$ORIGIN example.com.
+$TTL 1h
+example.com. 3600 IN SOA ns1.dnsimple.com. admin.dnsimple.com. 1445615767 86400 7200 604800 300
+example.com. 3600 IN NS ns1.dnsimple.com.
+example.com. 3600 IN NS ns2.dnsimple.com.
+example.com. 3600 IN NS ns3.dnsimple.com.
+example.com. 3600 IN NS ns4.dnsimple.com.
+test01.example.com. 3600 IN AAAA 1234:1234:1234:1234:1234:1234:1234:1234
