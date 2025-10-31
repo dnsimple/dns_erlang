@@ -12,7 +12,6 @@
 -define(OPTRR_MIN_SIZE, 88).
 %% 2^31 - 1, the largest signed 32-bit integer value
 -define(MAX_INT32, ((1 bsl 31) - 1)).
--define(DEFAULT_TSIG_FUDGE, 5 * 60).
 -define(HEADER_SIZE, 12).
 -define(CLASS_IS_IN(T), (T =:= ?DNS_CLASS_IN orelse T =:= ?DNS_CLASS_NONE)).
 
