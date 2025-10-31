@@ -1,0 +1,2 @@
+$ORIGIN example.com.
+$INCLUDE include_origin.zone sub.example.com.

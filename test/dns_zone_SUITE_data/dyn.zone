@@ -1,0 +1,56 @@
+$ORIGIN foo.bar.
+@                      3600 SOA   ns1.p.example.net. (
+                              webmaster.foo.bar.          ; address of responsible party
+                              2020042400                 ; serial number
+                              14400                      ; refresh period
+                              1800                       ; retry period
+                              604800                     ; expire time
+                              1800                     ) ; minimum ttl
+                      86400 NS    ns1.p.example.net.
+                      86400 NS    ns2.p.example.net.
+                      86400 NS    ns3.p.example.net.
+                      86400 NS    ns4.p.example.net.
+                       3600 MX    10 MX.L.MIKE.COM.
+                       3600 MX    20 ALT1.MX.L.MIKE.COM.
+                       3600 MX    20 ALT2.MX.L.MIKE.COM.
+                       3600 MX    30 ALT3.MX.L.MIKE.COM.
+                       3600 MX    30 ALT4.MX.L.MIKE.COM.
+                       3600 TXT   "_domain-verification=tnhnuthtnihnsi"
+                       3600 TXT   "ahrefs-site-verification_nsthtnhmtnwhnu"
+                       3600 TXT   "bob=thocgu"
+                       3600 TXT   "provider-site-verification=nthcgcrg"
+                       3600 TXT   "provider-site-verification=srcgrcg"
+                       3600 TXT   "provider-site-verification=srcghj"
+                       3600 TXT   "v=DKIM1\; k=rsa\; p=bad-rsa-key-hahaha"
+admin                  3600 CNAME hello-world.dnsimple.com.
+angebote               3600 CNAME quirky-thing.boo.com.
+ftp                     300 A     10.0.0.2
+imageorigin             900 CNAME foo.eu.bar.my-shop.com.
+images                 3600 CNAME images.my-cloud.net.
+img                    3600 CNAME img.foo.bar.s3-external-3.my-shop.com.
+impressum              3600 CNAME impressum.foo.bar.website.eu.my-shop.com.
+fine-press             3600 A     12.0.0.180
+fine-press             3600 TXT   "press=hehehehehehehehehe"
+mail                   3600 MX    10 feedback-smtp.eu-west-1.his-shop.com.
+mail                   3600 TXT   "v=spf1 include:his-shop.com ~all"
+mail-relay             3600 A     13.114.136.9
+phoning                3600 A     14.0.0.101
+sftp                   3600 A     10.0.0.1
+t                      3600 A     11.0.0.2
+www                    3600 CNAME d3.shared.us-eu.fastly.net.
+
+$ORIGIN _domainkey.foo.bar.
+k1                     3600 CNAME dkim.mcsv.net.
+s1                     3600 CNAME s1.alpha.beta.delta.mike.net.
+gamma                  3600 CNAME gamma.alpha.beta.delta.mike.net.
+$ORIGIN bg.foo.bar.
+phoning                3600 A     14.198.228.101
+$ORIGIN email.foo.bar.
+@                      3600 CNAME beta.delta.mike.net.
+o1                     3600 A     192.254.125.26
+$ORIGIN m.foo.bar.
+@                      3600 CNAME m.foo.bar.dnsimple.com.
+staging                3600 CNAME staging.foo.bar.website.eu.my-shop.com.
+$ORIGIN staging.foo.bar.
+@                      3600 CNAME crystal.dnsimple.com.
+billing                3600 A     12.0.0.159

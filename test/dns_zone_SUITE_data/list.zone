@@ -1,0 +1,16 @@
+	A	10.10.10.10
+MX	10 MX.L.EXAMPLE.COM.
+MX	20 ALT1.MX.L.EXAMPLE.COM.
+MX	20 ALT2.MX.L.EXAMPLE.COM.
+MX	30 MX2.EXAMPLEMAIN.COM.
+MX	30 MX3.EXAMPLEMAIN.COM.
+MX	30 MX4.EXAMPLEMAIN.COM.
+MX	30 MX5.EXAMPLEMAIN.COM.
+NS	ns1.foo.com.
+NS	ns2.foo.com.
+NS	ns3.foo.com.
+blocks	A	192.168.1.1
+blocks	MX	0 mx1.sub4.homie.mail.foo.com.
+blocks	MX	0 mx2.sub4.homie.mail.foo.com.
+_domainkey.blocks	TXT	"o=~; r=alice@blocks.bar.com"
+calendar	CNAME	baz.examplehosted.com.
