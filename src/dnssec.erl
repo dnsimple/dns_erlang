@@ -74,7 +74,8 @@ supported for signing RRSETs.
     | ?DNS_ALG_RSASHA1
     | ?DNS_ALG_NSEC3RSASHA1
     | ?DNS_ALG_RSASHA256
-    | ?DNS_ALG_RSASHA512.
+    | ?DNS_ALG_RSASHA512
+    | ?DNS_ALG_ECDSAP256SHA256.
 -type nsec3_hashalg() :: ?DNSSEC_NSEC3_ALG_SHA1.
 -type nsec3_hashalg_fun() :: fun((iodata()) -> binary()).
 -type nsec3_salt() :: binary().
@@ -585,7 +586,9 @@ preprocess_sig_input(Alg, SigInput) when
 ->
     {Prefix, HashType} = choose_sha_prefix_and_type(Alg),
     Hash = crypto:hash(HashType, SigInput),
-    <<Prefix/binary, Hash/binary>>.
+    <<Prefix/binary, Hash/binary>>;
+preprocess_sig_input(?DNS_ALG_ECDSAP256SHA256, SigInput) ->
+    crypto:hash(sha256, SigInput).
 
 -spec choose_sha_prefix_and_type(sigalg()) -> {binary(), sha | sha256 | sha512}.
 choose_sha_prefix_and_type(?DNS_ALG_RSASHA1) ->
