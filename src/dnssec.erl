@@ -520,7 +520,7 @@ verify(Alg, Key, Signature, SigInput) when
         error:decrypt_failed -> false
     end;
 verify(?DNS_ALG_ECDSAP256SHA256, Key, Signature, SigInput) ->
-    crypto:verify(ecdsa, sha256, SigInput, Signature,  [Key, secp256r1]).
+    crypto:verify(ecdsa, sha256, SigInput, Signature, [Key, secp256r1]).
 
 -spec build_sig_input(binary(), integer(), dns:alg(), integer(), integer(), [dns:rr(), ...]) ->
     {dns:rrdata_rrsig(), binary()}.
