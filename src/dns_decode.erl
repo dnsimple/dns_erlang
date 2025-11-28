@@ -396,6 +396,16 @@ decode_rrdata(
     };
 decode_rrdata(
     _MsgBin, _Class, ?DNS_TYPE_DNSKEY, <<Flags:16, Protocol:8, AlgNum:8, PublicKey/binary>> = Bin
+) when AlgNum =:= ?DNS_ALG_ECDSAP256SHA256 ->
+    #dns_rrdata_dnskey{
+        flags = Flags,
+        protocol = Protocol,
+        alg = AlgNum,
+        public_key = PublicKey,
+        keytag = bin_to_key_tag(Bin)
+    };
+decode_rrdata(
+    _MsgBin, _Class, ?DNS_TYPE_DNSKEY, <<Flags:16, Protocol:8, AlgNum:8, PublicKey/binary>> = Bin
 ) ->
     #dns_rrdata_dnskey{
         flags = Flags,

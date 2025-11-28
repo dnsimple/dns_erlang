@@ -74,7 +74,8 @@ supported for signing RRSETs.
     | ?DNS_ALG_RSASHA1
     | ?DNS_ALG_NSEC3RSASHA1
     | ?DNS_ALG_RSASHA256
-    | ?DNS_ALG_RSASHA512.
+    | ?DNS_ALG_RSASHA512
+    | ?DNS_ALG_ECDSAP256SHA256.
 -type nsec3_hashalg() :: ?DNSSEC_NSEC3_ALG_SHA1.
 -type nsec3_hashalg_fun() :: fun((iodata()) -> binary()).
 -type nsec3_salt() :: binary().
@@ -82,7 +83,7 @@ supported for signing RRSETs.
 -type gen_nsec_opts() :: #{base_types => [dns:type()]}.
 -type gen_nsec3_opts() :: gen_nsec_opts().
 -type keytag() :: integer().
--type key() :: [binary()].
+-type key() :: [binary()] | binary().
 -type sign_rr_opts() :: #{inception => dns:unix_time(), expiration => dns:unix_time()}.
 -type verify_rrsig_opts() :: #{now => dns:unix_time()}.
 
@@ -408,31 +409,7 @@ sign_rrset(
         Expire,
         RRs
     ),
-    Signature =
-        case Alg of
-            Alg when
-                Alg =:= ?DNS_ALG_DSA orelse
-                    Alg =:= ?DNS_ALG_NSEC3DSA
-            ->
-                Asn1Sig = crypto:sign(dss, sha, BaseSigInput, Key),
-                {R, S} = decode_asn1_dss_sig(Asn1Sig),
-                [P, _Q, _G, _Y] = Key,
-                T = (byte_size(P) - 64) div 8,
-                <<T, R:20/unit:8, S:20/unit:8>>;
-            Alg when
-                Alg =:= ?DNS_ALG_NSEC3RSASHA1 orelse
-                    Alg =:= ?DNS_ALG_RSASHA1 orelse
-                    Alg =:= ?DNS_ALG_RSASHA256 orelse
-                    Alg =:= ?DNS_ALG_RSASHA512
-            ->
-                crypto:sign(
-                    rsa,
-                    none,
-                    BaseSigInput,
-                    Key,
-                    [{rsa_padding, rsa_pkcs1_padding}]
-                )
-        end,
+    Signature = sign(Alg, BaseSigInput, Key),
     Data = Data0#dns_rrdata_rrsig{signature = Signature},
     #dns_rr{
         name = Name,
@@ -441,6 +418,29 @@ sign_rrset(
         ttl = TTL,
         data = Data
     }.
+
+-spec sign(sigalg(), binary(), key()) -> binary().
+sign(Alg, BaseSigInput, Key) when Alg =:= ?DNS_ALG_DSA orelse Alg =:= ?DNS_ALG_NSEC3DSA ->
+    Asn1Sig = crypto:sign(dss, sha, BaseSigInput, Key),
+    {R, S} = decode_asn1_dss_sig(Asn1Sig),
+    [P, _Q, _G, _Y] = Key,
+    T = (byte_size(P) - 64) div 8,
+    <<T, R:20/unit:8, S:20/unit:8>>;
+sign(Alg, BaseSigInput, Key) when
+    Alg =:= ?DNS_ALG_NSEC3RSASHA1 orelse
+        Alg =:= ?DNS_ALG_RSASHA1 orelse
+        Alg =:= ?DNS_ALG_RSASHA256 orelse
+        Alg =:= ?DNS_ALG_RSASHA512
+->
+    crypto:sign(
+        rsa,
+        none,
+        BaseSigInput,
+        Key,
+        [{rsa_padding, rsa_pkcs1_padding}]
+    );
+sign(?DNS_ALG_ECDSAP256SHA256, BaseSigInput, Key) ->
+    crypto:sign(ecdsa, sha256, BaseSigInput, [Key, secp256r1]).
 
 ?DOC("Provides primitive verification of an RR set.").
 -spec verify_rrsig(dns:rr(), [dns:rr()], [dns:rr()], verify_rrsig_opts()) -> boolean().
@@ -453,7 +453,7 @@ verify_rrsig(#dns_rr{type = ?DNS_TYPE_RRSIG, data = Data}, RRs, RRDNSKey, Opts) 
         inception = Incept,
         expiration = Expire,
         signers_name = SignersName,
-        signature = Sig
+        signature = Signature
     } = Data,
     Keys0 = [
         {KeyTag, Alg, PubKey}
@@ -488,41 +488,39 @@ verify_rrsig(#dns_rr{type = ?DNS_TYPE_RRSIG, data = Data}, RRs, RRDNSKey, Opts) 
                 RRs,
                 OTTL
             ),
-            lists:any(
-                fun
-                    ({_, Alg, Key}) when
-                        Alg =:= ?DNS_ALG_DSA orelse
-                            Alg =:= ?DNS_ALG_NSEC3DSA
-                    ->
-                        <<_T, R:20/unit:8, S:20/unit:8>> = Sig,
-                        AsnSig = encode_asn1_dss_sig(R, S),
-                        AsnSigSize = byte_size(AsnSig),
-                        AsnBin = <<AsnSigSize:32, AsnSig/binary>>,
-                        crypto:verify(dss, sha, SigInput, AsnBin, Key);
-                    ({_, Alg, Key}) when
-                        Alg =:= ?DNS_ALG_NSEC3RSASHA1 orelse
-                            Alg =:= ?DNS_ALG_RSASHA1 orelse
-                            Alg =:= ?DNS_ALG_RSASHA256 orelse
-                            Alg =:= ?DNS_ALG_RSASHA512
-                    ->
-                        try
-                            crypto:verify(
-                                rsa,
-                                none,
-                                SigInput,
-                                Sig,
-                                Key,
-                                [{rsa_padding, rsa_pkcs1_padding}]
-                            )
-                        catch
-                            error:decrypt_failed -> undefined
-                        end;
-                    (_) ->
-                        false
-                end,
-                Keys
-            )
+            lists:any(fun({_KeyTag, Alg, Key}) -> verify(Alg, Key, Signature, SigInput) end, Keys)
     end.
+
+-spec verify(sigalg(), key(), binary(), binary()) -> boolean().
+verify(Alg, Key, Signature, SigInput) when
+    Alg =:= ?DNS_ALG_DSA orelse
+        Alg =:= ?DNS_ALG_NSEC3DSA
+->
+    <<_T, R:20/unit:8, S:20/unit:8>> = Signature,
+    AsnSig = encode_asn1_dss_sig(R, S),
+    AsnSigSize = byte_size(AsnSig),
+    AsnBin = <<AsnSigSize:32, AsnSig/binary>>,
+    crypto:verify(dss, sha, SigInput, AsnBin, Key);
+verify(Alg, Key, Signature, SigInput) when
+    Alg =:= ?DNS_ALG_NSEC3RSASHA1 orelse
+        Alg =:= ?DNS_ALG_RSASHA1 orelse
+        Alg =:= ?DNS_ALG_RSASHA256 orelse
+        Alg =:= ?DNS_ALG_RSASHA512
+->
+    try
+        crypto:verify(
+            rsa,
+            none,
+            SigInput,
+            Signature,
+            Key,
+            [{rsa_padding, rsa_pkcs1_padding}]
+        )
+    catch
+        error:decrypt_failed -> false
+    end;
+verify(?DNS_ALG_ECDSAP256SHA256, Key, Signature, SigInput) ->
+    crypto:verify(ecdsa, sha256, SigInput, Signature, [Key, secp256r1]).
 
 -spec build_sig_input(binary(), integer(), dns:alg(), integer(), integer(), [dns:rr(), ...]) ->
     {dns:rrdata_rrsig(), binary()}.
@@ -564,7 +562,7 @@ build_sig_input(
         <<RecordBase/binary, (byte_size(Data)):16, Data/binary>>
      || Data <- Datas
     ],
-    RRSigData0 = #dns_rrdata_rrsig{
+    RRSigData = #dns_rrdata_rrsig{
         type_covered = Type,
         alg = Alg,
         labels = count_labels(Name),
@@ -574,28 +572,37 @@ build_sig_input(
         keytag = KeyTag,
         signers_name = SignersName
     },
-    RRSigRDataBin = rrsig_to_digestable(RRSigData0),
+    RRSigRDataBin = rrsig_to_digestable(RRSigData),
     SigInput0 = [RRSigRDataBin, RRSetBin],
-    case Alg of
-        Alg when Alg =:= ?DNS_ALG_DSA orelse Alg =:= ?DNS_ALG_NSEC3DSA ->
-            SigInput1 = iolist_to_binary(SigInput0),
-            SigInput1Size = byte_size(SigInput1),
-            {RRSigData0, <<SigInput1Size:32, SigInput1/binary>>};
-        _ ->
-            {Prefix, HashType} =
-                case Alg of
-                    ?DNS_ALG_RSASHA1 ->
-                        {?RSASHA1_PREFIX, sha};
-                    ?DNS_ALG_NSEC3RSASHA1 ->
-                        {?RSASHA1_PREFIX, sha};
-                    ?DNS_ALG_RSASHA256 ->
-                        {?RSASHA256_PREFIX, sha256};
-                    ?DNS_ALG_RSASHA512 ->
-                        {?RSASHA512_PREFIX, sha512}
-                end,
-            Hash = crypto:hash(HashType, SigInput0),
-            {RRSigData0, <<Prefix/binary, Hash/binary>>}
-    end.
+    SigInput = preprocess_sig_input(Alg, SigInput0),
+    {RRSigData, SigInput}.
+
+-spec preprocess_sig_input(sigalg(), [binary() | [binary()]]) -> binary().
+preprocess_sig_input(Alg, SigInput) when Alg =:= ?DNS_ALG_DSA orelse Alg =:= ?DNS_ALG_NSEC3DSA ->
+    NewSigInput = iolist_to_binary(SigInput),
+    NewSigInputSize = byte_size(NewSigInput),
+    <<NewSigInputSize:32, NewSigInput/binary>>;
+preprocess_sig_input(Alg, SigInput) when
+    Alg =:= ?DNS_ALG_NSEC3RSASHA1 orelse
+        Alg =:= ?DNS_ALG_RSASHA1 orelse
+        Alg =:= ?DNS_ALG_RSASHA256 orelse
+        Alg =:= ?DNS_ALG_RSASHA512
+->
+    {Prefix, HashType} = choose_sha_prefix_and_type(Alg),
+    Hash = crypto:hash(HashType, SigInput),
+    <<Prefix/binary, Hash/binary>>;
+preprocess_sig_input(?DNS_ALG_ECDSAP256SHA256, SigInput) ->
+    crypto:hash(sha256, SigInput).
+
+-spec choose_sha_prefix_and_type(sigalg()) -> {binary(), sha | sha256 | sha512}.
+choose_sha_prefix_and_type(?DNS_ALG_RSASHA1) ->
+    {?RSASHA1_PREFIX, sha};
+choose_sha_prefix_and_type(?DNS_ALG_NSEC3RSASHA1) ->
+    {?RSASHA1_PREFIX, sha};
+choose_sha_prefix_and_type(?DNS_ALG_RSASHA256) ->
+    {?RSASHA256_PREFIX, sha256};
+choose_sha_prefix_and_type(?DNS_ALG_RSASHA512) ->
+    {?RSASHA512_PREFIX, sha512}.
 
 ?DOC("Generates and appends a DNS Key records key tag.").
 -spec add_keytag_to_dnskey(dns:rr()) -> dns:rr().
@@ -620,11 +627,11 @@ add_keytag_to_cdnskey(
     NewData = dns_decode:decode_rrdata(KeyBin, ?DNS_CLASS_IN, ?DNS_TYPE_CDNSKEY),
     RR#dns_rr{data = NewData}.
 
--spec rrsig_to_digestable(dns:rrdata_rrsig()) -> any().
+-spec rrsig_to_digestable(dns:rrdata_rrsig()) -> binary().
 rrsig_to_digestable(#dns_rrdata_rrsig{} = Data) ->
     dns_encode:encode_rrdata(?DNS_CLASS_IN, Data#dns_rrdata_rrsig{signature = <<>>}).
 
--spec canonical_rrdata_bin(dns:rr()) -> any().
+-spec canonical_rrdata_bin(dns:rr()) -> binary().
 canonical_rrdata_bin(#dns_rr{class = Class, data = Data0}) ->
     dns_encode:encode_rrdata(Class, canonical_rrdata_form(Data0)).
 

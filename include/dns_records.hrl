@@ -264,7 +264,7 @@
 %% RRSIG record for DNSSEC signature. See RFC 4034: §3.1.
 -record(dns_rrdata_rrsig, {
     type_covered :: dns:uint16(),
-    alg :: 3 | 5 | 6 | 7 | 8 | 10,
+    alg :: 3 | 5 | 6 | 7 | 8 | 10 | 13,
     labels :: dns:uint8(),
     original_ttl :: dns:uint32(),
     expiration :: dns:uint32(),

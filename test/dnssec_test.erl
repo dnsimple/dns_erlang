@@ -218,7 +218,11 @@ test_sample_key(dsa, PrivKey, PubKey) ->
 test_sample_key(rsa, PrivKey, PubKey) ->
     Sample = <<"1234">>,
     Cipher = crypto:sign(rsa, none, Sample, PrivKey, [{rsa_padding, rsa_pkcs1_padding}]),
-    true =:= crypto:verify(rsa, none, Sample, Cipher, PubKey, [{rsa_padding, rsa_pkcs1_padding}]).
+    true =:= crypto:verify(rsa, none, Sample, Cipher, PubKey, [{rsa_padding, rsa_pkcs1_padding}]);
+test_sample_key(ecdsap256, PrivKey, PubKey) ->
+    Sample = crypto:hash(sha256, <<"1234">>),
+    Cipher = crypto:sign(ecdsa, sha256, Sample, [PrivKey, secp256r1]),
+    true =:= crypto:verify(ecdsa, sha256, Sample, Cipher, [PubKey, secp256r1]).
 
 dnskey_pubkey_gen_test_() ->
     [
@@ -273,6 +277,10 @@ helper_test_samples() ->
             Tuple;
         ({name, _} = Tuple) ->
             Tuple;
+        ({private_key, B64}) ->
+            {private_key, base64:decode(B64)};
+        ({public_key, B64}) ->
+            {public_key, base64:decode(B64)};
         ({Key, B64}) ->
             Bin = base64:decode(B64),
             Size = byte_size(Bin),
@@ -329,11 +337,7 @@ helper_test_samples() ->
              || #dns_rr{type = T} = R <- RR,
                 not lists:member(T, RRCleanExclude)
             ],
-            Alg =
-                case re:run(ZoneName, "dsa") of
-                    {match, _} -> dsa;
-                    nomatch -> rsa
-                end,
+            Alg = extract_alg_from_name(ZoneName),
             #dnssec_test_sample{
                 zonename = ZoneName,
                 alg = Alg,
@@ -348,6 +352,14 @@ helper_test_samples() ->
         end,
         Terms
     ).
+
+extract_alg_from_name("ecdsap256-example") ->
+    ecdsap256;
+extract_alg_from_name(ZoneName) ->
+    case re:run(ZoneName, "dsa") of
+        {match, _} -> dsa;
+        nomatch -> rsa
+    end.
 
 helper_verify_rrset_test_cases() ->
     lists:flatten(
@@ -420,6 +432,8 @@ helper_samplekeypl_to_privkey(DSA, Proplist) when
     G = proplists:get_value(g, Proplist),
     X = proplists:get_value(x, Proplist),
     [I || <<L:32, I:L/unit:8>> <- [P, Q, G, X]];
+helper_samplekeypl_to_privkey(?DNS_ALG_ECDSAP256SHA256, Proplist) ->
+    proplists:get_value(private_key, Proplist);
 helper_samplekeypl_to_privkey(_RSA, Proplist) ->
     E = proplists:get_value(public_exp, Proplist),
     N = proplists:get_value(modulus, Proplist),
@@ -438,6 +452,8 @@ helper_samplekeypl_to_pubkey(DSA, Proplist) when
     G = proplists:get_value(g, Proplist),
     Y = proplists:get_value(y, Proplist),
     [I || <<L:32, I:L/unit:8>> <- [P, Q, G, Y]];
+helper_samplekeypl_to_pubkey(?DNS_ALG_ECDSAP256SHA256, Proplist) ->
+    proplists:get_value(public_key, Proplist);
 helper_samplekeypl_to_pubkey(_RSA, Proplist) ->
     E = proplists:get_value(public_exp, Proplist),
     N = proplists:get_value(modulus, Proplist),
