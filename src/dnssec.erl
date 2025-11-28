@@ -83,7 +83,7 @@ supported for signing RRSETs.
 -type gen_nsec_opts() :: #{base_types => [dns:type()]}.
 -type gen_nsec3_opts() :: gen_nsec_opts().
 -type keytag() :: integer().
--type key() :: [binary()].
+-type key() :: [binary()] | binary().
 -type sign_rr_opts() :: #{inception => dns:unix_time(), expiration => dns:unix_time()}.
 -type verify_rrsig_opts() :: #{now => dns:unix_time()}.
 
@@ -439,7 +439,7 @@ sign(Alg, BaseSigInput, Key) when
         Key,
         [{rsa_padding, rsa_pkcs1_padding}]
     );
-sign(?DNS_ALG_ECDSAP256SHA256, BaseSigInput, [Key]) ->
+sign(?DNS_ALG_ECDSAP256SHA256, BaseSigInput, Key) ->
     crypto:sign(ecdsa, sha256, BaseSigInput, [Key, secp256r1]).
 
 ?DOC("Provides primitive verification of an RR set.").
@@ -519,7 +519,7 @@ verify(Alg, Key, Signature, SigInput) when
     catch
         error:decrypt_failed -> false
     end;
-verify(?DNS_ALG_ECDSAP256SHA256, [Key], Signature, SigInput) ->
+verify(?DNS_ALG_ECDSAP256SHA256, Key, Signature, SigInput) ->
     crypto:verify(ecdsa, sha256, SigInput, Signature,  [Key, secp256r1]).
 
 -spec build_sig_input(binary(), integer(), dns:alg(), integer(), integer(), [dns:rr(), ...]) ->

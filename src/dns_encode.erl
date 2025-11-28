@@ -625,6 +625,20 @@ encode_rrdata(
         public_key = PK
     },
     CompMap
+) when
+    Alg =:= ?DNS_ALG_ECDSAP256SHA256, is_binary(PK)
+->
+    {<<Flags:16, Protocol:8, Alg:8, PK/binary>>, CompMap};
+encode_rrdata(
+    _Pos,
+    _Class,
+    #dns_rrdata_dnskey{
+        flags = Flags,
+        protocol = Protocol,
+        alg = Alg,
+        public_key = PK
+    },
+    CompMap
 ) ->
     {<<Flags:16, Protocol:8, Alg:8, PK/binary>>, CompMap};
 encode_rrdata(
