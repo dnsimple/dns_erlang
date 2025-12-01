@@ -396,6 +396,19 @@ decode_rrdata(
     };
 decode_rrdata(
     _MsgBin, _Class, ?DNS_TYPE_DNSKEY, <<Flags:16, Protocol:8, AlgNum:8, PublicKey/binary>> = Bin
+) when
+    (AlgNum =:= ?DNS_ALG_ECDSAP256SHA256 andalso 64 =:= byte_size(PublicKey)) orelse
+        (AlgNum =:= ?DNS_ALG_ECDSAP384SHA384 andalso 96 =:= byte_size(PublicKey))
+->
+    #dns_rrdata_dnskey{
+        flags = Flags,
+        protocol = Protocol,
+        alg = AlgNum,
+        public_key = PublicKey,
+        keytag = bin_to_key_tag(Bin)
+    };
+decode_rrdata(
+    _MsgBin, _Class, ?DNS_TYPE_DNSKEY, <<Flags:16, Protocol:8, AlgNum:8, PublicKey/binary>> = Bin
 ) ->
     #dns_rrdata_dnskey{
         flags = Flags,
@@ -449,6 +462,22 @@ decode_rrdata(
         alg = AlgNum,
         public_key = Key,
         keytag = KeyTag
+    };
+decode_rrdata(
+    _MsgBin,
+    _Class,
+    ?DNS_TYPE_CDNSKEY,
+    <<Flags:16, Protocol:8, AlgNum:8, PublicKey/binary>> = Bin
+) when
+    (AlgNum =:= ?DNS_ALG_ECDSAP256SHA256 andalso 64 =:= byte_size(PublicKey)) orelse
+        (AlgNum =:= ?DNS_ALG_ECDSAP384SHA384 andalso 96 =:= byte_size(PublicKey))
+->
+    #dns_rrdata_cdnskey{
+        flags = Flags,
+        protocol = Protocol,
+        alg = AlgNum,
+        public_key = PublicKey,
+        keytag = bin_to_key_tag(Bin)
     };
 decode_rrdata(
     _MsgBin,
