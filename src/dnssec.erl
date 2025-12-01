@@ -75,7 +75,8 @@ supported for signing RRSETs.
     | ?DNS_ALG_NSEC3RSASHA1
     | ?DNS_ALG_RSASHA256
     | ?DNS_ALG_RSASHA512
-    | ?DNS_ALG_ECDSAP256SHA256.
+    | ?DNS_ALG_ECDSAP256SHA256
+    | ?DNS_ALG_ECDSAP384SHA384.
 -type nsec3_hashalg() :: ?DNSSEC_NSEC3_ALG_SHA1.
 -type nsec3_hashalg_fun() :: fun((iodata()) -> binary()).
 -type nsec3_salt() :: binary().
