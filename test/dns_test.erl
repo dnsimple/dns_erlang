@@ -414,6 +414,34 @@ decode_encode_rrdata_test_() ->
                     <<"2001:0db8:85a3:0000:0000:8a2e:0370:7334,2001:0db8:85a3:0000:0000:8a2e:0370:7335">>
             }
         }},
+        {?DNS_TYPE_DNSKEY, #dns_rrdata_dnskey{
+            flags = 257,
+            protocol = 3,
+            alg = ?DNS_ALG_ECDSAP256SHA256,
+            public_key = base64:decode(<<"GojIhhXUN/u4v54ZQqGSnyhWJwaubCvTmeexv7bR6edbkrSqQpF64cYbcB7wNcP+e+MAnLr+Wi9xMWyQLc8NAA==">>),
+            keytag = 55648
+        }},
+        {?DNS_TYPE_DNSKEY, #dns_rrdata_dnskey{
+            flags = 257,
+            protocol = 3,
+            alg = ?DNS_ALG_ECDSAP384SHA384,
+            public_key = base64:decode(<<"xKYaNhWdGOfJ+nPrL8/arkwf2EY3MDJ+SErKivBVSum1w/egsXvSADtNJhyem5RCOpgQ6K8X1DRSEkrbYQ+OB+v8/uX45NBwY8rp65F6Glur8I/mlVNgF6W/qTI37m40">>),
+            keytag = 10771
+        }},
+        {?DNS_TYPE_CDNSKEY, #dns_rrdata_cdnskey{
+            flags = 257,
+            protocol = 3,
+            alg = ?DNS_ALG_ECDSAP256SHA256,
+            public_key = base64:decode(<<"GojIhhXUN/u4v54ZQqGSnyhWJwaubCvTmeexv7bR6edbkrSqQpF64cYbcB7wNcP+e+MAnLr+Wi9xMWyQLc8NAA==">>),
+            keytag = 55648
+        }},
+        {?DNS_TYPE_CDNSKEY, #dns_rrdata_cdnskey{
+            flags = 257,
+            protocol = 3,
+            alg = ?DNS_ALG_ECDSAP384SHA384,
+            public_key = base64:decode(<<"xKYaNhWdGOfJ+nPrL8/arkwf2EY3MDJ+SErKivBVSum1w/egsXvSADtNJhyem5RCOpgQ6K8X1DRSEkrbYQ+OB+v8/uX45NBwY8rp65F6Glur8I/mlVNgF6W/qTI37m40">>),
+            keytag = 10771
+        }},
         % https://datatracker.ietf.org/doc/html/rfc6698#section-2.3 Example 2
         {?DNS_TYPE_TLSA, #dns_rrdata_tlsa{
             usage = 1,

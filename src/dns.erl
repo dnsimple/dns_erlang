@@ -279,7 +279,8 @@ restrictions on the length. Labels must be 63 characters or less.
     | ?DNS_ALG_NSEC3RSASHA1
     | ?DNS_ALG_RSASHA256
     | ?DNS_ALG_RSASHA512
-    | ?DNS_ALG_ECDSAP256SHA256.
+    | ?DNS_ALG_ECDSAP256SHA256
+    | ?DNS_ALG_ECDSAP384SHA384.
 -export_type([
     alg/0,
     tsig_mac/0,

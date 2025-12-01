@@ -626,7 +626,8 @@ encode_rrdata(
     },
     CompMap
 ) when
-    Alg =:= ?DNS_ALG_ECDSAP256SHA256, is_binary(PK)
+    (Alg =:= ?DNS_ALG_ECDSAP256SHA256 andalso is_binary(PK) andalso 64 =:= byte_size(PK)) orelse
+        (Alg =:= ?DNS_ALG_ECDSAP384SHA384 andalso is_binary(PK) andalso 96 =:= byte_size(PK))
 ->
     {<<Flags:16, Protocol:8, Alg:8, PK/binary>>, CompMap};
 encode_rrdata(
@@ -696,6 +697,21 @@ encode_rrdata(
     T = (M - 64) div 8,
     PKBin = <<T, Q:20/unit:8, P:M/unit:8, G:M/unit:8, Y:M/unit:8>>,
     {<<Flags:16, Protocol:8, Alg:8, PKBin/binary>>, CompMap};
+encode_rrdata(
+    _Pos,
+    _Class,
+    #dns_rrdata_cdnskey{
+        flags = Flags,
+        protocol = Protocol,
+        alg = Alg,
+        public_key = PK
+    },
+    CompMap
+) when
+    (Alg =:= ?DNS_ALG_ECDSAP256SHA256 andalso is_binary(PK) andalso 64 =:= byte_size(PK)) orelse
+        (Alg =:= ?DNS_ALG_ECDSAP384SHA384 andalso is_binary(PK) andalso 96 =:= byte_size(PK))
+->
+    {<<Flags:16, Protocol:8, Alg:8, PK/binary>>, CompMap};
 encode_rrdata(
     _Pos,
     _Class,

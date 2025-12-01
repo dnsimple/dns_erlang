@@ -440,7 +440,9 @@ sign(Alg, BaseSigInput, Key) when
         [{rsa_padding, rsa_pkcs1_padding}]
     );
 sign(?DNS_ALG_ECDSAP256SHA256, BaseSigInput, Key) ->
-    crypto:sign(ecdsa, sha256, BaseSigInput, [Key, secp256r1]).
+    crypto:sign(ecdsa, sha256, BaseSigInput, [Key, secp256r1]);
+sign(?DNS_ALG_ECDSAP384SHA384, BaseSigInput, Key) ->
+    crypto:sign(ecdsa, sha384, BaseSigInput, [Key, secp384r1]).
 
 ?DOC("Provides primitive verification of an RR set.").
 -spec verify_rrsig(dns:rr(), [dns:rr()], [dns:rr()], verify_rrsig_opts()) -> boolean().
