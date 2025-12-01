@@ -112,7 +112,8 @@ gen_nsec(RR) ->
     case lists:keyfind(?DNS_TYPE_SOA, #dns_rr.type, RR) of
         false ->
             erlang:error(badarg);
-        #dns_rr{name = ZoneName, data = #dns_rrdata_soa{minimum = TTL}} ->
+        #dns_rr{name = ZoneName} = Soa ->
+            TTL = minimum_soa_ttl(Soa),
             gen_nsec(ZoneName, RR, TTL)
     end.
 
@@ -166,7 +167,7 @@ gen_nsec3(RRs, Opts) ->
     case lists:keyfind(?DNS_TYPE_SOA, #dns_rr.type, RRs) of
         false ->
             erlang:error(badarg);
-        #dns_rr{name = ZoneName, data = #dns_rrdata_soa{minimum = TTL}} ->
+        #dns_rr{name = ZoneName} = Soa ->
             case lists:keyfind(?DNS_TYPE_NSEC3PARAM, #dns_rr.type, RRs) of
                 false ->
                     erlang:error(badarg);
@@ -178,6 +179,7 @@ gen_nsec3(RRs, Opts) ->
                         salt = Salt
                     }
                 } ->
+                    TTL = minimum_soa_ttl(Soa),
                     gen_nsec3(RRs, ZoneName, HashAlg, Salt, Iter, TTL, Class, Opts)
             end
     end.
@@ -227,6 +229,10 @@ gen_nsec3(RRs, ZoneName, Alg, Salt, Iterations, TTL, Class, Opts) ->
     ),
     Sorted = [RR || {_, RR} <- lists:keysort(1, Unsorted)],
     add_next_hash(Sorted).
+
+-spec minimum_soa_ttl(dns:rr()) -> dns:ttl().
+minimum_soa_ttl(#dns_rr{type = ?DNS_TYPE_SOA, ttl = Rec, data = #dns_rrdata_soa{minimum = Min}}) ->
+    erlang:min(Min, Rec).
 
 ?DOC("NSEC3 iterative hash function").
 -spec ih(nsec3_hashalg() | nsec3_hashalg_fun(), nsec3_salt(), binary(), nsec3_iterations()) ->
