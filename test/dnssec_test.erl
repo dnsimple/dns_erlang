@@ -7,8 +7,6 @@
     zonename,
     alg,
     nsec3,
-    alg_id,
-    alg_atom,
     inception,
     expiration,
     zsk_pl,
@@ -22,11 +20,7 @@ gen_nsec_test_() ->
         {ZoneName,
             ?_test(
                 begin
-                    RRClean = [
-                        RR
-                     || #dns_rr{type = Type} = RR <- RRSrc,
-                        Type =/= ?DNS_TYPE_NSEC
-                    ],
+                    RRClean = [RR || #dns_rr{type = Type} = RR <- RRSrc, Type =/= ?DNS_TYPE_NSEC],
                     NSEC = lists:sort(
                         lists:foldr(
                             fun(#dns_rr{data = Data} = RR, Acc) ->
@@ -222,7 +216,11 @@ test_sample_key(rsa, PrivKey, PubKey) ->
 test_sample_key(ecdsap256, PrivKey, PubKey) ->
     Sample = crypto:hash(sha256, <<"1234">>),
     Cipher = crypto:sign(ecdsa, sha256, Sample, [PrivKey, secp256r1]),
-    true =:= crypto:verify(ecdsa, sha256, Sample, Cipher, [PubKey, secp256r1]).
+    true =:= crypto:verify(ecdsa, sha256, Sample, Cipher, [<<4, PubKey/binary>>, secp256r1]);
+test_sample_key(ecdsap384, PrivKey, PubKey) ->
+    Sample = crypto:hash(sha384, <<"1234">>),
+    Cipher = crypto:sign(ecdsa, sha384, Sample, [PrivKey, secp384r1]),
+    true =:= crypto:verify(ecdsa, sha384, Sample, Cipher, [<<4, PubKey/binary>>, secp384r1]).
 
 dnskey_pubkey_gen_test_() ->
     [
@@ -270,73 +268,12 @@ dnskey_pubkey_gen_test_() ->
 helper_test_samples() ->
     Path = filename:join("test", "dnssec_samples.txt"),
     {ok, Terms} = file:consult(Path),
-    DecodeKeyProplistTuple = fun
-        ({alg, _} = Tuple) ->
-            Tuple;
-        ({flags, _} = Tuple) ->
-            Tuple;
-        ({name, _} = Tuple) ->
-            Tuple;
-        ({private_key, B64}) ->
-            {private_key, base64:decode(B64)};
-        ({public_key, B64}) ->
-            {public_key, base64:decode(B64)};
-        ({Key, B64}) ->
-            Bin = base64:decode(B64),
-            Size = byte_size(Bin),
-            {Key, <<Size:32, Bin/binary>>}
-    end,
-    RRCleanExclude = [
-        ?DNS_TYPE_NSEC,
-        ?DNS_TYPE_NSEC3,
-        ?DNS_TYPE_NSEC3PARAM,
-        ?DNS_TYPE_RRSIG,
-        ?DNS_TYPE_DNSKEY
-    ],
     lists:map(
         fun({ZoneName, KeysRaw, AxfrBin}) ->
-            [ZSK, KSK] = lists:foldl(
-                fun(KeyPLRaw, Acc) ->
-                    KeyPL = [
-                        DecodeKeyProplistTuple(Tuple)
-                     || {_, _} = Tuple <- KeyPLRaw
-                    ],
-                    case proplists:get_value(flags, KeyPL) of
-                        257 -> Acc ++ [KeyPL];
-                        _ -> [KeyPL] ++ Acc
-                    end
-                end,
-                [],
-                KeysRaw
-            ),
+            [ZSK, KSK] = lists:foldl(fun extract_zsk_and_ksk/2, [], KeysRaw),
             #dns_message{answers = RR} = dns:decode_message(AxfrBin),
-            [{I, E}] = helper_uniqlist(
-                [
-                    {D#dns_rrdata_rrsig.inception, D#dns_rrdata_rrsig.expiration}
-                 || #dns_rr{
-                        type = ?DNS_TYPE_RRSIG,
-                        data = D
-                    } <- RR
-                ]
-            ),
-            NSEC3 =
-                case
-                    [
-                        P
-                     || #dns_rr{
-                            type = ?DNS_TYPE_NSEC3PARAM,
-                            data = P
-                        } <- RR
-                    ]
-                of
-                    [#dns_rrdata_nsec3param{} = Param] -> Param;
-                    [] -> undefined
-                end,
-            CleanRR = [
-                R
-             || #dns_rr{type = T} = R <- RR,
-                not lists:member(T, RRCleanExclude)
-            ],
+            [{I, E} | _] = extract_rrsig_inception_expiration(RR),
+            NSEC3 = extract_nsec3_param(RR),
             Alg = extract_alg_from_name(ZoneName),
             #dnssec_test_sample{
                 zonename = ZoneName,
@@ -346,15 +283,61 @@ helper_test_samples() ->
                 nsec3 = NSEC3,
                 zsk_pl = ZSK,
                 ksk_pl = KSK,
-                rr_src = helper_uniqlist(RR),
-                rr_clean = helper_uniqlist(CleanRR)
+                rr_src = lists:usort(RR),
+                rr_clean = lists:usort(exclude_rr_clean(RR))
             }
         end,
         Terms
     ).
 
+extract_rrsig_inception_expiration(RR) ->
+    lists:usort([
+        {D#dns_rrdata_rrsig.inception, D#dns_rrdata_rrsig.expiration}
+     || #dns_rr{type = ?DNS_TYPE_RRSIG, data = D} <- RR
+    ]).
+
+extract_nsec3_param(RR) ->
+    case [P || #dns_rr{type = ?DNS_TYPE_NSEC3PARAM, data = P} <- RR] of
+        [#dns_rrdata_nsec3param{} = Param] -> Param;
+        [] -> undefined
+    end.
+
+extract_zsk_and_ksk(KeyPLRaw, Acc) ->
+    KeyPL = [decode_key_proplist_tuple(Tuple) || {_, _} = Tuple <- KeyPLRaw],
+    case proplists:get_value(flags, KeyPL) of
+        257 -> Acc ++ [KeyPL];
+        _ -> [KeyPL] ++ Acc
+    end.
+
+decode_key_proplist_tuple({alg, _} = Tuple) ->
+    Tuple;
+decode_key_proplist_tuple({flags, _} = Tuple) ->
+    Tuple;
+decode_key_proplist_tuple({name, _} = Tuple) ->
+    Tuple;
+decode_key_proplist_tuple({private_key, B64}) ->
+    {private_key, base64:decode(B64)};
+decode_key_proplist_tuple({public_key, B64}) ->
+    {public_key, base64:decode(B64)};
+decode_key_proplist_tuple({Key, B64}) ->
+    Bin = base64:decode(B64),
+    Size = byte_size(Bin),
+    {Key, <<Size:32, Bin/binary>>}.
+
+exclude_rr_clean(RRs) ->
+    RRCleanExclude = [
+        ?DNS_TYPE_NSEC,
+        ?DNS_TYPE_NSEC3,
+        ?DNS_TYPE_NSEC3PARAM,
+        ?DNS_TYPE_RRSIG,
+        ?DNS_TYPE_DNSKEY
+    ],
+    [R || #dns_rr{type = T} = R <- RRs, not lists:member(T, RRCleanExclude)].
+
 extract_alg_from_name("ecdsap256-example") ->
     ecdsap256;
+extract_alg_from_name("ecdsap384-example") ->
+    ecdsap384;
 extract_alg_from_name(ZoneName) ->
     case re:run(ZoneName, "dsa") of
         {match, _} -> dsa;
@@ -434,6 +417,8 @@ helper_samplekeypl_to_privkey(DSA, Proplist) when
     [I || <<L:32, I:L/unit:8>> <- [P, Q, G, X]];
 helper_samplekeypl_to_privkey(?DNS_ALG_ECDSAP256SHA256, Proplist) ->
     proplists:get_value(private_key, Proplist);
+helper_samplekeypl_to_privkey(?DNS_ALG_ECDSAP384SHA384, Proplist) ->
+    proplists:get_value(private_key, Proplist);
 helper_samplekeypl_to_privkey(_RSA, Proplist) ->
     E = proplists:get_value(public_exp, Proplist),
     N = proplists:get_value(modulus, Proplist),
@@ -453,6 +438,8 @@ helper_samplekeypl_to_pubkey(DSA, Proplist) when
     Y = proplists:get_value(y, Proplist),
     [I || <<L:32, I:L/unit:8>> <- [P, Q, G, Y]];
 helper_samplekeypl_to_pubkey(?DNS_ALG_ECDSAP256SHA256, Proplist) ->
+    proplists:get_value(public_key, Proplist);
+helper_samplekeypl_to_pubkey(?DNS_ALG_ECDSAP384SHA384, Proplist) ->
     proplists:get_value(public_key, Proplist);
 helper_samplekeypl_to_pubkey(_RSA, Proplist) ->
     E = proplists:get_value(public_exp, Proplist),
@@ -498,7 +485,4 @@ helper_add_keytag_to_dnskey(#dns_rrdata_dnskey{} = DNSKey) ->
     (dnssec:add_keytag_to_dnskey(RR))#dns_rr.data.
 
 helper_fmt(Fmt, Args) ->
-    lists:flatten(io_lib:format(Fmt, Args)).
-
-helper_uniqlist(List) ->
-    lists:sort(sets:to_list(sets:from_list(List))).
+    iolist_to_binary(io_lib:format(Fmt, Args)).

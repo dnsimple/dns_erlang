@@ -528,7 +528,9 @@ verify(Alg, Key, Signature, SigInput) when
         error:decrypt_failed -> false
     end;
 verify(?DNS_ALG_ECDSAP256SHA256, Key, Signature, SigInput) ->
-    crypto:verify(ecdsa, sha256, SigInput, Signature, [Key, secp256r1]).
+    crypto:verify(ecdsa, sha256, SigInput, Signature, [<<4, Key/binary>>, secp256r1]);
+verify(?DNS_ALG_ECDSAP384SHA384, Key, Signature, SigInput) ->
+    crypto:verify(ecdsa, sha384, SigInput, Signature, [<<4, Key/binary>>, secp384r1]).
 
 -spec build_sig_input(binary(), integer(), dns:alg(), integer(), integer(), [dns:rr(), ...]) ->
     {dns:rrdata_rrsig(), binary()}.
@@ -600,7 +602,9 @@ preprocess_sig_input(Alg, SigInput) when
     Hash = crypto:hash(HashType, SigInput),
     <<Prefix/binary, Hash/binary>>;
 preprocess_sig_input(?DNS_ALG_ECDSAP256SHA256, SigInput) ->
-    crypto:hash(sha256, SigInput).
+    crypto:hash(sha256, SigInput);
+preprocess_sig_input(?DNS_ALG_ECDSAP384SHA384, SigInput) ->
+    crypto:hash(sha384, SigInput).
 
 -spec choose_sha_prefix_and_type(sigalg()) -> {binary(), sha | sha256 | sha512}.
 choose_sha_prefix_and_type(?DNS_ALG_RSASHA1) ->
