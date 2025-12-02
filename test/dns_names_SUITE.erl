@@ -1,13 +1,37 @@
--module(dns_names_test).
+-module(dns_names_SUITE).
+-compile([export_all, nowarn_export_all]).
 
--include_lib("eunit/include/eunit.hrl").
--include_lib("dns_erlang/include/dns.hrl").
+-behaviour(ct_suite).
 
 -define(UNKNOWN_INT, ((1 bsl 32) - 1)).
 -define(UNKNOWN_BIN, base64:encode(crypto:strong_rand_bytes(128))).
 
-class_name_test_() ->
-    {ok, Cases} = file:consult(filename:join("test", "rrdata_wire_samples.txt")),
+-include_lib("stdlib/include/assert.hrl").
+-include_lib("dns_erlang/include/dns.hrl").
+
+-spec all() -> [ct_suite:ct_test_def()].
+all() ->
+    [{group, all}].
+
+-spec groups() -> [ct_suite:ct_group_def()].
+groups() ->
+    [
+        {all, [parallel], [
+            class_name,
+            type_name,
+            alg_terms,
+            rcode_terms,
+            optcode_terms,
+            tsigerr_terms,
+            ercode_name,
+            eoptcode_name,
+            llqopcode_name,
+            llqerrcode_name
+        ]}
+    ].
+
+class_name(_) ->
+    Cases = data_samples:rrdata_wire(),
     Classes = sets:to_list(sets:from_list([N || {N, _, _} <- Cases])),
     AllCases = [
         ?DNS_CLASS_IN_NUMBER,
@@ -18,13 +42,13 @@ class_name_test_() ->
         ?DNS_CLASS_ANY_NUMBER
         | Classes
     ],
-    [?_assertEqual(undefined, dns_names:class_name(?UNKNOWN_INT))] ++
-        [?_assertEqual(undefined, dns_names:name_class(?UNKNOWN_BIN))] ++
-        [?_assert(is_binary(dns_names:class_name(N))) || N <- AllCases] ++
-        [?_assertEqual(N, dns_names:name_class(dns_names:class_name(N))) || N <- AllCases].
+    ?assertEqual(undefined, dns_names:class_name(?UNKNOWN_INT)),
+    ?assertEqual(undefined, dns_names:name_class(?UNKNOWN_BIN)),
+    [?assert(is_binary(dns_names:class_name(N))) || N <- AllCases],
+    [?assertEqual(N, dns_names:name_class(dns_names:class_name(N))) || N <- AllCases].
 
-type_name_test_() ->
-    {ok, Cases} = file:consult(filename:join("test", "rrdata_wire_samples.txt")),
+type_name(_) ->
+    Cases = data_samples:rrdata_wire(),
     Types = sets:to_list(sets:from_list([T || {_, T, _} <- Cases])),
     AllCases = [
         ?DNS_TYPE_A_NUMBER,
@@ -99,12 +123,12 @@ type_name_test_() ->
         ?DNS_TYPE_DLV_NUMBER
         | Types
     ],
-    [?_assertEqual(undefined, dns_names:type_name(?UNKNOWN_INT))] ++
-        [?_assertEqual(undefined, dns_names:name_type(?UNKNOWN_BIN))] ++
-        [?_assert(is_binary(dns_names:type_name(N))) || N <- AllCases, N =/= 999] ++
-        [?_assertEqual(N, dns_names:name_type(dns_names:type_name(N))) || N <- AllCases, N =/= 999].
+    ?assertEqual(undefined, dns_names:type_name(?UNKNOWN_INT)),
+    ?assertEqual(undefined, dns_names:name_type(?UNKNOWN_BIN)),
+    [?assert(is_binary(dns_names:type_name(N))) || N <- AllCases, N =/= 999],
+    [?assertEqual(N, dns_names:name_type(dns_names:type_name(N))) || N <- AllCases, N =/= 999].
 
-alg_terms_test_() ->
+alg_terms(_) ->
     Cases = [
         ?DNS_ALG_DSA,
         ?DNS_ALG_NSEC3DSA,
@@ -113,12 +137,12 @@ alg_terms_test_() ->
         ?DNS_ALG_RSASHA256,
         ?DNS_ALG_RSASHA512
     ],
-    [?_assertEqual(undefined, dns_names:alg_name(?UNKNOWN_INT))] ++
-        [?_assertEqual(undefined, dns_names:name_alg(?UNKNOWN_BIN))] ++
-        [?_assert(is_binary(dns_names:alg_name(N))) || N <- Cases] ++
-        [?_assertEqual(N, dns_names:name_alg(dns_names:alg_name(N))) || N <- Cases].
+    ?assertEqual(undefined, dns_names:alg_name(?UNKNOWN_INT)),
+    ?assertEqual(undefined, dns_names:name_alg(?UNKNOWN_BIN)),
+    [?assert(is_binary(dns_names:alg_name(N))) || N <- Cases],
+    [?assertEqual(N, dns_names:name_alg(dns_names:alg_name(N))) || N <- Cases].
 
-rcode_terms_test_() ->
+rcode_terms(_) ->
     Cases = [
         ?DNS_RCODE_NOERROR_NUMBER,
         ?DNS_RCODE_FORMERR_NUMBER,
@@ -132,70 +156,70 @@ rcode_terms_test_() ->
         ?DNS_RCODE_NOTAUTH_NUMBER,
         ?DNS_RCODE_NOTZONE_NUMBER
     ],
-    [?_assertEqual(undefined, dns_names:rcode_name(?UNKNOWN_INT))] ++
-        [?_assertEqual(undefined, dns_names:name_rcode(?UNKNOWN_BIN))] ++
-        [?_assert(is_binary(dns_names:rcode_name(N))) || N <- Cases] ++
-        [?_assertEqual(N, dns_names:name_rcode(dns_names:rcode_name(N))) || N <- Cases].
+    ?assertEqual(undefined, dns_names:rcode_name(?UNKNOWN_INT)),
+    ?assertEqual(undefined, dns_names:name_rcode(?UNKNOWN_BIN)),
+    [?assert(is_binary(dns_names:rcode_name(N))) || N <- Cases],
+    [?assertEqual(N, dns_names:name_rcode(dns_names:rcode_name(N))) || N <- Cases].
 
-optcode_terms_test_() ->
+optcode_terms(_) ->
     Cases = [
         ?DNS_OPCODE_QUERY_NUMBER,
         ?DNS_OPCODE_IQUERY_NUMBER,
         ?DNS_OPCODE_STATUS_NUMBER,
         ?DNS_OPCODE_UPDATE_NUMBER
     ],
-    [?_assertEqual(undefined, dns_names:opcode_name(?UNKNOWN_INT))] ++
-        [?_assertEqual(undefined, dns_names:name_opcode(?UNKNOWN_BIN))] ++
-        [?_assert(is_binary(dns_names:opcode_name(N))) || N <- Cases] ++
-        [?_assertEqual(N, dns_names:name_opcode(dns_names:opcode_name(N))) || N <- Cases].
+    ?assertEqual(undefined, dns_names:opcode_name(?UNKNOWN_INT)),
+    ?assertEqual(undefined, dns_names:name_opcode(?UNKNOWN_BIN)),
+    [?assert(is_binary(dns_names:opcode_name(N))) || N <- Cases],
+    [?assertEqual(N, dns_names:name_opcode(dns_names:opcode_name(N))) || N <- Cases].
 
-tsigerr_terms_test_() ->
+tsigerr_terms(_) ->
     Cases = [
         ?DNS_TSIGERR_NOERROR_NUMBER,
         ?DNS_TSIGERR_BADSIG_NUMBER,
         ?DNS_TSIGERR_BADKEY_NUMBER,
         ?DNS_TSIGERR_BADTIME_NUMBER
     ],
-    [?_assertEqual(undefined, dns_names:tsigerr_name(?UNKNOWN_INT))] ++
-        [?_assertEqual(undefined, dns_names:name_tsigerr(?UNKNOWN_BIN))] ++
-        [?_assert(is_binary(dns_names:tsigerr_name(N))) || N <- Cases] ++
-        [?_assertEqual(N, dns_names:name_tsigerr(dns_names:tsigerr_name(N))) || N <- Cases].
+    ?assertEqual(undefined, dns_names:tsigerr_name(?UNKNOWN_INT)),
+    ?assertEqual(undefined, dns_names:name_tsigerr(?UNKNOWN_BIN)),
+    [?assert(is_binary(dns_names:tsigerr_name(N))) || N <- Cases],
+    [?assertEqual(N, dns_names:name_tsigerr(dns_names:tsigerr_name(N))) || N <- Cases].
 
-ercode_name_test_() ->
+ercode_name(_) ->
     Cases = [
         ?DNS_ERCODE_NOERROR_NUMBER,
         ?DNS_ERCODE_BADVERS_NUMBER,
         ?DNS_ERCODE_BADCOOKIE_NUMBER
     ],
-    [?_assertEqual(undefined, dns_names:ercode_name(?UNKNOWN_INT))] ++
-        [?_assertEqual(undefined, dns_names:name_ercode(?UNKNOWN_BIN))] ++
-        [?_assert(is_binary(dns_names:ercode_name(N))) || N <- Cases] ++
-        [?_assertEqual(N, dns_names:name_ercode(dns_names:ercode_name(N))) || N <- Cases].
+    ?assertEqual(undefined, dns_names:ercode_name(?UNKNOWN_INT)),
+    ?assertEqual(undefined, dns_names:name_ercode(?UNKNOWN_BIN)),
+    [?assert(is_binary(dns_names:ercode_name(N))) || N <- Cases],
+    [?assertEqual(N, dns_names:name_ercode(dns_names:ercode_name(N))) || N <- Cases].
 
-eoptcode_name_test_() ->
+eoptcode_name(_) ->
     Cases = [
         ?DNS_EOPTCODE_LLQ_NUMBER,
         ?DNS_EOPTCODE_UL_NUMBER,
         ?DNS_EOPTCODE_NSID_NUMBER,
         ?DNS_EOPTCODE_OWNER_NUMBER
     ],
-    [?_assertEqual(undefined, dns_names:eoptcode_name(?UNKNOWN_INT))] ++
-        [?_assertEqual(undefined, dns_names:name_eoptcode(?UNKNOWN_BIN))] ++
-        [?_assert(is_binary(dns_names:eoptcode_name(N))) || N <- Cases] ++
-        [?_assertEqual(N, dns_names:name_eoptcode(dns_names:eoptcode_name(N))) || N <- Cases].
+    ?assertEqual(undefined, dns_names:eoptcode_name(?UNKNOWN_INT)),
+    ?assertEqual(undefined, dns_names:name_eoptcode(?UNKNOWN_BIN)),
+    [?assert(is_binary(dns_names:eoptcode_name(N))) || N <- Cases],
+    [?assertEqual(N, dns_names:name_eoptcode(dns_names:eoptcode_name(N))) || N <- Cases].
 
-llqopcode_name_test_() ->
+llqopcode_name(_) ->
     Cases = [
         ?DNS_LLQOPCODE_SETUP_NUMBER,
         ?DNS_LLQOPCODE_REFRESH_NUMBER,
         ?DNS_LLQOPCODE_EVENT_NUMBER
     ],
-    [?_assertEqual(undefined, dns_names:llqopcode_name(?UNKNOWN_INT))] ++
-        [?_assertEqual(undefined, dns_names:name_llqopcode(?UNKNOWN_BIN))] ++
-        [?_assert(is_binary(dns_names:llqopcode_name(N))) || N <- Cases] ++
-        [?_assertEqual(N, dns_names:name_llqopcode(dns_names:llqopcode_name(N))) || N <- Cases].
+    ?assertEqual(undefined, dns_names:llqopcode_name(?UNKNOWN_INT)),
+    ?assertEqual(undefined, dns_names:name_llqopcode(?UNKNOWN_BIN)),
+    [?assert(is_binary(dns_names:llqopcode_name(N))) || N <- Cases],
+    [?assertEqual(N, dns_names:name_llqopcode(dns_names:llqopcode_name(N))) || N <- Cases].
 
-llqerrcode_name_test_() ->
+llqerrcode_name(_) ->
     Cases = [
         ?DNS_LLQERRCODE_NOERROR_NUMBER,
         ?DNS_LLQERRCODE_SERVFULL_NUMBER,
@@ -205,7 +229,7 @@ llqerrcode_name_test_() ->
         ?DNS_LLQERRCODE_BADVERS_NUMBER,
         ?DNS_LLQERRCODE_UNKNOWNERR_NUMBER
     ],
-    [?_assertEqual(undefined, dns_names:llqerrcode_name(?UNKNOWN_INT))] ++
-        [?_assertEqual(undefined, dns_names:name_llqerrcode(?UNKNOWN_BIN))] ++
-        [?_assert(is_binary(dns_names:llqerrcode_name(N))) || N <- Cases] ++
-        [?_assertEqual(N, dns_names:name_llqerrcode(dns_names:llqerrcode_name(N))) || N <- Cases].
+    ?assertEqual(undefined, dns_names:llqerrcode_name(?UNKNOWN_INT)),
+    ?assertEqual(undefined, dns_names:name_llqerrcode(?UNKNOWN_BIN)),
+    [?assert(is_binary(dns_names:llqerrcode_name(N))) || N <- Cases],
+    [?assertEqual(N, dns_names:name_llqerrcode(dns_names:llqerrcode_name(N))) || N <- Cases].

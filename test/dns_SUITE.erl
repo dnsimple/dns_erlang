@@ -1,53 +1,124 @@
--module(dns_test).
+-module(dns_SUITE).
+-compile([export_all, nowarn_export_all]).
 
--include_lib("eunit/include/eunit.hrl").
+-behaviour(ct_suite).
+
+-include_lib("stdlib/include/assert.hrl").
 -include_lib("dns_erlang/include/dns.hrl").
 
-message_empty_test() ->
+-spec all() -> [ct_suite:ct_test_def()].
+all() ->
+    [{group, all}].
+
+-spec groups() -> [ct_suite:ct_group_def()].
+groups() ->
+    [
+        {all, [parallel], [
+            message_empty,
+            message_query,
+            encode_message_max_size,
+            encode_message_invalid_size,
+            truncated_query_enforces_opt_record,
+            message_other,
+            long_txt,
+            long_txt_not_split,
+            fail_txt_not_list_of_strings,
+            truncated_txt,
+            trailing_garbage_txt,
+            message_edns,
+            missing_additional_section,
+            edns_badvers,
+            decode_encode_rrdata_wire_samples,
+            decode_encode_rrdata,
+            decode_encode_optdata,
+            decode_encode_optdata_owner,
+            decode_encode_svcb_params,
+            decode_dname_2_ptr,
+            decode_dname_decode_loop,
+            decode_dname_bad_pointer,
+            encode_dname_1,
+            encode_dname_3,
+            encode_dname_4,
+            dname_to_lower_labels,
+            dname_to_labels,
+            labels_to_dname,
+            dname_to_upper,
+            dname_to_lower,
+            dname_case_conversion,
+            dns_case_insensitive_comparison,
+            dname_preserve_dot
+        ]}
+    ].
+
+-spec init_per_suite(ct_suite:ct_config()) -> ct_suite:ct_config().
+init_per_suite(Config) ->
+    Config.
+
+-spec end_per_suite(ct_suite:ct_config()) -> term().
+end_per_suite(Config) ->
+    Config.
+
+-spec init_per_group(ct_suite:ct_groupname(), ct_suite:ct_config()) -> ct_suite:ct_config().
+init_per_group(_, Config) ->
+    Config.
+
+-spec end_per_group(ct_suite:ct_groupname(), ct_suite:ct_config()) -> term().
+end_per_group(_, _Config) ->
+    ok.
+
+-spec init_per_testcase(ct_suite:ct_testcase(), ct_suite:ct_config()) -> ct_suite:ct_config().
+init_per_testcase(_, Config) ->
+    Config.
+
+-spec end_per_testcase(ct_suite:ct_testcase(), ct_suite:ct_config()) -> term().
+end_per_testcase(_, Config) ->
+    Config.
+
+message_empty(_) ->
     Msg = #dns_message{},
     Bin = dns:encode_message(Msg),
     ?assertEqual(Msg, dns:decode_message(Bin)).
 
-message_query_test() ->
+message_query(_) ->
     Qs = [#dns_query{name = <<"example">>, type = ?DNS_TYPE_A}],
     QLen = length(Qs),
     Msg = #dns_message{qc = QLen, questions = Qs},
     Bin = dns:encode_message(Msg),
     ?assertEqual(Msg, dns:decode_message(Bin)).
 
-encode_message_max_size_test_() ->
+encode_message_max_size(_) ->
     Qs = [#dns_query{name = <<"example">>, type = ?DNS_TYPE_A}],
     QLen = length(Qs),
     Msg = #dns_message{qc = QLen, questions = Qs},
     Msg3 = Msg#dns_message{adc = 1, additional = [#dns_optrr{udp_payload_size = 512}]},
     [
-        ?_assert(begin
+        ?assert(begin
             {false, Bin} = dns:encode_message(Msg3, #{}),
             Msg3 =:= dns:decode_message(Bin)
         end),
-        ?_assert(begin
+        ?assert(begin
             {false, Bin} = dns:encode_message(Msg, #{max_size => 512}),
             Msg =:= dns:decode_message(Bin)
         end),
-        ?_assert(begin
+        ?assert(begin
             {false, Bin} = dns:encode_message(Msg, #{}),
             Msg =:= dns:decode_message(Bin)
         end)
     ].
 
-encode_message_invalid_size_test_() ->
+encode_message_invalid_size(_) ->
     Qs = [#dns_query{name = <<"example">>, type = ?DNS_TYPE_A}],
     QLen = length(Qs),
     Msg = #dns_message{qc = QLen, questions = Qs},
     Msg3 = Msg#dns_message{adc = 1, additional = [#dns_optrr{udp_payload_size = 99999999}]},
     [
-        ?_assertError(badarg, dns:encode_message(Msg3, #{})),
-        ?_assertError(badarg, dns:encode_message(Msg, #{max_size => 999999})),
-        ?_assertError(badarg, dns:encode_message(Msg, #{max_size => 413})),
-        ?_assertError(badarg, dns:encode_message(Msg, #{max_size => not_an_integer}))
+        ?assertError(badarg, dns:encode_message(Msg3, #{})),
+        ?assertError(badarg, dns:encode_message(Msg, #{max_size => 999999})),
+        ?assertError(badarg, dns:encode_message(Msg, #{max_size => 413})),
+        ?assertError(badarg, dns:encode_message(Msg, #{max_size => not_an_integer}))
     ].
 
-truncated_query_enforces_opt_record_test_() ->
+truncated_query_enforces_opt_record(_) ->
     QName = <<"txt.example.org">>,
     StringSplit = split_binary_into_chunks(list_to_binary(lists:duplicate(480, $a)), 255),
     TxtRecord = #dns_rr{
@@ -67,7 +138,7 @@ truncated_query_enforces_opt_record_test_() ->
     },
     [
         %% Answers are truncated but body and optrr are present in full
-        ?_assert(begin
+        ?assert(begin
             NSID = #dns_opt_nsid{data = binary:encode_hex(crypto:strong_rand_bytes(8))},
             Ads = [OptRR#dns_optrr{data = [NSID]}],
             Msg = Msg0#dns_message{additional = Ads},
@@ -79,7 +150,7 @@ truncated_query_enforces_opt_record_test_() ->
                 ok =:= ?assertMatch([#dns_optrr{data = [_]} | _], Decoded#dns_message.additional)
         end),
         %% Small answers are too truncated
-        ?_assert(begin
+        ?assert(begin
             NSID = #dns_opt_nsid{data = binary:encode_hex(crypto:strong_rand_bytes(8))},
             Ads = [OptRR#dns_optrr{data = [NSID]}],
             Msg = Msg0#dns_message{
@@ -93,7 +164,7 @@ truncated_query_enforces_opt_record_test_() ->
                 ok =:= ?assertMatch([#dns_optrr{data = [_]} | _], Decoded#dns_message.additional)
         end),
         %% A too large NSID is dropped, prioritising questions and a bare OptRR record
-        ?_assert(begin
+        ?assert(begin
             NSID = #dns_opt_nsid{data = binary:encode_hex(crypto:strong_rand_bytes(234))},
             Msg = Msg0#dns_message{additional = [OptRR#dns_optrr{data = [NSID]}]},
             {false, Encoded} = dns:encode_message(Msg, #{max_size => 512}),
@@ -105,7 +176,7 @@ truncated_query_enforces_opt_record_test_() ->
         end)
     ].
 
-message_other_test() ->
+message_other(_) ->
     QName = <<"i            .txt.example.org">>,
     Qs = [#dns_query{name = QName, type = ?DNS_TYPE_TXT}],
     As = [
@@ -122,7 +193,7 @@ message_other_test() ->
     Bin = dns:encode_message(Msg),
     ?assertEqual(Msg, dns:decode_message(Bin)).
 
-long_txt_test() ->
+long_txt(_) ->
     QName = <<"txt.example.org">>,
 
     % Create a string longer than 255 bytes
@@ -163,7 +234,7 @@ long_txt_test() ->
     ReassembledString = iolist_to_binary(DecodedTxt),
     ?assertEqual(LongString, ReassembledString).
 
-long_txt_not_split_test() ->
+long_txt_not_split(_) ->
     QName = <<"txt.example.org">>,
     % Create a string longer than 255 bytes
     LongStringOfA = list_to_binary(lists:duplicate(300, $a)),
@@ -195,7 +266,7 @@ long_txt_not_split_test() ->
     ReassembledString = iolist_to_binary(DecodedTxt),
     ?assertEqual(LongString, ReassembledString).
 
-fail_txt_not_list_of_strings_test() ->
+fail_txt_not_list_of_strings(_) ->
     QName = <<"txt.example.org">>,
     % Create a string longer than 255 bytes
     LongString = list_to_binary(lists:duplicate(300, $a)),
@@ -216,7 +287,7 @@ fail_txt_not_list_of_strings_test() ->
     },
     ?assertError(function_clause, dns:encode_message(Msg)).
 
-truncated_txt_test() ->
+truncated_txt(_) ->
     QName = <<"txt.example.org">>,
     % Create a string longer than 255 bytes
     LongString = list_to_binary(lists:duplicate(300, $a)),
@@ -241,7 +312,7 @@ truncated_txt_test() ->
     NewBin = <<Head/binary, 255, OneLorem/binary>>,
     ?assertMatch({truncated, _, _}, dns:decode_message(NewBin)).
 
-trailing_garbage_txt_test() ->
+trailing_garbage_txt(_) ->
     QName = <<"txt.example.org">>,
     Text = <<"\"Hello\"">>,
     Msg = #dns_message{
@@ -261,7 +332,7 @@ trailing_garbage_txt_test() ->
     NewBin = <<Bin/binary, "_">>,
     ?assertMatch({trailing_garbage, _, _}, dns:decode_message(NewBin)).
 
-message_edns_test() ->
+message_edns(_) ->
     QName = <<"_http._tcp.example.org">>,
     Qs = [#dns_query{name = QName, type = ?DNS_TYPE_PTR}],
     Ans = [
@@ -306,12 +377,12 @@ message_edns_test() ->
     Bin = dns:encode_message(Msg),
     ?assertEqual(Msg, dns:decode_message(Bin)).
 
-missing_additional_section_test() ->
+missing_additional_section(_) ->
     %% Query for test./IN/A with missing additional section
     Bin = <<192, 46, 0, 32, 0, 1, 0, 0, 0, 0, 0, 1, 4, 116, 101, 115, 116, 0, 0, 1, 0, 1>>,
     ?assertMatch({truncated, _, <<>>}, dns:decode_message(Bin)).
 
-edns_badvers_test() ->
+edns_badvers(_) ->
     QName = <<"example.com">>,
     Query = #dns_query{name = QName, type = ?DNS_TYPE_A},
     BadVersion = #dns_optrr{
@@ -332,40 +403,30 @@ edns_badvers_test() ->
 %%% Record data functions
 %%%===================================================================
 
-decode_encode_rrdata_wire_samples_test_() ->
-    {ok, Cases} = file:consult(filename:join("test", "rrdata_wire_samples.txt")),
-    ToTestName = fun({Class, Type, Bin}) ->
-        Fmt = "~p/~p/~n~p",
-        Args = [Class, Type, Bin],
-        lists:flatten(io_lib:format(Fmt, Args))
-    end,
+decode_encode_rrdata_wire_samples(_) ->
+    Cases = data_samples:rrdata_wire(),
     [
-        {
-            ToTestName(Case),
-            ?_test(
-                begin
-                    NewBin =
-                        case dns_decode:decode_rrdata(TestBin, Class, Type, TestBin) of
-                            TestBin when Type =:= 999 -> TestBin;
-                            TestBin ->
-                                throw(not_decoded);
-                            Record ->
-                                {Bin, _} = dns_encode:encode_rrdata(
-                                    0,
-                                    Class,
-                                    Record,
-                                    #{}
-                                ),
-                                Bin
-                        end,
-                    ?assertEqual(TestBin, NewBin)
-                end
-            )
-        }
-     || {Class, Type, TestBin} = Case <- Cases
+        begin
+            NewBin =
+                case dns_decode:decode_rrdata(TestBin, Class, Type, TestBin) of
+                    TestBin when Type =:= 999 -> TestBin;
+                    TestBin ->
+                        throw(not_decoded);
+                    Record ->
+                        {Bin, _} = dns_encode:encode_rrdata(
+                            0,
+                            Class,
+                            Record,
+                            #{}
+                        ),
+                        Bin
+                end,
+            ?assertEqual(TestBin, NewBin)
+        end
+     || {Class, Type, TestBin} <- Cases
     ].
 
-decode_encode_rrdata_test_() ->
+decode_encode_rrdata(_) ->
     %% For testing records that don't have wire samples
     Cases = [
         {?DNS_TYPE_MB, #dns_rrdata_mb{madname = <<"example.com">>}},
@@ -460,18 +521,16 @@ decode_encode_rrdata_test_() ->
         }}
     ],
     [
-        ?_test(
-            begin
-                {Encoded, _NewCompMap} = dns_encode:encode_rrdata(
-                    0,
-                    ?DNS_CLASS_IN,
-                    Data,
-                    #{}
-                ),
-                Decoded = dns_decode:decode_rrdata(Encoded, ?DNS_CLASS_IN, Type, Encoded),
-                ?assertEqual(Data, Decoded)
-            end
-        )
+        begin
+            {Encoded, _NewCompMap} = dns_encode:encode_rrdata(
+                0,
+                ?DNS_CLASS_IN,
+                Data,
+                #{}
+            ),
+            Decoded = dns_decode:decode_rrdata(Encoded, ?DNS_CLASS_IN, Type, Encoded),
+            ?assertEqual(Data, Decoded)
+        end
      || {Type, Data} <- Cases
     ].
 
@@ -479,7 +538,7 @@ decode_encode_rrdata_test_() ->
 %%% EDNS data functions
 %%%===================================================================
 
-decode_encode_optdata_test_() ->
+decode_encode_optdata(_) ->
     Cases = [
         #dns_opt_llq{
             opcode = ?DNS_LLQOPCODE_SETUP,
@@ -498,11 +557,11 @@ decode_encode_optdata_test_() ->
         #dns_opt_unknown{id = 999, bin = <<"hi">>}
     ],
     [
-        ?_assertEqual([Case], dns_decode:decode_optrrdata(dns_encode:encode_optrrdata([Case])))
+        ?assertEqual([Case], dns_decode:decode_optrrdata(dns_encode:encode_optrrdata([Case])))
      || Case <- Cases
     ].
 
-decode_encode_optdata_owner_test_() ->
+decode_encode_optdata_owner(_) ->
     application:start(crypto),
     Cases = [
         #dns_opt_owner{
@@ -530,11 +589,11 @@ decode_encode_optdata_owner_test_() ->
         }
     ],
     [
-        ?_assertEqual([Case], dns_decode:decode_optrrdata(dns_encode:encode_optrrdata([Case])))
+        ?assertEqual([Case], dns_decode:decode_optrrdata(dns_encode:encode_optrrdata([Case])))
      || Case <- Cases
     ].
 
-decode_encode_svcb_params_test() ->
+decode_encode_svcb_params(_) ->
     Cases = [
         {#{}, #{}},
         {#{?DNS_SVCB_PARAM_PORT => 8079}, #{?DNS_SVCB_PARAM_PORT => 8079}},
@@ -552,32 +611,32 @@ decode_encode_svcb_params_test() ->
 %%% Domain name functions
 %%%===================================================================
 
-decode_dname_2_ptr_test_() ->
+decode_dname_2_ptr(_) ->
     Cases = [{<<7, 101, 120, 97, 109, 112, 108, 101, 0>>, <<3:2, 0:14>>}],
     [
-        ?_assertEqual({<<"example">>, <<>>}, dns_decode:decode_dname(DataBin, MsgBin))
+        ?assertEqual({<<"example">>, <<>>}, dns_decode:decode_dname(DataBin, MsgBin))
      || {MsgBin, DataBin} <- Cases
     ].
 
-decode_dname_decode_loop_test() ->
+decode_dname_decode_loop(_) ->
     Bin = <<3:2, 0:14>>,
     ?assertException(throw, decode_loop, dns_decode:decode_dname(Bin, Bin)).
 
-decode_dname_bad_pointer_test() ->
+decode_dname_bad_pointer(_) ->
     Case = <<3:2, 42:14>>,
     ?assertException(throw, bad_pointer, dns_decode:decode_dname(Case, Case)).
 
-encode_dname_1_test_() ->
+encode_dname_1(_) ->
     Cases = [
         {<<"example">>, <<7, 101, 120, 97, 109, 112, 108, 101, 0>>}
     ],
-    [?_assertEqual(Expect, dns_encode:encode_dname(Input)) || {Input, Expect} <- Cases].
+    [?assertEqual(Expect, dns_encode:encode_dname(Input)) || {Input, Expect} <- Cases].
 
-encode_dname_3_test_() ->
+encode_dname_3(_) ->
     {Bin, _CompMap} = dns_encode:encode_dname(#{}, 0, <<"example">>),
-    ?_assertEqual(<<7, 101, 120, 97, 109, 112, 108, 101, 0>>, Bin).
+    ?assertEqual(<<7, 101, 120, 97, 109, 112, 108, 101, 0>>, Bin).
 
-encode_dname_4_test_() ->
+encode_dname_4(_) ->
     {Bin0, CM0} = dns_encode:encode_dname(<<>>, #{}, 0, <<"example">>),
     {Bin1, _} = dns_encode:encode_dname(Bin0, CM0, byte_size(Bin0), <<"example">>),
     {Bin2, _} = dns_encode:encode_dname(Bin0, CM0, byte_size(Bin0), <<"EXAMPLE">>),
@@ -590,9 +649,9 @@ encode_dname_4_test_() ->
         {Bin1, Bin2},
         {#{}, CM1}
     ],
-    [?_assertEqual(Expect, Result) || {Expect, Result} <- Cases].
+    [?assertEqual(Expect, Result) || {Expect, Result} <- Cases].
 
-dname_to_lower_labels_test_() ->
+dname_to_lower_labels(_) ->
     Cases = [
         {<<>>, []},
         {<<".">>, []},
@@ -601,9 +660,9 @@ dname_to_lower_labels_test_() ->
         {<<"A\\.B.c">>, [<<"a.b">>, <<"c">>]},
         {<<"A\\\\.b.C">>, [<<"a\\">>, <<"b">>, <<"c">>]}
     ],
-    [?_assertEqual(Expect, dns:dname_to_lower_labels(Arg)) || {Arg, Expect} <- Cases].
+    [?assertEqual(Expect, dns:dname_to_lower_labels(Arg)) || {Arg, Expect} <- Cases].
 
-dname_to_labels_test_() ->
+dname_to_labels(_) ->
     Cases = [
         {<<>>, []},
         {<<".">>, []},
@@ -612,58 +671,58 @@ dname_to_labels_test_() ->
         {<<"a\\.b.c">>, [<<"a.b">>, <<"c">>]},
         {<<"a\\\\.b.c">>, [<<"a\\">>, <<"b">>, <<"c">>]}
     ],
-    [?_assertEqual(Expect, dns:dname_to_labels(Arg)) || {Arg, Expect} <- Cases].
+    [?assertEqual(Expect, dns:dname_to_labels(Arg)) || {Arg, Expect} <- Cases].
 
-labels_to_dname_test_() ->
+labels_to_dname(_) ->
     Cases = [
         {[<<"a">>, <<"b">>, <<"c">>], <<"a.b.c">>},
         {[<<"a.b">>, <<"c">>], <<"a\\.b.c">>},
         {[<<"a\\">>, <<"b">>, <<"c">>], <<"a\\\\.b.c">>}
     ],
-    [?_assertEqual(Expect, dns:labels_to_dname(Arg)) || {Arg, Expect} <- Cases].
+    [?assertEqual(Expect, dns:labels_to_dname(Arg)) || {Arg, Expect} <- Cases].
 
-dname_to_upper_test_() ->
+dname_to_upper(_) ->
     Cases = [{<<"Y">>, <<"Y">>}, {<<"y">>, <<"Y">>}],
-    [?_assertEqual(Expect, dns:dname_to_upper(Arg)) || {Arg, Expect} <- Cases].
+    [?assertEqual(Expect, dns:dname_to_upper(Arg)) || {Arg, Expect} <- Cases].
 
-dname_to_lower_test_() ->
+dname_to_lower(_) ->
     Cases = [{<<"Y">>, <<"y">>}, {<<"y">>, <<"y">>}],
-    [?_assertEqual(Expect, dns:dname_to_lower(Arg)) || {Arg, Expect} <- Cases].
+    [?assertEqual(Expect, dns:dname_to_lower(Arg)) || {Arg, Expect} <- Cases].
 
-dname_case_conversion_test_() ->
+dname_case_conversion(_) ->
     [
         %% Basic domain name tests
-        ?_assertEqual(<<"EXAMPLE.COM">>, dns:dname_to_upper(<<"example.com">>)),
-        ?_assertEqual(<<"example.com">>, dns:dname_to_lower(<<"EXAMPLE.COM">>)),
+        ?assertEqual(<<"EXAMPLE.COM">>, dns:dname_to_upper(<<"example.com">>)),
+        ?assertEqual(<<"example.com">>, dns:dname_to_lower(<<"EXAMPLE.COM">>)),
 
         %% Mixed case input tests
-        ?_assertEqual(<<"EXAMPLE.COM">>, dns:dname_to_upper(<<"ExAmPle.CoM">>)),
-        ?_assertEqual(<<"example.com">>, dns:dname_to_lower(<<"ExAmPle.CoM">>)),
+        ?assertEqual(<<"EXAMPLE.COM">>, dns:dname_to_upper(<<"ExAmPle.CoM">>)),
+        ?assertEqual(<<"example.com">>, dns:dname_to_lower(<<"ExAmPle.CoM">>)),
 
         %% Tests with subdomains
-        ?_assertEqual(<<"WWW.EXAMPLE.COM">>, dns:dname_to_upper(<<"www.example.com">>)),
-        ?_assertEqual(
+        ?assertEqual(<<"WWW.EXAMPLE.COM">>, dns:dname_to_upper(<<"www.example.com">>)),
+        ?assertEqual(
             <<"sub.domain.example.com">>, dns:dname_to_lower(<<"SUB.DOMAIN.EXAMPLE.COM">>)
         ),
 
         %% Tests with special characters (which should remain unchanged)
-        ?_assertEqual(<<"TEST-1.EXAMPLE.COM">>, dns:dname_to_upper(<<"test-1.example.com">>)),
-        ?_assertEqual(<<"test_2.example.com">>, dns:dname_to_lower(<<"TEST_2.EXAMPLE.COM">>)),
+        ?assertEqual(<<"TEST-1.EXAMPLE.COM">>, dns:dname_to_upper(<<"test-1.example.com">>)),
+        ?assertEqual(<<"test_2.example.com">>, dns:dname_to_lower(<<"TEST_2.EXAMPLE.COM">>)),
 
         %% Tests with dots and escaping (common in DNS)
-        ?_assertEqual(
+        ?assertEqual(
             <<"ESCAPED\\.DOT.EXAMPLE.COM">>, dns:dname_to_upper(<<"escaped\\.dot.example.com">>)
         ),
-        ?_assertEqual(
+        ?assertEqual(
             <<"label\\.with\\.escaped.dots">>, dns:dname_to_lower(<<"LABEL\\.WITH\\.ESCAPED.DOTS">>)
         ),
 
         %% Tests with empty or single character domains
-        ?_assertEqual(<<>>, dns:dname_to_upper(<<>>)),
-        ?_assertEqual(<<"a">>, dns:dname_to_lower(<<"A">>)),
+        ?assertEqual(<<>>, dns:dname_to_upper(<<>>)),
+        ?assertEqual(<<"a">>, dns:dname_to_lower(<<"A">>)),
 
         %% Test with long domain name to check chunking behavior
-        ?_assertEqual(
+        ?assertEqual(
             <<"THISISAVERYLONGSUBDOMAINNAMEWITHMANYCHARACTERS.EXAMPLE.COM">>,
             dns:dname_to_upper(<<"thisisaverylongsubdomainnamewithmanycharacters.example.com">>)
         ),
@@ -671,67 +730,67 @@ dname_case_conversion_test_() ->
         %% Test with various lengths to ensure all chunk size code paths are tested
 
         % 2 chars
-        ?_assertEqual(<<"AB">>, dns:dname_to_upper(<<"ab">>)),
+        ?assertEqual(<<"AB">>, dns:dname_to_upper(<<"ab">>)),
         % 3 chars
-        ?_assertEqual(<<"abc">>, dns:dname_to_lower(<<"ABC">>)),
+        ?assertEqual(<<"abc">>, dns:dname_to_lower(<<"ABC">>)),
         % 4 chars
-        ?_assertEqual(<<"ABCD">>, dns:dname_to_upper(<<"abcd">>)),
+        ?assertEqual(<<"ABCD">>, dns:dname_to_upper(<<"abcd">>)),
         % 5 chars
-        ?_assertEqual(<<"abcde">>, dns:dname_to_lower(<<"ABCDE">>)),
+        ?assertEqual(<<"abcde">>, dns:dname_to_lower(<<"ABCDE">>)),
         % 6 chars
-        ?_assertEqual(<<"ABCDEF">>, dns:dname_to_upper(<<"abcdef">>)),
+        ?assertEqual(<<"ABCDEF">>, dns:dname_to_upper(<<"abcdef">>)),
         % 7 chars
-        ?_assertEqual(<<"abcdefg">>, dns:dname_to_lower(<<"ABCDEFG">>)),
+        ?assertEqual(<<"abcdefg">>, dns:dname_to_lower(<<"ABCDEFG">>)),
         % 8 chars
-        ?_assertEqual(<<"ABCDEFGH">>, dns:dname_to_upper(<<"abcdefgh">>)),
+        ?assertEqual(<<"ABCDEFGH">>, dns:dname_to_upper(<<"abcdefgh">>)),
 
         %% DNS specific examples - common DNS record types
-        ?_assertEqual(<<"_SRV._TCP.EXAMPLE.COM">>, dns:dname_to_upper(<<"_srv._tcp.example.com">>)),
-        ?_assertEqual(
+        ?assertEqual(<<"_SRV._TCP.EXAMPLE.COM">>, dns:dname_to_upper(<<"_srv._tcp.example.com">>)),
+        ?assertEqual(
             <<"_xmpp-server._tcp.example.com">>,
             dns:dname_to_lower(<<"_XMPP-SERVER._TCP.EXAMPLE.COM">>)
         ),
 
         %% Real-world examples
-        ?_assertEqual(<<"NS1.DNSPROVIDER.NET">>, dns:dname_to_upper(<<"ns1.dnsprovider.net">>)),
-        ?_assertEqual(<<"mail.example.org">>, dns:dname_to_lower(<<"MAIL.EXAMPLE.ORG">>))
+        ?assertEqual(<<"NS1.DNSPROVIDER.NET">>, dns:dname_to_upper(<<"ns1.dnsprovider.net">>)),
+        ?assertEqual(<<"mail.example.org">>, dns:dname_to_lower(<<"MAIL.EXAMPLE.ORG">>))
     ].
 
 %% Test specifically checking that case normalization doesn't affect DNS name comparison
-dns_case_insensitive_comparison_test_() ->
+dns_case_insensitive_comparison(_) ->
     [
-        ?_assert(dns:compare_dname(<<"example.com">>, <<"EXAMPLE.COM">>)),
-        ?_assert(dns:compare_dname(<<"www.EXAMPLE.com">>, <<"WWW.example.COM">>)),
-        ?_assert(
+        ?assert(dns:compare_dname(<<"example.com">>, <<"EXAMPLE.COM">>)),
+        ?assert(dns:compare_dname(<<"www.EXAMPLE.com">>, <<"WWW.example.COM">>)),
+        ?assert(
             dns:compare_dname(
                 dns:dname_to_upper(<<"example.com">>), dns:dname_to_lower(<<"EXAMPLE.COM">>)
             )
         ),
-        ?_assert(dns:compare_labels([<<"example">>, <<"com">>], [<<"EXAMPLE">>, <<"COM">>])),
-        ?_assert(
+        ?assert(dns:compare_labels([<<"example">>, <<"com">>], [<<"EXAMPLE">>, <<"COM">>])),
+        ?assert(
             dns:compare_labels([<<"www">>, <<"example">>, <<"com">>], [
                 <<"WWW">>, <<"example">>, <<"COM">>
             ])
         ),
-        ?_assert(
+        ?assert(
             dns:compare_labels([<<"www">>, <<"EXAMPLE">>, <<"com">>], [
                 <<"WWW">>, <<"example">>, <<"COM">>
             ])
         ),
-        ?_assertNot(
+        ?assertNot(
             dns:compare_labels([<<"www">>, <<"different">>, <<"com">>], [
                 <<"WWW">>, <<"example">>, <<"COM">>
             ])
         ),
-        ?_assertNot(
+        ?assertNot(
             dns:compare_labels([<<"www">>, <<"example">>], [<<"www">>, <<"example">>, <<"com">>])
         ),
-        ?_assertNot(
+        ?assertNot(
             dns:compare_labels([<<"www">>, <<"example">>, <<"com">>], [<<"www">>, <<"example">>])
         )
     ].
 
-dname_preserve_dot_test_() ->
+dname_preserve_dot(_) ->
     Query = #dns_query{name = <<"example\\.com">>, class = 1, type = 1},
     Message = #dns_message{qc = 1, questions = [Query]},
     Encoded = dns:encode_message(Message),
@@ -739,9 +798,9 @@ dname_preserve_dot_test_() ->
     ReEncoded = dns:encode_message(Decoded),
     ReDecoded = dns:decode_message(ReEncoded),
     [
-        ?_assertEqual(Message, Decoded),
-        ?_assertEqual(Encoded, ReEncoded),
-        ?_assertEqual(Message, ReDecoded)
+        ?assertEqual(Message, Decoded),
+        ?assertEqual(Encoded, ReEncoded),
+        ?assertEqual(Message, ReDecoded)
     ].
 
 split_binary_into_chunks(Bin, Chunk) ->

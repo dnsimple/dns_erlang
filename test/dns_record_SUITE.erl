@@ -1,10 +1,61 @@
--module(dns_record_test).
+-module(dns_record_SUITE).
+-compile([export_all, nowarn_export_all]).
 
--include_lib("eunit/include/eunit.hrl").
+-behaviour(ct_suite).
+
+-include_lib("stdlib/include/assert.hrl").
 -include_lib("dns_erlang/include/dns.hrl").
 
+-spec all() -> [ct_suite:ct_test_def()].
+all() ->
+    [{group, all}].
+
+-spec groups() -> [ct_suite:ct_group_def()].
+groups() ->
+    [
+        {all, [parallel], [
+            type_rec,
+            recinfo,
+            serialise_dnssec,
+            serialise_optrr,
+            serialise_rrdata,
+            serialise_tsig
+        ]}
+    ].
+
+type_rec(_) ->
+    Cases = data_samples:rrdata_wire(),
+    Types = sets:to_list(sets:from_list([T || {_, T, _} <- Cases, T =/= 999])),
+    [
+        ?assertEqual(Type, dns_record_info:type_for_atom(dns_record_info:atom_for_type(Type)))
+     || Type <- Types
+    ].
+
+recinfo(_) ->
+    Cases = data_samples:rrdata_wire(),
+    Types = sets:to_list(sets:from_list([T || {_, T, _} <- Cases, T =/= 999])),
+    Tags = [dns_rr | [dns_record_info:atom_for_type(Type) || Type <- Types]],
+    [
+        {
+            atom_to_list(Tag),
+            ?assertEqual(
+                length(dns_record_info:fields(Tag)),
+                dns_record_info:size(Tag) - 1
+            )
+        }
+     || Tag <- Tags
+    ].
+
+serialise_dnssec(_) -> erl_tests(dnssec_cases()).
+
+serialise_optrr(_) -> erl_tests(optrr_cases()).
+
+serialise_rrdata(_) -> erl_tests(rrdata_cases()).
+
+serialise_tsig(_) -> erl_tests(tsig_cases()).
+
 dnssec_cases() ->
-    {ok, Cases} = file:consult(filename:join("test", "dnssec_samples.txt")),
+    Cases = data_samples:dnssec(),
     [
         {ZoneName, dns:decode_message(Bin)}
      || {ZoneName, _RawKeys, Bin} <- Cases
@@ -32,7 +83,7 @@ optrr_cases() ->
     ].
 
 rrdata_cases() ->
-    {ok, Cases} = file:consult(filename:join("test", "rrdata_wire_samples.txt")),
+    Cases = data_samples:rrdata_wire(),
     [
         {
             lists:flatten(io_lib:format("~p/~p", [Class, Type])),
@@ -42,24 +93,16 @@ rrdata_cases() ->
     ].
 
 tsig_cases() ->
-    {ok, Cases} = file:consult(filename:join("test", "tsig_wire_samples.txt")),
+    Cases = data_samples:tsig(),
     [{Name, dns:decode_message(Msg)} || {Name, Msg} <- Cases].
 
 tests(Cases, Serialise, Deserialise) ->
     [
-        {TestName, ?_assertEqual(Term, Deserialise(Serialise(Term)))}
+        {TestName, ?assertEqual(Term, Deserialise(Serialise(Term)))}
      || {TestName, Term} <- Cases
     ].
 
 erl_tests(Cases) -> tests(Cases, fun dns_record:serialise/1, fun dns_record:deserialise/1).
-
-serialise_dnssec_test_() -> erl_tests(dnssec_cases()).
-
-serialise_optrr_test_() -> erl_tests(optrr_cases()).
-
-serialise_rrdata_test_() -> erl_tests(rrdata_cases()).
-
-serialise_tsig_test_() -> erl_tests(tsig_cases()).
 
 ejson_serialise(Term) ->
     Fun = fun
