@@ -28,7 +28,7 @@
 ]).
 -endif.
 
--compile({inline, [decode_bool/1, round_pow/1]}).
+-compile({inline, [decode_bool/1, round_pow/1, choose_next_bin/3]}).
 
 -spec decode(dns:message_bin()) ->
     dns:message() | {dns:decode_error(), dns:message() | undefined, binary()}.
@@ -119,28 +119,28 @@ decode_message_questions(MsgBin, DataBin, Count) ->
 
 -spec decode_message_questions(dns:message_bin(), binary(), dns:uint16(), dns:questions()) ->
     {dns:questions(), binary()} | {dns:decode_error(), dns:questions(), binary()}.
-decode_message_questions(_MsgBin, DataBin, 0, Qs) ->
-    {lists:reverse(Qs), DataBin};
-decode_message_questions(_MsgBin, <<>>, _Count, Qs) ->
-    {truncated, lists:reverse(Qs), <<>>};
-decode_message_questions(MsgBin, DataBin, Count, Qs) ->
+decode_message_questions(_MsgBin, DataBin, 0, RRs) ->
+    {lists:reverse(RRs), DataBin};
+decode_message_questions(_MsgBin, <<>>, _Count, RRs) ->
+    {truncated, lists:reverse(RRs), <<>>};
+decode_message_questions(MsgBin, DataBin, Count, RRs) ->
     try decode_dname(MsgBin, DataBin) of
         {Name, <<Type:16, Class:16, RB/binary>>} ->
-            Q = #dns_query{name = Name, type = Type, class = Class},
-            decode_message_questions(MsgBin, RB, Count - 1, [Q | Qs]);
+            R = #dns_query{name = Name, type = Type, class = Class},
+            decode_message_questions(MsgBin, RB, Count - 1, [R | RRs]);
         {_Name, _Bin} ->
-            {truncated, lists:reverse(Qs), DataBin}
+            {truncated, lists:reverse(RRs), DataBin}
     catch
         Error when is_atom(Error) ->
-            {Error, lists:reverse(Qs), DataBin};
+            {Error, lists:reverse(RRs), DataBin};
         _:_ ->
-            {formerr, lists:reverse(Qs), DataBin}
+            {formerr, lists:reverse(RRs), DataBin}
     end.
 
 -spec decode_message_additional(dns:message_bin(), binary(), dns:uint16()) ->
     {dns:additional(), binary()} | {dns:decode_error(), [dns:optrr() | dns:rr()], binary()}.
 decode_message_additional(MsgBin, DataBin, Count) when
-    is_binary(MsgBin), is_binary(MsgBin), is_integer(Count), 0 =< Count, Count =< 65535
+    is_binary(MsgBin), is_binary(DataBin), is_integer(Count), 0 =< Count, Count =< 65535
 ->
     do_decode_message_additional(MsgBin, DataBin, Count, []).
 
@@ -148,8 +148,8 @@ decode_message_additional(MsgBin, DataBin, Count) when
     {dns:additional(), binary()} | {dns:decode_error(), [dns:optrr() | dns:rr()], binary()}.
 do_decode_message_additional(_MsgBin, DataBin, 0, RRs) ->
     {lists:reverse(RRs), DataBin};
-do_decode_message_additional(_MsgBin, <<>>, _Count, Qs) ->
-    {truncated, lists:reverse(Qs), <<>>};
+do_decode_message_additional(_MsgBin, <<>>, _Count, RRs) ->
+    {truncated, lists:reverse(RRs), <<>>};
 do_decode_message_additional(MsgBin, DataBin, Count, RRs) ->
     try decode_dname(MsgBin, DataBin) of
         {<<>>,
@@ -197,8 +197,8 @@ decode_message_body(MsgBin, DataBin, Count) when
     {[dns:rr()], binary()} | {dns:decode_error(), [dns:rr()], binary()}.
 do_decode_message_body(_MsgBin, DataBin, 0, RRs) ->
     {lists:reverse(RRs), DataBin};
-do_decode_message_body(_MsgBin, <<>>, _Count, Qs) ->
-    {truncated, lists:reverse(Qs), <<>>};
+do_decode_message_body(_MsgBin, <<>>, _Count, RRs) ->
+    {truncated, lists:reverse(RRs), <<>>};
 do_decode_message_body(MsgBin, DataBin, Count, RRs) ->
     try decode_dname(MsgBin, DataBin) of
         {Name,
@@ -359,14 +359,7 @@ decode_rrdata(
         AlgNum =:= ?DNS_ALG_RSASHA256 orelse
         AlgNum =:= ?DNS_ALG_RSASHA512
 ->
-    Key =
-        case PublicKey of
-            <<0, Len:16, Exp:Len/unit:8, ModBin/binary>> ->
-                [Exp, binary:decode_unsigned(ModBin)];
-            <<Len:8, Exp:Len/unit:8, ModBin/binary>> ->
-                [Exp, binary:decode_unsigned(ModBin)]
-        end,
-    KeyTag = bin_to_key_tag(Bin),
+    {Key, KeyTag} = decode_rsa_key(PublicKey, Bin),
     #dns_rrdata_dnskey{
         flags = Flags,
         protocol = Protocol,
@@ -383,10 +376,7 @@ decode_rrdata(
     (AlgNum =:= ?DNS_ALG_DSA orelse AlgNum =:= ?DNS_ALG_NSEC3DSA) andalso
         T =< 8
 ->
-    S = 64 + T * 8,
-    <<P:S/unit:8, G:S/unit:8, Y:S/unit:8>> = KeyBin,
-    Key = [P, Q, G, Y],
-    KeyTag = bin_to_key_tag(Bin),
+    {Key, KeyTag} = decode_dsa_key(T, Q, KeyBin, Bin),
     #dns_rrdata_dnskey{
         flags = Flags,
         protocol = Protocol,
@@ -428,14 +418,7 @@ decode_rrdata(
         AlgNum =:= ?DNS_ALG_RSASHA256 orelse
         AlgNum =:= ?DNS_ALG_RSASHA512
 ->
-    Key =
-        case PublicKey of
-            <<0, Len:16, Exp:Len/unit:8, ModBin/binary>> ->
-                [Exp, binary:decode_unsigned(ModBin)];
-            <<Len:8, Exp:Len/unit:8, ModBin/binary>> ->
-                [Exp, binary:decode_unsigned(ModBin)]
-        end,
-    KeyTag = bin_to_key_tag(Bin),
+    {Key, KeyTag} = decode_rsa_key(PublicKey, Bin),
     #dns_rrdata_cdnskey{
         flags = Flags,
         protocol = Protocol,
@@ -452,10 +435,7 @@ decode_rrdata(
     (AlgNum =:= ?DNS_ALG_DSA orelse AlgNum =:= ?DNS_ALG_NSEC3DSA) andalso
         T =< 8
 ->
-    S = 64 + T * 8,
-    <<P:S/unit:8, G:S/unit:8, Y:S/unit:8>> = KeyBin,
-    Key = [P, Q, G, Y],
-    KeyTag = bin_to_key_tag(Bin),
+    {Key, KeyTag} = decode_dsa_key(T, Q, KeyBin, Bin),
     #dns_rrdata_cdnskey{
         flags = Flags,
         protocol = Protocol,
@@ -753,6 +733,28 @@ decode_dnameonly(MsgBin, Bin) ->
         _ -> throw(trailing_garbage)
     end.
 
+%% Helper function to decode RSA keys for DNSKEY and CDNSKEY records
+-spec decode_rsa_key(binary(), binary()) -> {list(), dns:uint16()}.
+decode_rsa_key(PublicKey, Bin) ->
+    Key =
+        case PublicKey of
+            <<0, Len:16, Exp:Len/unit:8, ModBin/binary>> ->
+                [Exp, binary:decode_unsigned(ModBin)];
+            <<Len:8, Exp:Len/unit:8, ModBin/binary>> ->
+                [Exp, binary:decode_unsigned(ModBin)]
+        end,
+    KeyTag = bin_to_key_tag(Bin),
+    {Key, KeyTag}.
+
+%% Helper function to decode DSA keys for DNSKEY and CDNSKEY records
+-spec decode_dsa_key(byte(), non_neg_integer(), binary(), binary()) -> {list(), dns:uint16()}.
+decode_dsa_key(T, Q, KeyBin, Bin) ->
+    S = 64 + T * 8,
+    <<P:S/unit:8, G:S/unit:8, Y:S/unit:8>> = KeyBin,
+    Key = [P, Q, G, Y],
+    KeyTag = bin_to_key_tag(Bin),
+    {Key, KeyTag}.
+
 -spec decode_text(binary()) -> [binary()].
 decode_text(<<>>) ->
     [];
@@ -764,11 +766,11 @@ decode_text(Bin) when is_binary(Bin) ->
 decode_string(<<Len, Bin:Len/binary, Rest/binary>>) ->
     {Rest, Bin}.
 
--spec bin_to_key_tag(<<_:32, _:_*8>>) -> char().
+-spec bin_to_key_tag(<<_:32, _:_*8>>) -> dns:uint16().
 bin_to_key_tag(Binary) when is_binary(Binary) ->
     do_bin_to_key_tag(Binary, 0).
 
--spec do_bin_to_key_tag(binary(), non_neg_integer()) -> char().
+-spec do_bin_to_key_tag(binary(), non_neg_integer()) -> dns:uint16().
 do_bin_to_key_tag(<<>>, AC) ->
     (AC + ((AC bsr 16) band 16#FFFF)) band 16#FFFF;
 do_bin_to_key_tag(<<X:16, Rest/binary>>, AC) ->

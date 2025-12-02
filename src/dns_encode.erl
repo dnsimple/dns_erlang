@@ -12,7 +12,6 @@
 -define(OPTRR_MIN_SIZE, 88).
 %% 2^31 - 1, the largest signed 32-bit integer value
 -define(MAX_INT32, ((1 bsl 31) - 1)).
--define(DEFAULT_TSIG_FUDGE, 5 * 60).
 -define(HEADER_SIZE, 12).
 -define(CLASS_IS_IN(T), (T =:= ?DNS_CLASS_IN orelse T =:= ?DNS_CLASS_NONE)).
 
@@ -576,18 +575,7 @@ encode_rrdata(
         Alg =:= ?DNS_ALG_RSASHA256 orelse
         Alg =:= ?DNS_ALG_RSASHA512
 ->
-    MBin = strip_leading_zeros(binary:encode_unsigned(M)),
-    EBin = strip_leading_zeros(binary:encode_unsigned(E)),
-    ESize = byte_size(EBin),
-    PKBin =
-        case ESize of
-            _ when ESize =< 16#FF ->
-                <<ESize:8, EBin:ESize/binary, MBin/binary>>;
-            _ when ESize =< 16#FFFF ->
-                <<0, ESize:16, EBin:ESize/binary, MBin/binary>>;
-            _ ->
-                erlang:error(badarg)
-        end,
+    PKBin = encode_rsa_key(E, M),
     {<<Flags:16, Protocol:8, Alg:8, PKBin/binary>>, CompMap};
 encode_rrdata(
     _Pos,
@@ -603,17 +591,7 @@ encode_rrdata(
     Alg =:= ?DNS_ALG_DSA orelse
         Alg =:= ?DNS_ALG_NSEC3DSA
 ->
-    [P, Q, G, Y] = [
-        case X of
-            <<L:32, I:L/unit:8>> -> I;
-            X when is_binary(X) -> binary:decode_unsigned(X);
-            X when is_integer(X) -> X
-        end
-     || X <- PKM
-    ],
-    M = byte_size(strip_leading_zeros(binary:encode_unsigned(P))),
-    T = (M - 64) div 8,
-    PKBin = <<T, Q:20/unit:8, P:M/unit:8, G:M/unit:8, Y:M/unit:8>>,
+    PKBin = encode_dsa_key(PKM),
     {<<Flags:16, Protocol:8, Alg:8, PKBin/binary>>, CompMap};
 encode_rrdata(
     _Pos,
@@ -658,18 +636,7 @@ encode_rrdata(
         Alg =:= ?DNS_ALG_RSASHA256 orelse
         Alg =:= ?DNS_ALG_RSASHA512
 ->
-    MBin = strip_leading_zeros(binary:encode_unsigned(M)),
-    EBin = strip_leading_zeros(binary:encode_unsigned(E)),
-    ESize = byte_size(EBin),
-    PKBin =
-        case ESize of
-            _ when ESize =< 16#FF ->
-                <<ESize:8, EBin:ESize/binary, MBin/binary>>;
-            _ when ESize =< 16#FFFF ->
-                <<0, ESize:16, EBin:ESize/binary, MBin/binary>>;
-            _ ->
-                erlang:error(badarg)
-        end,
+    PKBin = encode_rsa_key(E, M),
     {<<Flags:16, Protocol:8, Alg:8, PKBin/binary>>, CompMap};
 encode_rrdata(
     _Pos,
@@ -685,17 +652,7 @@ encode_rrdata(
     Alg =:= ?DNS_ALG_DSA orelse
         Alg =:= ?DNS_ALG_NSEC3DSA
 ->
-    [P, Q, G, Y] = [
-        case X of
-            <<L:32, I:L/unit:8>> -> I;
-            X when is_binary(X) -> binary:decode_unsigned(X);
-            X when is_integer(X) -> X
-        end
-     || X <- PKM
-    ],
-    M = byte_size(strip_leading_zeros(binary:encode_unsigned(P))),
-    T = (M - 64) div 8,
-    PKBin = <<T, Q:20/unit:8, P:M/unit:8, G:M/unit:8, Y:M/unit:8>>,
+    PKBin = encode_dsa_key(PKM),
     {<<Flags:16, Protocol:8, Alg:8, PKBin/binary>>, CompMap};
 encode_rrdata(
     _Pos,
@@ -1288,6 +1245,36 @@ strip_leading_zeros(<<0, Rest/binary>>) ->
 strip_leading_zeros(Binary) ->
     Binary.
 
+%% Helper function to encode RSA keys for DNSKEY and CDNSKEY records
+-spec encode_rsa_key(integer(), integer()) -> binary().
+encode_rsa_key(E, M) ->
+    MBin = strip_leading_zeros(binary:encode_unsigned(M)),
+    EBin = strip_leading_zeros(binary:encode_unsigned(E)),
+    ESize = byte_size(EBin),
+    case ESize of
+        _ when ESize =< 16#FF ->
+            <<ESize:8, EBin:ESize/binary, MBin/binary>>;
+        _ when ESize =< 16#FFFF ->
+            <<0, ESize:16, EBin:ESize/binary, MBin/binary>>;
+        _ ->
+            erlang:error(badarg)
+    end.
+
+%% Helper function to encode DSA keys for DNSKEY and CDNSKEY records
+-spec encode_dsa_key(list()) -> binary().
+encode_dsa_key(PKM) ->
+    [P, Q, G, Y] = [
+        case X of
+            <<L:32, I:L/unit:8>> -> I;
+            X when is_binary(X) -> binary:decode_unsigned(X);
+            X when is_integer(X) -> X
+        end
+     || X <- PKM
+    ],
+    M = byte_size(strip_leading_zeros(binary:encode_unsigned(P))),
+    T = (M - 64) div 8,
+    <<T, Q:20/unit:8, P:M/unit:8, G:M/unit:8, Y:M/unit:8>>.
+
 %% @doc Encodes a character-string as in RFC1035§3.3
 %%
 %% `<character-string>' is a single length octet followed by that number of characters.
@@ -1303,18 +1290,18 @@ encode_string(Bin, StringBin) when byte_size(StringBin) < 256 ->
 %% @see encode_string/2
 -spec encode_text([binary()]) -> binary().
 encode_text(Strings) ->
-    do_decode_text(Strings, <<>>).
+    do_encode_text(Strings, <<>>).
 
--spec do_decode_text([binary()], binary()) -> binary().
-do_decode_text([], Bin) ->
+-spec do_encode_text([binary()], binary()) -> binary().
+do_encode_text([], Bin) ->
     Bin;
-do_decode_text([<<Head:255/binary, Tail/binary>> | Strings], Acc) ->
-    do_decode_text([Tail | Strings], <<Acc/binary, 255, Head/binary>>);
-do_decode_text([<<>> | Strings], Acc) ->
-    do_decode_text(Strings, Acc);
-do_decode_text([S | Strings], Acc) ->
+do_encode_text([<<Head:255/binary, Tail/binary>> | Strings], Acc) ->
+    do_encode_text([Tail | Strings], <<Acc/binary, 255, Head/binary>>);
+do_encode_text([<<>> | Strings], Acc) ->
+    do_encode_text(Strings, Acc);
+do_encode_text([S | Strings], Acc) ->
     Size = byte_size(S),
-    do_decode_text(Strings, <<Acc/binary, Size, S/binary>>).
+    do_encode_text(Strings, <<Acc/binary, Size, S/binary>>).
 
 -spec encode_svcb_svc_params(dns:svcb_svc_params()) -> binary().
 encode_svcb_svc_params(SvcParams) ->

@@ -59,3 +59,14 @@ jobs:
         uses: coverallsapp/github-action@v2
         with:
           file: _build/test/covertool/dns_erlang.covertool.xml
+          parallel: true
+
+  finish:
+    needs: test
+    if: ${{ always() }}
+    runs-on: ubuntu-latest
+    steps:
+      - name: Close parallel build
+        uses: coverallsapp/github-action@v2
+        with:
+          parallel-finished: true
