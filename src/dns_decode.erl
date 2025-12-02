@@ -734,7 +734,7 @@ decode_dnameonly(MsgBin, Bin) ->
     end.
 
 %% Helper function to decode RSA keys for DNSKEY and CDNSKEY records
--spec decode_rsa_key(binary(), binary()) -> {list(), char()}.
+-spec decode_rsa_key(binary(), binary()) -> {list(), dns:uint16()}.
 decode_rsa_key(PublicKey, Bin) ->
     Key =
         case PublicKey of
@@ -747,7 +747,7 @@ decode_rsa_key(PublicKey, Bin) ->
     {Key, KeyTag}.
 
 %% Helper function to decode DSA keys for DNSKEY and CDNSKEY records
--spec decode_dsa_key(byte(), non_neg_integer(), binary(), binary()) -> {list(), char()}.
+-spec decode_dsa_key(byte(), non_neg_integer(), binary(), binary()) -> {list(), dns:uint16()}.
 decode_dsa_key(T, Q, KeyBin, Bin) ->
     S = 64 + T * 8,
     <<P:S/unit:8, G:S/unit:8, Y:S/unit:8>> = KeyBin,
@@ -766,11 +766,11 @@ decode_text(Bin) when is_binary(Bin) ->
 decode_string(<<Len, Bin:Len/binary, Rest/binary>>) ->
     {Rest, Bin}.
 
--spec bin_to_key_tag(<<_:32, _:_*8>>) -> char().
+-spec bin_to_key_tag(<<_:32, _:_*8>>) -> dns:uint16().
 bin_to_key_tag(Binary) when is_binary(Binary) ->
     do_bin_to_key_tag(Binary, 0).
 
--spec do_bin_to_key_tag(binary(), non_neg_integer()) -> char().
+-spec do_bin_to_key_tag(binary(), non_neg_integer()) -> dns:uint16().
 do_bin_to_key_tag(<<>>, AC) ->
     (AC + ((AC bsr 16) band 16#FFFF)) band 16#FFFF;
 do_bin_to_key_tag(<<X:16, Rest/binary>>, AC) ->
