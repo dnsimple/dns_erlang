@@ -1,6 +1,9 @@
--module(dnssec_test).
+-module(dnssec_SUITE).
+-compile([export_all, nowarn_export_all]).
 
--include_lib("eunit/include/eunit.hrl").
+-behaviour(ct_suite).
+
+-include_lib("stdlib/include/assert.hrl").
 -include_lib("dns_erlang/include/dns.hrl").
 
 -record(dnssec_test_sample, {
@@ -15,161 +18,178 @@
     rr_clean
 }).
 
-gen_nsec_test_() ->
-    {setup, fun() -> application:start(crypto) end, [
-        {ZoneName,
-            ?_test(
-                begin
-                    RRClean = [RR || #dns_rr{type = Type} = RR <- RRSrc, Type =/= ?DNS_TYPE_NSEC],
-                    NSEC = lists:sort(
-                        lists:foldr(
-                            fun(#dns_rr{data = Data} = RR, Acc) ->
-                                Bin = dns_encode:encode_rrdata(?DNS_CLASS_IN, Data),
-                                NewData = dns_decode:decode_rrdata(
-                                    Bin,
-                                    ?DNS_CLASS_IN,
-                                    ?DNS_TYPE_NSEC
-                                ),
-                                [RR#dns_rr{data = NewData} | Acc]
-                            end,
-                            [],
-                            dnssec:gen_nsec(RRClean)
-                        )
-                    ),
-                    SrcNSEC = lists:sort(
-                        [RR || #dns_rr{type = ?DNS_TYPE_NSEC} = RR <- RRSrc]
-                    ),
-                    ?assertEqual(SrcNSEC, NSEC)
-                end
-            )}
+-spec all() -> [ct_suite:ct_test_def()].
+all() ->
+    [{group, all}].
+
+-spec groups() -> [ct_suite:ct_group_def()].
+groups() ->
+    [
+        {all, [parallel], [
+            zone,
+            gen_nsec,
+            pubkey_gen,
+            verify_rrset,
+            sample_keys
+        ]}
+    ].
+
+-spec init_per_suite(ct_suite:ct_config()) -> ct_suite:ct_config().
+init_per_suite(Config) ->
+    Terms = data_samples:dnssec(),
+    Samples = helper_test_samples(Terms),
+    [{dnssec_samples, Samples} | Config].
+
+-spec end_per_suite(ct_suite:ct_config()) -> term().
+end_per_suite(Config) ->
+    Config.
+
+gen_nsec(Config) ->
+    [
+        begin
+            RRClean = [RR || #dns_rr{type = Type} = RR <- RRSrc, Type =/= ?DNS_TYPE_NSEC],
+            NSEC = lists:sort(
+                lists:foldr(
+                    fun(#dns_rr{data = Data} = RR, Acc) ->
+                        Bin = dns_encode:encode_rrdata(?DNS_CLASS_IN, Data),
+                        NewData = dns_decode:decode_rrdata(
+                            Bin,
+                            ?DNS_CLASS_IN,
+                            ?DNS_TYPE_NSEC
+                        ),
+                        [RR#dns_rr{data = NewData} | Acc]
+                    end,
+                    [],
+                    dnssec:gen_nsec(RRClean)
+                )
+            ),
+            SrcNSEC = lists:sort(
+                [RR || #dns_rr{type = ?DNS_TYPE_NSEC} = RR <- RRSrc]
+            ),
+            ?assertEqual(SrcNSEC, NSEC)
+        end
      || #dnssec_test_sample{
-            zonename = ZoneName,
             nsec3 = undefined,
             rr_src = RRSrc
-        } <- helper_test_samples()
-    ]}.
+        } <- proplists:get_value(dnssec_samples, Config)
+    ].
 
-verify_rrset_test_() ->
-    {setup, fun() -> application:start(crypto) end, [
-        {Name, ?_assert(dnssec:verify_rrsig(RRSig, RRSet, DNSKeys, Opts))}
-     || {Name, RRSig, RRSet, DNSKeys, Opts} <- helper_verify_rrset_test_cases()
-    ]}.
+verify_rrset(Config) ->
+    [
+        ?assert(dnssec:verify_rrsig(RRSig, RRSet, DNSKeys, Opts))
+     || {_Name, RRSig, RRSet, DNSKeys, Opts} <- helper_verify_rrset_test_cases(Config)
+    ].
 
-zone_test_() ->
-    {setup, fun() -> application:start(crypto) end, [
-        {
-            helper_fmt("Build Zone ~s", [ZoneName]),
-            ?_test(
-                begin
-                    ZoneNameB = iolist_to_binary(ZoneName),
-                    %% Add DNS keys
-                    ZSKAlg = proplists:get_value(alg, ZSKPL),
-                    ZSKPrivKey = helper_samplekeypl_to_privkey(ZSKPL),
-                    ZSKPubKey = helper_samplekeypl_to_pubkey(ZSKPL),
-                    ZSKPubKeyBin = helper_pubkey_to_dnskey_pubkey(Alg, ZSKPubKey),
-                    ZSKAlgNo = proplists:get_value(alg, ZSKPL),
-                    ZSKFlags = proplists:get_value(flags, ZSKPL),
-                    ZSKKey0 = #dns_rrdata_dnskey{
-                        flags = ZSKFlags,
-                        protocol = 3,
-                        alg = ZSKAlgNo,
-                        public_key = ZSKPubKeyBin
-                    },
-                    ZSKKey = helper_add_keytag_to_dnskey(ZSKKey0),
-                    KSKAlg = proplists:get_value(alg, KSKPL),
-                    KSKPrivKey = helper_samplekeypl_to_privkey(KSKPL),
-                    KSKPubKey = helper_samplekeypl_to_pubkey(KSKPL),
-                    KSKPubKeyBin = helper_pubkey_to_dnskey_pubkey(Alg, KSKPubKey),
-                    KSKAlgNo = proplists:get_value(alg, KSKPL),
-                    KSKFlags = proplists:get_value(flags, KSKPL),
-                    KSKKey0 = #dns_rrdata_dnskey{
-                        flags = KSKFlags,
-                        protocol = 3,
-                        alg = KSKAlgNo,
-                        public_key = KSKPubKeyBin
-                    },
-                    KSKKey = helper_add_keytag_to_dnskey(KSKKey0),
-                    DNSKeyTmpl = #dns_rr{
-                        name = iolist_to_binary(ZoneName),
-                        type = ?DNS_TYPE_DNSKEY,
-                        class = ?DNS_CLASS_IN,
-                        ttl = 3600
-                    },
-                    RRDNSKey = [
-                        DNSKeyTmpl#dns_rr{data = KSKKey},
-                        DNSKeyTmpl#dns_rr{data = ZSKKey}
-                        | RRClean
-                    ],
-                    %% Add NSEC / NSEC3
-                    RRNSEC =
-                        case NSEC3 of
-                            undefined ->
-                                dnssec:gen_nsec(RRDNSKey) ++ RRDNSKey;
-                            #dns_rrdata_nsec3param{} = Param ->
-                                RRNSEC3 = [
-                                    #dns_rr{
-                                        name = ZoneNameB,
-                                        type = ?DNS_TYPE_NSEC3PARAM,
-                                        ttl = 0,
-                                        data = Param
-                                    }
-                                    | RRDNSKey
-                                ],
-                                dnssec:gen_nsec3(RRNSEC3) ++ RRNSEC3
-                        end,
-                    RRDECENC = lists:map(
-                        fun(
+zone(Config) ->
+    [
+        begin
+            ZoneNameB = iolist_to_binary(ZoneName),
+            %% Add DNS keys
+            ZSKAlg = proplists:get_value(alg, ZSKPL),
+            ZSKPrivKey = helper_samplekeypl_to_privkey(ZSKPL),
+            ZSKPubKey = helper_samplekeypl_to_pubkey(ZSKPL),
+            ZSKPubKeyBin = helper_pubkey_to_dnskey_pubkey(Alg, ZSKPubKey),
+            ZSKAlgNo = proplists:get_value(alg, ZSKPL),
+            ZSKFlags = proplists:get_value(flags, ZSKPL),
+            ZSKKey0 = #dns_rrdata_dnskey{
+                flags = ZSKFlags,
+                protocol = 3,
+                alg = ZSKAlgNo,
+                public_key = ZSKPubKeyBin
+            },
+            ZSKKey = helper_add_keytag_to_dnskey(ZSKKey0),
+            KSKAlg = proplists:get_value(alg, KSKPL),
+            KSKPrivKey = helper_samplekeypl_to_privkey(KSKPL),
+            KSKPubKey = helper_samplekeypl_to_pubkey(KSKPL),
+            KSKPubKeyBin = helper_pubkey_to_dnskey_pubkey(Alg, KSKPubKey),
+            KSKAlgNo = proplists:get_value(alg, KSKPL),
+            KSKFlags = proplists:get_value(flags, KSKPL),
+            KSKKey0 = #dns_rrdata_dnskey{
+                flags = KSKFlags,
+                protocol = 3,
+                alg = KSKAlgNo,
+                public_key = KSKPubKeyBin
+            },
+            KSKKey = helper_add_keytag_to_dnskey(KSKKey0),
+            DNSKeyTmpl = #dns_rr{
+                name = iolist_to_binary(ZoneName),
+                type = ?DNS_TYPE_DNSKEY,
+                class = ?DNS_CLASS_IN,
+                ttl = 3600
+            },
+            RRDNSKey = [
+                DNSKeyTmpl#dns_rr{data = KSKKey},
+                DNSKeyTmpl#dns_rr{data = ZSKKey}
+                | RRClean
+            ],
+            %% Add NSEC / NSEC3
+            RRNSEC =
+                case NSEC3 of
+                    undefined ->
+                        dnssec:gen_nsec(RRDNSKey) ++ RRDNSKey;
+                    #dns_rrdata_nsec3param{} = Param ->
+                        RRNSEC3 = [
                             #dns_rr{
-                                class = Class,
-                                type = Type,
-                                data = Data
-                            } = RR
-                        ) ->
-                            Bin = dns_encode:encode_rrdata(?DNS_CLASS_IN, Data),
-                            NewData = dns_decode:decode_rrdata(Bin, Class, Type),
-                            RR#dns_rr{data = NewData}
-                        end,
-                        RRNSEC
-                    ),
-                    %% Add RRSIG
-                    Opts = #{inception => I, expiration => E},
-                    RRSigsZSK = dnssec:sign_rr(
-                        RRDECENC,
-                        ZoneNameB,
-                        ZSKKey#dns_rrdata_dnskey.keytag,
-                        ZSKAlg,
-                        ZSKPrivKey,
-                        Opts
-                    ),
-                    RRDNSKeys = [
-                        RR
-                     || #dns_rr{type = ?DNS_TYPE_DNSKEY} = RR <- RRDECENC
-                    ],
-                    RRSigsKSK = dnssec:sign_rr(
-                        RRDNSKeys,
-                        ZoneNameB,
-                        KSKKey#dns_rrdata_dnskey.keytag,
-                        KSKAlg,
-                        KSKPrivKey,
-                        Opts
-                    ),
-                    RRFinal = RRSigsKSK ++ RRSigsZSK ++ RRDECENC,
-                    GeneratedRR = lists:sort(
-                        [
-                            RR#dns_rr{name = dnssec:normalise_dname(Name)}
-                         || #dns_rr{name = Name} = RR <- RRFinal
-                        ]
-                    ),
-                    SampleRR = lists:sort(
-                        [
-                            RR#dns_rr{name = dnssec:normalise_dname(Name)}
-                         || #dns_rr{name = Name} = RR <- RRSrc
-                        ]
-                    ),
-                    ?assertEqual(GeneratedRR, SampleRR)
-                end
-            )
-        }
+                                name = ZoneNameB,
+                                type = ?DNS_TYPE_NSEC3PARAM,
+                                ttl = 0,
+                                data = Param
+                            }
+                            | RRDNSKey
+                        ],
+                        dnssec:gen_nsec3(RRNSEC3) ++ RRNSEC3
+                end,
+            RRDECENC = lists:map(
+                fun(
+                    #dns_rr{
+                        class = Class,
+                        type = Type,
+                        data = Data
+                    } = RR
+                ) ->
+                    Bin = dns_encode:encode_rrdata(?DNS_CLASS_IN, Data),
+                    NewData = dns_decode:decode_rrdata(Bin, Class, Type),
+                    RR#dns_rr{data = NewData}
+                end,
+                RRNSEC
+            ),
+            %% Add RRSIG
+            Opts = #{inception => I, expiration => E},
+            RRSigsZSK = dnssec:sign_rr(
+                RRDECENC,
+                ZoneNameB,
+                ZSKKey#dns_rrdata_dnskey.keytag,
+                ZSKAlg,
+                ZSKPrivKey,
+                Opts
+            ),
+            RRDNSKeys = [
+                RR
+             || #dns_rr{type = ?DNS_TYPE_DNSKEY} = RR <- RRDECENC
+            ],
+            RRSigsKSK = dnssec:sign_rr(
+                RRDNSKeys,
+                ZoneNameB,
+                KSKKey#dns_rrdata_dnskey.keytag,
+                KSKAlg,
+                KSKPrivKey,
+                Opts
+            ),
+            RRFinal = RRSigsKSK ++ RRSigsZSK ++ RRDECENC,
+            GeneratedRR = lists:sort(
+                [
+                    RR#dns_rr{name = dnssec:normalise_dname(Name)}
+                 || #dns_rr{name = Name} = RR <- RRFinal
+                ]
+            ),
+            SampleRR = lists:sort(
+                [
+                    RR#dns_rr{name = dnssec:normalise_dname(Name)}
+                 || #dns_rr{name = Name} = RR <- RRSrc
+                ]
+            ),
+            ?assertEqual(GeneratedRR, SampleRR)
+        end
      || #dnssec_test_sample{
             zonename = ZoneName,
             alg = rsa = Alg,
@@ -180,10 +200,49 @@ zone_test_() ->
             ksk_pl = KSKPL,
             rr_clean = RRClean,
             rr_src = RRSrc
-        } <- helper_test_samples()
-    ]}.
+        } <- proplists:get_value(dnssec_samples, Config)
+    ].
 
-test_sample_keys_test_() ->
+pubkey_gen(Config) ->
+    [
+        begin
+            DnsKeyRR = lists:sort(
+                [
+                    RR
+                 || #dns_rr{type = ?DNS_TYPE_DNSKEY} = RR <- RRs
+                ]
+            ),
+            Generated = lists:sort(
+                lists:map(
+                    fun(PL) ->
+                        PubKey = helper_samplekeypl_to_pubkey(PL),
+                        AlgNo = proplists:get_value(alg, PL),
+                        Flags = proplists:get_value(flags, PL),
+                        Key = #dns_rrdata_dnskey{
+                            flags = Flags,
+                            protocol = 3,
+                            alg = AlgNo,
+                            public_key = PubKey
+                        },
+                        helper_add_keytag_to_dnskey(Key)
+                    end,
+                    [ZSK_PL, KSK_PL]
+                )
+            ),
+            Expect = lists:sort([
+                (RR#dns_rr.data)#dns_rrdata_dnskey{}
+             || RR <- DnsKeyRR
+            ]),
+            ?assertEqual(Expect, Generated)
+        end
+     || #dnssec_test_sample{
+            rr_src = RRs,
+            ksk_pl = KSK_PL,
+            zsk_pl = ZSK_PL
+        } <- proplists:get_value(dnssec_samples, Config)
+    ].
+
+sample_keys(Config) ->
     Keys = lists:foldl(
         fun(
             #dnssec_test_sample{
@@ -196,11 +255,11 @@ test_sample_keys_test_() ->
             [{Alg, A}, {Alg, B} | Acc]
         end,
         [],
-        helper_test_samples()
+        proplists:get_value(dnssec_samples, Config)
     ),
-    {setup, fun() -> application:start(crypto) end, [?_assert(test_sample_key(Key)) || Key <- Keys]}.
+    [?assert(test_sample_key(Alg, Proplist)) || {Alg, Proplist} <- Keys].
 
-test_sample_key({Alg, Proplist}) ->
+test_sample_key(Alg, Proplist) ->
     PrivKey = helper_samplekeypl_to_privkey(Proplist),
     PubKey = helper_samplekeypl_to_pubkey(Proplist),
     test_sample_key(Alg, PrivKey, PubKey).
@@ -222,52 +281,7 @@ test_sample_key(ecdsap384, PrivKey, PubKey) ->
     Cipher = crypto:sign(ecdsa, sha384, Sample, [PrivKey, secp384r1]),
     true =:= crypto:verify(ecdsa, sha384, Sample, Cipher, [<<4, PubKey/binary>>, secp384r1]).
 
-dnskey_pubkey_gen_test_() ->
-    [
-        {ZoneName,
-            ?_test(
-                begin
-                    DnsKeyRR = lists:sort(
-                        [
-                            RR
-                         || #dns_rr{type = ?DNS_TYPE_DNSKEY} = RR <- RRs
-                        ]
-                    ),
-                    Generated = lists:sort(
-                        lists:map(
-                            fun(PL) ->
-                                PubKey = helper_samplekeypl_to_pubkey(PL),
-                                AlgNo = proplists:get_value(alg, PL),
-                                Flags = proplists:get_value(flags, PL),
-                                Key = #dns_rrdata_dnskey{
-                                    flags = Flags,
-                                    protocol = 3,
-                                    alg = AlgNo,
-                                    public_key = PubKey
-                                },
-                                helper_add_keytag_to_dnskey(Key)
-                            end,
-                            [ZSK_PL, KSK_PL]
-                        )
-                    ),
-                    Expect = lists:sort([
-                        (RR#dns_rr.data)#dns_rrdata_dnskey{}
-                     || RR <- DnsKeyRR
-                    ]),
-                    ?assertEqual(Expect, Generated)
-                end
-            )}
-     || #dnssec_test_sample{
-            zonename = ZoneName,
-            rr_src = RRs,
-            ksk_pl = KSK_PL,
-            zsk_pl = ZSK_PL
-        } <- helper_test_samples()
-    ].
-
-helper_test_samples() ->
-    Path = filename:join("test", "dnssec_samples.txt"),
-    {ok, Terms} = file:consult(Path),
+helper_test_samples(Terms) ->
     lists:map(
         fun({ZoneName, KeysRaw, AxfrBin}) ->
             [ZSK, KSK] = lists:foldl(fun extract_zsk_and_ksk/2, [], KeysRaw),
@@ -344,7 +358,7 @@ extract_alg_from_name(ZoneName) ->
         nomatch -> rsa
     end.
 
-helper_verify_rrset_test_cases() ->
+helper_verify_rrset_test_cases(Config) ->
     lists:flatten(
         [
             begin
@@ -399,7 +413,7 @@ helper_verify_rrset_test_cases() ->
                 )
             end
          || #dnssec_test_sample{inception = Now, rr_src = RRs} <-
-                helper_test_samples()
+                proplists:get_value(dnssec_samples, Config)
         ]
     ).
 
