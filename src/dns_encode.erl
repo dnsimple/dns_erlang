@@ -605,7 +605,9 @@ encode_rrdata(
     CompMap
 ) when
     (Alg =:= ?DNS_ALG_ECDSAP256SHA256 andalso is_binary(PK) andalso 64 =:= byte_size(PK)) orelse
-        (Alg =:= ?DNS_ALG_ECDSAP384SHA384 andalso is_binary(PK) andalso 96 =:= byte_size(PK))
+        (Alg =:= ?DNS_ALG_ECDSAP384SHA384 andalso is_binary(PK) andalso 96 =:= byte_size(PK)) orelse
+        (Alg =:= ?DNS_ALG_ED25519 andalso is_binary(PK) andalso 32 =:= byte_size(PK)) orelse
+        (Alg =:= ?DNS_ALG_ED448 andalso is_binary(PK) andalso 57 =:= byte_size(PK))
 ->
     {<<Flags:16, Protocol:8, Alg:8, PK/binary>>, CompMap};
 encode_rrdata(
@@ -666,7 +668,9 @@ encode_rrdata(
     CompMap
 ) when
     (Alg =:= ?DNS_ALG_ECDSAP256SHA256 andalso is_binary(PK) andalso 64 =:= byte_size(PK)) orelse
-        (Alg =:= ?DNS_ALG_ECDSAP384SHA384 andalso is_binary(PK) andalso 96 =:= byte_size(PK))
+        (Alg =:= ?DNS_ALG_ECDSAP384SHA384 andalso is_binary(PK) andalso 96 =:= byte_size(PK)) orelse
+        (Alg =:= ?DNS_ALG_ED25519 andalso is_binary(PK) andalso 32 =:= byte_size(PK)) orelse
+        (Alg =:= ?DNS_ALG_ED448 andalso is_binary(PK) andalso 57 =:= byte_size(PK))
 ->
     {<<Flags:16, Protocol:8, Alg:8, PK/binary>>, CompMap};
 encode_rrdata(

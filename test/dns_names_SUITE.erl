@@ -135,7 +135,10 @@ alg_terms(_) ->
         ?DNS_ALG_RSASHA1,
         ?DNS_ALG_NSEC3RSASHA1,
         ?DNS_ALG_RSASHA256,
-        ?DNS_ALG_RSASHA512
+        ?DNS_ALG_RSASHA512,
+        ?DNS_ALG_ECDSAP256SHA256_NUMBER,
+        ?DNS_ALG_ECDSAP384SHA384_NUMBER,
+        ?DNS_ALG_ED25519_NUMBER
     ],
     ?assertEqual(undefined, dns_names:alg_name(?UNKNOWN_INT)),
     ?assertEqual(undefined, dns_names:name_alg(?UNKNOWN_BIN)),
