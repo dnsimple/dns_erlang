@@ -1,0 +1,56 @@
+; Domain: strideapp.com
+; Exported (y-m-d hh:mm:ss): 2012-09-10 17:00:47
+;
+; This file is intended for use for informational and archival
+; purposes ONLY and MUST be edited before use on a production
+; DNS server.
+;
+; In particular, you must update the SOA record with the correct
+; authoritative name server and contact e-mail address information,
+; and add the correct NS records for the name servers which will
+; be authoritative for this domain.
+;
+; For further information, please consult the BIND documentation
+; located on the following website:
+;
+; http://www.isc.org/
+;
+; And RFC 1035:
+;
+; http://www.ietf.org/rfc/rfc1035.txt
+;
+; Please note that we do NOT offer technical support for any use
+; of this zone data, the BIND name server, or any other third-
+; party DNS software.
+;
+; Use at your own risk.
+
+; SOA Record
+EXAMPLE.COM.	3600	IN	SOA	ns15.example.com.	dns.gogogo.net (
+				2012082100
+				28800
+				7200
+				604800
+				3600
+				)
+
+; A Records
+@	3600	IN	A	74.207.247.186
+www	3600	IN	A	74.207.247.186
+db01	3600	IN	A	74.207.247.67
+staging	3600	IN	A	199.200.30.106
+
+; CNAME Records
+mail	3600	IN	CNAME	bar.base.com
+blog	4800	IN	CNAME	domains.foo.com
+
+; MX Records
+@	3600	IN	MX	0	MX.L.BAZ.COM
+@	3600	IN	MX	10	ALT1.MX.L.BAZ.COM
+
+; TXT Records
+@	3600	IN	TXT	"base-site-verification=STNSHENCGINTMNTWMNSOTGCNuentohocrSTH"
+
+; NS Records
+@	3600	IN	NS	ns1.example.com
+@	3600	IN	NS	ns2.example.com
