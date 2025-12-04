@@ -76,7 +76,9 @@ supported for signing RRSETs.
     | ?DNS_ALG_RSASHA256
     | ?DNS_ALG_RSASHA512
     | ?DNS_ALG_ECDSAP256SHA256
-    | ?DNS_ALG_ECDSAP384SHA384.
+    | ?DNS_ALG_ECDSAP384SHA384
+    | ?DNS_ALG_ED25519
+    | ?DNS_ALG_ED448.
 -type nsec3_hashalg() :: ?DNSSEC_NSEC3_ALG_SHA1.
 -type nsec3_hashalg_fun() :: fun((iodata()) -> binary()).
 -type nsec3_salt() :: binary().
@@ -449,7 +451,11 @@ sign(Alg, BaseSigInput, Key) when
 sign(?DNS_ALG_ECDSAP256SHA256, BaseSigInput, Key) ->
     crypto:sign(ecdsa, sha256, BaseSigInput, [Key, secp256r1]);
 sign(?DNS_ALG_ECDSAP384SHA384, BaseSigInput, Key) ->
-    crypto:sign(ecdsa, sha384, BaseSigInput, [Key, secp384r1]).
+    crypto:sign(ecdsa, sha384, BaseSigInput, [Key, secp384r1]);
+sign(?DNS_ALG_ED25519, BaseSigInput, Key) ->
+    crypto:sign(eddsa, none, BaseSigInput, [Key, ed25519]);
+sign(?DNS_ALG_ED448, BaseSigInput, Key) ->
+    crypto:sign(eddsa, none, BaseSigInput, [Key, ed448]).
 
 ?DOC("Provides primitive verification of an RR set.").
 -spec verify_rrsig(dns:rr(), [dns:rr()], [dns:rr()], verify_rrsig_opts()) -> boolean().
@@ -531,7 +537,11 @@ verify(Alg, Key, Signature, SigInput) when
 verify(?DNS_ALG_ECDSAP256SHA256, Key, Signature, SigInput) ->
     crypto:verify(ecdsa, sha256, SigInput, Signature, [<<4, Key/binary>>, secp256r1]);
 verify(?DNS_ALG_ECDSAP384SHA384, Key, Signature, SigInput) ->
-    crypto:verify(ecdsa, sha384, SigInput, Signature, [<<4, Key/binary>>, secp384r1]).
+    crypto:verify(ecdsa, sha384, SigInput, Signature, [<<4, Key/binary>>, secp384r1]);
+verify(?DNS_ALG_ED25519, Key, Signature, SigInput) ->
+    crypto:verify(eddsa, none, SigInput, Signature, [Key, ed25519]);
+verify(?DNS_ALG_ED448, Key, Signature, SigInput) ->
+    crypto:verify(eddsa, none, SigInput, Signature, [Key, ed448]).
 
 -spec build_sig_input(binary(), integer(), dns:alg(), integer(), integer(), [dns:rr(), ...]) ->
     {dns:rrdata_rrsig(), binary()}.
@@ -605,7 +615,11 @@ preprocess_sig_input(Alg, SigInput) when
 preprocess_sig_input(?DNS_ALG_ECDSAP256SHA256, SigInput) ->
     crypto:hash(sha256, SigInput);
 preprocess_sig_input(?DNS_ALG_ECDSAP384SHA384, SigInput) ->
-    crypto:hash(sha384, SigInput).
+    crypto:hash(sha384, SigInput);
+preprocess_sig_input(?DNS_ALG_ED25519, SigInput) ->
+    iolist_to_binary(SigInput);
+preprocess_sig_input(?DNS_ALG_ED448, SigInput) ->
+    iolist_to_binary(SigInput).
 
 -spec choose_sha_prefix_and_type(sigalg()) -> {binary(), sha | sha256 | sha512}.
 choose_sha_prefix_and_type(?DNS_ALG_RSASHA1) ->
