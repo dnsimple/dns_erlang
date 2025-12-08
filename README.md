@@ -66,3 +66,7 @@ Each of the record fields in `dns_message` corresponds to the elements defined i
 Other records defined include `dns_query`, which represents a single question in the `#dns_message.questions` field, `dns_rr` which corresponds to a single resource record (RR), which appears in the `answers`, `authority`, `additional` section of the `dns_message`, and so on.
 
 Note that all support RR types must include a `dns_rrdata_` record definition, used to store the parts of the RDATA for that RR type.
+
+## Supported RFCs
+
+`dns_erlang` implements and supports a wide range of DNS-related RFCs, including core DNS protocol specifications, DNSSEC extensions, EDNS, and more. For a comprehensive list of all supported RFCs and their implementation details, see [Supported RFCs](./SUPPORTED_RFCS.md).
