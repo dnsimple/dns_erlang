@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## main
 
+## 4.6.0
+
 - Add support for DNS zone file parsing
 
 ## 4.5.0
