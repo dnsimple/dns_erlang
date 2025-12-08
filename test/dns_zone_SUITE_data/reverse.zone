@@ -1,0 +1,8 @@
+$ORIGIN 3.2.1.in-addr.arpa.
+$TTL 1h
+3.2.1.in-addr.arpa. IN  SOA ns1.dnsimple.com admin.dnsimple.com 2011092001 86400 7200 604800 300
+3.2.1.in-addr.arpa. IN NS ns1.dnsimple.com.
+3.2.1.in-addr.arpa. IN NS ns2.dnsimple.com.
+3.2.1.in-addr.arpa. IN NS ns3.dnsimple.com.
+3.2.1.in-addr.arpa. IN NS ns4.dnsimple.com.
+4.3.2.1.in-addr.arpa. 3600 IN PTR example.com.

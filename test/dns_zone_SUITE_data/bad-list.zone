@@ -1,0 +1,19 @@
+6 $TTL 900
+@ IN TXT v=msv1 t=e3f116e1dfa84c448628179dac8fd2
+@ IN TXT v=spf1 include:example-05.com ~all
+@ IN TXT MS=ms64503157
+@ IN TXT v=spf1 include:spf.baz.example-04.com -all
+@ IN SRV 100 1 443 foo.online.example.com
+@ IN SRV 100 1 5061 foo.online.example.com
+auto IN CNAME auto.example-04.com
+sip IN CNAME foo.online.example.com
+lyncdiscover IN CNAME mike.online.example.com
+msoid IN CNAME bob.example-06.net
+@ IN CNAME alice.mail.baz.example-04.com
+@ IN MX 0 alice.mail.baz.example-04.com
+registration IN CNAME registration.example-03.net
+enrollment IN CNAME enrollment.manage.example-02.com
+_service._tls IN SRV 100 1 443 foo.online.example.com
+_service02._tcp IN SRV 100 1 5061 fed.online.example.com
+www IN CNAME alice.eu.example-06.com
+@ IN CNAME alice.eu.example-06.com

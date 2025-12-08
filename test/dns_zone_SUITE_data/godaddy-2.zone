@@ -1,0 +1,29 @@
+; SOA Record
+EXAMPLE.COM.	3600	IN	SOA	ns15.example.com.	dns.gogogo.net (
+				2012082100
+				28800
+				7200
+				604800
+				3600
+				)
+
+; A Records
+@	3600	IN	A	74.207.247.186
+www	3600	IN	A	74.207.247.186
+db01	3600	IN	A	74.207.247.67
+staging	3600	IN	A	199.200.30.106
+
+; CNAME Records
+mail	3600	IN	CNAME	bar.base.com
+blog	4800	IN	CNAME	domains.foo.com
+
+; MX Records
+@	3600	IN	MX	0	MX.L.BAZ.COM
+@	3600	IN	MX	10	ALT1.MX.L.BAZ.COM
+
+; TXT Records
+@	3600	IN	TXT	"base-site-verification=BLABLABLABLABLA"
+
+; NS Records
+@	3600	IN	NS	ns1.example.com
+@	3600	IN	NS	ns2.example.com
