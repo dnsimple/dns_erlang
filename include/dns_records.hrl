@@ -272,7 +272,9 @@
         | ?DNS_ALG_RSASHA256
         | ?DNS_ALG_RSASHA512
         | ?DNS_ALG_ECDSAP256SHA256
-        | ?DNS_ALG_ECDSAP384SHA384,
+        | ?DNS_ALG_ECDSAP384SHA384
+        | ?DNS_ALG_ED25519
+        | ?DNS_ALG_ED448,
     labels :: dns:uint8(),
     original_ttl :: dns:uint32(),
     expiration :: dns:uint32(),
@@ -391,6 +393,12 @@
 -record(dns_opt_cookie, {
     client :: <<_:64>>,
     server :: undefined | <<_:64, _:_*8>>
+}).
+
+%% Extended DNS Error. See RFC 8914: §2
+-record(dns_opt_ede, {
+    info_code :: dns:uint16(),
+    extra_text = <<>> :: binary()
 }).
 
 %% Unknown EDNS option.

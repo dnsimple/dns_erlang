@@ -37,7 +37,9 @@ groups() ->
             gen_nsec,
             pubkey_gen,
             verify_rrset,
-            sample_keys
+            sample_keys,
+            ed25519_basic_test,
+            ed448_basic_test
         ]}
     ].
 
@@ -242,6 +244,84 @@ sample_keys(Config) ->
     ),
     [?assert(test_sample_key(Alg, Proplist)) || {Alg, Proplist} <- Keys].
 
+ed25519_basic_test(_Config) ->
+    {Ed25519Pub, Ed25519Priv} = crypto:generate_key(eddsa, ed25519),
+    Ed25519RR = #dns_rr{
+        name = <<"test.example">>,
+        type = ?DNS_TYPE_A,
+        class = ?DNS_CLASS_IN,
+        ttl = 3600,
+        data = #dns_rrdata_a{ip = {1, 2, 3, 4}}
+    },
+    Ed25519Sig = dnssec:sign_rrset(
+        [Ed25519RR],
+        <<"example">>,
+        12345,
+        ?DNS_ALG_ED25519,
+        Ed25519Priv,
+        #{inception => 1000000, expiration => 2000000}
+    ),
+    Ed25519DNSKey = #dns_rr{
+        name = <<"example">>,
+        type = ?DNS_TYPE_DNSKEY,
+        class = ?DNS_CLASS_IN,
+        ttl = 3600,
+        data = #dns_rrdata_dnskey{
+            flags = 256,
+            protocol = 3,
+            alg = ?DNS_ALG_ED25519,
+            public_key = Ed25519Pub
+        }
+    },
+    Ed25519DNSKeyWithTag = dnssec:add_keytag_to_dnskey(Ed25519DNSKey),
+    ?assert(
+        dnssec:verify_rrsig(
+            Ed25519Sig,
+            [Ed25519RR],
+            [Ed25519DNSKeyWithTag],
+            #{now => 1500000}
+        )
+    ).
+
+ed448_basic_test(_Config) ->
+    {Ed448Pub, Ed448Priv} = crypto:generate_key(eddsa, ed448),
+    Ed448RR = #dns_rr{
+        name = <<"test.example">>,
+        type = ?DNS_TYPE_A,
+        class = ?DNS_CLASS_IN,
+        ttl = 3600,
+        data = #dns_rrdata_a{ip = {1, 2, 3, 4}}
+    },
+    Ed448Sig = dnssec:sign_rrset(
+        [Ed448RR],
+        <<"example">>,
+        12346,
+        ?DNS_ALG_ED448,
+        Ed448Priv,
+        #{inception => 1000000, expiration => 2000000}
+    ),
+    Ed448DNSKey = #dns_rr{
+        name = <<"example">>,
+        type = ?DNS_TYPE_DNSKEY,
+        class = ?DNS_CLASS_IN,
+        ttl = 3600,
+        data = #dns_rrdata_dnskey{
+            flags = 256,
+            protocol = 3,
+            alg = ?DNS_ALG_ED448,
+            public_key = Ed448Pub
+        }
+    },
+    Ed448DNSKeyWithTag = dnssec:add_keytag_to_dnskey(Ed448DNSKey),
+    ?assert(
+        dnssec:verify_rrsig(
+            Ed448Sig,
+            [Ed448RR],
+            [Ed448DNSKeyWithTag],
+            #{now => 1500000}
+        )
+    ).
+
 test_sample_key(Alg, Proplist) ->
     PrivKey = helper_samplekeypl_to_privkey(Proplist),
     PubKey = helper_samplekeypl_to_pubkey(Proplist),
@@ -262,7 +342,15 @@ test_sample_key(ecdsap256, PrivKey, PubKey) ->
 test_sample_key(ecdsap384, PrivKey, PubKey) ->
     Sample = crypto:hash(sha384, <<"1234">>),
     Cipher = crypto:sign(ecdsa, sha384, Sample, [PrivKey, secp384r1]),
-    true =:= crypto:verify(ecdsa, sha384, Sample, Cipher, [<<4, PubKey/binary>>, secp384r1]).
+    true =:= crypto:verify(ecdsa, sha384, Sample, Cipher, [<<4, PubKey/binary>>, secp384r1]);
+test_sample_key(ed25519, PrivKey, PubKey) ->
+    Sample = <<"1234">>,
+    Cipher = crypto:sign(eddsa, none, Sample, [PrivKey, ed25519]),
+    true =:= crypto:verify(eddsa, none, Sample, Cipher, [PubKey, ed25519]);
+test_sample_key(ed448, PrivKey, PubKey) ->
+    Sample = <<"1234">>,
+    Cipher = crypto:sign(eddsa, none, Sample, [PrivKey, ed448]),
+    true =:= crypto:verify(eddsa, none, Sample, Cipher, [PubKey, ed448]).
 
 helper_test_samples(Terms) ->
     lists:map(
@@ -335,6 +423,10 @@ extract_alg_from_name("ecdsap256-example") ->
     ecdsap256;
 extract_alg_from_name("ecdsap384-example") ->
     ecdsap384;
+extract_alg_from_name("ed25519-example") ->
+    ed25519;
+extract_alg_from_name("ed448-example") ->
+    ed448;
 extract_alg_from_name(ZoneName) ->
     case re:run(ZoneName, "dsa") of
         {match, _} -> dsa;
@@ -414,6 +506,10 @@ helper_samplekeypl_to_privkey(?DNS_ALG_ECDSAP256SHA256, Proplist) ->
     proplists:get_value(private_key, Proplist);
 helper_samplekeypl_to_privkey(?DNS_ALG_ECDSAP384SHA384, Proplist) ->
     proplists:get_value(private_key, Proplist);
+helper_samplekeypl_to_privkey(?DNS_ALG_ED25519, Proplist) ->
+    proplists:get_value(private_key, Proplist);
+helper_samplekeypl_to_privkey(?DNS_ALG_ED448, Proplist) ->
+    proplists:get_value(private_key, Proplist);
 helper_samplekeypl_to_privkey(_RSA, Proplist) ->
     E = proplists:get_value(public_exp, Proplist),
     N = proplists:get_value(modulus, Proplist),
@@ -435,6 +531,10 @@ helper_samplekeypl_to_pubkey(DSA, Proplist) when
 helper_samplekeypl_to_pubkey(?DNS_ALG_ECDSAP256SHA256, Proplist) ->
     proplists:get_value(public_key, Proplist);
 helper_samplekeypl_to_pubkey(?DNS_ALG_ECDSAP384SHA384, Proplist) ->
+    proplists:get_value(public_key, Proplist);
+helper_samplekeypl_to_pubkey(?DNS_ALG_ED25519, Proplist) ->
+    proplists:get_value(public_key, Proplist);
+helper_samplekeypl_to_pubkey(?DNS_ALG_ED448, Proplist) ->
     proplists:get_value(public_key, Proplist);
 helper_samplekeypl_to_pubkey(_RSA, Proplist) ->
     E = proplists:get_value(public_exp, Proplist),
@@ -473,7 +573,15 @@ helper_pubkey_to_dnskey_pubkey(dsa, Key) ->
     ),
     T = (M - 64) div 8,
     M = 64 + T * 8,
-    <<T, Q:20/unit:8, P:M/unit:8, G:M/unit:8, Y:M/unit:8>>.
+    <<T, Q:20/unit:8, P:M/unit:8, G:M/unit:8, Y:M/unit:8>>;
+helper_pubkey_to_dnskey_pubkey(ecdsap256, PubKey) when is_binary(PubKey) ->
+    PubKey;
+helper_pubkey_to_dnskey_pubkey(ecdsap384, PubKey) when is_binary(PubKey) ->
+    PubKey;
+helper_pubkey_to_dnskey_pubkey(ed25519, PubKey) when is_binary(PubKey) ->
+    PubKey;
+helper_pubkey_to_dnskey_pubkey(ed448, PubKey) when is_binary(PubKey) ->
+    PubKey.
 
 helper_add_keytag_to_dnskey(#dns_rrdata_dnskey{} = DNSKey) ->
     RR = #dns_rr{type = ?DNS_TYPE_DNSKEY, data = DNSKey},

@@ -312,6 +312,10 @@ do_decode_optrrdata(?DNS_EOPTCODE_COOKIE, <<ClientCookie:8/binary, ServerCookie/
     #dns_opt_cookie{client = ClientCookie, server = ServerCookie};
 do_decode_optrrdata(?DNS_EOPTCODE_COOKIE, _) ->
     erlang:error(bad_cookie);
+do_decode_optrrdata(?DNS_EOPTCODE_EDE, <<InfoCode:16, ExtraText/binary>>) ->
+    #dns_opt_ede{info_code = InfoCode, extra_text = ExtraText};
+do_decode_optrrdata(?DNS_EOPTCODE_EDE, <<>>) ->
+    #dns_opt_ede{info_code = 0, extra_text = <<>>};
 do_decode_optrrdata(EOpt, <<Bin/binary>>) ->
     #dns_opt_unknown{id = EOpt, bin = Bin}.
 
@@ -388,7 +392,9 @@ decode_rrdata(
     _MsgBin, _Class, ?DNS_TYPE_DNSKEY, <<Flags:16, Protocol:8, AlgNum:8, PublicKey/binary>> = Bin
 ) when
     (AlgNum =:= ?DNS_ALG_ECDSAP256SHA256 andalso 64 =:= byte_size(PublicKey)) orelse
-        (AlgNum =:= ?DNS_ALG_ECDSAP384SHA384 andalso 96 =:= byte_size(PublicKey))
+        (AlgNum =:= ?DNS_ALG_ECDSAP384SHA384 andalso 96 =:= byte_size(PublicKey)) orelse
+        (AlgNum =:= ?DNS_ALG_ED25519 andalso 32 =:= byte_size(PublicKey)) orelse
+        (AlgNum =:= ?DNS_ALG_ED448 andalso 57 =:= byte_size(PublicKey))
 ->
     #dns_rrdata_dnskey{
         flags = Flags,
@@ -450,7 +456,9 @@ decode_rrdata(
     <<Flags:16, Protocol:8, AlgNum:8, PublicKey/binary>> = Bin
 ) when
     (AlgNum =:= ?DNS_ALG_ECDSAP256SHA256 andalso 64 =:= byte_size(PublicKey)) orelse
-        (AlgNum =:= ?DNS_ALG_ECDSAP384SHA384 andalso 96 =:= byte_size(PublicKey))
+        (AlgNum =:= ?DNS_ALG_ECDSAP384SHA384 andalso 96 =:= byte_size(PublicKey)) orelse
+        (AlgNum =:= ?DNS_ALG_ED25519 andalso 32 =:= byte_size(PublicKey)) orelse
+        (AlgNum =:= ?DNS_ALG_ED448 andalso 57 =:= byte_size(PublicKey))
 ->
     #dns_rrdata_cdnskey{
         flags = Flags,

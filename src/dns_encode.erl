@@ -605,7 +605,9 @@ encode_rrdata(
     CompMap
 ) when
     (Alg =:= ?DNS_ALG_ECDSAP256SHA256 andalso is_binary(PK) andalso 64 =:= byte_size(PK)) orelse
-        (Alg =:= ?DNS_ALG_ECDSAP384SHA384 andalso is_binary(PK) andalso 96 =:= byte_size(PK))
+        (Alg =:= ?DNS_ALG_ECDSAP384SHA384 andalso is_binary(PK) andalso 96 =:= byte_size(PK)) orelse
+        (Alg =:= ?DNS_ALG_ED25519 andalso is_binary(PK) andalso 32 =:= byte_size(PK)) orelse
+        (Alg =:= ?DNS_ALG_ED448 andalso is_binary(PK) andalso 57 =:= byte_size(PK))
 ->
     {<<Flags:16, Protocol:8, Alg:8, PK/binary>>, CompMap};
 encode_rrdata(
@@ -666,7 +668,9 @@ encode_rrdata(
     CompMap
 ) when
     (Alg =:= ?DNS_ALG_ECDSAP256SHA256 andalso is_binary(PK) andalso 64 =:= byte_size(PK)) orelse
-        (Alg =:= ?DNS_ALG_ECDSAP384SHA384 andalso is_binary(PK) andalso 96 =:= byte_size(PK))
+        (Alg =:= ?DNS_ALG_ECDSAP384SHA384 andalso is_binary(PK) andalso 96 =:= byte_size(PK)) orelse
+        (Alg =:= ?DNS_ALG_ED25519 andalso is_binary(PK) andalso 32 =:= byte_size(PK)) orelse
+        (Alg =:= ?DNS_ALG_ED448 andalso is_binary(PK) andalso 57 =:= byte_size(PK))
 ->
     {<<Flags:16, Protocol:8, Alg:8, PK/binary>>, CompMap};
 encode_rrdata(
@@ -1181,6 +1185,11 @@ do_encode_optrrdata(#dns_opt_cookie{
     {?DNS_EOPTCODE_COOKIE, <<ClientCookie/binary, ServerCookie/binary>>};
 do_encode_optrrdata(#dns_opt_cookie{}) ->
     erlang:error(bad_cookie);
+do_encode_optrrdata(#dns_opt_ede{info_code = InfoCode, extra_text = ExtraText}) when
+    is_integer(InfoCode), is_binary(ExtraText)
+->
+    Data = <<InfoCode:16, ExtraText/binary>>,
+    {?DNS_EOPTCODE_EDE, Data};
 do_encode_optrrdata(#dns_opt_unknown{id = Id, bin = Data}) when
     is_integer(Id) andalso is_binary(Data)
 ->

@@ -178,6 +178,8 @@ restrictions on the length. Labels must be 63 characters or less.
 ?DOC(#{group => <<"Types: records">>}).
 -type opt_cookie() :: #dns_opt_cookie{}.
 ?DOC(#{group => <<"Types: records">>}).
+-type opt_ede() :: #dns_opt_ede{}.
+?DOC(#{group => <<"Types: records">>}).
 -type opt_unknown() :: #dns_opt_unknown{}.
 ?DOC(#{group => <<"Types: records">>}).
 -type rrdata_rrsig() :: #dns_rrdata_rrsig{}.
@@ -235,7 +237,8 @@ restrictions on the length. Labels must be 63 characters or less.
     | opt_ecs()
     | opt_llq()
     | opt_owner()
-    | opt_cookie().
+    | opt_cookie()
+    | opt_ede().
 ?DOC(#{group => <<"Types: records">>}).
 -type questions() :: [query()].
 ?DOC(#{group => <<"Types: records">>}).
@@ -280,7 +283,9 @@ restrictions on the length. Labels must be 63 characters or less.
     | ?DNS_ALG_RSASHA256
     | ?DNS_ALG_RSASHA512
     | ?DNS_ALG_ECDSAP256SHA256
-    | ?DNS_ALG_ECDSAP384SHA384.
+    | ?DNS_ALG_ECDSAP384SHA384
+    | ?DNS_ALG_ED25519
+    | ?DNS_ALG_ED448.
 -export_type([
     alg/0,
     tsig_mac/0,
