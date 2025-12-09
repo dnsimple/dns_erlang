@@ -9,12 +9,6 @@
 %%     # Generate RFC list and save to file
 %%     escript scripts/generate_rfc_list.escript --output RFC_LIST.md
 %%
-%%     # Show debug information (file locations for each RFC)
-%%     escript scripts/generate_rfc_list.escript --debug
-%%
-%%     # Exclude README.md and CHANGELOG.md from search
-%%     escript scripts/generate_rfc_list.escript --no-docs
-%%
 %% To update the README.md:
 %%     1. Run: escript scripts/generate_rfc_list.escript > /tmp/rfc_list.md
 %%     2. Copy the output and replace the "## Supported RFCs" section in README.md
@@ -23,6 +17,7 @@
 -mode(compile).
 
 -define(RFC_TITLES, #{
+    <<"1034">> => <<"Domain Names - Concepts and Facilites">>,
     <<"1035">> => <<"Domain Names - Implementation and Specification">>,
     <<"3596">> => <<"DNS Extensions to Support IP Version 6">>,
     <<"1183">> => <<"New DNS RR Definitions">>,
@@ -31,6 +26,8 @@
     <<"2782">> => <<"A DNS RR for specifying the location of services (DNS SRV)">>,
     <<"3403">> =>
         <<"Dynamic Delegation Discovery System (DDDS) Part Three: The Domain Name System (DNS) Database">>,
+    <<"2308">> => <<"Negative Caching of DNS Queries (DNS NCACHE)">>,
+    <<"3597">> => <<"Handling of Unknown DNS Resource Record (RR) Types">>,
     <<"4025">> => <<"A Method for Storing IPsec Keying Material in DNS">>,
     <<"4255">> => <<"Using DNS to Securely Publish Secure Shell (SSH) Key Fingerprints">>,
     <<"4398">> => <<"Storing Certificates in the Domain Name System (DNS)">>,

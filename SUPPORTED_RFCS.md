@@ -2,15 +2,18 @@
 
 This library implements encoding and decoding of DNS packets according to the following RFCs. Note that this library focuses on packet encoding/decoding only and does not implement DNS server functionality such as socket handling or query resolution.
 
+- **[RFC 1034](https://tools.ietf.org/html/rfc1034)**: Domain Names - Concepts and Facilites
 - **[RFC 1035](https://tools.ietf.org/html/rfc1035)**: Domain Names - Implementation and Specification
 - **[RFC 1183](https://tools.ietf.org/html/rfc1183)**: New DNS RR Definitions
 - **[RFC 1876](https://tools.ietf.org/html/rfc1876)**: A Means for Expressing Location Information in the Domain Name System
 - **[RFC 2230](https://tools.ietf.org/html/rfc2230)**: Key Exchange Delegation Record for the DNS
+- **[RFC 2308](https://tools.ietf.org/html/rfc2308)**: Negative Caching of DNS Queries (DNS NCACHE)
 - **[RFC 2535](https://tools.ietf.org/html/rfc2535)**: Domain Name System Security Extensions
 - **[RFC 2782](https://tools.ietf.org/html/rfc2782)**: A DNS RR for specifying the location of services (DNS SRV)
 - **[RFC 2845](https://tools.ietf.org/html/rfc2845)**: Secret Key Transaction Authentication for DNS (TSIG)
 - **[RFC 3403](https://tools.ietf.org/html/rfc3403)**: Dynamic Delegation Discovery System (DDDS) Part Three: The Domain Name System (DNS) Database
 - **[RFC 3596](https://tools.ietf.org/html/rfc3596)**: DNS Extensions to Support IP Version 6
+- **[RFC 3597](https://tools.ietf.org/html/rfc3597)**: Handling of Unknown DNS Resource Record (RR) Types
 - **[RFC 4025](https://tools.ietf.org/html/rfc4025)**: A Method for Storing IPsec Keying Material in DNS
 - **[RFC 4034](https://tools.ietf.org/html/rfc4034)**: Resource Records for the DNS Security Extensions
 - **[RFC 4255](https://tools.ietf.org/html/rfc4255)**: Using DNS to Securely Publish Secure Shell (SSH) Key Fingerprints
