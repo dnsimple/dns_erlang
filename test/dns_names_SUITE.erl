@@ -26,7 +26,8 @@ groups() ->
             ercode_name,
             eoptcode_name,
             llqopcode_name,
-            llqerrcode_name
+            llqerrcode_name,
+            ede_code_text
         ]}
     ].
 
@@ -236,3 +237,10 @@ llqerrcode_name(_) ->
     ?assertEqual(undefined, dns_names:name_llqerrcode(?UNKNOWN_BIN)),
     [?assert(is_binary(dns_names:llqerrcode_name(N))) || N <- Cases],
     [?assertEqual(N, dns_names:name_llqerrcode(dns_names:llqerrcode_name(N))) || N <- Cases].
+
+ede_code_text(_) ->
+    Cases = lists:seq(1, 24),
+    ?assertEqual(undefined, dns_names:ede_code_text(?UNKNOWN_INT)),
+    ?assertEqual(undefined, dns_names:ede_text_code(?UNKNOWN_BIN)),
+    [?assert(is_binary(dns_names:ede_code_text(N))) || N <- Cases],
+    [?assertEqual(N, dns_names:ede_text_code(dns_names:ede_code_text(N))) || N <- Cases].
