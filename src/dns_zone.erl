@@ -605,6 +605,18 @@ rdata_error_message(<<"DNSKEY">>, _RData) ->
         <<"Invalid DNSKEY record: public key must be valid base64">>,
         <<"Public key should be base64-encoded key material">>
     };
+rdata_error_message(<<"ZONEMD">>, RData) when length(RData) < 4 ->
+    {
+        <<"Invalid ZONEMD record: expected 4 fields ", "(serial, scheme, algorithm, hash), got ",
+            (integer_to_binary(length(RData)))/binary>>,
+        <<"ZONEMD requires: serial scheme algorithm \"hexhash\"\n",
+            "Example: example.com. IN ZONEMD 2025121100 1 1 \"F8857A5A89EF49FF...\"">>
+    };
+rdata_error_message(<<"ZONEMD">>, _RData) ->
+    {
+        <<"Invalid ZONEMD record: hash must be even-length hex string">>,
+        <<"Hex strings must have an even number of characters">>
+    };
 rdata_error_message(<<"SVCB">>, RData) when length(RData) < 2 ->
     {
         <<"Invalid SVCB record: expected at least 2 fields ", "(priority, target), got ",
@@ -1424,6 +1436,8 @@ type_to_number("DLV") ->
     ?DNS_TYPE_DLV;
 type_to_number("IPSECKEY") ->
     ?DNS_TYPE_IPSECKEY;
+type_to_number("ZONEMD") ->
+    ?DNS_TYPE_ZONEMD;
 type_to_number(_) ->
     ?DNS_TYPE_A.
 

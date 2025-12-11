@@ -101,6 +101,8 @@ serialise(dns_rrdata_dnskey, public_key, PublicKey, _Opts) ->
     {<<"public_key">>, base64:encode(iolist_to_binary(PKMpint))};
 serialise(dns_rrdata_ds, digest, Digest, _Opts) ->
     {<<"digest">>, binary:encode_hex(Digest)};
+serialise(dns_rrdata_zonemd, hash, Hash, _Opts) ->
+    {<<"hash">>, binary:encode_hex(Hash)};
 serialise(dns_rrdata_ipseckey, gateway, Tuple, _Opts) when is_tuple(Tuple) ->
     {<<"gateway">>, list_to_binary(inet_parse:ntoa(Tuple))};
 serialise(dns_rrdata_ipseckey, public_key, PublicKey, _Opts) ->
@@ -192,6 +194,8 @@ deserialise(dns_rrdata_dnskey, public_key, PublicKeyB64, _Opts) ->
     deserialise_dnskey_publickey(PublicKeyB64);
 deserialise(dns_rrdata_ds, digest, Digest, _Opts) ->
     binary:decode_hex(Digest);
+deserialise(dns_rrdata_zonemd, hash, Hash, _Opts) ->
+    binary:decode_hex(Hash);
 deserialise(dns_rrdata_ipseckey, gateway, Gateway, _Opts) ->
     case inet_parse:address(binary_to_list(Gateway)) of
         {ok, Tuple} -> Tuple;

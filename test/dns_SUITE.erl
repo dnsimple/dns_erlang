@@ -447,6 +447,15 @@ decode_encode_rrdata(_) ->
             target_name = <<"target.example.com">>,
             svc_params = #{?DNS_SVCB_PARAM_PORT_NUMBER => 8080}
         }},
+        {?DNS_TYPE_ZONEMD, #dns_rrdata_zonemd{
+            serial = 2025121100,
+            scheme = 1,
+            algorithm = ?DNS_ZONEMD_ALG_SHA384,
+            hash =
+                <<248, 133, 122, 90, 137, 239, 73, 255, 194, 235, 224, 95, 39, 24, 115, 94, 229,
+                    116, 172, 159, 230, 143, 71, 48, 131, 240, 245, 75, 250, 57, 200, 24, 1, 228,
+                    54, 127, 239, 243, 222, 160, 193, 79, 87, 40, 58, 124, 102, 173>>
+        }},
         {?DNS_TYPE_SVCB, #dns_rrdata_svcb{
             svc_priority = 0,
             target_name = <<"target.example.com">>,

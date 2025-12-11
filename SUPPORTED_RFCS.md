@@ -34,5 +34,6 @@ This library implements encoding and decoding of DNS packets according to the fo
 - **[RFC 8080](https://tools.ietf.org/html/rfc8080)**: Ed25519 and Ed448 for DNSSEC
 - **[RFC 8764](https://tools.ietf.org/html/rfc8764)**: DNS Long-Lived Queries (LLQ)
 - **[RFC 8914](https://tools.ietf.org/html/rfc8914)**: Extended DNS Errors
+- **[RFC 8976](https://tools.ietf.org/html/rfc8976)**: Message Digest for DNS Zones
 - **[RFC 9077](https://tools.ietf.org/html/rfc9077)**: NSEC and NSEC3 TTL Values
 - **[RFC 9460](https://tools.ietf.org/html/rfc9460)**: Service Binding and Parameter Specification via the DNS (DNS SVCB and HTTPS Resource Records)

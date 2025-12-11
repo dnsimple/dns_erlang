@@ -159,6 +159,7 @@ RTYPE_SVCB     = SVCB
 RTYPE_HTTPS    = HTTPS
 RTYPE_DLV      = DLV
 RTYPE_IPSECKEY = IPSECKEY
+RTYPE_ZONEMD   = ZONEMD
 
 % Quoted strings for TXT records, etc.
 STRING    = "([^"\\]|\\.)*"
@@ -203,6 +204,7 @@ Rules.
 
 % Record types - order matters, longest match first
 {RTYPE_NSEC3PARAM} : {token, {rtype, TokenLine, TokenChars}}.
+{RTYPE_ZONEMD}     : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_IPSECKEY}   : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_CDNSKEY}    : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_NSEC3}      : {token, {rtype, TokenLine, TokenChars}}.
