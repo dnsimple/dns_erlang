@@ -1264,30 +1264,14 @@ parse_file_named_root(_Config) ->
 
 parse_file_root_zone(_Config) ->
     %% Parse a sample of the root zone file
-    %% Note: The full root.zone is very large (~650KB), this tests that we can handle it
+    %% Note: The full root.zone is very large (~650KB) and varied, this tests that we can handle it
     DataDir = proplists:get_value(data_dir, _Config),
     FilePath = filename:join(DataDir, "root.zone"),
-
     Result = dns_zone:parse_file(FilePath),
-
-    %% The root zone may have parsing issues due to complex DNSSEC records
-    %% or unusual formatting, so we accept either success or specific error types
-    case Result of
-        {ok, Records} ->
-            %% If it parses successfully, verify basic properties
-            ?assert(length(Records) > 0),
-
-            %% Should contain various record types including DNSSEC
-            Types = lists:usort([RR#dns_rr.type || RR <- Records]),
-            ?assert(length(Types) > 1);
-        {error, Reason} ->
-            %% If it fails, log the reason but don't fail the test
-            %% This is because the root zone may contain records or formats
-            %% that our parser doesn't fully support yet
-            ct:log("Root zone parsing failed (expected for complex DNSSEC zones): ~p", [Reason]),
-            %% Mark as passed - we're testing that it doesn't crash
-            ok
-    end.
+    {ok, Records} = Result,
+    ?assert(length(Records) > 0),
+    Types = lists:usort([RR#dns_rr.type || RR <- Records]),
+    ?assert(length(Types) > 1).
 
 %% ============================================================================
 %% Error Tests

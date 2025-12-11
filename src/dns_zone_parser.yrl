@@ -56,6 +56,9 @@ Terminals
     '@' dot lparen rparen
     nl.
 
+%% Note: rtype tokens can appear in RDATA for records like RRSIG where
+%% record type names are part of the data (e.g., "RRSIG DS ...")
+
 Rootsymbol zone.
 
 %% Expected shift/reduce conflicts due to RFC 1035's flexible field ordering
@@ -219,6 +222,9 @@ rdata_element -> ipv6 : {ipv6, extract_token('$1')}.
 %% RFC 3597 - Generic RDATA format: \# length hexdata
 %% The entire \# line is captured as a single token by the lexer
 rdata_element -> rfc3597_data : {rfc3597, extract_token('$1')}.
+%% Record type tokens can appear in RDATA (e.g., RRSIG type_covered field)
+%% Treat them as strings/labels
+rdata_element -> rtype : {domain, extract_token('$1')}.
 
 %% ============================================================================
 %% Basic Values

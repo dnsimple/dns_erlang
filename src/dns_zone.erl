@@ -1142,10 +1142,26 @@ build_rdata("DHCID", RData, Ctx) ->
 build_rdata("DS", RData, Ctx) ->
     %% DS format: keytag algorithm digest-type digest(hex string)
     %% RFC 4034 - Delegation Signer
+    %% Hex strings are often unquoted, so they may be parsed as labels/domains
     case RData of
         [{int, KeyTag}, {int, Alg}, {int, DigestType}, {string, DigestHex}] when
             is_integer(KeyTag), is_integer(Alg), is_integer(DigestType), is_list(DigestHex)
         ->
+            case hex_to_binary(DigestHex) of
+                {ok, Digest} ->
+                    {ok, #dns_rrdata_ds{
+                        keytag = KeyTag,
+                        alg = Alg,
+                        digest_type = DigestType,
+                        digest = Digest
+                    }};
+                {error, _Reason} ->
+                    {error, make_rdata_error(<<"DS">>, RData, Ctx)}
+            end;
+        [{int, KeyTag}, {int, Alg}, {int, DigestType}, {domain, DigestHex}] when
+            is_integer(KeyTag), is_integer(Alg), is_integer(DigestType), is_list(DigestHex)
+        ->
+            %% Hex strings are unquoted and may be parsed as domain names
             case hex_to_binary(DigestHex) of
                 {ok, Digest} ->
                     {ok, #dns_rrdata_ds{
@@ -1163,10 +1179,31 @@ build_rdata("DS", RData, Ctx) ->
 build_rdata("DNSKEY", RData, Ctx) ->
     %% DNSKEY format: flags protocol algorithm public-key(base64 string)
     %% RFC 4034 - DNS Public Key
+    %% Base64 strings are often unquoted, so they may be parsed as labels/domains
     case RData of
         [{int, Flags}, {int, Protocol}, {int, Alg}, {string, PublicKeyB64}] when
             is_integer(Flags), is_integer(Protocol), is_integer(Alg), is_list(PublicKeyB64)
         ->
+            try
+                PublicKey = base64:decode(PublicKeyB64),
+                %% Calculate keytag (RFC 4034 Appendix B)
+                KeyTag = calculate_keytag(Flags, Protocol, Alg, PublicKey),
+                {ok, #dns_rrdata_dnskey{
+                    flags = Flags,
+                    protocol = Protocol,
+                    alg = Alg,
+                    public_key = PublicKey,
+                    keytag = KeyTag
+                }}
+            catch
+                _:_ ->
+                    {error, make_rdata_error(<<"DNSKEY">>, RData, Ctx)}
+            end;
+        [{int, Flags}, {int, Protocol}, {int, Alg}, {domain, PublicKeyB64}] when
+            is_integer(Flags), is_integer(Protocol), is_integer(Alg), is_list(PublicKeyB64)
+        ->
+            %% Base64 strings are unquoted and may be parsed as domain names
+            %% Convert to string and try to decode
             try
                 PublicKey = base64:decode(PublicKeyB64),
                 %% Calculate keytag (RFC 4034 Appendix B)
@@ -1215,8 +1252,129 @@ build_rdata("HTTPS", RData, Ctx) ->
         _ ->
             {error, make_rdata_error(<<"HTTPS">>, RData, Ctx)}
     end;
+build_rdata("RRSIG", RData, Ctx) ->
+    %% RRSIG format:
+    %%      type_covered alg labels original_ttl expiration inception keytag signers_name signature
+    %% RFC 4034 - DNSSEC signature
+    %% type_covered can be a record type name (like "DS", "NSEC") parsed as rtype or domain
+    %% signature is base64-encoded and may be unquoted (parsed as domain/string)
+    case RData of
+        %% type_covered parsed as domain (from rtype token or label),
+        %% then integers, then signers_name, then signature as string or domain (unquoted base64)
+        [
+            {domain, TypeCovered},
+            {int, Alg},
+            {int, Labels},
+            {int, OriginalTTL},
+            {int, Expiration},
+            {int, Inception},
+            {int, KeyTag},
+            {domain, SignersName},
+            SignatureToken
+        ] when
+            is_list(TypeCovered),
+            is_integer(Alg),
+            is_integer(Labels),
+            is_integer(OriginalTTL),
+            is_integer(Expiration),
+            is_integer(Inception),
+            is_integer(KeyTag),
+            is_list(SignersName),
+            is_tuple(SignatureToken),
+            tuple_size(SignatureToken) =:= 2,
+            (element(1, SignatureToken) =:= string orelse element(1, SignatureToken) =:= domain)
+        ->
+            SignatureB64 = element(2, SignatureToken),
+            TypeCoveredNum = type_to_number(TypeCovered),
+            SignersNameBin = resolve_name(SignersName, Ctx#parse_ctx.origin),
+            try
+                Signature = base64:decode(SignatureB64),
+                {ok, #dns_rrdata_rrsig{
+                    type_covered = TypeCoveredNum,
+                    alg = Alg,
+                    labels = Labels,
+                    original_ttl = OriginalTTL,
+                    expiration = Expiration,
+                    inception = Inception,
+                    keytag = KeyTag,
+                    signers_name = SignersNameBin,
+                    signature = Signature
+                }}
+            catch
+                _:_ ->
+                    {error, make_rdata_error(<<"RRSIG">>, RData, Ctx)}
+            end;
+        _ ->
+            {error, make_rdata_error(<<"RRSIG">>, RData, Ctx)}
+    end;
+build_rdata("NSEC", RData, Ctx) ->
+    %% NSEC format: next_dname type1 type2 type3 ...
+    %% RFC 4034 - DNSSEC authenticated denial of existence
+    %% Types are record type names (like "NS", "SOA", "RRSIG") parsed as rtype or domain tokens
+    case RData of
+        [{domain, NextDName} | Types] when is_list(NextDName), length(Types) > 0 ->
+            %% Parse type names - they can be rtype tokens (parsed as domain) or labels
+            TypeNums = lists:map(
+                fun
+                    ({domain, TypeName}) when is_list(TypeName) ->
+                        type_to_number(TypeName);
+                    ({rtype, TypeName}) when is_list(TypeName) ->
+                        type_to_number(TypeName);
+                    (_) ->
+                        %% Invalid type, skip or use 0
+                        0
+                end,
+                Types
+            ),
+            %% Filter out invalid types (0)
+            ValidTypes = [T || T <- TypeNums, T =/= 0],
+            NextDNameBin = resolve_name(NextDName, Ctx#parse_ctx.origin),
+            {ok, #dns_rrdata_nsec{
+                next_dname = NextDNameBin,
+                types = ValidTypes
+            }};
+        _ ->
+            {error, make_rdata_error(<<"NSEC">>, RData, Ctx)}
+    end;
+build_rdata("ZONEMD", RData, Ctx) ->
+    %% ZONEMD format: serial scheme algorithm hash(hex string)
+    %% RFC 8976 - Zone Metadata
+    case RData of
+        [{int, Serial}, {int, Scheme}, {int, Algorithm}, {domain, HashHex}] when
+            is_integer(Serial), is_integer(Scheme), is_integer(Algorithm), is_list(HashHex)
+        ->
+            %% Hash may be parsed as domain (unquoted hex string)
+            case hex_to_binary(HashHex) of
+                {ok, Hash} ->
+                    {ok, #dns_rrdata_zonemd{
+                        serial = Serial,
+                        scheme = Scheme,
+                        algorithm = Algorithm,
+                        hash = Hash
+                    }};
+                {error, _Reason} ->
+                    {error, make_rdata_error(<<"ZONEMD">>, RData, Ctx)}
+            end;
+        [{int, Serial}, {int, Scheme}, {int, Algorithm}, {string, HashHex}] when
+            is_integer(Serial), is_integer(Scheme), is_integer(Algorithm), is_list(HashHex)
+        ->
+            %% Hash parsed as quoted string
+            case hex_to_binary(HashHex) of
+                {ok, Hash} ->
+                    {ok, #dns_rrdata_zonemd{
+                        serial = Serial,
+                        scheme = Scheme,
+                        algorithm = Algorithm,
+                        hash = Hash
+                    }};
+                {error, _Reason} ->
+                    {error, make_rdata_error(<<"ZONEMD">>, RData, Ctx)}
+            end;
+        _ ->
+            {error, make_rdata_error(<<"ZONEMD">>, RData, Ctx)}
+    end;
 build_rdata(Type, _RData, Ctx) ->
-    %% Unsupported or complex record types (LOC, RRSIG, NSEC, etc.)
+    %% Unsupported or complex record types (LOC, etc.)
     %% These are typically auto-generated or use RFC 3597 format
     {error, make_semantic_error({unsupported_type, Type}, Ctx)}.
 
