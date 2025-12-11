@@ -165,7 +165,6 @@ Detailed error information with context and suggestions.
     | {ipv4, string()}
     | {ipv6, string()}
     | {domain, string()}
-    | {rfc3597, string()}
     | {rfc3597, string()}.
 -type directive() ::
     {directive, origin, dynamic()}
