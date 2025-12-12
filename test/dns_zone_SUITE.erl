@@ -147,6 +147,7 @@ groups() ->
             parse_dhcid_record,
             parse_ds_record,
             parse_dnskey_record,
+            parse_zonemd_record,
             parse_svcb_record,
             parse_https_record
         ]},
@@ -246,6 +247,8 @@ groups() ->
             parse_invalid_ds_hex,
             parse_invalid_dnskey_rdata,
             parse_invalid_dnskey_base64,
+            parse_invalid_zonemd_rdata,
+            parse_invalid_zonemd_hex,
             parse_invalid_svcb_rdata,
             parse_invalid_https_rdata,
             test_format_error,
@@ -1120,6 +1123,26 @@ parse_dnskey_record(_Config) ->
     ?assert(KeyTag >= 0),
     ?assert(KeyTag =< 65535).
 
+parse_zonemd_record(_Config) ->
+    %% ZONEMD (Zone Metadata) for DNSSEC (RFC 8976)
+    %% Format: serial scheme algorithm hash
+    %% Example from root zone
+    Zone =
+        <<"example.com. 86400 IN ZONEMD 2025121100 1 1 F8857A5A89EF49FFC2EBE05F2718735EE574AC9FE68F473083F0F54BFA39C81801E4367FEFF3DEA0C14F57283A7C66AD\n">>,
+    {ok, [RR]} = dns_zone:parse_string(Zone, #{origin => <<"example.com.">>}),
+    ?assertEqual(?DNS_TYPE_ZONEMD, RR#dns_rr.type),
+    #dns_rrdata_zonemd{
+        serial = Serial,
+        scheme = Scheme,
+        algorithm = Algorithm,
+        hash = Hash
+    } = RR#dns_rr.data,
+    ?assertEqual(2025121100, Serial),
+    ?assertEqual(1, Scheme),
+    ?assertEqual(1, Algorithm),
+    ?assert(is_binary(Hash)),
+    ?assert(byte_size(Hash) > 0).
+
 parse_svcb_record(_Config) ->
     %% SVCB (Service Binding) for modern service discovery (RFC 9460)
     %% Format: priority target [svcparams...]
@@ -1241,30 +1264,14 @@ parse_file_named_root(_Config) ->
 
 parse_file_root_zone(_Config) ->
     %% Parse a sample of the root zone file
-    %% Note: The full root.zone is very large (~650KB), this tests that we can handle it
+    %% Note: The full root.zone is very large (~650KB) and varied, this tests that we can handle it
     DataDir = proplists:get_value(data_dir, _Config),
     FilePath = filename:join(DataDir, "root.zone"),
-
     Result = dns_zone:parse_file(FilePath),
-
-    %% The root zone may have parsing issues due to complex DNSSEC records
-    %% or unusual formatting, so we accept either success or specific error types
-    case Result of
-        {ok, Records} ->
-            %% If it parses successfully, verify basic properties
-            ?assert(length(Records) > 0),
-
-            %% Should contain various record types including DNSSEC
-            Types = lists:usort([RR#dns_rr.type || RR <- Records]),
-            ?assert(length(Types) > 1);
-        {error, Reason} ->
-            %% If it fails, log the reason but don't fail the test
-            %% This is because the root zone may contain records or formats
-            %% that our parser doesn't fully support yet
-            ct:log("Root zone parsing failed (expected for complex DNSSEC zones): ~p", [Reason]),
-            %% Mark as passed - we're testing that it doesn't crash
-            ok
-    end.
+    {ok, Records} = Result,
+    ?assert(length(Records) > 0),
+    Types = lists:usort([RR#dns_rr.type || RR <- Records]),
+    ?assert(length(Types) > 1).
 
 %% ============================================================================
 %% Error Tests
@@ -1700,6 +1707,16 @@ parse_invalid_dnskey_rdata(_Config) ->
 parse_invalid_dnskey_base64(_Config) ->
     %% DNSKEY record with invalid base64 public key
     Zone = <<"example.com. 3600 IN DNSKEY 256 3 8 \"!!!INVALID!!!\"\n">>,
+    {error, #{type := semantic}} = dns_zone:parse_string(Zone, #{origin => <<"example.com.">>}).
+
+parse_invalid_zonemd_rdata(_Config) ->
+    %% ZONEMD record with missing fields
+    Zone = <<"example.com. 3600 IN ZONEMD 2025121100\n">>,
+    {error, #{type := semantic}} = dns_zone:parse_string(Zone, #{origin => <<"example.com.">>}).
+
+parse_invalid_zonemd_hex(_Config) ->
+    %% ZONEMD record with invalid hex hash (odd length)
+    Zone = <<"example.com. 3600 IN ZONEMD 2025121100 1 1 \"ABC\"\n">>,
     {error, #{type := semantic}} = dns_zone:parse_string(Zone, #{origin => <<"example.com.">>}).
 
 parse_invalid_svcb_rdata(_Config) ->

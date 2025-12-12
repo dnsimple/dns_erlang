@@ -709,6 +709,18 @@ encode_rrdata(
     CompMap
 ) ->
     {<<KeyTag:16, Alg:8, DigestType:8, Digest/binary>>, CompMap};
+encode_rrdata(
+    _Pos,
+    _Class,
+    #dns_rrdata_zonemd{
+        serial = Serial,
+        scheme = Scheme,
+        algorithm = Algorithm,
+        hash = Hash
+    },
+    CompMap
+) ->
+    {<<Serial:32, Scheme:8, Algorithm:8, Hash/binary>>, CompMap};
 encode_rrdata(_Pos, _Class, #dns_rrdata_hinfo{cpu = CPU, os = OS}, CompMap) ->
     {encode_text([CPU, OS]), CompMap};
 encode_rrdata(

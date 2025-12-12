@@ -51,6 +51,7 @@
     <<"9077">> => <<"NSEC and NSEC3 TTL Values">>,
     <<"2845">> => <<"Secret Key Transaction Authentication for DNS (TSIG)">>,
     <<"6891">> => <<"Extension Mechanisms for DNS (EDNS(0))">>,
+    <<"8976">> => <<"Message Digest for DNS Zones">>,
     <<"5001">> => <<"DNS Name Server Identifier (NSID) Option">>,
     <<"7871">> => <<"Client Subnet in DNS Queries">>,
     <<"7873">> => <<"Domain Name System (DNS) Cookies">>,

@@ -82,10 +82,13 @@ TIME_VALUE = ({TIME_NUM}{TIME_UNIT}+)+
 %   _ (underscore) - RFC 2782: Service labels (_tcp, _http, etc.)
 %                    Also used by DKIM (RFC 6376), DMARC
 %   : (colon) - For IPv6 addresses and service names
+%   +/= (plus, slash, equal) - RFC 4648: Base64 encoding
 % Note: RFC 1035 hostnames cannot start with digit or hyphen,
 %       but zone file labels are more permissive
-LABEL_CHAR = [a-zA-Z0-9\-_*:]
-LABEL      = [a-zA-Z0-9\-_*:][a-zA-Z0-9\-_*:]*
+% Note: = is used for base64 padding and also as EQUALS token, but standalone = will
+% still match EQUALS since LABEL requires at least one non-= character
+LABEL_CHAR = [a-zA-Z0-9\-_*:+\/=]
+LABEL      = [a-zA-Z0-9\-_*:+\/=][a-zA-Z0-9\-_*:+\/=]*
 
 % IP addresses
 IPV4      = [0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}
@@ -159,6 +162,7 @@ RTYPE_SVCB     = SVCB
 RTYPE_HTTPS    = HTTPS
 RTYPE_DLV      = DLV
 RTYPE_IPSECKEY = IPSECKEY
+RTYPE_ZONEMD   = ZONEMD
 
 % Quoted strings for TXT records, etc.
 STRING    = "([^"\\]|\\.)*"
@@ -203,6 +207,7 @@ Rules.
 
 % Record types - order matters, longest match first
 {RTYPE_NSEC3PARAM} : {token, {rtype, TokenLine, TokenChars}}.
+{RTYPE_ZONEMD}     : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_IPSECKEY}   : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_CDNSKEY}    : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_NSEC3}      : {token, {rtype, TokenLine, TokenChars}}.
