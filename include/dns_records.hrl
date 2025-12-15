@@ -128,6 +128,14 @@
     digest :: binary()
 }).
 
+%% ZONEMD record for Zone Metadata. See RFC 8976: §2.2.
+-record(dns_rrdata_zonemd, {
+    serial :: dns:uint32(),
+    scheme :: dns:uint8(),
+    algorithm :: dns:uint8(),
+    hash :: binary()
+}).
+
 %% HINFO record for host information. See RFC 1035: §3.3.2.
 -record(dns_rrdata_hinfo, {
     %% each binary is less than 255 bytes

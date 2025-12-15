@@ -494,6 +494,13 @@ decode_rrdata(_MsgBin, _Class, ?DNS_TYPE_CDS, <<KeyTag:16, Alg:8, DigestType:8, 
         digest_type = DigestType,
         digest = Digest
     };
+decode_rrdata(_MsgBin, _Class, ?DNS_TYPE_ZONEMD, <<Serial:32, Scheme:8, Alg:8, Hash/binary>>) ->
+    #dns_rrdata_zonemd{
+        serial = Serial,
+        scheme = Scheme,
+        algorithm = Alg,
+        hash = Hash
+    };
 decode_rrdata(_MsgBin, _Class, ?DNS_TYPE_HINFO, Bin) ->
     [CPU, OS] = decode_text(Bin),
     #dns_rrdata_hinfo{cpu = CPU, os = OS};
