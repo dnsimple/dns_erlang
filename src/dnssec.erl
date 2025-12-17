@@ -639,7 +639,7 @@ add_keytag_to_dnskey(
         data = #dns_rrdata_dnskey{} = Data
     } = RR
 ) ->
-    KeyBin = dns_encode:encode_rrdata(in, Data),
+    KeyBin = dns_encode:encode_rrdata(?DNS_CLASS_IN, Data),
     NewData = dns_decode:decode_rrdata(KeyBin, ?DNS_CLASS_IN, ?DNS_TYPE_DNSKEY),
     RR#dns_rr{data = NewData}.
 
@@ -650,7 +650,7 @@ add_keytag_to_cdnskey(
         data = #dns_rrdata_cdnskey{} = Data
     } = RR
 ) ->
-    KeyBin = dns_encode:encode_rrdata(in, Data),
+    KeyBin = dns_encode:encode_rrdata(?DNS_CLASS_IN, Data),
     NewData = dns_decode:decode_rrdata(KeyBin, ?DNS_CLASS_IN, ?DNS_TYPE_CDNSKEY),
     RR#dns_rr{data = NewData}.
 

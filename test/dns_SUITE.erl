@@ -28,6 +28,8 @@ groups() ->
             message_edns,
             missing_additional_section,
             edns_badvers,
+            optrr_too_large,
+            bad_optrr_too_large,
             decode_encode_rrdata_wire_samples,
             decode_encode_rrdata,
             decode_encode_optdata,
@@ -398,6 +400,56 @@ edns_badvers(_) ->
     Encoded = dns:encode_message(Msg),
     Decoded = dns:decode_message(Encoded),
     ?assertMatch([#dns_optrr{ext_rcode = 1, version = 0} | _], Decoded#dns_message.additional).
+
+optrr_too_large(Config) ->
+    optrr_too_large(Config, 14).
+
+bad_optrr_too_large(Config) ->
+    optrr_too_large(Config, 15).
+
+%% Regression:
+%%
+%% Ensure we are reserving the right amount of space for OptRR records, which on their minimal
+%% size is 11 bytes. We here construct a message that we know barely but correctly fits within
+%% 512 bytes, and we test that when re-encoding the original message, it will encode exactly as
+%% it is.
+optrr_too_large(_Config, Anc) ->
+    %% Regression: test `optrr_too_large` going wrong
+    QName = iolist_to_binary(lists:duplicate(255, $a)),
+    Question = #dns_query{name = QName, type = ?DNS_TYPE_A},
+    Answers = [
+        #dns_rr{
+            name = QName,
+            type = ?DNS_TYPE_A,
+            ttl = 3600,
+            data = #dns_rrdata_a{ip = {127, 0, 0, I}}
+        }
+     || I <- lists:seq(1, Anc)
+    ],
+    OptRR = #dns_optrr{udp_payload_size = 512},
+    Msg = #dns_message{
+        qc = 1,
+        questions = [Question],
+        anc = Anc,
+        answers = Answers,
+        adc = 1,
+        additional = [OptRR]
+    },
+    case Anc of
+        14 ->
+            ?assert(byte_size(dns:encode_message(Msg)) =< 512);
+        _ ->
+            ?assert(byte_size(dns:encode_message(Msg)) > 512)
+    end,
+    try
+        Result = dns:encode_message(Msg, #{max_size => 512}),
+        ?assertMatch({false, _}, Result),
+        {false, Encoded} = Result,
+        ?assert(is_binary(Encoded) andalso byte_size(Encoded) > 0)
+    catch
+        Error:Reason ->
+            ct:fail("Error: ~p:~p", [Error, Reason])
+    end.
 
 %%%===================================================================
 %%% Record data functions

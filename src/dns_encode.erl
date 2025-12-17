@@ -9,7 +9,7 @@
 -include_lib("dns_erlang/include/dns.hrl").
 
 %% Minimal size of an OptRR record without any data
--define(OPTRR_MIN_SIZE, 88).
+-define(OPTRR_MIN_SIZE, 11).
 %% 2^31 - 1, the largest signed 32-bit integer value
 -define(MAX_INT32, ((1 bsl 31) - 1)).
 -define(HEADER_SIZE, 12).
@@ -153,12 +153,22 @@ encode_message_default(#dns_message{qc = QC, additional = Additional} = Msg0, Ma
             OptRRBinSizeFull = byte_size(OptRRBinFull),
             SpaceForOptRR = SpaceLeft1 + PreservedOptRRBinSize - byte_size(Bin1),
             case {OptRRBinSizeFull =< SpaceForOptRR, OptRRBinSizeMin =< SpaceForOptRR} of
+                {true, _} ->
+                    %% Full OptRR fits
+                    Head = build_head(Msg0, true, QC, 0, 0, AddCountFull),
+                    <<Head/binary, Bin1/binary, OptRRBinFull/binary>>;
                 {false, true} ->
+                    %% Full OptRR doesn't fit, but minimal does
                     Head = build_head(Msg0, true, QC, 0, 0, AddCountMin),
                     <<Head/binary, Bin1/binary, OptRRBinMin/binary>>;
-                {true, _} ->
-                    Head = build_head(Msg0, true, QC, 0, 0, AddCountFull),
-                    <<Head/binary, Bin1/binary, OptRRBinFull/binary>>
+                {false, false} ->
+                    %% Neither full nor minimal OptRR fits, but we MUST include OptRR
+                    %% per RFC6891, so include minimal even if it exceeds the space
+                    %% This is most likely bad input, the client code should already know the
+                    %% original packet, composed of the question plus EDNS,
+                    %% should have fit in this size limit.
+                    Head = build_head(Msg0, true, QC, 0, 0, AddCountMin),
+                    <<Head/binary, Bin1/binary, OptRRBinMin/binary>>
             end;
         {CompMap, ANC, AUC, Body} ->
             BodySize = byte_size(Body),
@@ -500,12 +510,12 @@ ensure_edns_version(Version, ExtRcode) when
 ensure_edns_version(_, _) ->
     {?DNS_EDNS_MAX_VERSION, ?DNS_ERCODE_BADVERS_NUMBER}.
 
--spec encode_rrdata(_, dns:rrdata()) -> binary().
+-spec encode_rrdata(dns:class(), dns:rrdata()) -> binary().
 encode_rrdata(Class, Data) ->
     {Bin, undefined} = encode_rrdata(0, Class, Data, undefined),
     Bin.
 
--spec encode_rrdata(non_neg_integer(), _, dns:rrdata(), undefined | compmap()) ->
+-spec encode_rrdata(non_neg_integer(), dns:class(), dns:rrdata(), undefined | compmap()) ->
     {binary(), undefined | compmap()}.
 encode_rrdata(_Pos, Class, #dns_rrdata_a{ip = {A, B, C, D}}, CompMap) when
     ?CLASS_IS_IN(Class)
