@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## main
 
+## 4.8.1
+
+- Fix bad size for reserved OptRR record during encoding
+
+## 4.8.0
+
+- Fix Base64 lexing of zone files
+- Add support for [RFC8976](https://datatracker.ietf.org/doc/rfc8914/): Message Digest for DNS Zones
+
 ## 4.7.0
 
 - Extend support for [RFC8914](https://datatracker.ietf.org/doc/rfc8914/): Extended DNS Errors.
