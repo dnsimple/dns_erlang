@@ -63,6 +63,7 @@ AT        = @
 DOT       = \.
 LPAREN    = \(
 RPAREN    = \)
+COMMA     = ,
 
 % Numbers
 INT       = [0-9]+
@@ -82,7 +83,7 @@ TIME_VALUE = ({TIME_NUM}{TIME_UNIT}+)+
 %   _ (underscore) - RFC 2782: Service labels (_tcp, _http, etc.)
 %                    Also used by DKIM (RFC 6376), DMARC
 %   : (colon) - For IPv6 addresses and service names
-%   +/= (plus, slash, equal) - RFC 4648: Base64 encoding
+%   +/= (plus, slash, equals) - RFC 4648: Base64 encoding (equals for padding)
 % Note: RFC 1035 hostnames cannot start with digit or hyphen,
 %       but zone file labels are more permissive
 % Note: = is used for base64 padding and also as EQUALS token, but standalone = will
@@ -196,6 +197,7 @@ Rules.
 {LPAREN}       : {token, {lparen, TokenLine}}.
 {RPAREN}       : {token, {rparen, TokenLine}}.
 {EQUALS}       : {token, {equals, TokenLine}}.
+{COMMA}        : {token, {comma, TokenLine}}.
 
 % Class
 {CLASS}        : {token, {class, TokenLine, TokenChars}}.

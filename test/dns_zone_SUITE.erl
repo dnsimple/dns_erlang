@@ -29,6 +29,7 @@ groups() ->
             {group, comments},
             {group, blank_owner},
             {group, uncommon_records},
+            {group, svcb_https},
             {group, dns_classes},
             {group, edge_cases},
             {group, parse_file_tests},
@@ -147,9 +148,24 @@ groups() ->
             parse_dhcid_record,
             parse_ds_record,
             parse_dnskey_record,
-            parse_zonemd_record,
+            parse_zonemd_record
+        ]},
+        {svcb_https, [parallel], [
             parse_svcb_record,
-            parse_https_record
+            parse_svcb_with_alpn,
+            parse_svcb_with_port_bad,
+            parse_svcb_with_port,
+            parse_svcb_with_no_default_alpn,
+            parse_svcb_with_ipv4hint,
+            parse_svcb_with_ipv6hint,
+            parse_svcb_with_ipv6hint_bad,
+            parse_svcb_with_ipv4hint_bad,
+            parse_svcb_with_echconfig,
+            parse_svcb_with_echconfig_bad,
+            parse_svcb_with_mandatory,
+            parse_svcb_with_multiple_params,
+            parse_https_record,
+            parse_https_with_params
         ]},
         {dns_classes, [parallel], [
             parse_class_ch,
@@ -1146,7 +1162,6 @@ parse_zonemd_record(_Config) ->
 parse_svcb_record(_Config) ->
     %% SVCB (Service Binding) for modern service discovery (RFC 9460)
     %% Format: priority target [svcparams...]
-    %% Note: svcparams are not yet supported, only basic priority and target
     Zone = <<"example.com. 3600 IN SVCB 1 svc.example.com.\n">>,
     {ok, [RR]} = dns_zone:parse_string(Zone, #{origin => <<"example.com.">>}),
     ?assertEqual(?DNS_TYPE_SVCB, RR#dns_rr.type),
@@ -1159,15 +1174,107 @@ parse_svcb_record(_Config) ->
     ?assertEqual(<<"svc.example.com.">>, TargetName),
     ?assertEqual(#{}, SvcParams).
 
+parse_svcb_with_alpn(_Config) ->
+    %% SVCB with ALPN service parameter
+    Zone = <<"example.com. 3600 IN SVCB 1 svc.example.com. alpn=h2,h3\n">>,
+    {ok, [RR]} = dns_zone:parse_string(Zone, #{origin => <<"example.com.">>}),
+    #dns_rrdata_svcb{svc_params = SvcParams} = RR#dns_rr.data,
+    ?assertEqual([<<"h2">>, <<"h3">>], maps:get(?DNS_SVCB_PARAM_ALPN, SvcParams)).
+
+parse_svcb_with_port_bad(_Config) ->
+    %% SVCB with port service parameter
+    Zone = <<"example.com. 3600 IN SVCB 1 svc.example.com. port=abc\n">>,
+    Result = dns_zone:parse_string(Zone, #{origin => <<"example.com.">>}),
+    ?assertMatch({error, #{type := semantic}}, Result).
+
+parse_svcb_with_port(_Config) ->
+    %% SVCB with port service parameter
+    Zone = <<"example.com. 3600 IN SVCB 1 svc.example.com. port=443\n">>,
+    {ok, [RR]} = dns_zone:parse_string(Zone, #{origin => <<"example.com.">>}),
+    #dns_rrdata_svcb{svc_params = SvcParams} = RR#dns_rr.data,
+    ?assertEqual(443, maps:get(?DNS_SVCB_PARAM_PORT, SvcParams)).
+
+parse_svcb_with_no_default_alpn(_Config) ->
+    %% SVCB with no-default-alpn flag (no value)
+    Zone = <<"example.com. 3600 IN SVCB 1 svc.example.com. no-default-alpn\n">>,
+    {ok, [RR]} = dns_zone:parse_string(Zone, #{origin => <<"example.com.">>}),
+    #dns_rrdata_svcb{svc_params = SvcParams} = RR#dns_rr.data,
+    ?assertEqual(none, maps:get(?DNS_SVCB_PARAM_NO_DEFAULT_ALPN, SvcParams)).
+
+parse_svcb_with_ipv4hint(_Config) ->
+    %% SVCB with ipv4hint service parameter
+    Zone = <<"example.com. 3600 IN SVCB 1 svc.example.com. ipv4hint=192.0.2.1,192.0.2.2\n">>,
+    {ok, [RR]} = dns_zone:parse_string(Zone, #{origin => <<"example.com.">>}),
+    #dns_rrdata_svcb{svc_params = SvcParams} = RR#dns_rr.data,
+    IPs = maps:get(?DNS_SVCB_PARAM_IPV4HINT, SvcParams),
+    ?assertEqual([{192, 0, 2, 1}, {192, 0, 2, 2}], IPs).
+
+parse_svcb_with_ipv6hint(_Config) ->
+    %% SVCB with ipv6hint service parameter
+    Zone = <<"example.com. 3600 IN SVCB 1 svc.example.com. ipv6hint=2001:db8::1,2001:db8::2\n">>,
+    {ok, [RR]} = dns_zone:parse_string(Zone, #{origin => <<"example.com.">>}),
+    #dns_rrdata_svcb{svc_params = SvcParams} = RR#dns_rr.data,
+    IPs = maps:get(?DNS_SVCB_PARAM_IPV6HINT, SvcParams),
+    ?assertEqual(2, length(IPs)),
+    ?assert(lists:member({16#2001, 16#0db8, 0, 0, 0, 0, 0, 1}, IPs)),
+    ?assert(lists:member({16#2001, 16#0db8, 0, 0, 0, 0, 0, 2}, IPs)).
+
+parse_svcb_with_ipv4hint_bad(_Config) ->
+    %% SVCB with ipv4hint service parameter
+    Zone = <<"example.com. 3600 IN SVCB 1 svc.example.com. ipv4hint=1920.2.1,19a.0.2.2\n">>,
+    Result = dns_zone:parse_string(Zone, #{origin => <<"example.com.">>}),
+    ?assertMatch({error, #{type := semantic}}, Result).
+
+parse_svcb_with_ipv6hint_bad(_Config) ->
+    %% SVCB with ipv6hint service parameter
+    Zone = <<"example.com. 3600 IN SVCB 1 svc.example.com. ipv6hint=x001:db8::1,2001:db8::2\n">>,
+    Result = dns_zone:parse_string(Zone, #{origin => <<"example.com.">>}),
+    ?assertMatch({error, #{type := semantic}}, Result).
+
+parse_svcb_with_echconfig(_Config) ->
+    %% SVCB with ipv6hint service parameter
+    Zone = <<"example.com. 3600 IN SVCB 1 svc.example.com. ech=\"YWJjZGVm\"\n">>,
+    {ok, [RR]} = dns_zone:parse_string(Zone, #{origin => <<"example.com.">>}),
+    #dns_rrdata_svcb{svc_params = SvcParams} = RR#dns_rr.data,
+    ?assert(maps:is_key(?DNS_SVCB_PARAM_ECHCONFIG, SvcParams)).
+
+parse_svcb_with_echconfig_bad(_Config) ->
+    %% SVCB with ipv4hint service parameter
+    Zone = <<"example.com. 3600 IN SVCB 1 svc.example.com. ech=\"zzzzzzm\"\n">>,
+    Result = dns_zone:parse_string(Zone, #{origin => <<"example.com.">>}),
+    ?assertMatch({error, #{type := semantic}}, Result).
+
+parse_svcb_with_mandatory(_Config) ->
+    %% SVCB with mandatory parameter
+    Zone =
+        <<"example.com. 3600 IN SVCB 1 svc.example.com. mandatory=alpn,no-default-alpn,port alpn=h2 port=443 no-default-alpn\n">>,
+    {ok, [RR]} = dns_zone:parse_string(Zone, #{origin => <<"example.com.">>}),
+    #dns_rrdata_svcb{svc_params = SvcParams} = RR#dns_rr.data,
+    ?assertEqual(
+        [?DNS_SVCB_PARAM_ALPN, ?DNS_SVCB_PARAM_NO_DEFAULT_ALPN, ?DNS_SVCB_PARAM_PORT],
+        maps:get(?DNS_SVCB_PARAM_MANDATORY, SvcParams)
+    ),
+    ?assertEqual([<<"h2">>], maps:get(?DNS_SVCB_PARAM_ALPN, SvcParams)),
+    ?assertEqual(443, maps:get(?DNS_SVCB_PARAM_PORT, SvcParams)).
+
+parse_svcb_with_multiple_params(_Config) ->
+    %% SVCB with multiple service parameters
+    Zone =
+        <<"example.com. 3600 IN SVCB 1 svc.example.com. alpn=h2,h3 port=443 ipv4hint=192.0.2.1\n">>,
+    {ok, [RR]} = dns_zone:parse_string(Zone, #{origin => <<"example.com.">>}),
+    #dns_rrdata_svcb{svc_params = SvcParams} = RR#dns_rr.data,
+    ?assertEqual([<<"h2">>, <<"h3">>], maps:get(?DNS_SVCB_PARAM_ALPN, SvcParams)),
+    ?assertEqual(443, maps:get(?DNS_SVCB_PARAM_PORT, SvcParams)),
+    ?assertEqual([{192, 0, 2, 1}], maps:get(?DNS_SVCB_PARAM_IPV4HINT, SvcParams)).
+
 parse_https_record(_Config) ->
     %% HTTPS (HTTPS-specific Service Binding) for HTTPS discovery (RFC 9460)
     %% Format: priority target [svcparams...]
-    %% Note: svcparams are not yet supported, only basic priority and target
     %% Using "." as target means use the owner name
     Zone = <<"example.com. 3600 IN HTTPS 1 .\n">>,
     {ok, [RR]} = dns_zone:parse_string(Zone, #{origin => <<"example.com.">>}),
     ?assertEqual(?DNS_TYPE_HTTPS, RR#dns_rr.type),
-    #dns_rrdata_svcb{
+    #dns_rrdata_https{
         svc_priority = Priority,
         target_name = TargetName,
         svc_params = SvcParams
@@ -1175,6 +1282,14 @@ parse_https_record(_Config) ->
     ?assertEqual(1, Priority),
     ?assertEqual(<<".">>, TargetName),
     ?assertEqual(#{}, SvcParams).
+
+parse_https_with_params(_Config) ->
+    %% HTTPS with service parameters
+    Zone = <<"example.com. 3600 IN HTTPS 1 . alpn=h2 port=443\n">>,
+    {ok, [RR]} = dns_zone:parse_string(Zone, #{origin => <<"example.com.">>}),
+    #dns_rrdata_https{svc_params = SvcParams} = RR#dns_rr.data,
+    ?assertEqual([<<"h2">>], maps:get(?DNS_SVCB_PARAM_ALPN, SvcParams)),
+    ?assertEqual(443, maps:get(?DNS_SVCB_PARAM_PORT, SvcParams)).
 
 %% ============================================================================
 %% Full Zone File Test
