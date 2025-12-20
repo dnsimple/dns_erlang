@@ -34,7 +34,9 @@ Helpers to convert between DNS codes and their names.
     alg_name/1,
     name_alg/1,
     ede_code_text/1,
-    ede_text_code/1
+    ede_text_code/1,
+    svcb_param_name/1,
+    name_svcb_param/1
 ]).
 
 %%%===================================================================
@@ -128,6 +130,8 @@ type_name(Int) when is_integer(Int) ->
         ?DNS_TYPE_NINFO_NUMBER -> ?DNS_TYPE_NINFO_BSTR;
         ?DNS_TYPE_RKEY_NUMBER -> ?DNS_TYPE_RKEY_BSTR;
         ?DNS_TYPE_TALINK_NUMBER -> ?DNS_TYPE_TALINK_BSTR;
+        ?DNS_TYPE_SVCB_NUMBER -> ?DNS_TYPE_SVCB_BSTR;
+        ?DNS_TYPE_HTTPS_NUMBER -> ?DNS_TYPE_HTTPS_BSTR;
         ?DNS_TYPE_SPF_NUMBER -> ?DNS_TYPE_SPF_BSTR;
         ?DNS_TYPE_UINFO_NUMBER -> ?DNS_TYPE_UINFO_BSTR;
         ?DNS_TYPE_UID_NUMBER -> ?DNS_TYPE_UID_BSTR;
@@ -206,6 +210,8 @@ name_type(Bin) when is_binary(Bin) ->
         ?DNS_TYPE_NINFO_BSTR -> ?DNS_TYPE_NINFO_NUMBER;
         ?DNS_TYPE_RKEY_BSTR -> ?DNS_TYPE_RKEY_NUMBER;
         ?DNS_TYPE_TALINK_BSTR -> ?DNS_TYPE_TALINK_NUMBER;
+        ?DNS_TYPE_SVCB_BSTR -> ?DNS_TYPE_SVCB_NUMBER;
+        ?DNS_TYPE_HTTPS_BSTR -> ?DNS_TYPE_HTTPS_NUMBER;
         ?DNS_TYPE_SPF_BSTR -> ?DNS_TYPE_SPF_NUMBER;
         ?DNS_TYPE_UINFO_BSTR -> ?DNS_TYPE_UINFO_NUMBER;
         ?DNS_TYPE_UID_BSTR -> ?DNS_TYPE_UID_NUMBER;
@@ -488,5 +494,33 @@ name_llqerrcode(Bin) when is_binary(Bin) ->
         ?DNS_LLQERRCODE_NOSUCHLLQ_BSTR -> ?DNS_LLQERRCODE_NOSUCHLLQ_NUMBER;
         ?DNS_LLQERRCODE_BADVERS_BSTR -> ?DNS_LLQERRCODE_BADVERS_NUMBER;
         ?DNS_LLQERRCODE_UNKNOWNERR_BSTR -> ?DNS_LLQERRCODE_UNKNOWNERR_NUMBER;
+        _ -> undefined
+    end.
+
+?DOC("Returns the name of an SVCB parameter as a binary string.").
+-spec svcb_param_name(dns:uint16()) -> unicode:latin1_binary() | undefined.
+svcb_param_name(Int) when is_integer(Int) ->
+    case Int of
+        ?DNS_SVCB_PARAM_MANDATORY_NUMBER -> ?DNS_SVCB_PARAM_MANDATORY_BSTR;
+        ?DNS_SVCB_PARAM_ALPN_NUMBER -> ?DNS_SVCB_PARAM_ALPN_BSTR;
+        ?DNS_SVCB_PARAM_NO_DEFAULT_ALPN_NUMBER -> ?DNS_SVCB_PARAM_NO_DEFAULT_ALPN_BSTR;
+        ?DNS_SVCB_PARAM_PORT_NUMBER -> ?DNS_SVCB_PARAM_PORT_BSTR;
+        ?DNS_SVCB_PARAM_IPV4HINT_NUMBER -> ?DNS_SVCB_PARAM_IPV4HINT_BSTR;
+        ?DNS_SVCB_PARAM_ECHCONFIG_NUMBER -> ?DNS_SVCB_PARAM_ECHCONFIG_BSTR;
+        ?DNS_SVCB_PARAM_IPV6HINT_NUMBER -> ?DNS_SVCB_PARAM_IPV6HINT_BSTR;
+        _ -> undefined
+    end.
+
+?DOC("Returns the SVCB parameter from a binary string.").
+-spec name_svcb_param(unicode:latin1_binary()) -> dns:uint16() | undefined.
+name_svcb_param(Bin) when is_binary(Bin) ->
+    case Bin of
+        ?DNS_SVCB_PARAM_MANDATORY_BSTR -> ?DNS_SVCB_PARAM_MANDATORY_NUMBER;
+        ?DNS_SVCB_PARAM_ALPN_BSTR -> ?DNS_SVCB_PARAM_ALPN_NUMBER;
+        ?DNS_SVCB_PARAM_NO_DEFAULT_ALPN_BSTR -> ?DNS_SVCB_PARAM_NO_DEFAULT_ALPN_NUMBER;
+        ?DNS_SVCB_PARAM_PORT_BSTR -> ?DNS_SVCB_PARAM_PORT_NUMBER;
+        ?DNS_SVCB_PARAM_IPV4HINT_BSTR -> ?DNS_SVCB_PARAM_IPV4HINT_NUMBER;
+        ?DNS_SVCB_PARAM_ECHCONFIG_BSTR -> ?DNS_SVCB_PARAM_ECHCONFIG_NUMBER;
+        ?DNS_SVCB_PARAM_IPV6HINT_BSTR -> ?DNS_SVCB_PARAM_IPV6HINT_NUMBER;
         _ -> undefined
     end.
