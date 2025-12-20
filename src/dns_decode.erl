@@ -723,6 +723,10 @@ decode_rrdata(MsgBin, _Class, ?DNS_TYPE_SVCB, <<SvcPriority:16, Bin/binary>>) ->
     {TargetName, SvcParamsBin} = decode_dname(MsgBin, Bin),
     SvcParams = decode_svcb_svc_params(SvcParamsBin),
     #dns_rrdata_svcb{svc_priority = SvcPriority, target_name = TargetName, svc_params = SvcParams};
+decode_rrdata(MsgBin, _Class, ?DNS_TYPE_HTTPS, <<SvcPriority:16, Bin/binary>>) ->
+    {TargetName, SvcParamsBin} = decode_dname(MsgBin, Bin),
+    SvcParams = decode_svcb_svc_params(SvcParamsBin),
+    #dns_rrdata_https{svc_priority = SvcPriority, target_name = TargetName, svc_params = SvcParams};
 decode_rrdata(MsgBin, _Class, ?DNS_TYPE_TSIG, Bin) ->
     {Alg,
         <<Time:48, Fudge:16, MS:16, MAC:MS/bytes, MsgId:16, ErrInt:16, OtherLen:16,
@@ -840,28 +844,51 @@ decode_svcb_svc_params(Bin) ->
 decode_svcb_svc_params(<<>>, SvcParams) ->
     SvcParams;
 decode_svcb_svc_params(
-    <<?DNS_SVCB_PARAM_ALPN:16, Len:16, SvcParamValueBin:Len/binary, Rest/binary>>, SvcParams
+    <<?DNS_SVCB_PARAM_MANDATORY:16, Len:16, ValueBin:Len/binary, Rest/binary>>, SvcParams
 ) ->
-    decode_svcb_svc_params(Rest, SvcParams#{?DNS_SVCB_PARAM_ALPN => SvcParamValueBin});
+    Value = [K || <<K:16>> <= ValueBin],
+    decode_svcb_svc_params(Rest, SvcParams#{?DNS_SVCB_PARAM_MANDATORY => Value});
+decode_svcb_svc_params(
+    <<?DNS_SVCB_PARAM_ALPN:16, Len:16, ValueBin:Len/binary, Rest/binary>>, SvcParams
+) ->
+    Value = decode_svcb_svc_params_value(?DNS_SVCB_PARAM_ALPN, ValueBin),
+    decode_svcb_svc_params(Rest, SvcParams#{?DNS_SVCB_PARAM_ALPN => Value});
 decode_svcb_svc_params(<<?DNS_SVCB_PARAM_NO_DEFAULT_ALPN:16, 0:16, Rest/binary>>, SvcParams) ->
     decode_svcb_svc_params(Rest, SvcParams#{?DNS_SVCB_PARAM_NO_DEFAULT_ALPN => none});
 decode_svcb_svc_params(
-    <<?DNS_SVCB_PARAM_PORT:16, Len:16, SvcParamValueBin:Len/binary, Rest/binary>>, SvcParams
+    <<?DNS_SVCB_PARAM_PORT:16, 2:16, Port:16/integer, Rest/binary>>, SvcParams
 ) ->
-    <<V:16/integer>> = SvcParamValueBin,
-    decode_svcb_svc_params(Rest, SvcParams#{?DNS_SVCB_PARAM_PORT => V});
+    decode_svcb_svc_params(Rest, SvcParams#{?DNS_SVCB_PARAM_PORT => Port});
 decode_svcb_svc_params(
-    <<?DNS_SVCB_PARAM_ECHCONFIG:16, Len:16, SvcParamValueBin:Len/binary, Rest/binary>>, SvcParams
+    <<?DNS_SVCB_PARAM_ECHCONFIG:16, Len:16, ValueBin:Len/binary, Rest/binary>>, SvcParams
 ) ->
-    decode_svcb_svc_params(Rest, SvcParams#{?DNS_SVCB_PARAM_ECHCONFIG => SvcParamValueBin});
+    decode_svcb_svc_params(Rest, SvcParams#{?DNS_SVCB_PARAM_ECHCONFIG => ValueBin});
 decode_svcb_svc_params(
-    <<?DNS_SVCB_PARAM_IPV4HINT:16, Len:16, SvcParamValueBin:Len/binary, Rest/binary>>, SvcParams
+    <<?DNS_SVCB_PARAM_IPV4HINT:16, Len:16, ValueBin:Len/binary, Rest/binary>>, SvcParams
 ) ->
-    decode_svcb_svc_params(Rest, SvcParams#{?DNS_SVCB_PARAM_IPV4HINT => SvcParamValueBin});
+    Value = decode_svcb_svc_params_value(?DNS_SVCB_PARAM_IPV4HINT, ValueBin),
+    decode_svcb_svc_params(Rest, SvcParams#{?DNS_SVCB_PARAM_IPV4HINT => Value});
 decode_svcb_svc_params(
-    <<?DNS_SVCB_PARAM_IPV6HINT:16, Len:16, SvcParamValueBin:Len/binary, Rest/binary>>, SvcParams
+    <<?DNS_SVCB_PARAM_IPV6HINT:16, Len:16, ValueBin:Len/binary, Rest/binary>>, SvcParams
 ) ->
-    decode_svcb_svc_params(Rest, SvcParams#{?DNS_SVCB_PARAM_IPV6HINT => SvcParamValueBin}).
+    Value = decode_svcb_svc_params_value(?DNS_SVCB_PARAM_IPV6HINT, ValueBin),
+    decode_svcb_svc_params(Rest, SvcParams#{?DNS_SVCB_PARAM_IPV6HINT => Value});
+decode_svcb_svc_params(
+    <<UnknownKey:16, Len:16, UnknownValueBin:Len/binary, Rest/binary>>, SvcParams
+) ->
+    decode_svcb_svc_params(Rest, SvcParams#{UnknownKey => UnknownValueBin}).
+
+decode_svcb_svc_params_value(?DNS_SVCB_PARAM_ALPN, Bin) ->
+    decode_alpn_list(Bin);
+decode_svcb_svc_params_value(?DNS_SVCB_PARAM_IPV4HINT, Bin) ->
+    [{A, B, C, D} || <<A, B, C, D>> <= Bin];
+decode_svcb_svc_params_value(?DNS_SVCB_PARAM_IPV6HINT, Bin) ->
+    [{A, B, C, D, E, F, G, H} || <<A:16, B:16, C:16, D:16, E:16, F:16, G:16, H:16>> <= Bin].
+
+decode_alpn_list(<<Len:8, Str:Len/binary, Rest/binary>>) ->
+    [Str | decode_alpn_list(Rest)];
+decode_alpn_list(<<>>) ->
+    [].
 
 -spec decode_bool(0 | 1) -> boolean().
 decode_bool(0) -> false;

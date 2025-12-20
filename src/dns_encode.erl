@@ -63,7 +63,7 @@ encode_message_inner_fold(Rec, {BinTmp, CompMapTmp}) ->
     {RecBin, CompMapTmp0} = encode_message_rec(CompMapTmp, byte_size(BinTmp), Rec),
     {<<BinTmp/binary, RecBin/binary>>, CompMapTmp0}.
 
-%% @doc Encode a dns_message record - will truncate the message as needed.
+%% Encode a dns_message record - will truncate the message as needed.
 -spec encode(dns:message(), dns:encode_message_opts()) ->
     {false, dns:message_bin()}
     | {false, dns:message_bin(), dns:tsig_mac()}
@@ -1042,6 +1042,19 @@ encode_rrdata(
 encode_rrdata(
     _Pos,
     _Class,
+    #dns_rrdata_https{
+        svc_priority = SvcPriority,
+        target_name = TargetName,
+        svc_params = SvcParams
+    },
+    CompMap
+) ->
+    TargetNameBin = encode_dname(TargetName),
+    SvcParamsBin = encode_svcb_svc_params(SvcParams),
+    {<<SvcPriority:16, TargetNameBin/binary, SvcParamsBin/binary>>, CompMap};
+encode_rrdata(
+    _Pos,
+    _Class,
     #dns_rrdata_tsig{
         alg = Alg,
         time = Time,
@@ -1336,40 +1349,33 @@ do_encode_text([S | Strings], Acc) ->
 
 -spec encode_svcb_svc_params(dns:svcb_svc_params()) -> binary().
 encode_svcb_svc_params(SvcParams) ->
-    SortedKeys = lists:sort(maps:keys(SvcParams)),
-    lists:foldl(
-        fun(K, AccIn) ->
-            encode_svcb_svc_params_value(K, maps:get(K, SvcParams), AccIn)
-        end,
-        <<>>,
-        SortedKeys
-    ).
+    SortedParams = lists:sort(maps:to_list(SvcParams)),
+    lists:foldl(fun encode_svcb_svc_params_value/2, <<>>, SortedParams).
 
--spec encode_svcb_svc_params_value(atom() | 1..6, none | char() | binary(), binary()) -> binary().
-encode_svcb_svc_params_value(alpn, V, Bin) ->
-    encode_svcb_svc_params_value(?DNS_SVCB_PARAM_ALPN, V, Bin);
-encode_svcb_svc_params_value(?DNS_SVCB_PARAM_ALPN = K, V, Bin) ->
-    L = byte_size(V),
-    <<Bin/binary, K:16/integer, L:16/integer, V/binary>>;
-encode_svcb_svc_params_value(no_default_alpn, V, Bin) ->
-    encode_svcb_svc_params_value(?DNS_SVCB_PARAM_NO_DEFAULT_ALPN, V, Bin);
-encode_svcb_svc_params_value(?DNS_SVCB_PARAM_NO_DEFAULT_ALPN = K, _, Bin) ->
-    L = 0,
-    <<Bin/binary, K:16/integer, L:16/integer>>;
-encode_svcb_svc_params_value(port, V, Bin) ->
-    encode_svcb_svc_params_value(?DNS_SVCB_PARAM_PORT, V, Bin);
-encode_svcb_svc_params_value(?DNS_SVCB_PARAM_PORT = K, V, Bin) ->
-    <<Bin/binary, K:16/integer, 2:16/integer, V:16/integer>>;
-encode_svcb_svc_params_value(echconfig, V, Bin) ->
-    encode_svcb_svc_params_value(?DNS_SVCB_PARAM_ECHCONFIG, V, Bin);
-encode_svcb_svc_params_value(?DNS_SVCB_PARAM_ECHCONFIG = K, V, Bin) ->
-    L = byte_size(V),
-    <<Bin/binary, K:16/integer, L:16/integer, V/binary>>;
-encode_svcb_svc_params_value(?DNS_SVCB_PARAM_IPV4HINT = K, V, Bin) ->
-    L = byte_size(V),
-    <<Bin/binary, K:16/integer, L:16/integer, V/binary>>;
-encode_svcb_svc_params_value(?DNS_SVCB_PARAM_IPV6HINT = K, V, Bin) ->
-    L = byte_size(V),
-    <<Bin/binary, K:16/integer, L:16/integer, V/binary>>;
-encode_svcb_svc_params_value(_, _, Bin) ->
-    Bin.
+-spec encode_svcb_svc_params_value({dns:uint16(), none | binary()}, binary()) -> binary().
+encode_svcb_svc_params_value({?DNS_SVCB_PARAM_MANDATORY = K, Keys}, Bin) ->
+    SortedKeys = lists:sort(Keys),
+    ValueBin = <<<<Key:16>> || Key <- SortedKeys>>,
+    <<Bin/binary, K:16/integer, (byte_size(ValueBin)):16/integer, ValueBin/binary>>;
+%% ALPN: List of length-prefixed strings
+%% Input: ["h2", "h3"] -> Output: <<2, "h2", 2, "h3">>
+encode_svcb_svc_params_value({?DNS_SVCB_PARAM_ALPN = K, Protocols}, Bin) ->
+    ValueBin = <<<<(byte_size(P)):8, P/binary>> || P <- Protocols>>,
+    <<Bin/binary, K:16/integer, (byte_size(ValueBin)):16/integer, ValueBin/binary>>;
+encode_svcb_svc_params_value({?DNS_SVCB_PARAM_NO_DEFAULT_ALPN = K, none}, Bin) ->
+    <<Bin/binary, K:16/integer, 0:16/integer>>;
+encode_svcb_svc_params_value({?DNS_SVCB_PARAM_PORT = K, Int}, Bin) ->
+    <<Bin/binary, K:16/integer, 2:16/integer, Int:16/integer>>;
+encode_svcb_svc_params_value({?DNS_SVCB_PARAM_ECHCONFIG = K, ValueBin}, Bin) ->
+    <<Bin/binary, K:16/integer, (byte_size(ValueBin)):16/integer, ValueBin/binary>>;
+encode_svcb_svc_params_value({?DNS_SVCB_PARAM_IPV4HINT = K, IPs}, Bin) ->
+    ValueBin = <<<<A, B, C, D>> || {A, B, C, D} <- IPs>>,
+    <<Bin/binary, K:16/integer, (byte_size(ValueBin)):16/integer, ValueBin/binary>>;
+encode_svcb_svc_params_value({?DNS_SVCB_PARAM_IPV6HINT = K, IPs}, Bin) ->
+    ValueBin = <<
+        <<A:16, B:16, C:16, D:16, E:16, F:16, G:16, H:16>>
+     || {A, B, C, D, E, F, G, H} <- IPs
+    >>,
+    <<Bin/binary, K:16/integer, (byte_size(ValueBin)):16/integer, ValueBin/binary>>;
+encode_svcb_svc_params_value({K, V}, Bin) ->
+    <<Bin/binary, K:16/integer, (byte_size(V)):16/integer, V/binary>>.
