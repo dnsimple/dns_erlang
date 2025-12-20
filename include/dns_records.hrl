@@ -81,6 +81,11 @@
     data :: binary()
 }).
 
+%% OPENPGPKEY record for OpenPGP public key. See RFC 7929.
+-record(dns_rrdata_openpgpkey, {
+    data :: binary()
+}).
+
 %% DLV record for DNSSEC Lookaside Validation. See RFC 4431. As dns_rrdata_ds.
 -record(dns_rrdata_dlv, {
     keytag :: dns:uint16(),
@@ -252,6 +257,14 @@
     certificate :: binary()
 }).
 
+%% SMIMEA record for S/MIME cert association. See RFC 8162.
+-record(dns_rrdata_smimea, {
+    usage :: dns:uint8(),
+    selector :: dns:uint8(),
+    matching_type :: dns:uint8(),
+    certificate :: binary()
+}).
+
 %% NXT record for next domain (obsoleted by NSEC). See RFC 2535.
 -record(dns_rrdata_nxt, {
     dname :: dns:dname(),
@@ -343,6 +356,21 @@
     svc_priority :: dns:uint16(),
     target_name :: dns:dname(),
     svc_params :: dns:svcb_svc_params()
+}).
+
+%% EUI48 record for EUI-48 address. See RFC 7043.
+-record(dns_rrdata_eui48, {
+    address :: <<_:48>>
+}).
+
+%% EUI64 record for EUI-64 address. See RFC 7043.
+-record(dns_rrdata_eui64, {
+    address :: <<_:64>>
+}).
+
+%% WALLET record for public wallet address.
+-record(dns_rrdata_wallet, {
+    data :: binary()
 }).
 
 %% TSIG record for transaction signature. See RFC 2845: §2.3.
