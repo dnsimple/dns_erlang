@@ -85,6 +85,10 @@ serialise(dns_rrdata_cert, cert, CRL, _Opts) ->
     {<<"cert">>, base64:encode(CRL)};
 serialise(dns_rrdata_dhcid, data, Data, _Opts) ->
     {<<"data">>, base64:encode(Data)};
+serialise(dns_rrdata_openpgpkey, data, Data, _Opts) ->
+    {<<"data">>, base64:encode(Data)};
+serialise(dns_rrdata_wallet, data, Data, _Opts) ->
+    {<<"data">>, base64:encode(Data)};
 serialise(dns_rrdata_dlv, Field, Value, Opts) ->
     serialise(dns_rrdata_ds, Field, Value, Opts);
 serialise(dns_rrdata_key, public_key, PublicKey, _Opts) ->
@@ -122,8 +126,14 @@ serialise(dns_rrdata_nsec3, hash, Hash, _Opts) ->
     {<<"hash">>, base32:encode(Hash, [hex])};
 serialise(dns_rrdata_rrsig, signature, Sig, _Opts) ->
     {<<"signature">>, base64:encode(Sig)};
+serialise(dns_rrdata_smimea, certificate, Certificate, _Opts) ->
+    {<<"certificate">>, base64:encode(Certificate)};
 serialise(dns_rrdata_sshfp, fp, FP, _Opts) ->
     {<<"fp">>, binary:encode_hex(FP)};
+serialise(dns_rrdata_eui48, address, Address, _Opts) ->
+    {<<"address">>, binary:encode_hex(Address)};
+serialise(dns_rrdata_eui64, address, Address, _Opts) ->
+    {<<"address">>, binary:encode_hex(Address)};
 serialise(Tag, svc_params, SvcParams, Opts) when
     Tag =:= dns_rrdata_svcb orelse Tag =:= dns_rrdata_https
 ->
@@ -197,6 +207,10 @@ deserialise(dns_rrdata_cert, cert, CRL, _Opts) ->
     base64:decode(CRL);
 deserialise(dns_rrdata_dhcid, data, Data, _Opts) ->
     base64:decode(Data);
+deserialise(dns_rrdata_openpgpkey, data, Data, _Opts) ->
+    base64:decode(Data);
+deserialise(dns_rrdata_wallet, data, Data, _Opts) ->
+    base64:decode(Data);
 deserialise(dns_rrdata_dlv, Field, Value, Opts) ->
     deserialise(dns_rrdata_ds, Field, Value, Opts);
 deserialise(dns_rrdata_key, public_key, PublicKeyB64, _Opts) ->
@@ -226,8 +240,14 @@ deserialise(dns_rrdata_nsec3, hash, Hash, _Opts) ->
     base32:decode(Hash, [hex]);
 deserialise(dns_rrdata_rrsig, signature, Sig, _Opts) ->
     base64:decode(Sig);
+deserialise(dns_rrdata_smimea, certificate, Certificate, _Opts) ->
+    base64:decode(Certificate);
 deserialise(dns_rrdata_sshfp, fp, FP, _Opts) ->
     binary:decode_hex(FP);
+deserialise(dns_rrdata_eui48, address, Address, _Opts) ->
+    binary:decode_hex(Address);
+deserialise(dns_rrdata_eui64, address, Address, _Opts) ->
+    binary:decode_hex(Address);
 deserialise(Tag, svc_params, SvcParamsList, Opts) when
     Tag =:= dns_rrdata_svcb orelse Tag =:= dns_rrdata_https
 ->

@@ -92,6 +92,26 @@ rrdata_cases() ->
      || {Class, Type, Bin} <- Cases
     ],
     [
+        {"OPENPGPKEY", #dns_rrdata_openpgpkey{
+            data = base64:decode(
+                <<"mQINBFit2jsBEADrbl5vjVxYeAE0g0IDYCBpHirv1Sjlqxx5gjtPhb2YhvyDMXjq">>
+            )
+        }},
+        {"SMIMEA", #dns_rrdata_smimea{
+            usage = 3,
+            selector = 1,
+            matching_type = 1,
+            certificate = base64:decode(<<"MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA">>)
+        }},
+        {"WALLET", #dns_rrdata_wallet{
+            data = base64:decode(<<"dGVzdC13YWxsZXQtZGF0YQ==">>)
+        }},
+        {"EUI48", #dns_rrdata_eui48{
+            address = <<16#00, 16#1A, 16#2B, 16#3C, 16#4D, 16#5E>>
+        }},
+        {"EUI64", #dns_rrdata_eui64{
+            address = <<16#00, 16#1A, 16#2B, 16#3C, 16#4D, 16#5E, 16#6F, 16#70>>
+        }},
         {"SVCB", #dns_rrdata_svcb{
             svc_priority = 0,
             target_name = <<"target.example.com">>,
