@@ -57,7 +57,9 @@ recinfo_new_types(_) ->
         ?DNS_TYPE_EUI48,
         ?DNS_TYPE_EUI64,
         ?DNS_TYPE_SVCB,
-        ?DNS_TYPE_HTTPS
+        ?DNS_TYPE_HTTPS,
+        ?DNS_TYPE_URI,
+        ?DNS_TYPE_RESINFO
     ],
     [
         begin
@@ -239,6 +241,14 @@ rrdata_cases() ->
             svc_priority = 1,
             target_name = <<"target.example.com">>,
             svc_params = #{?DNS_SVCB_PARAM_ALPN => [<<"h2">>, <<"h3">>]}
+        }},
+        {"URI", #dns_rrdata_uri{
+            priority = 10,
+            weight = 1,
+            target = <<"https://www.example.com/">>
+        }},
+        {"RESINFO", #dns_rrdata_resinfo{
+            data = [<<"test-resinfo-data">>]
         }}
         | WireCases
     ].

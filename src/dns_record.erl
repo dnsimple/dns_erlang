@@ -87,6 +87,14 @@ serialise(dns_rrdata_dhcid, data, Data, _Opts) ->
     {<<"data">>, base64:encode(Data)};
 serialise(dns_rrdata_openpgpkey, data, Data, _Opts) ->
     {<<"data">>, base64:encode(Data)};
+serialise(dns_rrdata_uri, priority, Priority, _Opts) when is_integer(Priority) ->
+    {<<"priority">>, integer_to_binary(Priority, 10)};
+serialise(dns_rrdata_uri, weight, Weight, _Opts) when is_integer(Weight) ->
+    {<<"weight">>, integer_to_binary(Weight, 10)};
+serialise(dns_rrdata_uri, target, Target, _Opts) when is_binary(Target) ->
+    {<<"target">>, Target};
+serialise(dns_rrdata_resinfo, data, Data, _Opts) when is_list(Data) ->
+    {<<"data">>, Data};
 serialise(dns_rrdata_wallet, data, Data, _Opts) ->
     {<<"data">>, base64:encode(Data)};
 serialise(dns_rrdata_dlv, Field, Value, Opts) ->
@@ -209,6 +217,16 @@ deserialise(dns_rrdata_dhcid, data, Data, _Opts) ->
     base64:decode(Data);
 deserialise(dns_rrdata_openpgpkey, data, Data, _Opts) ->
     base64:decode(Data);
+deserialise(dns_rrdata_uri, priority, Priority, _Opts) when is_binary(Priority) ->
+    binary_to_integer(Priority);
+deserialise(dns_rrdata_uri, weight, Weight, _Opts) when is_binary(Weight) ->
+    binary_to_integer(Weight);
+deserialise(dns_rrdata_uri, target, Target, _Opts) when is_binary(Target) ->
+    Target;
+deserialise(dns_rrdata_resinfo, data, Data, _Opts) when is_list(Data) ->
+    Data;
+deserialise(dns_rrdata_resinfo, data, Data, _Opts) when is_binary(Data) ->
+    [Data];
 deserialise(dns_rrdata_wallet, data, Data, _Opts) ->
     base64:decode(Data);
 deserialise(dns_rrdata_dlv, Field, Value, Opts) ->
