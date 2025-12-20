@@ -608,6 +608,26 @@ decode_encode_rrdata(_) ->
             matching_type = 2,
             certificate =
                 <<"92003ba34942dc74152e2f2c408d29eca5a520e7f2e06bb944f4dca346baf63c1b177615d466f6c4b71c216a50292bd58c9ebdd2f74e38fe51ffd48c43326cbc">>
+        }},
+        {?DNS_TYPE_OPENPGPKEY, #dns_rrdata_openpgpkey{
+            data = base64:decode(
+                <<"mQINBFit2jsBEADrbl5vjVxYeAE0g0IDYCBpHirv1Sjlqxx5gjtPhb2YhvyDMXjq">>
+            )
+        }},
+        {?DNS_TYPE_SMIMEA, #dns_rrdata_smimea{
+            usage = 3,
+            selector = 1,
+            matching_type = 1,
+            certificate = base64:decode(<<"MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA">>)
+        }},
+        {?DNS_TYPE_WALLET, #dns_rrdata_wallet{
+            data = base64:decode(<<"dGVzdC13YWxsZXQtZGF0YQ==">>)
+        }},
+        {?DNS_TYPE_EUI48, #dns_rrdata_eui48{
+            address = <<16#00, 16#1A, 16#2B, 16#3C, 16#4D, 16#5E>>
+        }},
+        {?DNS_TYPE_EUI64, #dns_rrdata_eui64{
+            address = <<16#00, 16#1A, 16#2B, 16#3C, 16#4D, 16#5E, 16#6F, 16#70>>
         }}
     ],
     [
