@@ -1139,6 +1139,100 @@ build_rdata("DHCID", RData, Ctx) ->
         _ ->
             {error, make_rdata_error(<<"DHCID">>, RData, Ctx)}
     end;
+build_rdata("OPENPGPKEY", RData, Ctx) ->
+    %% OPENPGPKEY format: base64-encoded data (single string)
+    %% RFC 7929 - OpenPGP Public Key
+    case RData of
+        [{string, Base64Data}] when is_list(Base64Data) ->
+            try
+                Data = base64:decode(Base64Data),
+                {ok, #dns_rrdata_openpgpkey{data = Data}}
+            catch
+                _:_ ->
+                    {error, make_rdata_error(<<"OPENPGPKEY">>, RData, Ctx)}
+            end;
+        _ ->
+            {error, make_rdata_error(<<"OPENPGPKEY">>, RData, Ctx)}
+    end;
+build_rdata("WALLET", RData, Ctx) ->
+    %% WALLET format: base64-encoded data (single string)
+    case RData of
+        [{string, Base64Data}] when is_list(Base64Data) ->
+            try
+                Data = base64:decode(Base64Data),
+                {ok, #dns_rrdata_wallet{data = Data}}
+            catch
+                _:_ ->
+                    {error, make_rdata_error(<<"WALLET">>, RData, Ctx)}
+            end;
+        _ ->
+            {error, make_rdata_error(<<"WALLET">>, RData, Ctx)}
+    end;
+build_rdata("SMIMEA", RData, Ctx) ->
+    %% SMIMEA format: usage selector matching-type cert-data(hex string)
+    %% RFC 8162 - S/MIME cert association (similar to TLSA)
+    case RData of
+        [{int, Usage}, {int, Selector}, {int, MatchingType}, {string, CertHex}] when
+            is_integer(Usage), is_integer(Selector), is_integer(MatchingType), is_list(CertHex)
+        ->
+            case hex_to_binary(CertHex) of
+                {ok, Cert} ->
+                    {ok, #dns_rrdata_smimea{
+                        usage = Usage,
+                        selector = Selector,
+                        matching_type = MatchingType,
+                        certificate = Cert
+                    }};
+                {error, _Reason} ->
+                    {error, make_rdata_error(<<"SMIMEA">>, RData, Ctx)}
+            end;
+        _ ->
+            {error, make_rdata_error(<<"SMIMEA">>, RData, Ctx)}
+    end;
+build_rdata("EUI48", RData, Ctx) ->
+    %% EUI48 format: 48-bit MAC address (hex string, 12 hex digits)
+    %% RFC 7043 - EUI-48 address
+    case RData of
+        [{string, HexAddr}] when is_list(HexAddr) ->
+            case hex_to_binary(HexAddr) of
+                {ok, Addr} when byte_size(Addr) =:= 6 ->
+                    {ok, #dns_rrdata_eui48{address = Addr}};
+                _ ->
+                    {error, make_rdata_error(<<"EUI48">>, RData, Ctx)}
+            end;
+        [{domain, HexAddr}] when is_list(HexAddr) ->
+            %% Hex strings may be parsed as domain names
+            case hex_to_binary(HexAddr) of
+                {ok, Addr} when byte_size(Addr) =:= 6 ->
+                    {ok, #dns_rrdata_eui48{address = Addr}};
+                _ ->
+                    {error, make_rdata_error(<<"EUI48">>, RData, Ctx)}
+            end;
+        _ ->
+            {error, make_rdata_error(<<"EUI48">>, RData, Ctx)}
+    end;
+build_rdata("EUI64", RData, Ctx) ->
+    %% EUI64 format: 64-bit MAC address (hex string, 16 hex digits)
+    %% RFC 7043 - EUI-64 address
+    case RData of
+        [{string, HexAddr}] when is_list(HexAddr) ->
+            case hex_to_binary(HexAddr) of
+                {ok, Addr} when byte_size(Addr) =:= 8 ->
+                    {ok, #dns_rrdata_eui64{address = Addr}};
+                _ ->
+                    {error, make_rdata_error(<<"EUI64">>, RData, Ctx)}
+            end;
+        [{domain, HexAddr}] when is_list(HexAddr) ->
+            %% Hex strings may be parsed as domain names
+            case hex_to_binary(HexAddr) of
+                {ok, Addr} when byte_size(Addr) =:= 8 ->
+                    {ok, #dns_rrdata_eui64{address = Addr}};
+                _ ->
+                    {error, make_rdata_error(<<"EUI64">>, RData, Ctx)}
+            end;
+        _ ->
+            {error, make_rdata_error(<<"EUI64">>, RData, Ctx)}
+    end;
 build_rdata("DS", RData, Ctx) ->
     %% DS format: keytag algorithm digest-type digest(hex string)
     %% RFC 4034 - Delegation Signer
@@ -1611,6 +1705,16 @@ type_to_number("CERT") ->
     ?DNS_TYPE_CERT;
 type_to_number("DHCID") ->
     ?DNS_TYPE_DHCID;
+type_to_number("OPENPGPKEY") ->
+    ?DNS_TYPE_OPENPGPKEY;
+type_to_number("SMIMEA") ->
+    ?DNS_TYPE_SMIMEA;
+type_to_number("WALLET") ->
+    ?DNS_TYPE_WALLET;
+type_to_number("EUI48") ->
+    ?DNS_TYPE_EUI48;
+type_to_number("EUI64") ->
+    ?DNS_TYPE_EUI64;
 type_to_number("SPF") ->
     ?DNS_TYPE_SPF;
 type_to_number("SVCB") ->
