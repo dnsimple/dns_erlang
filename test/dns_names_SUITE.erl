@@ -27,7 +27,8 @@ groups() ->
             eoptcode_name,
             llqopcode_name,
             llqerrcode_name,
-            ede_code_text
+            ede_code_text,
+            svcb_param_name
         ]}
     ].
 
@@ -108,6 +109,8 @@ type_name(_) ->
         ?DNS_TYPE_NINFO_NUMBER,
         ?DNS_TYPE_RKEY_NUMBER,
         ?DNS_TYPE_TALINK_NUMBER,
+        ?DNS_TYPE_SVCB_NUMBER,
+        ?DNS_TYPE_HTTPS_NUMBER,
         ?DNS_TYPE_SPF_NUMBER,
         ?DNS_TYPE_UINFO_NUMBER,
         ?DNS_TYPE_UID_NUMBER,
@@ -244,3 +247,18 @@ ede_code_text(_) ->
     ?assertEqual(undefined, dns_names:ede_text_code(?UNKNOWN_BIN)),
     [?assert(is_binary(dns_names:ede_code_text(N))) || N <- Cases],
     [?assertEqual(N, dns_names:ede_text_code(dns_names:ede_code_text(N))) || N <- Cases].
+
+svcb_param_name(_) ->
+    Cases = [
+        ?DNS_SVCB_PARAM_MANDATORY,
+        ?DNS_SVCB_PARAM_ALPN,
+        ?DNS_SVCB_PARAM_NO_DEFAULT_ALPN,
+        ?DNS_SVCB_PARAM_PORT,
+        ?DNS_SVCB_PARAM_IPV4HINT,
+        ?DNS_SVCB_PARAM_ECHCONFIG,
+        ?DNS_SVCB_PARAM_IPV6HINT
+    ],
+    ?assertEqual(undefined, dns_names:svcb_param_name(?UNKNOWN_INT)),
+    ?assertEqual(undefined, dns_names:name_svcb_param(?UNKNOWN_BIN)),
+    [?assert(is_binary(dns_names:svcb_param_name(N))) || N <- Cases],
+    [?assertEqual(N, dns_names:name_svcb_param(dns_names:svcb_param_name(N))) || N <- Cases].

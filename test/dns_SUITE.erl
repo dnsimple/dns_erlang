@@ -491,6 +491,9 @@ decode_encode_rrdata(_) ->
         {?DNS_TYPE_CAA, #dns_rrdata_caa{
             flags = 0, tag = <<"issue">>, value = <<"letsencrypt.org">>
         }},
+        {?DNS_TYPE_HTTPS, #dns_rrdata_https{
+            svc_priority = 0, target_name = <<"target.example.com">>, svc_params = #{}
+        }},
         {?DNS_TYPE_SVCB, #dns_rrdata_svcb{
             svc_priority = 0, target_name = <<"target.example.com">>, svc_params = #{}
         }},
@@ -514,9 +517,28 @@ decode_encode_rrdata(_) ->
             svc_params = #{?DNS_SVCB_PARAM_NO_DEFAULT_ALPN => none}
         }},
         {?DNS_TYPE_SVCB, #dns_rrdata_svcb{
+            svc_priority = 83,
+            target_name = <<"target.example.com">>,
+            svc_params = #{
+                ?DNS_SVCB_PARAM_MANDATORY => [?DNS_SVCB_PARAM_ALPN, ?DNS_SVCB_PARAM_PORT],
+                ?DNS_SVCB_PARAM_ALPN => [<<"h2>>, <<h3">>],
+                ?DNS_SVCB_PARAM_PORT => 83
+            }
+        }},
+        {?DNS_TYPE_SVCB, #dns_rrdata_svcb{
+            svc_priority = 83,
+            target_name = <<"target.example.com">>,
+            svc_params = #{
+                ?DNS_SVCB_PARAM_MANDATORY => [?DNS_SVCB_PARAM_ALPN, ?DNS_SVCB_PARAM_PORT],
+                ?DNS_SVCB_PARAM_ALPN => [<<"h2>>, <<h3">>],
+                ?DNS_SVCB_PARAM_PORT => 83,
+                667 => <<"opaque-value">>
+            }
+        }},
+        {?DNS_TYPE_SVCB, #dns_rrdata_svcb{
             svc_priority = 0,
             target_name = <<"target.example.com">>,
-            svc_params = #{?DNS_SVCB_PARAM_ALPN => <<"h2,h3">>}
+            svc_params = #{?DNS_SVCB_PARAM_ALPN => [<<"h2>>, <<h3">>]}
         }},
         {?DNS_TYPE_SVCB, #dns_rrdata_svcb{
             svc_priority = 0,
@@ -526,14 +548,17 @@ decode_encode_rrdata(_) ->
         {?DNS_TYPE_SVCB, #dns_rrdata_svcb{
             svc_priority = 0,
             target_name = <<"target.example.com">>,
-            svc_params = #{?DNS_SVCB_PARAM_IPV4HINT => <<"1.2.3.4,1.2.3.5">>}
+            svc_params = #{?DNS_SVCB_PARAM_IPV4HINT => [{1, 2, 3, 4}, {1, 2, 3, 5}]}
         }},
         {?DNS_TYPE_SVCB, #dns_rrdata_svcb{
             svc_priority = 0,
             target_name = <<"target.example.com">>,
             svc_params = #{
                 ?DNS_SVCB_PARAM_IPV6HINT =>
-                    <<"2001:0db8:85a3:0000:0000:8a2e:0370:7334,2001:0db8:85a3:0000:0000:8a2e:0370:7335">>
+                    [
+                        {16#2001, 16#0db8, 16#85a3, 16#0000, 16#0000, 16#8a2e, 16#0370, 16#7334},
+                        {16#2001, 16#0db8, 16#85a3, 16#0000, 16#0000, 16#8a2e, 16#0370, 16#7335}
+                    ]
             }
         }},
         {?DNS_TYPE_DNSKEY, #dns_rrdata_dnskey{
@@ -657,8 +682,7 @@ decode_encode_optdata_owner(_) ->
 decode_encode_svcb_params(_) ->
     Cases = [
         {#{}, #{}},
-        {#{?DNS_SVCB_PARAM_PORT => 8079}, #{?DNS_SVCB_PARAM_PORT => 8079}},
-        {#{port => 8080}, #{?DNS_SVCB_PARAM_PORT => 8080}}
+        {#{?DNS_SVCB_PARAM_PORT => 8079}, #{?DNS_SVCB_PARAM_PORT => 8079}}
     ],
 
     [

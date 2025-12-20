@@ -1223,9 +1223,9 @@ build_rdata("DNSKEY", RData, Ctx) ->
             {error, make_rdata_error(<<"DNSKEY">>, RData, Ctx)}
     end;
 build_rdata("SVCB", RData, Ctx) ->
-    %% SVCB format: priority target [svcparams...]
     %% RFC 9460 - Service Binding
-    %% For now, we parse priority and target, svcparams are not yet supported
+    %% SVCB format: priority target [svcparams...]
+    %% Service parameters are key=value pairs or just key (for no-default-alpn)
     case RData of
         [{int, Priority}, {domain, Target}] when is_integer(Priority), is_list(Target) ->
             TargetName = resolve_name(Target, Ctx#parse_ctx.origin),
@@ -1234,21 +1234,47 @@ build_rdata("SVCB", RData, Ctx) ->
                 target_name = TargetName,
                 svc_params = #{}
             }};
+        [{int, Priority}, {domain, Target} | SvcParams] when
+            is_integer(Priority), is_list(Target)
+        ->
+            TargetName = resolve_name(Target, Ctx#parse_ctx.origin),
+            case parse_svcb_params_from_rdata(SvcParams, Ctx) of
+                {ok, Params} ->
+                    {ok, #dns_rrdata_svcb{
+                        svc_priority = Priority,
+                        target_name = TargetName,
+                        svc_params = Params
+                    }};
+                {error, Reason} ->
+                    {error, Reason}
+            end;
         _ ->
             {error, make_rdata_error(<<"SVCB">>, RData, Ctx)}
     end;
 build_rdata("HTTPS", RData, Ctx) ->
-    %% HTTPS format: same as SVCB but different type number
-    %% RFC 9460 - HTTPS-specific Service Binding
-    %% For now, we parse priority and target, svcparams are not yet supported
+    %% RFC 9460 - HTTPS-specific Service Binding: same as SVCB but different type number
     case RData of
         [{int, Priority}, {domain, Target}] when is_integer(Priority), is_list(Target) ->
             TargetName = resolve_name(Target, Ctx#parse_ctx.origin),
-            {ok, #dns_rrdata_svcb{
+            {ok, #dns_rrdata_https{
                 svc_priority = Priority,
                 target_name = TargetName,
                 svc_params = #{}
             }};
+        [{int, Priority}, {domain, Target} | SvcParams] when
+            is_integer(Priority), is_list(Target)
+        ->
+            TargetName = resolve_name(Target, Ctx#parse_ctx.origin),
+            case parse_svcb_params_from_rdata(SvcParams, Ctx) of
+                {ok, Params} ->
+                    {ok, #dns_rrdata_https{
+                        svc_priority = Priority,
+                        target_name = TargetName,
+                        svc_params = Params
+                    }};
+                {error, Reason} ->
+                    {error, Reason}
+            end;
         _ ->
             {error, make_rdata_error(<<"HTTPS">>, RData, Ctx)}
     end;
@@ -1711,4 +1737,135 @@ hex_to_binary(HexBin) when is_binary(HexBin) ->
     catch
         error:badarg ->
             {error, {invalid_hex_data, HexBin}}
+    end.
+
+%% Parse SVCB/HTTPS service parameters directly from RDATA
+%% Handles both parsed key=value pairs and labels containing = (from lexer)
+-spec parse_svcb_params_from_rdata([rdata()], parse_ctx()) ->
+    {ok, dns:svcb_svc_params()} | {error, error_detail()}.
+parse_svcb_params_from_rdata(SvcParams, Ctx) ->
+    parse_svcb_params_from_rdata(SvcParams, Ctx, #{}).
+
+-spec parse_svcb_params_from_rdata([rdata()], parse_ctx(), dns:svcb_svc_params()) ->
+    {ok, dns:svcb_svc_params()} | {error, error_detail()}.
+parse_svcb_params_from_rdata([], _Ctx, Acc) ->
+    {ok, Acc};
+parse_svcb_params_from_rdata([{domain, "no-default-alpn"} | Rest], Ctx, Acc) ->
+    NewAcc = Acc#{?DNS_SVCB_PARAM_NO_DEFAULT_ALPN => none},
+    parse_svcb_params_from_rdata(Rest, Ctx, NewAcc);
+parse_svcb_params_from_rdata([{domain, "alpn=" ++ Alpn} | Rest], Ctx, Acc) ->
+    Protocols = [list_to_binary(string:trim(P)) || P <- string:split(Alpn, ",", all), P =/= ""],
+    NewAcc = Acc#{?DNS_SVCB_PARAM_ALPN => Protocols},
+    parse_svcb_params_from_rdata(Rest, Ctx, NewAcc);
+parse_svcb_params_from_rdata([{domain, "port=" ++ PortStr} | Rest], Ctx, Acc) ->
+    case string:to_integer(PortStr) of
+        {Port, ""} when Port >= 0, Port =< 65535 ->
+            NewAcc = Acc#{?DNS_SVCB_PARAM_PORT => Port},
+            parse_svcb_params_from_rdata(Rest, Ctx, NewAcc);
+        _ ->
+            {error, make_semantic_error({invalid_port, PortStr}, Ctx)}
+    end;
+parse_svcb_params_from_rdata([{domain, "ipv4hint=" ++ Value} | Rest], Ctx, Acc) ->
+    IPs = [string:trim(IP) || IP <- string:split(Value, ",", all), IP =/= ""],
+    case parse_ipv4_list(IPs, Ctx) of
+        {ok, IPList} ->
+            NewAcc = Acc#{?DNS_SVCB_PARAM_IPV4HINT => IPList},
+            parse_svcb_params_from_rdata(Rest, Ctx, NewAcc);
+        {error, Reason} ->
+            {error, Reason}
+    end;
+parse_svcb_params_from_rdata([{domain, "ipv6hint=" ++ Value} | Rest], Ctx, Acc) ->
+    IPs = [string:trim(IP) || IP <- string:split(Value, ",", all), IP =/= ""],
+    case parse_ipv6_list(IPs, Ctx) of
+        {ok, IPList} ->
+            NewAcc = Acc#{?DNS_SVCB_PARAM_IPV6HINT => IPList},
+            parse_svcb_params_from_rdata(Rest, Ctx, NewAcc);
+        {error, Reason} ->
+            {error, Reason}
+    end;
+parse_svcb_params_from_rdata([{domain, "mandatory=" ++ Mandatory} | Rest], Ctx, Acc) ->
+    Keys = [string:trim(K) || K <- string:split(Mandatory, ",", all), K =/= ""],
+    case parse_mandatory_keys(Keys, Ctx) of
+        {ok, KeyNums} ->
+            NewAcc = Acc#{?DNS_SVCB_PARAM_MANDATORY => KeyNums},
+            parse_svcb_params_from_rdata(Rest, Ctx, NewAcc);
+        {error, Reason} ->
+            {error, Reason}
+    end;
+parse_svcb_params_from_rdata([{domain, "ech="}, {string, Value} | Rest], Ctx, Acc) ->
+    try
+        ECHConfig = base64:decode(Value),
+        NewAcc = Acc#{?DNS_SVCB_PARAM_ECHCONFIG => ECHConfig},
+        parse_svcb_params_from_rdata(Rest, Ctx, NewAcc)
+    catch
+        _:Reason ->
+            {error, make_semantic_error({invalid_svcparam_format, Reason}, Ctx)}
+    end;
+parse_svcb_params_from_rdata([Other | _], Ctx, _Acc) ->
+    {error, make_semantic_error({invalid_svcparam_format, Other}, Ctx)}.
+
+%% Parse mandatory parameter keys (e.g., "alpn,port" -> [1, 3])
+-spec parse_mandatory_keys([string()], parse_ctx()) ->
+    {ok, [dns:uint16()]} | {error, error_detail()}.
+parse_mandatory_keys(Keys, Ctx) ->
+    parse_mandatory_keys(Keys, Ctx, []).
+
+-spec parse_mandatory_keys([string()], parse_ctx(), [dns:uint16()]) ->
+    {ok, [dns:uint16()]} | {error, error_detail()}.
+parse_mandatory_keys([], _Ctx, Acc) ->
+    {ok, lists:reverse(Acc)};
+parse_mandatory_keys(["alpn" | Rest], Ctx, Acc) ->
+    parse_mandatory_keys(Rest, Ctx, [?DNS_SVCB_PARAM_ALPN | Acc]);
+parse_mandatory_keys(["no-default-alpn" | Rest], Ctx, Acc) ->
+    parse_mandatory_keys(Rest, Ctx, [?DNS_SVCB_PARAM_NO_DEFAULT_ALPN | Acc]);
+parse_mandatory_keys(["port" | Rest], Ctx, Acc) ->
+    parse_mandatory_keys(Rest, Ctx, [?DNS_SVCB_PARAM_PORT | Acc]);
+parse_mandatory_keys(["ipv4hint" | Rest], Ctx, Acc) ->
+    parse_mandatory_keys(Rest, Ctx, [?DNS_SVCB_PARAM_IPV4HINT | Acc]);
+parse_mandatory_keys(["ipv6hint" | Rest], Ctx, Acc) ->
+    parse_mandatory_keys(Rest, Ctx, [?DNS_SVCB_PARAM_IPV6HINT | Acc]);
+parse_mandatory_keys(["key" ++ IntStr | Rest], Ctx, Acc) ->
+    KeyNum =
+        case string:to_integer(IntStr) of
+            {Num, ""} when Num >= 0, Num =< 65535 -> Num;
+            _ -> undefined
+        end,
+    parse_mandatory_keys(Rest, Ctx, [KeyNum | Acc]);
+parse_mandatory_keys([Key | _], Ctx, _) ->
+    {error, make_semantic_error({invalid_mandatory_key, Key}, Ctx)}.
+
+%% Parse a list of IPv4 addresses
+-spec parse_ipv4_list([string()], parse_ctx()) ->
+    {ok, [inet:ip4_address()]} | {error, error_detail()}.
+parse_ipv4_list(IPs, Ctx) ->
+    parse_ipv4_list(IPs, Ctx, []).
+
+-spec parse_ipv4_list([string()], parse_ctx(), [inet:ip4_address()]) ->
+    {ok, [inet:ip4_address()]} | {error, error_detail()}.
+parse_ipv4_list([], _Ctx, Acc) ->
+    {ok, lists:reverse(Acc)};
+parse_ipv4_list([IP | Rest], Ctx, Acc) ->
+    case parse_ipv4(IP) of
+        {ok, IPAddr} ->
+            parse_ipv4_list(Rest, Ctx, [IPAddr | Acc]);
+        {error, Reason} ->
+            {error, make_semantic_error({invalid_ipv4_in_hint, IP, Reason}, Ctx)}
+    end.
+
+%% Parse a list of IPv6 addresses
+-spec parse_ipv6_list([string()], parse_ctx()) ->
+    {ok, [inet:ip6_address()]} | {error, error_detail()}.
+parse_ipv6_list(IPs, Ctx) ->
+    parse_ipv6_list(IPs, Ctx, []).
+
+-spec parse_ipv6_list([string()], parse_ctx(), [inet:ip6_address()]) ->
+    {ok, [inet:ip6_address()]} | {error, error_detail()}.
+parse_ipv6_list([], _Ctx, Acc) ->
+    {ok, lists:reverse(Acc)};
+parse_ipv6_list([IP | Rest], Ctx, Acc) ->
+    case parse_ipv6(IP) of
+        {ok, IPAddr} ->
+            parse_ipv6_list(Rest, Ctx, [IPAddr | Acc]);
+        {error, Reason} ->
+            {error, make_semantic_error({invalid_ipv6_in_hint, IP, Reason}, Ctx)}
     end.
