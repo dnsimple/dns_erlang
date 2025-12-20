@@ -148,6 +148,8 @@ groups() ->
             parse_cert_record_hex,
             parse_dhcid_record,
             parse_openpgpkey_record,
+            parse_uri_record,
+            parse_resinfo_record,
             parse_wallet_record,
             parse_eui48_record,
             parse_eui64_record,
@@ -271,6 +273,9 @@ groups() ->
             parse_invalid_dhcid_base64,
             parse_invalid_openpgpkey_rdata,
             parse_invalid_openpgpkey_base64,
+            parse_invalid_uri_rdata,
+            parse_invalid_resinfo_rdata,
+            parse_invalid_resinfo_base64,
             parse_invalid_wallet_rdata,
             parse_invalid_wallet_base64,
             parse_invalid_eui48_rdata,
@@ -1210,6 +1215,26 @@ parse_openpgpkey_record(_Config) ->
     ?assert(is_binary(Data)),
     ?assert(byte_size(Data) > 0).
 
+parse_uri_record(_Config) ->
+    %% URI record (RFC 7553)
+    Zone = <<"example.com. 3600 IN URI 10 1 \"https://www.example.com/\"\n">>,
+    {ok, [RR]} = dns_zone:parse_string(Zone, #{origin => <<"example.com.">>}),
+    ?assertEqual(?DNS_TYPE_URI, RR#dns_rr.type),
+    #dns_rrdata_uri{priority = Priority, weight = Weight, target = Target} = RR#dns_rr.data,
+    ?assertEqual(10, Priority),
+    ?assertEqual(1, Weight),
+    ?assertEqual(<<"https://www.example.com/">>, Target).
+
+parse_resinfo_record(_Config) ->
+    %% RESINFO record (same format as TXT)
+    Zone = <<"example.com. 3600 IN RESINFO \"test-resinfo-data\"\n">>,
+    {ok, [RR]} = dns_zone:parse_string(Zone, #{origin => <<"example.com.">>}),
+    ?assertEqual(?DNS_TYPE_RESINFO, RR#dns_rr.type),
+    #dns_rrdata_resinfo{data = Data} = RR#dns_rr.data,
+    %% Verify it's a list of binaries (same as TXT)
+    ?assert(is_list(Data)),
+    ?assertEqual([<<"test-resinfo-data">>], Data).
+
 parse_wallet_record(_Config) ->
     %% WALLET for public wallet address
     Zone = <<"example.com. 3600 IN WALLET \"dGVzdC13YWxsZXQtZGF0YQ==\"\n">>,
@@ -1970,6 +1995,23 @@ parse_invalid_openpgpkey_base64(_Config) ->
     %% OPENPGPKEY record with invalid base64 data
     Zone = <<"example.com. 3600 IN OPENPGPKEY \"!!!INVALID!!!\"\n">>,
     {error, #{type := semantic}} = dns_zone:parse_string(Zone, #{origin => <<"example.com.">>}).
+
+parse_invalid_uri_rdata(_Config) ->
+    %% URI record with no RDATA
+    Zone = <<"example.com. 3600 IN URI\n">>,
+    {error, #{type := parser}} = dns_zone:parse_string(Zone, #{origin => <<"example.com.">>}).
+
+parse_invalid_resinfo_rdata(_Config) ->
+    %% RESINFO record with no RDATA
+    Zone = <<"example.com. 3600 IN RESINFO\n">>,
+    {error, #{type := parser}} = dns_zone:parse_string(Zone, #{origin => <<"example.com.">>}).
+
+parse_invalid_resinfo_base64(_Config) ->
+    %% RESINFO record parsing (should work with any strings, same as TXT)
+    %% This test is kept for consistency but RESINFO accepts any strings
+    Zone = <<"example.com. 3600 IN RESINFO \"valid-string\"\n">>,
+    {ok, [RR]} = dns_zone:parse_string(Zone, #{origin => <<"example.com.">>}),
+    ?assertEqual(?DNS_TYPE_RESINFO, RR#dns_rr.type).
 
 parse_invalid_wallet_rdata(_Config) ->
     %% WALLET record with no RDATA

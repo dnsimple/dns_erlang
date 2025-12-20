@@ -356,6 +356,24 @@ decode_rrdata(_MsgBin, Class, ?DNS_TYPE_DHCID, Bin) when ?CLASS_IS_IN(Class) ->
     #dns_rrdata_dhcid{data = Bin};
 decode_rrdata(_MsgBin, Class, ?DNS_TYPE_OPENPGPKEY, Bin) when ?CLASS_IS_IN(Class) ->
     #dns_rrdata_openpgpkey{data = Bin};
+decode_rrdata(
+    _MsgBin,
+    _Class,
+    ?DNS_TYPE_URI,
+    <<Priority:16, Weight:16, Target/binary>>
+) ->
+    case uri_string:normalize(Target) of
+        {error, Reason, _} ->
+            erlang:error({bad_uri, Target, Reason});
+        NormalizedTarget ->
+            #dns_rrdata_uri{
+                priority = Priority,
+                weight = Weight,
+                target = NormalizedTarget
+            }
+    end;
+decode_rrdata(_MsgBin, Class, ?DNS_TYPE_RESINFO, Bin) when ?CLASS_IS_IN(Class) ->
+    #dns_rrdata_resinfo{data = decode_text(Bin)};
 decode_rrdata(_MsgBin, Class, ?DNS_TYPE_WALLET, Bin) when ?CLASS_IS_IN(Class) ->
     #dns_rrdata_wallet{data = Bin};
 decode_rrdata(_MsgBin, _Class, ?DNS_TYPE_DLV, <<KeyTag:16, Alg:8, DigestType:8, Digest/binary>>) ->

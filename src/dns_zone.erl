@@ -568,18 +568,6 @@ rdata_error_message(<<"DHCID">>, _RData) ->
         <<"DHCID requires: \"base64data\"\n", "Example: example.com. IN DHCID ",
             "\"AAIBY2/AuCccgoJbsaxcQc9TUapptP69lOjxfNuVAA2kjEA=\"">>
     };
-rdata_error_message(<<"MX">>, _RData) ->
-    {
-        <<"Invalid MX record: expected preference and mail server">>,
-        <<"MX requires: preference mailserver\n",
-            "Example: example.com. IN MX 10 mail.example.com.">>
-    };
-rdata_error_message(<<"SRV">>, _RData) ->
-    {
-        <<"Invalid SRV record: expected priority, weight, port, and target">>,
-        <<"SRV requires: priority weight port target\n",
-            "Example: _http._tcp.example.com. IN SRV 10 20 80 www.example.com.">>
-    };
 rdata_error_message(<<"DS">>, RData) when length(RData) < 4 ->
     {
         <<"Invalid DS record: expected 4 fields ", "(keytag, algorithm, digest-type, digest), got ",
@@ -1154,6 +1142,34 @@ build_rdata("OPENPGPKEY", RData, Ctx) ->
         _ ->
             {error, make_rdata_error(<<"OPENPGPKEY">>, RData, Ctx)}
     end;
+build_rdata("URI", RData, Ctx) ->
+    %% URI format: priority weight target
+    %% RFC 7553 - The Uniform Resource Identifier (URI) DNS Resource Record
+    case RData of
+        [{int, Priority}, {int, Weight}, {string, Target}] when
+            is_integer(Priority), is_integer(Weight), is_list(Target)
+        ->
+            BinTarget = unicode:characters_to_binary(Target),
+            case uri_string:normalize(BinTarget) of
+                {error, Reason, _} ->
+                    erlang:error({bad_uri, Target, Reason});
+                NormalizedTarget ->
+                    {ok, #dns_rrdata_uri{
+                        priority = Priority,
+                        weight = Weight,
+                        target = NormalizedTarget
+                    }}
+            end;
+        _ ->
+            {error, make_rdata_error(<<"URI">>, RData, Ctx)}
+    end;
+build_rdata("RESINFO", RData, Ctx) ->
+    %% RESINFO format: text strings (same as TXT)
+    %% RFC 9606 - Resource Information (RESINFO) DNS Resource Record
+    case extract_strings(RData) of
+        {ok, Strings} -> {ok, #dns_rrdata_resinfo{data = Strings}};
+        {error, Reason} -> {error, make_semantic_error(Reason, Ctx)}
+    end;
 build_rdata("WALLET", RData, Ctx) ->
     %% WALLET format: base64-encoded data (single string)
     case RData of
@@ -1709,6 +1725,10 @@ type_to_number("OPENPGPKEY") ->
     ?DNS_TYPE_OPENPGPKEY;
 type_to_number("SMIMEA") ->
     ?DNS_TYPE_SMIMEA;
+type_to_number("URI") ->
+    ?DNS_TYPE_URI;
+type_to_number("RESINFO") ->
+    ?DNS_TYPE_RESINFO;
 type_to_number("WALLET") ->
     ?DNS_TYPE_WALLET;
 type_to_number("EUI48") ->

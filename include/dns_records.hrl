@@ -368,6 +368,18 @@
     address :: <<_:64>>
 }).
 
+%% URI record for uniform resource identifier. See RFC 7553.
+-record(dns_rrdata_uri, {
+    priority :: dns:uint16(),
+    weight :: dns:uint16(),
+    target :: binary()
+}).
+
+%% RESINFO record for resource information. See RFC 9606
+-record(dns_rrdata_resinfo, {
+    data :: [binary()]
+}).
+
 %% WALLET record for public wallet address.
 -record(dns_rrdata_wallet, {
     data :: binary()

@@ -86,6 +86,8 @@ fields(dns_rrdata_dlv) -> record_info(fields, dns_rrdata_dlv);
 fields(dns_rrdata_zonemd) -> record_info(fields, dns_rrdata_zonemd);
 fields(dns_rrdata_cert) -> record_info(fields, dns_rrdata_cert);
 fields(dns_rrdata_tsig) -> record_info(fields, dns_rrdata_tsig);
+fields(dns_rrdata_uri) -> record_info(fields, dns_rrdata_uri);
+fields(dns_rrdata_resinfo) -> record_info(fields, dns_rrdata_resinfo);
 fields(dns_rrdata_wallet) -> record_info(fields, dns_rrdata_wallet);
 fields(dns_optrr) -> record_info(fields, dns_optrr);
 fields(dns_opt_llq) -> record_info(fields, dns_opt_llq);
@@ -147,6 +149,8 @@ size(dns_rrdata_dlv) -> record_info(size, dns_rrdata_dlv);
 size(dns_rrdata_zonemd) -> record_info(size, dns_rrdata_zonemd);
 size(dns_rrdata_cert) -> record_info(size, dns_rrdata_cert);
 size(dns_rrdata_tsig) -> record_info(size, dns_rrdata_tsig);
+size(dns_rrdata_uri) -> record_info(size, dns_rrdata_uri);
+size(dns_rrdata_resinfo) -> record_info(size, dns_rrdata_resinfo);
 size(dns_rrdata_wallet) -> record_info(size, dns_rrdata_wallet);
 size(dns_optrr) -> record_info(size, dns_optrr);
 size(dns_opt_llq) -> record_info(size, dns_opt_llq);
@@ -207,6 +211,8 @@ atom_for_type(?DNS_TYPE_DLV) -> dns_rrdata_dlv;
 atom_for_type(?DNS_TYPE_ZONEMD) -> dns_rrdata_zonemd;
 atom_for_type(?DNS_TYPE_CERT) -> dns_rrdata_cert;
 atom_for_type(?DNS_TYPE_TSIG) -> dns_rrdata_tsig;
+atom_for_type(?DNS_TYPE_URI) -> dns_rrdata_uri;
+atom_for_type(?DNS_TYPE_RESINFO) -> dns_rrdata_resinfo;
 atom_for_type(?DNS_TYPE_WALLET) -> dns_rrdata_wallet;
 atom_for_type(_) -> undefined.
 
@@ -261,5 +267,7 @@ type_for_atom(dns_rrdata_dlv) -> ?DNS_TYPE_DLV;
 type_for_atom(dns_rrdata_zonemd) -> ?DNS_TYPE_ZONEMD;
 type_for_atom(dns_rrdata_cert) -> ?DNS_TYPE_CERT;
 type_for_atom(dns_rrdata_tsig) -> ?DNS_TYPE_TSIG;
+type_for_atom(dns_rrdata_uri) -> ?DNS_TYPE_URI;
+type_for_atom(dns_rrdata_resinfo) -> ?DNS_TYPE_RESINFO;
 type_for_atom(dns_rrdata_wallet) -> ?DNS_TYPE_WALLET;
 type_for_atom(_) -> undefined.

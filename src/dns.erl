@@ -231,6 +231,8 @@ restrictions on the length. Labels must be 63 characters or less.
     | #dns_rrdata_smimea{}
     | #dns_rrdata_tsig{}
     | #dns_rrdata_txt{}
+    | #dns_rrdata_uri{}
+    | #dns_rrdata_resinfo{}
     | #dns_rrdata_wallet{}.
 ?DOC(#{group => <<"Types: records">>}).
 -type records() :: additional() | answers() | authority() | questions().

@@ -569,6 +569,19 @@ encode_rrdata(_Pos, ?DNS_CLASS_IN, #dns_rrdata_dhcid{data = Bin}, CompMap) ->
     {Bin, CompMap};
 encode_rrdata(_Pos, ?DNS_CLASS_IN, #dns_rrdata_openpgpkey{data = Bin}, CompMap) ->
     {Bin, CompMap};
+encode_rrdata(
+    _Pos,
+    _Class,
+    #dns_rrdata_uri{
+        priority = Priority,
+        weight = Weight,
+        target = Target
+    },
+    CompMap
+) ->
+    {<<Priority:16, Weight:16, Target/binary>>, CompMap};
+encode_rrdata(_Pos, _Class, #dns_rrdata_resinfo{data = Strings}, CompMap) ->
+    {encode_text(Strings), CompMap};
 encode_rrdata(_Pos, ?DNS_CLASS_IN, #dns_rrdata_wallet{data = Bin}, CompMap) ->
     {Bin, CompMap};
 encode_rrdata(
