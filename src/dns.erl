@@ -217,6 +217,8 @@ restrictions on the length. Labels must be 63 characters or less.
     | #dns_rrdata_nsec3{}
     | #dns_rrdata_nsec3param{}
     | #dns_rrdata_nxt{}
+    | #dns_rrdata_csync{}
+    | #dns_rrdata_dsync{}
     | #dns_rrdata_openpgpkey{}
     | #dns_rrdata_ptr{}
     | #dns_rrdata_rp{}

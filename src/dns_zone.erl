@@ -1473,6 +1473,63 @@ build_rdata("NSEC", RData, Ctx) ->
         _ ->
             {error, make_rdata_error(<<"NSEC">>, RData, Ctx)}
     end;
+build_rdata("CSYNC", RData, Ctx) ->
+    %% CSYNC format: soa_serial flags type1 type2 type3 ...
+    %% RFC 7477 - Child-to-Parent Synchronization in DNS
+    case RData of
+        [{int, SOASerial}, {int, Flags} | Types] when
+            is_integer(SOASerial), is_integer(Flags), length(Types) > 0
+        ->
+            %% Parse type names - they can be rtype tokens (parsed as domain) or labels
+            TypeNums = lists:map(
+                fun
+                    ({domain, TypeName}) when is_list(TypeName) ->
+                        type_to_number(TypeName);
+                    ({rtype, TypeName}) when is_list(TypeName) ->
+                        type_to_number(TypeName);
+                    (_) ->
+                        %% Invalid type, skip or use 0
+                        0
+                end,
+                Types
+            ),
+            %% Filter out invalid types (0)
+            ValidTypes = [T || T <- TypeNums, T =/= 0],
+            {ok, #dns_rrdata_csync{
+                soa_serial = SOASerial,
+                flags = Flags,
+                types = ValidTypes
+            }};
+        _ ->
+            {error, make_rdata_error(<<"CSYNC">>, RData, Ctx)}
+    end;
+build_rdata("DSYNC", RData, Ctx) ->
+    %% DSYNC format: rrtype scheme port target
+    %% RFC 9859 - Delegation Synchronization (DSYNC) DNS Resource Record
+    case RData of
+        [{domain, RRTypeName}, {int, Scheme}, {int, Port}, {domain, Target}] when
+            is_list(RRTypeName),
+            is_integer(Scheme),
+            Scheme >= 0,
+            Scheme =< 255,
+            is_integer(Port),
+            is_list(Target)
+        ->
+            RRType = type_to_number(RRTypeName),
+            case RRType of
+                0 ->
+                    {error, make_rdata_error(<<"DSYNC">>, RData, Ctx)};
+                _ ->
+                    {ok, #dns_rrdata_dsync{
+                        rrtype = RRType,
+                        scheme = Scheme,
+                        port = Port,
+                        target = resolve_name(Target, Ctx#parse_ctx.origin)
+                    }}
+            end;
+        _ ->
+            {error, make_rdata_error(<<"DSYNC">>, RData, Ctx)}
+    end;
 build_rdata("ZONEMD", RData, Ctx) ->
     %% ZONEMD format: serial scheme algorithm hash(hex string)
     %% RFC 8976 - Zone Metadata
@@ -1723,12 +1780,16 @@ type_to_number("DHCID") ->
     ?DNS_TYPE_DHCID;
 type_to_number("OPENPGPKEY") ->
     ?DNS_TYPE_OPENPGPKEY;
+type_to_number("CSYNC") ->
+    ?DNS_TYPE_CSYNC;
 type_to_number("SMIMEA") ->
     ?DNS_TYPE_SMIMEA;
 type_to_number("URI") ->
     ?DNS_TYPE_URI;
 type_to_number("RESINFO") ->
     ?DNS_TYPE_RESINFO;
+type_to_number("DSYNC") ->
+    ?DNS_TYPE_DSYNC;
 type_to_number("WALLET") ->
     ?DNS_TYPE_WALLET;
 type_to_number("EUI48") ->

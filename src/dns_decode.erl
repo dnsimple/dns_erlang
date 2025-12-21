@@ -654,6 +654,31 @@ decode_rrdata(MsgBin, _Class, ?DNS_TYPE_NSEC, Bin) ->
 decode_rrdata(
     _MsgBin,
     _Class,
+    ?DNS_TYPE_CSYNC,
+    <<SOASerial:32, Flags:16, TypeBMP/binary>>
+) ->
+    Types = decode_nsec_types(TypeBMP),
+    #dns_rrdata_csync{
+        soa_serial = SOASerial,
+        flags = Flags,
+        types = Types
+    };
+decode_rrdata(
+    MsgBin,
+    _Class,
+    ?DNS_TYPE_DSYNC,
+    <<RRType:16, Scheme:8, Port:16, TargetBin/binary>>
+) ->
+    Target = decode_dnameonly(MsgBin, TargetBin),
+    #dns_rrdata_dsync{
+        rrtype = RRType,
+        scheme = Scheme,
+        port = Port,
+        target = Target
+    };
+decode_rrdata(
+    _MsgBin,
+    _Class,
     ?DNS_TYPE_NSEC3,
     <<HashAlg:8, _FlagsZ:7, OptOut:1, Iterations:16, SaltLen:8/unsigned, Salt:SaltLen/binary-unit:8,
         HashLen:8/unsigned, Hash:HashLen/binary-unit:8, TypeBMP/binary>>

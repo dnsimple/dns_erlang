@@ -150,6 +150,8 @@ groups() ->
             parse_openpgpkey_record,
             parse_uri_record,
             parse_resinfo_record,
+            parse_csync_record,
+            parse_dsync_record,
             parse_wallet_record,
             parse_eui48_record,
             parse_eui64_record,
@@ -276,6 +278,8 @@ groups() ->
             parse_invalid_uri_rdata,
             parse_invalid_resinfo_rdata,
             parse_invalid_resinfo_base64,
+            parse_invalid_csync_rdata,
+            parse_invalid_dsync_rdata,
             parse_invalid_wallet_rdata,
             parse_invalid_wallet_base64,
             parse_invalid_eui48_rdata,
@@ -1235,6 +1239,32 @@ parse_resinfo_record(_Config) ->
     ?assert(is_list(Data)),
     ?assertEqual([<<"test-resinfo-data">>], Data).
 
+parse_csync_record(_Config) ->
+    %% CSYNC record (RFC 7477)
+    Zone = <<"example.com. 3600 IN CSYNC 12345 0 A NS SOA\n">>,
+    {ok, [RR]} = dns_zone:parse_string(Zone, #{origin => <<"example.com.">>}),
+    ?assertEqual(?DNS_TYPE_CSYNC, RR#dns_rr.type),
+    #dns_rrdata_csync{soa_serial = Serial, flags = Flags, types = Types} = RR#dns_rr.data,
+    ?assertEqual(12345, Serial),
+    ?assertEqual(0, Flags),
+    ?assert(is_list(Types)),
+    ?assert(lists:member(?DNS_TYPE_A, Types)),
+    ?assert(lists:member(?DNS_TYPE_NS, Types)),
+    ?assert(lists:member(?DNS_TYPE_SOA, Types)).
+
+parse_dsync_record(_Config) ->
+    %% DSYNC record (RFC 9859)
+    %% Scheme is an 8-bit integer (0-255)
+    Zone = <<"example.com. 3600 IN DSYNC A 1 443 target.example.com.\n">>,
+    {ok, [RR]} = dns_zone:parse_string(Zone, #{origin => <<"example.com.">>}),
+    ?assertEqual(?DNS_TYPE_DSYNC, RR#dns_rr.type),
+    #dns_rrdata_dsync{rrtype = RRType, scheme = Scheme, port = Port, target = Target} =
+        RR#dns_rr.data,
+    ?assertEqual(?DNS_TYPE_A, RRType),
+    ?assertEqual(1, Scheme),
+    ?assertEqual(443, Port),
+    ?assertEqual(<<"target.example.com.">>, Target).
+
 parse_wallet_record(_Config) ->
     %% WALLET for public wallet address
     Zone = <<"example.com. 3600 IN WALLET \"dGVzdC13YWxsZXQtZGF0YQ==\"\n">>,
@@ -2012,6 +2042,16 @@ parse_invalid_resinfo_base64(_Config) ->
     Zone = <<"example.com. 3600 IN RESINFO \"valid-string\"\n">>,
     {ok, [RR]} = dns_zone:parse_string(Zone, #{origin => <<"example.com.">>}),
     ?assertEqual(?DNS_TYPE_RESINFO, RR#dns_rr.type).
+
+parse_invalid_csync_rdata(_Config) ->
+    %% CSYNC record with no RDATA
+    Zone = <<"example.com. 3600 IN CSYNC\n">>,
+    {error, #{type := parser}} = dns_zone:parse_string(Zone, #{origin => <<"example.com.">>}).
+
+parse_invalid_dsync_rdata(_Config) ->
+    %% DSYNC record with no RDATA
+    Zone = <<"example.com. 3600 IN DSYNC\n">>,
+    {error, #{type := parser}} = dns_zone:parse_string(Zone, #{origin => <<"example.com.">>}).
 
 parse_invalid_wallet_rdata(_Config) ->
     %% WALLET record with no RDATA

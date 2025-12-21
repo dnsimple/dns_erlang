@@ -132,6 +132,8 @@ type_name(_) ->
         ?DNS_TYPE_ANY_NUMBER,
         ?DNS_TYPE_URI_NUMBER,
         ?DNS_TYPE_RESINFO_NUMBER,
+        ?DNS_TYPE_CSYNC_NUMBER,
+        ?DNS_TYPE_DSYNC_NUMBER,
         ?DNS_TYPE_WALLET_NUMBER,
         ?DNS_TYPE_DLV_NUMBER
         | Types
