@@ -55,6 +55,8 @@
     <<"9606">> => <<"DNS Resolver Information">>,
     <<"7929">> => <<"DNS-Based Authentication of Named Entities (DANE) Bindings for OpenPGP">>,
     <<"2845">> => <<"Secret Key Transaction Authentication for DNS (TSIG)">>,
+    <<"7477">> => <<"Child-to-Parent Synchronization in DNS">>,
+    <<"9859">> => <<"Generalized DNS Notifications">>,
     <<"6891">> => <<"Extension Mechanisms for DNS (EDNS(0))">>,
     <<"8976">> => <<"Message Digest for DNS Zones">>,
     <<"5001">> => <<"DNS Name Server Identifier (NSID) Option">>,

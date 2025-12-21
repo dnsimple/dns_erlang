@@ -922,6 +922,32 @@ encode_rrdata(
 encode_rrdata(
     _Pos,
     _Class,
+    #dns_rrdata_csync{
+        soa_serial = SOASerial,
+        flags = Flags,
+        types = Types
+    },
+    CompMap
+) ->
+    TypesBin = encode_nsec_types(Types),
+    {<<SOASerial:32, Flags:16, TypesBin/binary>>, CompMap};
+encode_rrdata(
+    _Pos,
+    _Class,
+    #dns_rrdata_dsync{
+        rrtype = RRType,
+        scheme = Scheme,
+        port = Port,
+        target = Target
+    },
+    CompMap
+) ->
+    %% DSYNC target must be uncompressed per RFC 9859
+    TargetBin = encode_dname(Target),
+    {<<RRType:16, Scheme:8, Port:16, TargetBin/binary>>, CompMap};
+encode_rrdata(
+    _Pos,
+    _Class,
     #dns_rrdata_nsec3{
         hash_alg = HashAlg,
         opt_out = OptOut,

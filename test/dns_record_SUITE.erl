@@ -59,7 +59,9 @@ recinfo_new_types(_) ->
         ?DNS_TYPE_SVCB,
         ?DNS_TYPE_HTTPS,
         ?DNS_TYPE_URI,
-        ?DNS_TYPE_RESINFO
+        ?DNS_TYPE_RESINFO,
+        ?DNS_TYPE_CSYNC,
+        ?DNS_TYPE_DSYNC
     ],
     [
         begin
@@ -249,6 +251,17 @@ rrdata_cases() ->
         }},
         {"RESINFO", #dns_rrdata_resinfo{
             data = [<<"test-resinfo-data">>]
+        }},
+        {"CSYNC", #dns_rrdata_csync{
+            soa_serial = 12345,
+            flags = 0,
+            types = [?DNS_TYPE_A, ?DNS_TYPE_NS, ?DNS_TYPE_SOA]
+        }},
+        {"DSYNC", #dns_rrdata_dsync{
+            rrtype = ?DNS_TYPE_A,
+            scheme = 1,
+            port = 443,
+            target = <<"target.example.com.">>
         }}
         | WireCases
     ].

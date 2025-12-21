@@ -231,6 +231,21 @@
     types :: [non_neg_integer()]
 }).
 
+%% CSYNC record for child-to-parent synchronization. See RFC 7477.
+-record(dns_rrdata_csync, {
+    soa_serial :: dns:uint32(),
+    flags :: dns:uint16(),
+    types :: [non_neg_integer()]
+}).
+
+%% DSYNC record for delegation synchronization. See RFC 9859.
+-record(dns_rrdata_dsync, {
+    rrtype :: dns:uint16(),
+    scheme :: dns:uint8(),
+    port :: dns:uint16(),
+    target :: dns:dname()
+}).
+
 %% NSEC3 record for DNSSEC authenticated denial of existence. See RFC 5155: §4.2.
 -record(dns_rrdata_nsec3, {
     hash_alg :: dns:uint8(),

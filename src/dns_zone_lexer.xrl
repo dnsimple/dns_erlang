@@ -138,8 +138,10 @@ RTYPE_TLSA     = TLSA
 RTYPE_EUI48    = EUI48
 RTYPE_EUI64    = EUI64
 RTYPE_SMIMEA   = SMIMEA
+RTYPE_CSYNC    = CSYNC
 RTYPE_URI      = URI
 RTYPE_RESINFO  = RESINFO
+RTYPE_DSYNC    = DSYNC
 RTYPE_WALLET   = WALLET
 RTYPE_DS       = DS
 RTYPE_DNSKEY   = DNSKEY
@@ -224,6 +226,8 @@ Rules.
 {RTYPE_RESINFO}    : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_WALLET}     : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_ZONEMD}     : {token, {rtype, TokenLine, TokenChars}}.
+{RTYPE_CSYNC}      : {token, {rtype, TokenLine, TokenChars}}.
+{RTYPE_DSYNC}      : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_NSEC3}      : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_RRSIG}      : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_SSHFP}      : {token, {rtype, TokenLine, TokenChars}}.

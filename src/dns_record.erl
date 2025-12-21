@@ -88,10 +88,24 @@ serialise(dns_rrdata_dhcid, data, Data, _Opts) ->
 serialise(dns_rrdata_openpgpkey, data, Data, _Opts) ->
     {<<"data">>, base64:encode(Data)};
 serialise(dns_rrdata_uri, priority, Priority, _Opts) when is_integer(Priority) ->
-    {<<"priority">>, integer_to_binary(Priority, 10)};
+    {<<"priority">>, integer_to_binary(Priority)};
 serialise(dns_rrdata_uri, weight, Weight, _Opts) when is_integer(Weight) ->
-    {<<"weight">>, integer_to_binary(Weight, 10)};
+    {<<"weight">>, integer_to_binary(Weight)};
 serialise(dns_rrdata_uri, target, Target, _Opts) when is_binary(Target) ->
+    {<<"target">>, Target};
+serialise(dns_rrdata_csync, soa_serial, SOASerial, _Opts) when is_integer(SOASerial) ->
+    {<<"soa_serial">>, integer_to_binary(SOASerial)};
+serialise(dns_rrdata_csync, flags, Flags, _Opts) when is_integer(Flags) ->
+    {<<"flags">>, integer_to_binary(Flags)};
+serialise(dns_rrdata_csync, types, Types, _Opts) when is_list(Types) ->
+    {<<"types">>, Types};
+serialise(dns_rrdata_dsync, rrtype, RRType, _Opts) when is_integer(RRType) ->
+    {<<"rrtype">>, integer_to_binary(RRType)};
+serialise(dns_rrdata_dsync, scheme, Scheme, _Opts) when is_integer(Scheme) ->
+    {<<"scheme">>, integer_to_binary(Scheme)};
+serialise(dns_rrdata_dsync, port, Port, _Opts) when is_integer(Port) ->
+    {<<"port">>, integer_to_binary(Port)};
+serialise(dns_rrdata_dsync, target, Target, _Opts) when is_binary(Target) ->
     {<<"target">>, Target};
 serialise(dns_rrdata_resinfo, data, Data, _Opts) when is_list(Data) ->
     {<<"data">>, Data};
@@ -223,6 +237,20 @@ deserialise(dns_rrdata_uri, weight, Weight, _Opts) when is_binary(Weight) ->
     binary_to_integer(Weight);
 deserialise(dns_rrdata_uri, target, Target, _Opts) when is_binary(Target) ->
     Target;
+deserialise(dns_rrdata_csync, soa_serial, SOASerial, _Opts) when is_binary(SOASerial) ->
+    binary_to_integer(SOASerial);
+deserialise(dns_rrdata_csync, flags, Flags, _Opts) when is_binary(Flags) ->
+    binary_to_integer(Flags);
+deserialise(dns_rrdata_csync, types, Types, _Opts) when is_list(Types) ->
+    Types;
+deserialise(dns_rrdata_dsync, rrtype, RRType, _Opts) when is_binary(RRType) ->
+    binary_to_integer(RRType);
+deserialise(dns_rrdata_dsync, scheme, Scheme, _Opts) when is_binary(Scheme) ->
+    binary_to_integer(Scheme);
+deserialise(dns_rrdata_dsync, port, Port, _Opts) when is_binary(Port) ->
+    binary_to_integer(Port);
+deserialise(dns_rrdata_dsync, target, Target, _Opts) when is_binary(Target) ->
+    Target;
 deserialise(dns_rrdata_resinfo, data, Data, _Opts) when is_list(Data) ->
     Data;
 deserialise(dns_rrdata_resinfo, data, Data, _Opts) when is_binary(Data) ->
@@ -297,14 +325,14 @@ deserialise(_Tag, _Field, Value, _Opts) ->
 %% Helper functions for SVCB/HTTPS svc_params serialization
 serialise_svcb_param_value(?DNS_SVCB_PARAM_MANDATORY, Value, _Opts) when is_list(Value) ->
     %% List of parameter key codes (integers)
-    [integer_to_binary(V, 10) || V <- Value];
+    [integer_to_binary(V) || V <- Value];
 serialise_svcb_param_value(?DNS_SVCB_PARAM_ALPN, Value, _Opts) when is_list(Value) ->
     %% List of protocol name binaries
     [base64:encode(V) || V <- Value];
 serialise_svcb_param_value(?DNS_SVCB_PARAM_NO_DEFAULT_ALPN, none, _Opts) ->
     <<"none">>;
 serialise_svcb_param_value(?DNS_SVCB_PARAM_PORT, Value, _Opts) when is_integer(Value) ->
-    integer_to_binary(Value, 10);
+    integer_to_binary(Value);
 serialise_svcb_param_value(?DNS_SVCB_PARAM_IPV4HINT, Value, _Opts) when is_list(Value) ->
     %% List of IPv4 address tuples
     [list_to_binary(inet_parse:ntoa(V)) || V <- Value];
