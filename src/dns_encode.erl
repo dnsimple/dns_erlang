@@ -526,6 +526,18 @@ encode_rrdata(_Pos, Class, #dns_rrdata_aaaa{ip = {A, B, C, D, E, F, G, H}}, Comp
 ->
     {<<A:16, B:16, C:16, D:16, E:16, F:16, G:16, H:16>>, CompMap};
 encode_rrdata(
+    _Pos, Class, #dns_rrdata_eui48{address = Address}, CompMap
+) when
+    ?CLASS_IS_IN(Class), 6 =:= byte_size(Address)
+->
+    {Address, CompMap};
+encode_rrdata(
+    _Pos, Class, #dns_rrdata_eui64{address = Address}, CompMap
+) when
+    ?CLASS_IS_IN(Class), 8 =:= byte_size(Address)
+->
+    {Address, CompMap};
+encode_rrdata(
     _Pos,
     _Class,
     #dns_rrdata_afsdb{
@@ -554,6 +566,23 @@ encode_rrdata(
 encode_rrdata(Pos, _Class, #dns_rrdata_cname{dname = Name}, CompMap) ->
     encode_dname(CompMap, Pos, Name);
 encode_rrdata(_Pos, ?DNS_CLASS_IN, #dns_rrdata_dhcid{data = Bin}, CompMap) ->
+    {Bin, CompMap};
+encode_rrdata(_Pos, ?DNS_CLASS_IN, #dns_rrdata_openpgpkey{data = Bin}, CompMap) ->
+    {Bin, CompMap};
+encode_rrdata(
+    _Pos,
+    _Class,
+    #dns_rrdata_uri{
+        priority = Priority,
+        weight = Weight,
+        target = Target
+    },
+    CompMap
+) ->
+    {<<Priority:16, Weight:16, Target/binary>>, CompMap};
+encode_rrdata(_Pos, _Class, #dns_rrdata_resinfo{data = Strings}, CompMap) ->
+    {encode_text(Strings), CompMap};
+encode_rrdata(_Pos, ?DNS_CLASS_IN, #dns_rrdata_wallet{data = Bin}, CompMap) ->
     {Bin, CompMap};
 encode_rrdata(
     _Pos,
@@ -893,6 +922,32 @@ encode_rrdata(
 encode_rrdata(
     _Pos,
     _Class,
+    #dns_rrdata_csync{
+        soa_serial = SOASerial,
+        flags = Flags,
+        types = Types
+    },
+    CompMap
+) ->
+    TypesBin = encode_nsec_types(Types),
+    {<<SOASerial:32, Flags:16, TypesBin/binary>>, CompMap};
+encode_rrdata(
+    _Pos,
+    _Class,
+    #dns_rrdata_dsync{
+        rrtype = RRType,
+        scheme = Scheme,
+        port = Port,
+        target = Target
+    },
+    CompMap
+) ->
+    %% DSYNC target must be uncompressed per RFC 9859
+    TargetBin = encode_dname(Target),
+    {<<RRType:16, Scheme:8, Port:16, TargetBin/binary>>, CompMap};
+encode_rrdata(
+    _Pos,
+    _Class,
     #dns_rrdata_nsec3{
         hash_alg = HashAlg,
         opt_out = OptOut,
@@ -930,6 +985,18 @@ encode_rrdata(
     _Pos,
     _Class,
     #dns_rrdata_tlsa{
+        usage = Usage,
+        selector = Selector,
+        matching_type = MatchingType,
+        certificate = Certificate
+    },
+    CompMap
+) ->
+    {<<Usage:8, Selector:8, MatchingType:8, Certificate/binary>>, CompMap};
+encode_rrdata(
+    _Pos,
+    _Class,
+    #dns_rrdata_smimea{
         usage = Usage,
         selector = Selector,
         matching_type = MatchingType,
@@ -1205,10 +1272,10 @@ do_encode_optrrdata(
         family = FAMILY,
         source_prefix_length = SRCPL,
         scope_prefix_length = SCOPEPL,
-        address = ADDRESS
+        address = Address
     }
 ) ->
-    Data = <<FAMILY:16, SRCPL:8, SCOPEPL:8, ADDRESS/binary>>,
+    Data = <<FAMILY:16, SRCPL:8, SCOPEPL:8, Address/binary>>,
     {?DNS_EOPTCODE_ECS, Data};
 do_encode_optrrdata(#dns_opt_cookie{client = <<ClientCookie:8/binary>>, server = undefined}) ->
     {?DNS_EOPTCODE_COOKIE, ClientCookie};

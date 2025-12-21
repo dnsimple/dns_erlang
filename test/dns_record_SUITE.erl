@@ -16,6 +16,8 @@ groups() ->
         {all, [parallel], [
             type_rec,
             recinfo,
+            recinfo_new_types,
+            recinfo_missing_coverage,
             serialise_dnssec,
             serialise_optrr,
             serialise_rrdata,
@@ -45,6 +47,116 @@ recinfo(_) ->
         }
      || Tag <- Tags
     ].
+
+recinfo_new_types(_) ->
+    %% Test new record types that may not be in wire samples
+    NewTypes = [
+        ?DNS_TYPE_OPENPGPKEY,
+        ?DNS_TYPE_SMIMEA,
+        ?DNS_TYPE_WALLET,
+        ?DNS_TYPE_EUI48,
+        ?DNS_TYPE_EUI64,
+        ?DNS_TYPE_SVCB,
+        ?DNS_TYPE_HTTPS,
+        ?DNS_TYPE_URI,
+        ?DNS_TYPE_RESINFO,
+        ?DNS_TYPE_CSYNC,
+        ?DNS_TYPE_DSYNC
+    ],
+    [
+        begin
+            Tag = dns_record_info:atom_for_type(Type),
+            ?assertNotEqual(undefined, Tag),
+            ?assertNotEqual(undefined, dns_record_info:type_for_atom(Tag)),
+            ?assertEqual(Type, dns_record_info:type_for_atom(Tag)),
+            ?assertEqual(
+                length(dns_record_info:fields(Tag)),
+                dns_record_info:size(Tag) - 1
+            ),
+            ?assert(is_list(dns_record_info:fields(Tag))),
+            ?assert(length(dns_record_info:fields(Tag)) > 0)
+        end
+     || Type <- NewTypes
+    ].
+
+recinfo_missing_coverage(_) ->
+    %% Test types that are not covered by existing tests
+    %% Based on code coverage report
+    %% Test DNS record types not in wire samples
+    %% Note: MD and MF are obsolete types without record definitions,
+    %% so we only test atom_for_type/type_for_atom for them
+    MissingTypesWithRecords = [
+        ?DNS_TYPE_CAA,
+        ?DNS_TYPE_MB,
+        ?DNS_TYPE_MG,
+        ?DNS_TYPE_MINFO,
+        ?DNS_TYPE_MR,
+        ?DNS_TYPE_ZONEMD,
+        ?DNS_TYPE_TSIG
+    ],
+    [
+        begin
+            Tag = dns_record_info:atom_for_type(Type),
+            ?assertNotEqual(undefined, Tag),
+            ?assertNotEqual(undefined, dns_record_info:type_for_atom(Tag)),
+            ?assertEqual(Type, dns_record_info:type_for_atom(Tag)),
+            ?assertEqual(
+                length(dns_record_info:fields(Tag)),
+                dns_record_info:size(Tag) - 1
+            ),
+            ?assert(is_list(dns_record_info:fields(Tag))),
+            ?assert(length(dns_record_info:fields(Tag)) > 0)
+        end
+     || Type <- MissingTypesWithRecords
+    ],
+    %% Test obsolete types MD and MF (no record definitions, only type mappings)
+    ObsoleteTypes = [?DNS_TYPE_MD, ?DNS_TYPE_MF],
+    [
+        begin
+            Tag = dns_record_info:atom_for_type(Type),
+            ?assertNotEqual(undefined, Tag),
+            ?assertNotEqual(undefined, dns_record_info:type_for_atom(Tag)),
+            ?assertEqual(Type, dns_record_info:type_for_atom(Tag))
+        end
+     || Type <- ObsoleteTypes
+    ],
+    %% Test dns_message and dns_query
+    [
+        begin
+            ?assert(is_list(dns_record_info:fields(Tag))),
+            ?assert(length(dns_record_info:fields(Tag)) > 0),
+            ?assertEqual(
+                length(dns_record_info:fields(Tag)),
+                dns_record_info:size(Tag) - 1
+            )
+        end
+     || Tag <- [dns_message, dns_query]
+    ],
+    %% Test OPT record types
+    OptTags = [
+        dns_optrr,
+        dns_opt_llq,
+        dns_opt_nsid,
+        dns_opt_owner,
+        dns_opt_ul,
+        dns_opt_ecs,
+        dns_opt_unknown
+    ],
+    [
+        begin
+            ?assert(is_list(dns_record_info:fields(Tag))),
+            ?assert(length(dns_record_info:fields(Tag)) > 0),
+            ?assertEqual(
+                length(dns_record_info:fields(Tag)),
+                dns_record_info:size(Tag) - 1
+            )
+        end
+     || Tag <- OptTags
+    ],
+    %% Test atom_for_type with undefined case
+    ?assertEqual(undefined, dns_record_info:atom_for_type(99999)),
+    %% Test type_for_atom with undefined case
+    ?assertEqual(undefined, dns_record_info:type_for_atom(nonexistent_atom)).
 
 serialise_dnssec(_) -> erl_tests(dnssec_cases()).
 
@@ -92,6 +204,26 @@ rrdata_cases() ->
      || {Class, Type, Bin} <- Cases
     ],
     [
+        {"OPENPGPKEY", #dns_rrdata_openpgpkey{
+            data = base64:decode(
+                <<"mQINBFit2jsBEADrbl5vjVxYeAE0g0IDYCBpHirv1Sjlqxx5gjtPhb2YhvyDMXjq">>
+            )
+        }},
+        {"SMIMEA", #dns_rrdata_smimea{
+            usage = 3,
+            selector = 1,
+            matching_type = 1,
+            certificate = base64:decode(<<"MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA">>)
+        }},
+        {"WALLET", #dns_rrdata_wallet{
+            data = base64:decode(<<"dGVzdC13YWxsZXQtZGF0YQ==">>)
+        }},
+        {"EUI48", #dns_rrdata_eui48{
+            address = <<16#00, 16#1A, 16#2B, 16#3C, 16#4D, 16#5E>>
+        }},
+        {"EUI64", #dns_rrdata_eui64{
+            address = <<16#00, 16#1A, 16#2B, 16#3C, 16#4D, 16#5E, 16#6F, 16#70>>
+        }},
         {"SVCB", #dns_rrdata_svcb{
             svc_priority = 0,
             target_name = <<"target.example.com">>,
@@ -111,6 +243,25 @@ rrdata_cases() ->
             svc_priority = 1,
             target_name = <<"target.example.com">>,
             svc_params = #{?DNS_SVCB_PARAM_ALPN => [<<"h2">>, <<"h3">>]}
+        }},
+        {"URI", #dns_rrdata_uri{
+            priority = 10,
+            weight = 1,
+            target = <<"https://www.example.com/">>
+        }},
+        {"RESINFO", #dns_rrdata_resinfo{
+            data = [<<"test-resinfo-data">>]
+        }},
+        {"CSYNC", #dns_rrdata_csync{
+            soa_serial = 12345,
+            flags = 0,
+            types = [?DNS_TYPE_A, ?DNS_TYPE_NS, ?DNS_TYPE_SOA]
+        }},
+        {"DSYNC", #dns_rrdata_dsync{
+            rrtype = ?DNS_TYPE_A,
+            scheme = 1,
+            port = 443,
+            target = <<"target.example.com.">>
         }}
         | WireCases
     ].

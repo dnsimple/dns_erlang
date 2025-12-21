@@ -28,12 +28,19 @@ This library implements encoding and decoding of DNS packets according to the fo
 - **[RFC 6698](https://tools.ietf.org/html/rfc6698)**: The DNS-Based Authentication of Named Entities (DANE) Transport Layer Security (TLS) Protocol: TLSA
 - **[RFC 6844](https://tools.ietf.org/html/rfc6844)**: DNS Certification Authority Authorization (CAA) Resource Record
 - **[RFC 6891](https://tools.ietf.org/html/rfc6891)**: Extension Mechanisms for DNS (EDNS(0))
+- **[RFC 7043](https://tools.ietf.org/html/rfc7043)**: Resource Records for EUI-48 and EUI-64 Addresses in the DNS
 - **[RFC 7344](https://tools.ietf.org/html/rfc7344)**: Automating DNSSEC Delegation Trust Maintenance
+- **[RFC 7477](https://tools.ietf.org/html/rfc7477)**: Child-to-Parent Synchronization in DNS
+- **[RFC 7553](https://tools.ietf.org/html/rfc7553)**: The Uniform Resource Identifier (URI) DNS Resource Record
 - **[RFC 7871](https://tools.ietf.org/html/rfc7871)**: Client Subnet in DNS Queries
 - **[RFC 7873](https://tools.ietf.org/html/rfc7873)**: Domain Name System (DNS) Cookies
+- **[RFC 7929](https://tools.ietf.org/html/rfc7929)**: DNS-Based Authentication of Named Entities (DANE) Bindings for OpenPGP
 - **[RFC 8080](https://tools.ietf.org/html/rfc8080)**: Ed25519 and Ed448 for DNSSEC
+- **[RFC 8162](https://tools.ietf.org/html/rfc8162)**: Using Secure DNS to Associate Certificates with Domain Names for S/MIME
 - **[RFC 8764](https://tools.ietf.org/html/rfc8764)**: DNS Long-Lived Queries (LLQ)
 - **[RFC 8914](https://tools.ietf.org/html/rfc8914)**: Extended DNS Errors
 - **[RFC 8976](https://tools.ietf.org/html/rfc8976)**: Message Digest for DNS Zones
 - **[RFC 9077](https://tools.ietf.org/html/rfc9077)**: NSEC and NSEC3 TTL Values
 - **[RFC 9460](https://tools.ietf.org/html/rfc9460)**: Service Binding and Parameter Specification via the DNS (DNS SVCB and HTTPS Resource Records)
+- **[RFC 9606](https://tools.ietf.org/html/rfc9606)**: DNS Resolver Information
+- **[RFC 9859](https://tools.ietf.org/html/rfc9859)**: Generalized DNS Notifications

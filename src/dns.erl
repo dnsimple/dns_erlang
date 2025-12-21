@@ -197,6 +197,8 @@ restrictions on the length. Labels must be 63 characters or less.
     | #dns_rrdata_dhcid{}
     | #dns_rrdata_dlv{}
     | #dns_rrdata_dname{}
+    | #dns_rrdata_eui48{}
+    | #dns_rrdata_eui64{}
     | #dns_rrdata_dnskey{}
     | #dns_rrdata_ds{}
     | #dns_rrdata_hinfo{}
@@ -215,6 +217,9 @@ restrictions on the length. Labels must be 63 characters or less.
     | #dns_rrdata_nsec3{}
     | #dns_rrdata_nsec3param{}
     | #dns_rrdata_nxt{}
+    | #dns_rrdata_csync{}
+    | #dns_rrdata_dsync{}
+    | #dns_rrdata_openpgpkey{}
     | #dns_rrdata_ptr{}
     | #dns_rrdata_rp{}
     | #dns_rrdata_rrsig{}
@@ -225,8 +230,12 @@ restrictions on the length. Labels must be 63 characters or less.
     | #dns_rrdata_svcb{}
     | #dns_rrdata_sshfp{}
     | #dns_rrdata_tlsa{}
+    | #dns_rrdata_smimea{}
     | #dns_rrdata_tsig{}
-    | #dns_rrdata_txt{}.
+    | #dns_rrdata_txt{}
+    | #dns_rrdata_uri{}
+    | #dns_rrdata_resinfo{}
+    | #dns_rrdata_wallet{}.
 ?DOC(#{group => <<"Types: records">>}).
 -type records() :: additional() | answers() | authority() | questions().
 ?DOC(#{group => <<"Types: records">>}).

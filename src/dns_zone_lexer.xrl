@@ -135,12 +135,21 @@ RTYPE_CAA      = CAA
 RTYPE_NAPTR    = NAPTR
 RTYPE_SSHFP    = SSHFP
 RTYPE_TLSA     = TLSA
+RTYPE_EUI48    = EUI48
+RTYPE_EUI64    = EUI64
+RTYPE_SMIMEA   = SMIMEA
+RTYPE_CSYNC    = CSYNC
+RTYPE_URI      = URI
+RTYPE_RESINFO  = RESINFO
+RTYPE_DSYNC    = DSYNC
+RTYPE_WALLET   = WALLET
 RTYPE_DS       = DS
 RTYPE_DNSKEY   = DNSKEY
 RTYPE_RRSIG    = RRSIG
 RTYPE_NSEC     = NSEC
 RTYPE_NSEC3    = NSEC3
 RTYPE_NSEC3PARAM = NSEC3PARAM
+RTYPE_OPENPGPKEY = OPENPGPKEY
 RTYPE_CDNSKEY  = CDNSKEY
 RTYPE_CDS      = CDS
 RTYPE_DNAME    = DNAME
@@ -209,11 +218,17 @@ Rules.
 
 % Record types - order matters, longest match first
 {RTYPE_NSEC3PARAM} : {token, {rtype, TokenLine, TokenChars}}.
-{RTYPE_ZONEMD}     : {token, {rtype, TokenLine, TokenChars}}.
+{RTYPE_OPENPGPKEY} : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_IPSECKEY}   : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_CDNSKEY}    : {token, {rtype, TokenLine, TokenChars}}.
-{RTYPE_NSEC3}      : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_DNSKEY}     : {token, {rtype, TokenLine, TokenChars}}.
+{RTYPE_SMIMEA}     : {token, {rtype, TokenLine, TokenChars}}.
+{RTYPE_RESINFO}    : {token, {rtype, TokenLine, TokenChars}}.
+{RTYPE_WALLET}     : {token, {rtype, TokenLine, TokenChars}}.
+{RTYPE_ZONEMD}     : {token, {rtype, TokenLine, TokenChars}}.
+{RTYPE_CSYNC}      : {token, {rtype, TokenLine, TokenChars}}.
+{RTYPE_DSYNC}      : {token, {rtype, TokenLine, TokenChars}}.
+{RTYPE_NSEC3}      : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_RRSIG}      : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_SSHFP}      : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_HTTPS}      : {token, {rtype, TokenLine, TokenChars}}.
@@ -224,6 +239,8 @@ Rules.
 {RTYPE_MINFO}      : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_AFSDB}      : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_DHCID}      : {token, {rtype, TokenLine, TokenChars}}.
+{RTYPE_EUI48}      : {token, {rtype, TokenLine, TokenChars}}.
+{RTYPE_EUI64}      : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_AAAA}       : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_TLSA}       : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_NSEC}       : {token, {rtype, TokenLine, TokenChars}}.
@@ -240,6 +257,7 @@ Rules.
 {RTYPE_NXT}        : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_DLV}        : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_SPF}        : {token, {rtype, TokenLine, TokenChars}}.
+{RTYPE_URI}        : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_NS}         : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_MX}         : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_DS}         : {token, {rtype, TokenLine, TokenChars}}.

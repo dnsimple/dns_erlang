@@ -81,6 +81,11 @@
     data :: binary()
 }).
 
+%% OPENPGPKEY record for OpenPGP public key. See RFC 7929.
+-record(dns_rrdata_openpgpkey, {
+    data :: binary()
+}).
+
 %% DLV record for DNSSEC Lookaside Validation. See RFC 4431. As dns_rrdata_ds.
 -record(dns_rrdata_dlv, {
     keytag :: dns:uint16(),
@@ -226,6 +231,21 @@
     types :: [non_neg_integer()]
 }).
 
+%% CSYNC record for child-to-parent synchronization. See RFC 7477.
+-record(dns_rrdata_csync, {
+    soa_serial :: dns:uint32(),
+    flags :: dns:uint16(),
+    types :: [non_neg_integer()]
+}).
+
+%% DSYNC record for delegation synchronization. See RFC 9859.
+-record(dns_rrdata_dsync, {
+    rrtype :: dns:uint16(),
+    scheme :: dns:uint8(),
+    port :: dns:uint16(),
+    target :: dns:dname()
+}).
+
 %% NSEC3 record for DNSSEC authenticated denial of existence. See RFC 5155: §4.2.
 -record(dns_rrdata_nsec3, {
     hash_alg :: dns:uint8(),
@@ -246,6 +266,14 @@
 
 %% TLSA record for DANE TLS. See RFC 6698.
 -record(dns_rrdata_tlsa, {
+    usage :: dns:uint8(),
+    selector :: dns:uint8(),
+    matching_type :: dns:uint8(),
+    certificate :: binary()
+}).
+
+%% SMIMEA record for S/MIME cert association. See RFC 8162.
+-record(dns_rrdata_smimea, {
     usage :: dns:uint8(),
     selector :: dns:uint8(),
     matching_type :: dns:uint8(),
@@ -343,6 +371,33 @@
     svc_priority :: dns:uint16(),
     target_name :: dns:dname(),
     svc_params :: dns:svcb_svc_params()
+}).
+
+%% EUI48 record for EUI-48 address. See RFC 7043.
+-record(dns_rrdata_eui48, {
+    address :: <<_:48>>
+}).
+
+%% EUI64 record for EUI-64 address. See RFC 7043.
+-record(dns_rrdata_eui64, {
+    address :: <<_:64>>
+}).
+
+%% URI record for uniform resource identifier. See RFC 7553.
+-record(dns_rrdata_uri, {
+    priority :: dns:uint16(),
+    weight :: dns:uint16(),
+    target :: binary()
+}).
+
+%% RESINFO record for resource information. See RFC 9606
+-record(dns_rrdata_resinfo, {
+    data :: [binary()]
+}).
+
+%% WALLET record for public wallet address.
+-record(dns_rrdata_wallet, {
+    data :: binary()
 }).
 
 %% TSIG record for transaction signature. See RFC 2845: §2.3.
