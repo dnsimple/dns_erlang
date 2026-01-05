@@ -35,6 +35,10 @@ groups() ->
             decode_encode_optdata,
             decode_encode_optdata_owner,
             decode_encode_svcb_params,
+            svcb_key_ordering_validation,
+            svcb_mandatory_self_reference,
+            svcb_mandatory_missing_keys,
+            svcb_no_default_alpn_length_validation,
             decode_dname_2_ptr,
             decode_dname_decode_loop,
             decode_dname_bad_pointer,
@@ -691,6 +695,59 @@ decode_encode_svcb_params(_) ->
         )
      || {Input, Expected} <- Cases
     ].
+
+svcb_key_ordering_validation(_) ->
+    %% Test that keys must be in strictly ascending order
+    %% Create a binary with keys out of order: port (3) before alpn (1)
+    PortKey = ?DNS_SVCB_PARAM_PORT,
+    AlpnKey = ?DNS_SVCB_PARAM_ALPN,
+    %% Encode port first (wrong order)
+    PortBin = <<PortKey:16, 2:16, 443:16>>,
+    %% Encode alpn second (should be first)
+    AlpnValue = <<2, "h2">>,
+    AlpnBin = <<AlpnKey:16, (byte_size(AlpnValue)):16, AlpnValue/binary>>,
+    OutOfOrderBin = <<PortBin/binary, AlpnBin/binary>>,
+    ?assertException(
+        throw,
+        {svcb_key_ordering_error, {prev_key, PortKey}, {current_key, AlpnKey}},
+        dns_decode:decode_svcb_svc_params(OutOfOrderBin)
+    ).
+
+svcb_mandatory_self_reference(_) ->
+    %% Test that mandatory cannot reference itself (key 0)
+    MandatoryKey = ?DNS_SVCB_PARAM_MANDATORY,
+    %% Create mandatory parameter that references itself
+    MandatoryValue = <<MandatoryKey:16>>,
+    MandatoryBin = <<MandatoryKey:16, (byte_size(MandatoryValue)):16, MandatoryValue/binary>>,
+    ?assertException(
+        throw,
+        {svcb_mandatory_validation_error, {mandatory_self_reference, MandatoryKey}},
+        dns_decode:decode_svcb_svc_params(MandatoryBin)
+    ).
+
+svcb_mandatory_missing_keys(_) ->
+    %% Test that all mandatory keys must exist in SvcParams
+    MandatoryKey = ?DNS_SVCB_PARAM_MANDATORY,
+    PortKey = ?DNS_SVCB_PARAM_PORT,
+    %% Create mandatory parameter that references port, but port is not present
+    MandatoryValue = <<PortKey:16>>,
+    MandatoryBin = <<MandatoryKey:16, (byte_size(MandatoryValue)):16, MandatoryValue/binary>>,
+    ?assertException(
+        throw,
+        {svcb_mandatory_validation_error, {missing_mandatory_keys, [PortKey]}},
+        dns_decode:decode_svcb_svc_params(MandatoryBin)
+    ).
+
+svcb_no_default_alpn_length_validation(_) ->
+    %% Test that NO_DEFAULT_ALPN must have length 0
+    NoDefaultAlpnKey = ?DNS_SVCB_PARAM_NO_DEFAULT_ALPN,
+    %% Create NO_DEFAULT_ALPN with non-zero length (should be 0)
+    InvalidBin = <<NoDefaultAlpnKey:16, 1:16, 0:8>>,
+    ?assertException(
+        throw,
+        {svcb_bad_no_default_alpn, 1},
+        dns_decode:decode_svcb_svc_params(InvalidBin)
+    ).
 
 %%%===================================================================
 %%% Domain name functions

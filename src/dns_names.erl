@@ -515,12 +515,27 @@ svcb_param_name(Int) when is_integer(Int) ->
 -spec name_svcb_param(unicode:latin1_binary()) -> dns:uint16() | undefined.
 name_svcb_param(Bin) when is_binary(Bin) ->
     case Bin of
-        ?DNS_SVCB_PARAM_MANDATORY_BSTR -> ?DNS_SVCB_PARAM_MANDATORY_NUMBER;
-        ?DNS_SVCB_PARAM_ALPN_BSTR -> ?DNS_SVCB_PARAM_ALPN_NUMBER;
-        ?DNS_SVCB_PARAM_NO_DEFAULT_ALPN_BSTR -> ?DNS_SVCB_PARAM_NO_DEFAULT_ALPN_NUMBER;
-        ?DNS_SVCB_PARAM_PORT_BSTR -> ?DNS_SVCB_PARAM_PORT_NUMBER;
-        ?DNS_SVCB_PARAM_IPV4HINT_BSTR -> ?DNS_SVCB_PARAM_IPV4HINT_NUMBER;
-        ?DNS_SVCB_PARAM_ECH_BSTR -> ?DNS_SVCB_PARAM_ECH_NUMBER;
-        ?DNS_SVCB_PARAM_IPV6HINT_BSTR -> ?DNS_SVCB_PARAM_IPV6HINT_NUMBER;
-        <<"key", KeyNum/binary>> -> binary_to_integer(KeyNum)
+        ?DNS_SVCB_PARAM_MANDATORY_BSTR ->
+            ?DNS_SVCB_PARAM_MANDATORY_NUMBER;
+        ?DNS_SVCB_PARAM_ALPN_BSTR ->
+            ?DNS_SVCB_PARAM_ALPN_NUMBER;
+        ?DNS_SVCB_PARAM_NO_DEFAULT_ALPN_BSTR ->
+            ?DNS_SVCB_PARAM_NO_DEFAULT_ALPN_NUMBER;
+        ?DNS_SVCB_PARAM_PORT_BSTR ->
+            ?DNS_SVCB_PARAM_PORT_NUMBER;
+        ?DNS_SVCB_PARAM_IPV4HINT_BSTR ->
+            ?DNS_SVCB_PARAM_IPV4HINT_NUMBER;
+        ?DNS_SVCB_PARAM_ECH_BSTR ->
+            ?DNS_SVCB_PARAM_ECH_NUMBER;
+        ?DNS_SVCB_PARAM_IPV6HINT_BSTR ->
+            ?DNS_SVCB_PARAM_IPV6HINT_NUMBER;
+        <<"key", KeyNum/binary>> ->
+            try binary_to_integer(KeyNum) of
+                KeyInt when KeyInt >= 0, KeyInt =< 65535 -> KeyInt;
+                _ -> undefined
+            catch
+                _:_ -> undefined
+            end;
+        _ ->
+            undefined
     end.

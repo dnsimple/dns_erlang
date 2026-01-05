@@ -164,6 +164,9 @@ groups() ->
             parse_svcb_with_echconfig_bad,
             parse_svcb_with_mandatory,
             parse_svcb_with_multiple_params,
+            parse_svcb_mandatory_self_reference,
+            parse_svcb_mandatory_missing_keys,
+            parse_svcb_unknown_key_format,
             parse_https_record,
             parse_https_with_params
         ]},
@@ -1290,6 +1293,32 @@ parse_https_with_params(_Config) ->
     #dns_rrdata_https{svc_params = SvcParams} = RR#dns_rr.data,
     ?assertEqual([<<"h2">>], maps:get(?DNS_SVCB_PARAM_ALPN, SvcParams)),
     ?assertEqual(443, maps:get(?DNS_SVCB_PARAM_PORT, SvcParams)).
+
+parse_svcb_mandatory_self_reference(_Config) ->
+    %% SVCB with mandatory parameter referencing itself (key 0) - should fail
+    Zone = <<"example.com. 3600 IN SVCB 1 svc.example.com. mandatory=mandatory alpn=h2\n">>,
+    {error, _} = dns_zone:parse_string(Zone, #{origin => <<"example.com.">>}).
+
+parse_svcb_mandatory_missing_keys(_Config) ->
+    %% SVCB with mandatory parameter referencing port, but port is not present - should fail
+    Zone = <<"example.com. 3600 IN SVCB 1 svc.example.com. mandatory=port alpn=h2\n">>,
+    {error, _} = dns_zone:parse_string(Zone, #{origin => <<"example.com.">>}).
+
+parse_svcb_unknown_key_format(_Config) ->
+    %% SVCB with unknown key in keyNNNNN format
+    Zone = <<"example.com. 3600 IN SVCB 1 svc.example.com. key65001=\"dGVzdA==\"\n">>,
+    {ok, [RR]} = dns_zone:parse_string(Zone, #{origin => <<"example.com.">>}),
+    #dns_rrdata_svcb{svc_params = SvcParams} = RR#dns_rr.data,
+    %% Unknown key 65001 should be present
+    ?assert(maps:is_key(65001, SvcParams)),
+    %% Value should be base64 decoded "test"
+    ?assertEqual(<<"test">>, maps:get(65001, SvcParams)),
+    %% Test unknown key without value (like no-default-alpn)
+    Zone2 = <<"example.com. 3600 IN SVCB 1 svc.example.com. key65002\n">>,
+    {ok, [RR2]} = dns_zone:parse_string(Zone2, #{origin => <<"example.com.">>}),
+    #dns_rrdata_svcb{svc_params = SvcParams2} = RR2#dns_rr.data,
+    ?assert(maps:is_key(65002, SvcParams2)),
+    ?assertEqual(none, maps:get(65002, SvcParams2)).
 
 %% ============================================================================
 %% Full Zone File Test

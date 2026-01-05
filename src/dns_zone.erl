@@ -1226,6 +1226,7 @@ build_rdata("SVCB", RData, Ctx) ->
     %% RFC 9460 - Service Binding
     %% SVCB format: priority target [svcparams...]
     %% Service parameters are key=value pairs or just key (for no-default-alpn)
+    %% Note: TargetName "." in AliasMode (priority=0) means "service is not available"
     case RData of
         [{int, Priority}, {domain, Target}] when is_integer(Priority), is_list(Target) ->
             TargetName = resolve_name(Target, Ctx#parse_ctx.origin),
@@ -1748,8 +1749,8 @@ parse_svcb_params_from_rdata(SvcParams, Ctx) ->
 
 -spec parse_svcb_params_from_rdata([rdata()], parse_ctx(), dns:svcb_svc_params()) ->
     {ok, dns:svcb_svc_params()} | {error, error_detail()}.
-parse_svcb_params_from_rdata([], _Ctx, Acc) ->
-    {ok, Acc};
+parse_svcb_params_from_rdata([], Ctx, Acc) ->
+    validate_mandatory_params(Acc, Ctx);
 parse_svcb_params_from_rdata([{domain, "no-default-alpn"} | Rest], Ctx, Acc) ->
     NewAcc = Acc#{?DNS_SVCB_PARAM_NO_DEFAULT_ALPN => none},
     parse_svcb_params_from_rdata(Rest, Ctx, NewAcc);
@@ -1801,6 +1802,38 @@ parse_svcb_params_from_rdata([{domain, "ech="}, {string, Value} | Rest], Ctx, Ac
         _:Reason ->
             {error, make_semantic_error({invalid_svcparam_format, Reason}, Ctx)}
     end;
+parse_svcb_params_from_rdata([{domain, "key" ++ RestStr}, {string, Value} | Rest], Ctx, Acc) ->
+    %% Check for unknown key with quoted value: keyNNNNN="value"
+    case string:split(RestStr, "=", leading) of
+        [KeyNumStr, ""] ->
+            case string:to_integer(KeyNumStr) of
+                {KeyNum, ""} when KeyNum >= 0, KeyNum =< 65535 ->
+                    ValueBin =
+                        try
+                            base64:decode(Value)
+                        catch
+                            _:_ -> list_to_binary(Value)
+                        end,
+                    NewAcc = Acc#{KeyNum => ValueBin},
+                    parse_svcb_params_from_rdata(Rest, Ctx, NewAcc);
+                _ ->
+                    {error, make_semantic_error({invalid_key_number, KeyNumStr}, Ctx)}
+            end;
+        _ ->
+            %% Not keyNNNNN= format, error
+            {error, make_semantic_error({invalid_svcparam_format, RestStr}, Ctx)}
+    end;
+parse_svcb_params_from_rdata([{domain, ParamStr}, {string, _} | _], Ctx, _) ->
+    {error, make_semantic_error({invalid_svcparam_format, ParamStr}, Ctx)};
+parse_svcb_params_from_rdata([{domain, "key" ++ KeyNumStr} | Rest], Ctx, Acc) ->
+    %% keyNNNNN (no value, like no-default-alpn)
+    case string:to_integer(KeyNumStr) of
+        {KeyNum, ""} when KeyNum >= 0, KeyNum =< 65535 ->
+            NewAcc = Acc#{KeyNum => none},
+            parse_svcb_params_from_rdata(Rest, Ctx, NewAcc);
+        _ ->
+            {error, make_semantic_error({invalid_svcparam_format, KeyNumStr}, Ctx)}
+    end;
 parse_svcb_params_from_rdata([Other | _], Ctx, _Acc) ->
     {error, make_semantic_error({invalid_svcparam_format, Other}, Ctx)}.
 
@@ -1833,6 +1866,31 @@ parse_mandatory_keys(["key" ++ IntStr | Rest], Ctx, Acc) ->
     parse_mandatory_keys(Rest, Ctx, [KeyNum | Acc]);
 parse_mandatory_keys([Key | _], Ctx, _) ->
     {error, make_semantic_error({invalid_mandatory_key, Key}, Ctx)}.
+
+%% Validate mandatory parameter self-consistency
+%% RFC 9460: Keys listed in mandatory parameter must exist in SvcParams
+%% and mandatory (key 0) cannot reference itself
+-spec validate_mandatory_params(dns:svcb_svc_params(), parse_ctx() | undefined) ->
+    {ok, dns:svcb_svc_params()} | {error, error_detail()}.
+validate_mandatory_params(#{?DNS_SVCB_PARAM_MANDATORY := MandatoryKeys} = SvcParams, Ctx) ->
+    %% Check that mandatory doesn't reference itself (key 0)
+    case lists:member(?DNS_SVCB_PARAM_MANDATORY, MandatoryKeys) of
+        true ->
+            Error = {mandatory_self_reference, ?DNS_SVCB_PARAM_MANDATORY},
+            {error, make_semantic_error(Error, Ctx)};
+        false ->
+            %% Check that all mandatory keys exist in SvcParams
+            MissingKeys = [K || K <- MandatoryKeys, not maps:is_key(K, SvcParams)],
+            case MissingKeys of
+                [] ->
+                    {ok, SvcParams};
+                _ ->
+                    Error = {missing_mandatory_keys, MissingKeys},
+                    {error, make_semantic_error(Error, Ctx)}
+            end
+    end;
+validate_mandatory_params(SvcParams, _) ->
+    {ok, SvcParams}.
 
 %% Parse a list of IPv4 addresses
 -spec parse_ipv4_list([string()], parse_ctx()) ->

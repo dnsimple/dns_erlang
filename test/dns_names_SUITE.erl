@@ -258,7 +258,14 @@ svcb_param_name(_) ->
         ?DNS_SVCB_PARAM_ECH,
         ?DNS_SVCB_PARAM_IPV6HINT
     ],
-    ?assertEqual(undefined, dns_names:svcb_param_name(?UNKNOWN_INT)),
-    ?assertEqual(undefined, dns_names:name_svcb_param(?UNKNOWN_BIN)),
     [?assert(is_binary(dns_names:svcb_param_name(N))) || N <- Cases],
-    [?assertEqual(N, dns_names:name_svcb_param(dns_names:svcb_param_name(N))) || N <- Cases].
+    [?assertEqual(N, dns_names:name_svcb_param(dns_names:svcb_param_name(N))) || N <- Cases],
+    %% Test unknown key format (keyNNNNN)
+    UnknownKey = 65001,
+    UnknownKeyName = dns_names:svcb_param_name(UnknownKey),
+    ?assertEqual(<<"key65001">>, UnknownKeyName),
+    ?assertEqual(UnknownKey, dns_names:name_svcb_param(UnknownKeyName)),
+    %% Test that invalid key format returns undefined
+    ?assertEqual(undefined, dns_names:name_svcb_param(<<"notkey123">>)),
+    ?assertEqual(undefined, dns_names:name_svcb_param(<<"key">>)),
+    ?assertEqual(undefined, dns_names:name_svcb_param(<<"keyabc">>)).
