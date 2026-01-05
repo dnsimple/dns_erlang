@@ -877,12 +877,12 @@ encode_dname_3(_) ->
     ?assertEqual(<<7, 101, 120, 97, 109, 112, 108, 101, 0>>, Bin).
 
 encode_dname_4(_) ->
-    {Bin0, CM0} = dns_encode:encode_dname(<<>>, #{}, 0, <<"example">>),
-    {Bin1, _} = dns_encode:encode_dname(Bin0, CM0, byte_size(Bin0), <<"example">>),
-    {Bin2, _} = dns_encode:encode_dname(Bin0, CM0, byte_size(Bin0), <<"EXAMPLE">>),
+    {Bin0, CM0} = dns_encode:encode_append_dname(<<>>, #{}, 0, <<"example">>),
+    {Bin1, _} = dns_encode:encode_append_dname(Bin0, CM0, byte_size(Bin0), <<"example">>),
+    {Bin2, _} = dns_encode:encode_append_dname(Bin0, CM0, byte_size(Bin0), <<"EXAMPLE">>),
     MP = (1 bsl 14),
     MPB = <<0:MP/unit:8>>,
-    {_, CM1} = dns_encode:encode_dname(MPB, #{}, MP, <<"example">>),
+    {_, CM1} = dns_encode:encode_append_dname(MPB, #{}, MP, <<"example">>),
     Cases = [
         {<<7, 101, 120, 97, 109, 112, 108, 101, 0>>, Bin0},
         {<<7, 101, 120, 97, 109, 112, 108, 101, 0, 192, 0>>, Bin1},
