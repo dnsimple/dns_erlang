@@ -860,9 +860,9 @@ decode_svcb_svc_params(
 ) ->
     decode_svcb_svc_params(Rest, SvcParams#{?DNS_SVCB_PARAM_PORT => Port});
 decode_svcb_svc_params(
-    <<?DNS_SVCB_PARAM_ECHCONFIG:16, Len:16, ValueBin:Len/binary, Rest/binary>>, SvcParams
+    <<?DNS_SVCB_PARAM_ECH:16, Len:16, ValueBin:Len/binary, Rest/binary>>, SvcParams
 ) ->
-    decode_svcb_svc_params(Rest, SvcParams#{?DNS_SVCB_PARAM_ECHCONFIG => ValueBin});
+    decode_svcb_svc_params(Rest, SvcParams#{?DNS_SVCB_PARAM_ECH => ValueBin});
 decode_svcb_svc_params(
     <<?DNS_SVCB_PARAM_IPV4HINT:16, Len:16, ValueBin:Len/binary, Rest/binary>>, SvcParams
 ) ->

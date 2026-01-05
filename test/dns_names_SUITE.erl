@@ -255,7 +255,7 @@ svcb_param_name(_) ->
         ?DNS_SVCB_PARAM_NO_DEFAULT_ALPN,
         ?DNS_SVCB_PARAM_PORT,
         ?DNS_SVCB_PARAM_IPV4HINT,
-        ?DNS_SVCB_PARAM_ECHCONFIG,
+        ?DNS_SVCB_PARAM_ECH,
         ?DNS_SVCB_PARAM_IPV6HINT
     ],
     ?assertEqual(undefined, dns_names:svcb_param_name(?UNKNOWN_INT)),

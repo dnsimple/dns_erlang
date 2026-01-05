@@ -543,7 +543,7 @@ decode_encode_rrdata(_) ->
         {?DNS_TYPE_SVCB, #dns_rrdata_svcb{
             svc_priority = 0,
             target_name = <<"target.example.com">>,
-            svc_params = #{?DNS_SVCB_PARAM_ECHCONFIG => <<"123abc">>}
+            svc_params = #{?DNS_SVCB_PARAM_ECH => <<"123abc">>}
         }},
         {?DNS_TYPE_SVCB, #dns_rrdata_svcb{
             svc_priority = 0,

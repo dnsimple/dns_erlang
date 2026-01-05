@@ -1366,7 +1366,7 @@ encode_svcb_svc_params_value({?DNS_SVCB_PARAM_NO_DEFAULT_ALPN = K, none}, Bin) -
     <<Bin/binary, K:16/integer, 0:16/integer>>;
 encode_svcb_svc_params_value({?DNS_SVCB_PARAM_PORT = K, Int}, Bin) ->
     <<Bin/binary, K:16/integer, 2:16/integer, Int:16/integer>>;
-encode_svcb_svc_params_value({?DNS_SVCB_PARAM_ECHCONFIG = K, ValueBin}, Bin) ->
+encode_svcb_svc_params_value({?DNS_SVCB_PARAM_ECH = K, ValueBin}, Bin) ->
     <<Bin/binary, K:16/integer, (byte_size(ValueBin)):16/integer, ValueBin/binary>>;
 encode_svcb_svc_params_value({?DNS_SVCB_PARAM_IPV4HINT = K, IPs}, Bin) ->
     ValueBin = <<<<A, B, C, D>> || {A, B, C, D} <- IPs>>,

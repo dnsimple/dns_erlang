@@ -1795,7 +1795,7 @@ parse_svcb_params_from_rdata([{domain, "mandatory=" ++ Mandatory} | Rest], Ctx, 
 parse_svcb_params_from_rdata([{domain, "ech="}, {string, Value} | Rest], Ctx, Acc) ->
     try
         ECHConfig = base64:decode(Value),
-        NewAcc = Acc#{?DNS_SVCB_PARAM_ECHCONFIG => ECHConfig},
+        NewAcc = Acc#{?DNS_SVCB_PARAM_ECH => ECHConfig},
         parse_svcb_params_from_rdata(Rest, Ctx, NewAcc)
     catch
         _:Reason ->

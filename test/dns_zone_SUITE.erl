@@ -1236,7 +1236,7 @@ parse_svcb_with_echconfig(_Config) ->
     Zone = <<"example.com. 3600 IN SVCB 1 svc.example.com. ech=\"YWJjZGVm\"\n">>,
     {ok, [RR]} = dns_zone:parse_string(Zone, #{origin => <<"example.com.">>}),
     #dns_rrdata_svcb{svc_params = SvcParams} = RR#dns_rr.data,
-    ?assert(maps:is_key(?DNS_SVCB_PARAM_ECHCONFIG, SvcParams)).
+    ?assert(maps:is_key(?DNS_SVCB_PARAM_ECH, SvcParams)).
 
 parse_svcb_with_echconfig_bad(_Config) ->
     %% SVCB with ipv4hint service parameter

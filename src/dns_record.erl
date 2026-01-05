@@ -270,7 +270,7 @@ serialise_svcb_param_value(?DNS_SVCB_PARAM_PORT, Value, _Opts) when is_integer(V
 serialise_svcb_param_value(?DNS_SVCB_PARAM_IPV4HINT, Value, _Opts) when is_list(Value) ->
     %% List of IPv4 address tuples
     [list_to_binary(inet_parse:ntoa(V)) || V <- Value];
-serialise_svcb_param_value(?DNS_SVCB_PARAM_ECHCONFIG, Value, _Opts) when is_binary(Value) ->
+serialise_svcb_param_value(?DNS_SVCB_PARAM_ECH, Value, _Opts) when is_binary(Value) ->
     base64:encode(Value);
 serialise_svcb_param_value(?DNS_SVCB_PARAM_IPV6HINT, Value, _Opts) when is_list(Value) ->
     %% List of IPv6 address tuples
@@ -298,7 +298,7 @@ deserialise_svcb_param_value(?DNS_SVCB_PARAM_IPV4HINT, Value, _Opts) when is_lis
         element(2, inet_parse:address(binary_to_list(V)))
      || V <- Value
     ];
-deserialise_svcb_param_value(?DNS_SVCB_PARAM_ECHCONFIG, Value, _Opts) when is_binary(Value) ->
+deserialise_svcb_param_value(?DNS_SVCB_PARAM_ECH, Value, _Opts) when is_binary(Value) ->
     base64:decode(Value);
 deserialise_svcb_param_value(?DNS_SVCB_PARAM_IPV6HINT, Value, _Opts) when is_list(Value) ->
     %% List of IP address strings -> IPv6 tuples
