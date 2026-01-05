@@ -53,7 +53,7 @@ Terminals
     name label string
     int time
     ipv4 ipv6
-    '@' dot lparen rparen
+    '@' dot lparen rparen comma
     nl.
 
 %% Note: rtype tokens can appear in RDATA for records like RRSIG where
@@ -63,7 +63,7 @@ Rootsymbol zone.
 
 %% Expected shift/reduce conflicts due to RFC 1035's flexible field ordering
 %% (TTL and class can appear in either order or be omitted)
-Expect 20.
+Expect 25.
 
 %% ============================================================================
 %% Zone Structure
@@ -225,6 +225,29 @@ rdata_element -> rfc3597_data : {rfc3597, extract_token('$1')}.
 %% Record type tokens can appear in RDATA (e.g., RRSIG type_covered field)
 %% Treat them as strings/labels
 rdata_element -> rtype : {domain, extract_token('$1')}.
+%% RFC 9460 - SVCB/HTTPS service parameter: key=value pairs
+%% Allow comma-separated labels in RDATA (for SVCB/HTTPS service parameters like "alpn=h2,h3")
+%% When lexer sees "alpn=h2,h3", it produces label("alpn=h2"), comma, label("h3")
+%% This rule allows the parser to accept this structure,
+rdata_element -> label comma label :
+                 {domain, extract_token('$1') ++ ","
+                        ++ extract_token('$3')}.
+rdata_element -> label comma label comma label :
+                 {domain, extract_token('$1') ++ ","
+                        ++ extract_token('$3') ++ ","
+                        ++ extract_token('$5')}.
+rdata_element -> label comma label comma label comma label :
+                 {domain, extract_token('$1') ++ ","
+                        ++ extract_token('$3') ++ ","
+                        ++ extract_token('$5') ++ ","
+                        ++ extract_token('$7')}.
+rdata_element -> label comma label comma label comma label comma label:
+                 {domain, extract_token('$1') ++ ","
+                        ++ extract_token('$3') ++ ","
+                        ++ extract_token('$5') ++ ","
+                        ++ extract_token('$7') ++ ","
+                        ++ extract_token('$9')}.
+rdata_element -> name comma name : {domain, extract_token('$1') ++ "," ++ extract_token('$3')}.
 
 %% ============================================================================
 %% Basic Values

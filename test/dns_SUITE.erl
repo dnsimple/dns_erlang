@@ -35,6 +35,10 @@ groups() ->
             decode_encode_optdata,
             decode_encode_optdata_owner,
             decode_encode_svcb_params,
+            svcb_key_ordering_validation,
+            svcb_mandatory_self_reference,
+            svcb_mandatory_missing_keys,
+            svcb_no_default_alpn_length_validation,
             decode_dname_2_ptr,
             decode_dname_decode_loop,
             decode_dname_bad_pointer,
@@ -491,6 +495,9 @@ decode_encode_rrdata(_) ->
         {?DNS_TYPE_CAA, #dns_rrdata_caa{
             flags = 0, tag = <<"issue">>, value = <<"letsencrypt.org">>
         }},
+        {?DNS_TYPE_HTTPS, #dns_rrdata_https{
+            svc_priority = 0, target_name = <<"target.example.com">>, svc_params = #{}
+        }},
         {?DNS_TYPE_SVCB, #dns_rrdata_svcb{
             svc_priority = 0, target_name = <<"target.example.com">>, svc_params = #{}
         }},
@@ -514,26 +521,48 @@ decode_encode_rrdata(_) ->
             svc_params = #{?DNS_SVCB_PARAM_NO_DEFAULT_ALPN => none}
         }},
         {?DNS_TYPE_SVCB, #dns_rrdata_svcb{
-            svc_priority = 0,
+            svc_priority = 83,
             target_name = <<"target.example.com">>,
-            svc_params = #{?DNS_SVCB_PARAM_ALPN => <<"h2,h3">>}
+            svc_params = #{
+                ?DNS_SVCB_PARAM_MANDATORY => [?DNS_SVCB_PARAM_ALPN, ?DNS_SVCB_PARAM_PORT],
+                ?DNS_SVCB_PARAM_ALPN => [<<"h2>>, <<h3">>],
+                ?DNS_SVCB_PARAM_PORT => 83
+            }
+        }},
+        {?DNS_TYPE_SVCB, #dns_rrdata_svcb{
+            svc_priority = 83,
+            target_name = <<"target.example.com">>,
+            svc_params = #{
+                ?DNS_SVCB_PARAM_MANDATORY => [?DNS_SVCB_PARAM_ALPN, ?DNS_SVCB_PARAM_PORT],
+                ?DNS_SVCB_PARAM_ALPN => [<<"h2>>, <<h3">>],
+                ?DNS_SVCB_PARAM_PORT => 83,
+                667 => <<"opaque-value">>
+            }
         }},
         {?DNS_TYPE_SVCB, #dns_rrdata_svcb{
             svc_priority = 0,
             target_name = <<"target.example.com">>,
-            svc_params = #{?DNS_SVCB_PARAM_ECHCONFIG => <<"123abc">>}
+            svc_params = #{?DNS_SVCB_PARAM_ALPN => [<<"h2>>, <<h3">>]}
         }},
         {?DNS_TYPE_SVCB, #dns_rrdata_svcb{
             svc_priority = 0,
             target_name = <<"target.example.com">>,
-            svc_params = #{?DNS_SVCB_PARAM_IPV4HINT => <<"1.2.3.4,1.2.3.5">>}
+            svc_params = #{?DNS_SVCB_PARAM_ECH => <<"123abc">>}
+        }},
+        {?DNS_TYPE_SVCB, #dns_rrdata_svcb{
+            svc_priority = 0,
+            target_name = <<"target.example.com">>,
+            svc_params = #{?DNS_SVCB_PARAM_IPV4HINT => [{1, 2, 3, 4}, {1, 2, 3, 5}]}
         }},
         {?DNS_TYPE_SVCB, #dns_rrdata_svcb{
             svc_priority = 0,
             target_name = <<"target.example.com">>,
             svc_params = #{
                 ?DNS_SVCB_PARAM_IPV6HINT =>
-                    <<"2001:0db8:85a3:0000:0000:8a2e:0370:7334,2001:0db8:85a3:0000:0000:8a2e:0370:7335">>
+                    [
+                        {16#2001, 16#0db8, 16#85a3, 16#0000, 16#0000, 16#8a2e, 16#0370, 16#7334},
+                        {16#2001, 16#0db8, 16#85a3, 16#0000, 16#0000, 16#8a2e, 16#0370, 16#7335}
+                    ]
             }
         }},
         {?DNS_TYPE_DNSKEY, #dns_rrdata_dnskey{
@@ -657,8 +686,7 @@ decode_encode_optdata_owner(_) ->
 decode_encode_svcb_params(_) ->
     Cases = [
         {#{}, #{}},
-        {#{?DNS_SVCB_PARAM_PORT => 8079}, #{?DNS_SVCB_PARAM_PORT => 8079}},
-        {#{port => 8080}, #{?DNS_SVCB_PARAM_PORT => 8080}}
+        {#{?DNS_SVCB_PARAM_PORT => 8079}, #{?DNS_SVCB_PARAM_PORT => 8079}}
     ],
 
     [
@@ -667,6 +695,59 @@ decode_encode_svcb_params(_) ->
         )
      || {Input, Expected} <- Cases
     ].
+
+svcb_key_ordering_validation(_) ->
+    %% Test that keys must be in strictly ascending order
+    %% Create a binary with keys out of order: port (3) before alpn (1)
+    PortKey = ?DNS_SVCB_PARAM_PORT,
+    AlpnKey = ?DNS_SVCB_PARAM_ALPN,
+    %% Encode port first (wrong order)
+    PortBin = <<PortKey:16, 2:16, 443:16>>,
+    %% Encode alpn second (should be first)
+    AlpnValue = <<2, "h2">>,
+    AlpnBin = <<AlpnKey:16, (byte_size(AlpnValue)):16, AlpnValue/binary>>,
+    OutOfOrderBin = <<PortBin/binary, AlpnBin/binary>>,
+    ?assertException(
+        throw,
+        {svcb_key_ordering_error, {prev_key, PortKey}, {current_key, AlpnKey}},
+        dns_decode:decode_svcb_svc_params(OutOfOrderBin)
+    ).
+
+svcb_mandatory_self_reference(_) ->
+    %% Test that mandatory cannot reference itself (key 0)
+    MandatoryKey = ?DNS_SVCB_PARAM_MANDATORY,
+    %% Create mandatory parameter that references itself
+    MandatoryValue = <<MandatoryKey:16>>,
+    MandatoryBin = <<MandatoryKey:16, (byte_size(MandatoryValue)):16, MandatoryValue/binary>>,
+    ?assertException(
+        throw,
+        {svcb_mandatory_validation_error, {mandatory_self_reference, MandatoryKey}},
+        dns_decode:decode_svcb_svc_params(MandatoryBin)
+    ).
+
+svcb_mandatory_missing_keys(_) ->
+    %% Test that all mandatory keys must exist in SvcParams
+    MandatoryKey = ?DNS_SVCB_PARAM_MANDATORY,
+    PortKey = ?DNS_SVCB_PARAM_PORT,
+    %% Create mandatory parameter that references port, but port is not present
+    MandatoryValue = <<PortKey:16>>,
+    MandatoryBin = <<MandatoryKey:16, (byte_size(MandatoryValue)):16, MandatoryValue/binary>>,
+    ?assertException(
+        throw,
+        {svcb_mandatory_validation_error, {missing_mandatory_keys, [PortKey]}},
+        dns_decode:decode_svcb_svc_params(MandatoryBin)
+    ).
+
+svcb_no_default_alpn_length_validation(_) ->
+    %% Test that NO_DEFAULT_ALPN must have length 0
+    NoDefaultAlpnKey = ?DNS_SVCB_PARAM_NO_DEFAULT_ALPN,
+    %% Create NO_DEFAULT_ALPN with non-zero length (should be 0)
+    InvalidBin = <<NoDefaultAlpnKey:16, 1:16, 0:8>>,
+    ?assertException(
+        throw,
+        {svcb_bad_no_default_alpn, 1},
+        dns_decode:decode_svcb_svc_params(InvalidBin)
+    ).
 
 %%%===================================================================
 %%% Domain name functions

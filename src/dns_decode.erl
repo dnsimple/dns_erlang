@@ -723,6 +723,10 @@ decode_rrdata(MsgBin, _Class, ?DNS_TYPE_SVCB, <<SvcPriority:16, Bin/binary>>) ->
     {TargetName, SvcParamsBin} = decode_dname(MsgBin, Bin),
     SvcParams = decode_svcb_svc_params(SvcParamsBin),
     #dns_rrdata_svcb{svc_priority = SvcPriority, target_name = TargetName, svc_params = SvcParams};
+decode_rrdata(MsgBin, _Class, ?DNS_TYPE_HTTPS, <<SvcPriority:16, Bin/binary>>) ->
+    {TargetName, SvcParamsBin} = decode_dname(MsgBin, Bin),
+    SvcParams = decode_svcb_svc_params(SvcParamsBin),
+    #dns_rrdata_https{svc_priority = SvcPriority, target_name = TargetName, svc_params = SvcParams};
 decode_rrdata(MsgBin, _Class, ?DNS_TYPE_TSIG, Bin) ->
     {Alg,
         <<Time:48, Fudge:16, MS:16, MAC:MS/bytes, MsgId:16, ErrInt:16, OtherLen:16,
@@ -834,34 +838,82 @@ do_decode_nxt_bmp(<<0:1, Rest/bitstring>>, Offset, Types) ->
 
 -spec decode_svcb_svc_params(binary()) -> dns:svcb_svc_params().
 decode_svcb_svc_params(Bin) ->
-    decode_svcb_svc_params(Bin, #{}).
+    decode_svcb_svc_params(Bin, #{}, -1).
 
--spec decode_svcb_svc_params(binary(), dns:svcb_svc_params()) -> dns:svcb_svc_params().
-decode_svcb_svc_params(<<>>, SvcParams) ->
-    SvcParams;
+-spec decode_svcb_svc_params(binary(), dns:svcb_svc_params(), -1 | dns:uint16()) ->
+    dns:svcb_svc_params().
+decode_svcb_svc_params(<<>>, SvcParams, _PrevKey) ->
+    validate_mandatory_params(SvcParams);
 decode_svcb_svc_params(
-    <<?DNS_SVCB_PARAM_ALPN:16, Len:16, SvcParamValueBin:Len/binary, Rest/binary>>, SvcParams
-) ->
-    decode_svcb_svc_params(Rest, SvcParams#{?DNS_SVCB_PARAM_ALPN => SvcParamValueBin});
-decode_svcb_svc_params(<<?DNS_SVCB_PARAM_NO_DEFAULT_ALPN:16, 0:16, Rest/binary>>, SvcParams) ->
-    decode_svcb_svc_params(Rest, SvcParams#{?DNS_SVCB_PARAM_NO_DEFAULT_ALPN => none});
-decode_svcb_svc_params(
-    <<?DNS_SVCB_PARAM_PORT:16, Len:16, SvcParamValueBin:Len/binary, Rest/binary>>, SvcParams
-) ->
-    <<V:16/integer>> = SvcParamValueBin,
-    decode_svcb_svc_params(Rest, SvcParams#{?DNS_SVCB_PARAM_PORT => V});
-decode_svcb_svc_params(
-    <<?DNS_SVCB_PARAM_ECHCONFIG:16, Len:16, SvcParamValueBin:Len/binary, Rest/binary>>, SvcParams
-) ->
-    decode_svcb_svc_params(Rest, SvcParams#{?DNS_SVCB_PARAM_ECHCONFIG => SvcParamValueBin});
-decode_svcb_svc_params(
-    <<?DNS_SVCB_PARAM_IPV4HINT:16, Len:16, SvcParamValueBin:Len/binary, Rest/binary>>, SvcParams
-) ->
-    decode_svcb_svc_params(Rest, SvcParams#{?DNS_SVCB_PARAM_IPV4HINT => SvcParamValueBin});
-decode_svcb_svc_params(
-    <<?DNS_SVCB_PARAM_IPV6HINT:16, Len:16, SvcParamValueBin:Len/binary, Rest/binary>>, SvcParams
-) ->
-    decode_svcb_svc_params(Rest, SvcParams#{?DNS_SVCB_PARAM_IPV6HINT => SvcParamValueBin}).
+    <<Key:16, Len:16, ValueBin:Len/binary, Rest/binary>>, SvcParams, PrevKey
+) when PrevKey < Key ->
+    NewSvcParams =
+        case Key of
+            ?DNS_SVCB_PARAM_MANDATORY ->
+                Value = [K || <<K:16>> <= ValueBin],
+                SvcParams#{?DNS_SVCB_PARAM_MANDATORY => Value};
+            ?DNS_SVCB_PARAM_ALPN ->
+                Value = decode_svcb_svc_params_value(?DNS_SVCB_PARAM_ALPN, ValueBin),
+                SvcParams#{?DNS_SVCB_PARAM_ALPN => Value};
+            ?DNS_SVCB_PARAM_NO_DEFAULT_ALPN when Len =:= 0 ->
+                SvcParams#{?DNS_SVCB_PARAM_NO_DEFAULT_ALPN => none};
+            ?DNS_SVCB_PARAM_NO_DEFAULT_ALPN ->
+                throw({svcb_bad_no_default_alpn, Len});
+            ?DNS_SVCB_PARAM_PORT when Len =:= 2 ->
+                <<Port:16/integer>> = ValueBin,
+                SvcParams#{?DNS_SVCB_PARAM_PORT => Port};
+            ?DNS_SVCB_PARAM_ECH ->
+                SvcParams#{?DNS_SVCB_PARAM_ECH => ValueBin};
+            ?DNS_SVCB_PARAM_IPV4HINT ->
+                Value = decode_svcb_svc_params_value(?DNS_SVCB_PARAM_IPV4HINT, ValueBin),
+                SvcParams#{?DNS_SVCB_PARAM_IPV4HINT => Value};
+            ?DNS_SVCB_PARAM_IPV6HINT ->
+                Value = decode_svcb_svc_params_value(?DNS_SVCB_PARAM_IPV6HINT, ValueBin),
+                SvcParams#{?DNS_SVCB_PARAM_IPV6HINT => Value};
+            UnknownKey ->
+                SvcParams#{UnknownKey => ValueBin}
+        end,
+    decode_svcb_svc_params(Rest, NewSvcParams, Key);
+decode_svcb_svc_params(<<Key:16, Len:16, _:Len/binary, _/binary>>, _, PrevKey) when
+    Key =< PrevKey
+->
+    throw({svcb_key_ordering_error, {prev_key, PrevKey}, {current_key, Key}}).
+
+%% Validate mandatory parameter self-consistency
+%% RFC 9460: Keys listed in mandatory parameter must exist in SvcParams
+%% and mandatory (key 0) cannot reference itself
+-spec validate_mandatory_params(dns:svcb_svc_params()) -> dns:svcb_svc_params() | no_return().
+validate_mandatory_params(#{?DNS_SVCB_PARAM_MANDATORY := MandatoryKeys} = SvcParams) ->
+    %% Check that mandatory doesn't reference itself (key 0)
+    case lists:member(?DNS_SVCB_PARAM_MANDATORY, MandatoryKeys) of
+        true ->
+            Reason = {mandatory_self_reference, ?DNS_SVCB_PARAM_MANDATORY},
+            throw({svcb_mandatory_validation_error, Reason});
+        false ->
+            %% Check that all mandatory keys exist in SvcParams
+            MissingKeys = [K || K <- MandatoryKeys, not maps:is_key(K, SvcParams)],
+            case MissingKeys of
+                [] ->
+                    SvcParams;
+                _ ->
+                    Reason = {missing_mandatory_keys, MissingKeys},
+                    throw({svcb_mandatory_validation_error, Reason})
+            end
+    end;
+validate_mandatory_params(SvcParams) ->
+    SvcParams.
+
+decode_svcb_svc_params_value(?DNS_SVCB_PARAM_ALPN, Bin) ->
+    decode_alpn_list(Bin);
+decode_svcb_svc_params_value(?DNS_SVCB_PARAM_IPV4HINT, Bin) ->
+    [{A, B, C, D} || <<A, B, C, D>> <= Bin];
+decode_svcb_svc_params_value(?DNS_SVCB_PARAM_IPV6HINT, Bin) ->
+    [{A, B, C, D, E, F, G, H} || <<A:16, B:16, C:16, D:16, E:16, F:16, G:16, H:16>> <= Bin].
+
+decode_alpn_list(<<Len:8, Str:Len/binary, Rest/binary>>) ->
+    [Str | decode_alpn_list(Rest)];
+decode_alpn_list(<<>>) ->
+    [].
 
 -spec decode_bool(0 | 1) -> boolean().
 decode_bool(0) -> false;

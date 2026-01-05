@@ -84,12 +84,35 @@ optrr_cases() ->
 
 rrdata_cases() ->
     Cases = data_samples:rrdata_wire(),
-    [
+    WireCases = [
         {
             lists:flatten(io_lib:format("~p/~p", [Class, Type])),
             dns_decode:decode_rrdata(Bin, Class, Type)
         }
      || {Class, Type, Bin} <- Cases
+    ],
+    [
+        {"SVCB", #dns_rrdata_svcb{
+            svc_priority = 0,
+            target_name = <<"target.example.com">>,
+            svc_params = #{}
+        }},
+        {"SVCB with params", #dns_rrdata_svcb{
+            svc_priority = 16,
+            target_name = <<"target.example.com">>,
+            svc_params = #{?DNS_SVCB_PARAM_PORT => 8080}
+        }},
+        {"HTTPS", #dns_rrdata_https{
+            svc_priority = 0,
+            target_name = <<"target.example.com">>,
+            svc_params = #{}
+        }},
+        {"HTTPS with params", #dns_rrdata_https{
+            svc_priority = 1,
+            target_name = <<"target.example.com">>,
+            svc_params = #{?DNS_SVCB_PARAM_ALPN => [<<"h2">>, <<"h3">>]}
+        }}
+        | WireCases
     ].
 
 tsig_cases() ->

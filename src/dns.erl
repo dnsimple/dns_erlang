@@ -295,7 +295,14 @@ restrictions on the length. Labels must be 63 characters or less.
 
 ?DOC(#{group => <<"Types: options">>}).
 -type svcb_svc_params() :: #{
-    1..6 => none | char() | binary()
+    ?DNS_SVCB_PARAM_MANDATORY => [dns:uint16()],
+    ?DNS_SVCB_PARAM_ALPN => [binary()],
+    ?DNS_SVCB_PARAM_NO_DEFAULT_ALPN => none,
+    ?DNS_SVCB_PARAM_PORT => inet:port_number(),
+    ?DNS_SVCB_PARAM_ECH => binary(),
+    ?DNS_SVCB_PARAM_IPV4HINT => [inet:ip4_address()],
+    ?DNS_SVCB_PARAM_IPV6HINT => [inet:ip6_address()],
+    uint16() => none | binary()
 }.
 ?DOC(#{group => <<"Types: options">>}).
 -type encode_message_opts() :: #{

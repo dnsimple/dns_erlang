@@ -27,7 +27,8 @@ groups() ->
             eoptcode_name,
             llqopcode_name,
             llqerrcode_name,
-            ede_code_text
+            ede_code_text,
+            svcb_param_name
         ]}
     ].
 
@@ -108,6 +109,8 @@ type_name(_) ->
         ?DNS_TYPE_NINFO_NUMBER,
         ?DNS_TYPE_RKEY_NUMBER,
         ?DNS_TYPE_TALINK_NUMBER,
+        ?DNS_TYPE_SVCB_NUMBER,
+        ?DNS_TYPE_HTTPS_NUMBER,
         ?DNS_TYPE_SPF_NUMBER,
         ?DNS_TYPE_UINFO_NUMBER,
         ?DNS_TYPE_UID_NUMBER,
@@ -244,3 +247,25 @@ ede_code_text(_) ->
     ?assertEqual(undefined, dns_names:ede_text_code(?UNKNOWN_BIN)),
     [?assert(is_binary(dns_names:ede_code_text(N))) || N <- Cases],
     [?assertEqual(N, dns_names:ede_text_code(dns_names:ede_code_text(N))) || N <- Cases].
+
+svcb_param_name(_) ->
+    Cases = [
+        ?DNS_SVCB_PARAM_MANDATORY,
+        ?DNS_SVCB_PARAM_ALPN,
+        ?DNS_SVCB_PARAM_NO_DEFAULT_ALPN,
+        ?DNS_SVCB_PARAM_PORT,
+        ?DNS_SVCB_PARAM_IPV4HINT,
+        ?DNS_SVCB_PARAM_ECH,
+        ?DNS_SVCB_PARAM_IPV6HINT
+    ],
+    [?assert(is_binary(dns_names:svcb_param_name(N))) || N <- Cases],
+    [?assertEqual(N, dns_names:name_svcb_param(dns_names:svcb_param_name(N))) || N <- Cases],
+    %% Test unknown key format (keyNNNNN)
+    UnknownKey = 65001,
+    UnknownKeyName = dns_names:svcb_param_name(UnknownKey),
+    ?assertEqual(<<"key65001">>, UnknownKeyName),
+    ?assertEqual(UnknownKey, dns_names:name_svcb_param(UnknownKeyName)),
+    %% Test that invalid key format returns undefined
+    ?assertEqual(undefined, dns_names:name_svcb_param(<<"notkey123">>)),
+    ?assertEqual(undefined, dns_names:name_svcb_param(<<"key">>)),
+    ?assertEqual(undefined, dns_names:name_svcb_param(<<"keyabc">>)).

@@ -35,6 +35,8 @@ the functions for encoding and decoding messages exported by `m:dns`.
 
 -export([serialise/1, serialise/2, deserialise/1, deserialise/2]).
 
+-include_lib("dns_erlang/include/dns.hrl").
+
 ?DOC("Module's core type.").
 -type t() :: binary() | {binary(), proplists:proplist()}.
 ?DOC("Options available for serialisation and deserialisation.").
@@ -122,6 +124,15 @@ serialise(dns_rrdata_rrsig, signature, Sig, _Opts) ->
     {<<"signature">>, base64:encode(Sig)};
 serialise(dns_rrdata_sshfp, fp, FP, _Opts) ->
     {<<"fp">>, binary:encode_hex(FP)};
+serialise(Tag, svc_params, SvcParams, Opts) when
+    Tag =:= dns_rrdata_svcb orelse Tag =:= dns_rrdata_https
+->
+    SvcParamsList = lists:sort(maps:to_list(SvcParams)),
+    SerialisedParams = [
+        {dns_names:svcb_param_name(K), serialise_svcb_param_value(K, V, Opts)}
+     || {K, V} <- SvcParamsList
+    ],
+    {<<"svc_params">>, SerialisedParams};
 serialise(dns_rrdata_tsig, mac, MAC, _Opts) ->
     {<<"mac">>, base64:encode(MAC)};
 serialise(dns_rrdata_tsig, other, Other, _Opts) ->
@@ -217,6 +228,17 @@ deserialise(dns_rrdata_rrsig, signature, Sig, _Opts) ->
     base64:decode(Sig);
 deserialise(dns_rrdata_sshfp, fp, FP, _Opts) ->
     binary:decode_hex(FP);
+deserialise(Tag, svc_params, SvcParamsList, Opts) when
+    Tag =:= dns_rrdata_svcb orelse Tag =:= dns_rrdata_https
+->
+    DeserialisedParams = [
+        {
+            dns_names:name_svcb_param(K),
+            deserialise_svcb_param_value(dns_names:name_svcb_param(K), V, Opts)
+        }
+     || {K, V} <- SvcParamsList
+    ],
+    maps:from_list(DeserialisedParams);
 deserialise(dns_rrdata_tsig, mac, MAC, _Opts) ->
     base64:decode(MAC);
 deserialise(dns_rrdata_tsig, other, Other, _Opts) ->
@@ -232,4 +254,65 @@ deserialise(dns_opt_ecs, _Field, Data, _Opts) when is_binary(Data) ->
 deserialise(dns_opt_unknown, bin, Bin, _Opts) when is_binary(Bin) ->
     binary:decode_hex(Bin);
 deserialise(_Tag, _Field, Value, _Opts) ->
+    Value.
+
+%% Helper functions for SVCB/HTTPS svc_params serialization
+serialise_svcb_param_value(?DNS_SVCB_PARAM_MANDATORY, Value, _Opts) when is_list(Value) ->
+    %% List of parameter key codes (integers)
+    [integer_to_binary(V, 10) || V <- Value];
+serialise_svcb_param_value(?DNS_SVCB_PARAM_ALPN, Value, _Opts) when is_list(Value) ->
+    %% List of protocol name binaries
+    [base64:encode(V) || V <- Value];
+serialise_svcb_param_value(?DNS_SVCB_PARAM_NO_DEFAULT_ALPN, none, _Opts) ->
+    <<"none">>;
+serialise_svcb_param_value(?DNS_SVCB_PARAM_PORT, Value, _Opts) when is_integer(Value) ->
+    integer_to_binary(Value, 10);
+serialise_svcb_param_value(?DNS_SVCB_PARAM_IPV4HINT, Value, _Opts) when is_list(Value) ->
+    %% List of IPv4 address tuples
+    [list_to_binary(inet_parse:ntoa(V)) || V <- Value];
+serialise_svcb_param_value(?DNS_SVCB_PARAM_ECH, Value, _Opts) when is_binary(Value) ->
+    base64:encode(Value);
+serialise_svcb_param_value(?DNS_SVCB_PARAM_IPV6HINT, Value, _Opts) when is_list(Value) ->
+    %% List of IPv6 address tuples
+    [list_to_binary(inet_parse:ntoa(V)) || V <- Value];
+serialise_svcb_param_value(_Key, Value, _Opts) when is_binary(Value) ->
+    %% Unknown parameter - base64 encode binary values
+    base64:encode(Value);
+serialise_svcb_param_value(_Key, Value, _Opts) ->
+    %% Fallback for unknown types
+    Value.
+
+deserialise_svcb_param_value(?DNS_SVCB_PARAM_MANDATORY, Value, _Opts) when is_list(Value) ->
+    %% List of parameter key code strings -> integers
+    [binary_to_integer(V) || V <- Value];
+deserialise_svcb_param_value(?DNS_SVCB_PARAM_ALPN, Value, _Opts) when is_list(Value) ->
+    %% List of base64-encoded protocol names -> binaries
+    [base64:decode(V) || V <- Value];
+deserialise_svcb_param_value(?DNS_SVCB_PARAM_NO_DEFAULT_ALPN, <<"none">>, _Opts) ->
+    none;
+deserialise_svcb_param_value(?DNS_SVCB_PARAM_PORT, Value, _Opts) when is_binary(Value) ->
+    binary_to_integer(Value);
+deserialise_svcb_param_value(?DNS_SVCB_PARAM_IPV4HINT, Value, _Opts) when is_list(Value) ->
+    %% List of IP address strings -> IPv4 tuples
+    [
+        element(2, inet_parse:address(binary_to_list(V)))
+     || V <- Value
+    ];
+deserialise_svcb_param_value(?DNS_SVCB_PARAM_ECH, Value, _Opts) when is_binary(Value) ->
+    base64:decode(Value);
+deserialise_svcb_param_value(?DNS_SVCB_PARAM_IPV6HINT, Value, _Opts) when is_list(Value) ->
+    %% List of IP address strings -> IPv6 tuples
+    [
+        element(2, inet_parse:address(binary_to_list(V)))
+     || V <- Value
+    ];
+deserialise_svcb_param_value(_Key, Value, _Opts) when is_binary(Value) ->
+    %% Unknown parameter - try base64 decode
+    try
+        base64:decode(Value)
+    catch
+        _:_ -> Value
+    end;
+deserialise_svcb_param_value(_Key, Value, _Opts) ->
+    %% Fallback for unknown types
     Value.

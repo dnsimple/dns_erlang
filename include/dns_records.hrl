@@ -337,6 +337,14 @@
     svc_params :: dns:svcb_svc_params()
 }).
 
+%% HTTPS record for service binding. See RFC 9460.
+%% It is identical to dns_rrdata_svcb but we keep it for more consistent pattern-matching
+-record(dns_rrdata_https, {
+    svc_priority :: dns:uint16(),
+    target_name :: dns:dname(),
+    svc_params :: dns:svcb_svc_params()
+}).
+
 %% TSIG record for transaction signature. See RFC 2845: §2.3.
 -record(dns_rrdata_tsig, {
     alg :: dns:tsig_alg(),
