@@ -508,7 +508,7 @@ svcb_param_name(Int) when is_integer(Int) ->
         ?DNS_SVCB_PARAM_IPV4HINT_NUMBER -> ?DNS_SVCB_PARAM_IPV4HINT_BSTR;
         ?DNS_SVCB_PARAM_ECH_NUMBER -> ?DNS_SVCB_PARAM_ECH_BSTR;
         ?DNS_SVCB_PARAM_IPV6HINT_NUMBER -> ?DNS_SVCB_PARAM_IPV6HINT_BSTR;
-        _ -> undefined
+        _ -> <<"key", (integer_to_binary(Int))/binary>>
     end.
 
 ?DOC("Returns the SVCB parameter from a binary string.").
@@ -522,5 +522,5 @@ name_svcb_param(Bin) when is_binary(Bin) ->
         ?DNS_SVCB_PARAM_IPV4HINT_BSTR -> ?DNS_SVCB_PARAM_IPV4HINT_NUMBER;
         ?DNS_SVCB_PARAM_ECH_BSTR -> ?DNS_SVCB_PARAM_ECH_NUMBER;
         ?DNS_SVCB_PARAM_IPV6HINT_BSTR -> ?DNS_SVCB_PARAM_IPV6HINT_NUMBER;
-        _ -> undefined
+        <<"key", KeyNum/binary>> -> binary_to_integer(KeyNum)
     end.
