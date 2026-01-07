@@ -412,9 +412,9 @@ encode_message_llq(
     Msg0 = Msg#dns_message{qc = QC, anc = EncodedAnC, auc = AuthorityLen, adc = AdditionalLen},
     Head = encode_message_head(Msg0),
     Bin = <<Head/binary, QBin/binary, AnBin/binary, AuAdBin/binary>>,
-    case LeftoverAnC =:= 0 of
-        true -> Bin;
-        false -> {Bin, Msg#dns_message{anc = LeftoverAnC, answers = LeftoverAn}}
+    case LeftoverAnC of
+        0 -> Bin;
+        _ -> {Bin, Msg#dns_message{anc = LeftoverAnC, answers = LeftoverAn}}
     end.
 
 -spec encode_message_rec_list(
