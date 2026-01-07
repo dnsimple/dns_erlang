@@ -54,7 +54,8 @@ groups() ->
             dname_to_lower,
             dname_case_conversion,
             dns_case_insensitive_comparison,
-            dname_preserve_dot
+            dname_preserve_dot,
+            encode_rec_list_accumulates_multiple_records
         ]}
     ].
 
@@ -453,8 +454,8 @@ optrr_too_large(_Config, Anc) ->
         {false, Encoded} = Result,
         ?assert(is_binary(Encoded) andalso byte_size(Encoded) > 0)
     catch
-        Error:Reason ->
-            ct:fail("Error: ~p:~p", [Error, Reason])
+        Error:Reason:Stacktrace ->
+            ct:fail("Error: ~p:~p~n~p", [Error, Reason, Stacktrace])
     end.
 
 %%%===================================================================
@@ -1041,6 +1042,66 @@ dname_preserve_dot(_) ->
         ?assertEqual(Encoded, ReEncoded),
         ?assertEqual(Message, ReDecoded)
     ].
+
+%% This test ensures that encode_rec_list correctly accumulates all records,
+%% not just the last one. The bug was that the accumulator was being replaced
+%% instead of accumulated, causing only the last record to be returned.
+encode_rec_list_accumulates_multiple_records(_) ->
+    QName = <<"example.com">>,
+    %% Create a message with multiple A records in the answers section
+    %% This will test encode_rec_list with multiple records
+    Answers = [
+        #dns_rr{
+            name = QName,
+            type = ?DNS_TYPE_A,
+            ttl = 3600,
+            data = #dns_rrdata_a{ip = {127, 0, 0, I}}
+        }
+     || I <- lists:seq(1, 5)
+    ],
+    Msg = #dns_message{
+        qc = 1,
+        anc = 5,
+        questions = [#dns_query{name = QName, type = ?DNS_TYPE_A}],
+        answers = Answers
+    },
+    %% Encode and decode the message
+    Encoded = dns:encode_message(Msg),
+    Decoded = dns:decode_message(Encoded),
+    %% Verify all 5 records are present in the decoded message
+    ?assertEqual(5, length(Decoded#dns_message.answers)),
+    %% Verify each record matches the original
+    [
+        ?assertMatch(
+            #dns_rr{
+                name = QName,
+                type = ?DNS_TYPE_A,
+                data = #dns_rrdata_a{ip = {127, 0, 0, I}}
+            },
+            lists:nth(I, Decoded#dns_message.answers)
+        )
+     || I <- lists:seq(1, 5)
+    ],
+    %% Also test with multiple OPT records in additional section
+    %% This tests encode_message_d_opt which also uses encode_rec_list
+    OptRRs = [
+        #dns_optrr{
+            udp_payload_size = 512 + I,
+            data = [#dns_opt_nsid{data = <<"test", I:8>>}]
+        }
+     || I <- lists:seq(0, 2)
+    ],
+    MsgWithOpt = Msg#dns_message{
+        adc = 3,
+        additional = OptRRs
+    },
+    EncodedOpt = dns:encode_message(MsgWithOpt),
+    DecodedOpt = dns:decode_message(EncodedOpt),
+    %% Verify all OPT records are present
+    ?assertEqual(3, length(DecodedOpt#dns_message.additional)),
+    %% Verify we can round-trip encode/decode
+    ?assertEqual(Msg, Decoded),
+    ?assertEqual(MsgWithOpt, DecodedOpt).
 
 split_binary_into_chunks(Bin, Chunk) ->
     List = binary_to_list(Bin),
