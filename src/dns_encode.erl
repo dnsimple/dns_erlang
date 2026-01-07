@@ -221,7 +221,7 @@ encode_message_d_req(Msg, CompMap, Pos, SpaceLeft, Acc) ->
         {additional, _, _} ->
             {Acc, CompMap};
         {Section, RecsLen, Recs} ->
-            case encode_message_rec_list(Pos, SpaceLeft, CompMap, Recs) of
+            case encode_message_rec_list(Recs, CompMap, Pos, SpaceLeft) of
                 {CompMap1, NewBin, []} ->
                     NewBinSize = byte_size(NewBin),
                     Pos1 = Pos + NewBinSize,
@@ -241,7 +241,7 @@ encode_message_d_req(Msg, CompMap, Pos, SpaceLeft, Acc) ->
     dns:records()
 ) -> false | {non_neg_integer(), bitstring()}.
 encode_message_d_opt(Pos, SpaceLeft, CompMap, Recs) ->
-    case encode_message_rec_list(Pos, SpaceLeft, CompMap, Recs) of
+    case encode_message_rec_list(Recs, CompMap, Pos, SpaceLeft) of
         {_, Bin, []} -> {length(Recs), Bin};
         _ -> false
     end.
@@ -256,7 +256,7 @@ encode_message_axfr(#dns_message{} = Msg, MaxSize) ->
     binary() | {binary(), dns:message()}.
 encode_message_axfr(Msg, Pos, SpaceLeft, CompMap, Bin) ->
     {Section, RecsLen, Recs} = encode_message_pop(Msg),
-    {CompMap0, NewBin, Recs0} = encode_message_rec_list(Pos, SpaceLeft, CompMap, Recs),
+    {CompMap0, NewBin, Recs0} = encode_message_rec_list(Recs, CompMap, Pos, SpaceLeft),
     Recs0Len = length(Recs0),
     EncodedLen = RecsLen - Recs0Len,
     Msg1 = encode_message_put(Msg, Recs0, EncodedLen, Section),
@@ -358,21 +358,21 @@ encode_message_llq(
     AuAd = Authority ++ Additional,
     Pos = ?HEADER_SIZE,
     SpaceLeft = MaxSize - Pos,
-    {CompMap0, QBin, []} = encode_message_rec_list(Pos, SpaceLeft, #{}, Q),
+    {CompMap0, QBin, []} = encode_message_rec_list(Q, #{}, Pos, SpaceLeft),
     QBinSize = byte_size(QBin),
     SpaceLeft0 = SpaceLeft - QBinSize,
     Pos0 = QBinSize + Pos,
-    {_, AuAdTmp, []} = encode_message_rec_list(Pos0, SpaceLeft0, CompMap0, AuAd),
+    {_, AuAdTmp, []} = encode_message_rec_list(AuAd, CompMap0, Pos0, SpaceLeft0),
     AuAdTmpSize = byte_size(AuAdTmp),
     {CompMap1, AnBin, LeftoverAn} =
-        encode_message_rec_list(Pos0, SpaceLeft0 - AuAdTmpSize, CompMap0, Answers),
+        encode_message_rec_list(Answers, CompMap0, Pos0, SpaceLeft0 - AuAdTmpSize),
     LeftoverAnC = length(LeftoverAn),
     EncodedAnC = AnswersLen - LeftoverAnC,
     AnBinSize = byte_size(AnBin),
     Pos1 = Pos0 + AnBinSize,
     SpaceLeft1 = SpaceLeft0 - AnBinSize,
     {_, AuAdBin, []} =
-        encode_message_rec_list(Pos1, SpaceLeft1, CompMap1, AuAd),
+        encode_message_rec_list(AuAd, CompMap1, Pos1, SpaceLeft1),
     Msg0 = Msg#dns_message{qc = QC, anc = EncodedAnC, auc = AuthorityLen, adc = AdditionalLen},
     Head = encode_message_header(Msg0),
     Bin = <<Head/binary, QBin/binary, AnBin/binary, AuAdBin/binary>>,
@@ -381,43 +381,34 @@ encode_message_llq(
         _ -> {Bin, Msg#dns_message{anc = LeftoverAnC, answers = LeftoverAn}}
     end.
 
--spec encode_message_rec_list(
-    pos_integer(),
-    number(),
-    compmap(),
-    dns:records()
-) -> {compmap(), bitstring(), dns:records()}.
-encode_message_rec_list(Pos, SpaceLeft, CompMap, Recs) ->
-    encode_message_rec_list(Pos, SpaceLeft, CompMap, <<>>, Recs).
+-spec encode_message_rec_list(dns:records(), compmap(), pos_integer(), number()) ->
+    {compmap(), binary(), dns:records()}.
+encode_message_rec_list(Recs, CompMap, Pos, SpaceLeft) ->
+    encode_message_rec_list(Recs, CompMap, Pos, SpaceLeft, <<>>).
 
--spec encode_message_rec_list(
-    pos_integer(),
-    number(),
-    compmap(),
-    bitstring(),
-    dns:records()
-) -> {compmap(), bitstring(), dns:records()}.
-encode_message_rec_list(Pos, SpaceLeft, CompMap, Body, [Rec | Rest] = Recs) ->
-    case encode_message_rec(Body, CompMap, Pos, Rec, SpaceLeft) of
-        {NewBody, CompMap0} ->
+-spec encode_message_rec_list(dns:records(), compmap(), pos_integer(), number(), binary()) ->
+    {compmap(), binary(), dns:records()}.
+encode_message_rec_list([Rec | Rest] = Recs, CompMap, Pos, SpaceLeft, Body) ->
+    case encode_message_rec(Rec, CompMap, Pos, SpaceLeft, Body) of
+        {NewBody, CompMap1} ->
             NewBinSize = byte_size(NewBody) - byte_size(Body),
-            Pos0 = Pos + NewBinSize,
-            SpaceLeft0 = SpaceLeft - NewBinSize,
-            encode_message_rec_list(Pos0, SpaceLeft0, CompMap0, NewBody, Rest);
+            Pos1 = Pos + NewBinSize,
+            SpaceLeft1 = SpaceLeft - NewBinSize,
+            encode_message_rec_list(Rest, CompMap1, Pos1, SpaceLeft1, Body);
         not_appended ->
             {CompMap, Body, Recs}
     end;
-encode_message_rec_list(_Pos, _SpaceLeft, CompMap, Body, []) ->
+encode_message_rec_list([], CompMap, _, _, Body) ->
     {CompMap, Body, []}.
 
 -spec encode_message_rec(
-    binary(),
+    dns:query() | dns:optrr() | dns:rr(),
     compmap(),
     non_neg_integer(),
-    dns:query() | dns:optrr() | dns:rr(),
-    non_neg_integer() | infinity
+    non_neg_integer() | infinity,
+    binary()
 ) -> {binary(), compmap()} | not_appended.
-encode_message_rec(Acc, CompMap, Pos, #dns_query{name = N, type = T, class = C}, MaxSize) ->
+encode_message_rec(#dns_query{name = N, type = T, class = C}, CompMap, Pos, MaxSize, Acc) ->
     {NameBin, CompMap0} = encode_dname(CompMap, Pos, N),
     RecSize = byte_size(NameBin) + 2 + 2,
     case RecSize =< MaxSize of
@@ -427,7 +418,7 @@ encode_message_rec(Acc, CompMap, Pos, #dns_query{name = N, type = T, class = C},
         false ->
             not_appended
     end;
-encode_message_rec(Acc, CompMap, _Pos, #dns_optrr{} = OptRR, MaxSize) ->
+encode_message_rec(#dns_optrr{} = OptRR, CompMap, _Pos, MaxSize, Acc) ->
     OptRRBin = encode_optrr(<<>>, OptRR),
     OptRRSize = byte_size(OptRRBin),
     case OptRRSize =< MaxSize of
@@ -438,17 +429,11 @@ encode_message_rec(Acc, CompMap, _Pos, #dns_optrr{} = OptRR, MaxSize) ->
             not_appended
     end;
 encode_message_rec(
-    Acc,
+    #dns_rr{name = N, type = T, class = C, ttl = TTL, data = D},
     CompMap,
     Pos,
-    #dns_rr{
-        name = N,
-        type = T,
-        class = C,
-        ttl = TTL,
-        data = D
-    },
-    MaxSize
+    MaxSize,
+    Acc
 ) ->
     maybe
         %% Check if we have at least enough space for the fixed header
