@@ -142,41 +142,38 @@ encode_message_default(
     SpaceLeft0 = MaxSize - ?HEADER_SIZE - PreservedOptRRBinSize,
     %% RFC6891 §7, the question section MUST always be present
     {Acc1, CompMap1} = encode_append_section(<<>>, #{}, Questions),
-    SpaceLeft1 = SpaceLeft0 - byte_size(Acc1),
-    Pos1 = ?HEADER_SIZE + byte_size(Acc1),
-    MsgTmp = Msg0#dns_message{qc = 0, questions = [], anc = 0, auc = 0},
-    case encode_message_d_req(MsgTmp, Pos1, SpaceLeft1, CompMap1, Acc1) of
+    Acc1Size = byte_size(Acc1),
+    SpaceLeft1 = SpaceLeft0 - Acc1Size,
+    Pos1 = ?HEADER_SIZE + Acc1Size,
+    MsgTmp = Msg0#dns_message{qc = 0, questions = []},
+    case encode_message_d_req(MsgTmp, CompMap1, Pos1, SpaceLeft1, Acc1) of
         truncated ->
             %% We ran out of space, we MUST append a OptRR EDNS0 record,
             %% and this takes precedence over the body
-            {AddCountMin, OptRRBinMin} = ensure_optrr(Additional, minimal),
-            OptRRBinSizeMin = byte_size(OptRRBinMin),
             {AddCountFull, OptRRBinFull} = ensure_optrr(Additional, full),
             OptRRBinSizeFull = byte_size(OptRRBinFull),
-            SpaceForOptRR = SpaceLeft1 + PreservedOptRRBinSize - byte_size(Acc1),
-            case {OptRRBinSizeFull =< SpaceForOptRR, OptRRBinSizeMin =< SpaceForOptRR} of
-                {true, _} ->
+            SpaceForOptRR = MaxSize - ?HEADER_SIZE - Acc1Size,
+            case OptRRBinSizeFull =< SpaceForOptRR of
+                true ->
                     %% Full OptRR fits
                     Head = build_header(Msg0, true, QC, 0, 0, AddCountFull),
                     <<Head/binary, Acc1/binary, OptRRBinFull/binary>>;
-                {false, true} ->
-                    %% Full OptRR doesn't fit, but minimal does
+                false ->
+                    %% Full OptRR doesn't fit, but minimal (should) do
+                    {AddCountMin, OptRRBinMin} = ensure_optrr(Additional, minimal),
                     Head = build_header(Msg0, true, QC, 0, 0, AddCountMin),
-                    <<Head/binary, Acc1/binary, OptRRBinMin/binary>>;
-                {false, false} ->
-                    %% Neither full nor minimal OptRR fits, but we MUST include OptRR
-                    %% per RFC6891, so include minimal even if it exceeds the space
-                    %% This is most likely bad input, the client code should already know the
-                    %% original packet, composed of the question plus EDNS,
-                    %% should have fit in this size limit.
-                    Head = build_header(Msg0, true, QC, 0, 0, AddCountMin),
+                    %% If minimal would not fit either, it is most likely bad input,
+                    %% the client code should already know the original packet,
+                    %% composed of the question plus EDNS, should have fit in this size limit.
+                    %% We MUST include OptRR per RFC6891, so include even if it may exceed the space
                     <<Head/binary, Acc1/binary, OptRRBinMin/binary>>
             end;
-        {CompMap, ANC, AUC, Body} ->
+        {Body, CompMap2} ->
             BodySize = byte_size(Body),
             {OptRRBin, Ad0} = encode_message_pop_optrr(Additional),
             OptRRBinSize = byte_size(OptRRBin),
             Pos2 = BodySize,
+            #dns_message{anc = ANC, auc = AUC} = Msg0,
             case SpaceLeft1 + PreservedOptRRBinSize - BodySize of
                 SpaceLeft2 when SpaceLeft2 < OptRRBinSize ->
                     Head = build_header(Msg0, false, QC, ANC, AUC, 0),
@@ -189,12 +186,13 @@ encode_message_default(
                             0 -> 0;
                             _ -> 1
                         end,
-                    case encode_message_d_opt(Pos3, SpaceLeft3, CompMap, Ad0) of
+                    case encode_message_d_opt(Pos3, SpaceLeft3, CompMap2, Ad0) of
                         false ->
                             Head = build_header(Msg0, false, QC, ANC, AUC, OptC),
                             <<Head/binary, Body/binary, OptRRBin/binary>>;
-                        {ADC, AdBin} ->
-                            Head = build_header(Msg0, false, QC, ANC, AUC, OptC + ADC),
+                        {_, AdBin} ->
+                            #dns_message{adc = ADC} = Msg0,
+                            Head = build_header(Msg0, false, QC, ANC, AUC, ADC),
                             <<Head/binary, Body/binary, OptRRBin/binary, AdBin/binary>>
                     end
             end
@@ -216,31 +214,21 @@ build_header(#dns_message{tc = TC} = Msg, TCBool, EncQC, EncANC, EncAUC, EncADC)
 
 %% Encodes authorities, and answers, for as long as there is space
 %% Will return a false tag if there wasn't enough space
--spec encode_message_d_req(dns:message(), pos_integer(), integer(), compmap(), bitstring()) ->
-    truncated | {compmap(), dns:uint16(), dns:uint16(), bitstring()}.
-encode_message_d_req(
-    #dns_message{anc = ANC, auc = AUC} = Msg,
-    Pos,
-    SpaceLeft,
-    CompMap,
-    Acc
-) ->
+-spec encode_message_d_req(dns:message(), compmap(), pos_integer(), integer(), binary()) ->
+    truncated | {binary(), compmap()}.
+encode_message_d_req(Msg, CompMap, Pos, SpaceLeft, Acc) ->
     case encode_message_pop(Msg) of
-        {additional, _} ->
-            {CompMap, ANC, AUC, Acc};
-        {Section, Recs} ->
-            RecsLen = length(Recs),
-            {CompMap0, NewBin, Recs0} = encode_message_rec_list(Pos, SpaceLeft, CompMap, Recs),
-            Recs0Len = length(Recs0),
-            EncodedLen = RecsLen - Recs0Len,
-            Msg1 = encode_message_put(Msg, Recs0, EncodedLen, Section),
-            Acc1 = <<Acc/binary, NewBin/binary>>,
-            case Recs0Len of
-                0 ->
+        {additional, _, _} ->
+            {Acc, CompMap};
+        {Section, RecsLen, Recs} ->
+            case encode_message_rec_list(Pos, SpaceLeft, CompMap, Recs) of
+                {CompMap1, NewBin, []} ->
                     NewBinSize = byte_size(NewBin),
-                    Pos0 = Pos + NewBinSize,
-                    SpaceLeft0 = SpaceLeft - NewBinSize,
-                    encode_message_d_req(Msg1, Pos0, SpaceLeft0, CompMap0, Acc1);
+                    Pos1 = Pos + NewBinSize,
+                    SpaceLeft1 = SpaceLeft - NewBinSize,
+                    Msg1 = encode_message_put(Msg, [], RecsLen, Section),
+                    Acc1 = <<Acc/binary, NewBin/binary>>,
+                    encode_message_d_req(Msg1, CompMap1, Pos1, SpaceLeft1, Acc1);
                 _ ->
                     truncated
             end
@@ -267,8 +255,7 @@ encode_message_axfr(#dns_message{} = Msg, MaxSize) ->
 -spec encode_message_axfr(dns:message(), pos_integer(), number(), compmap(), binary()) ->
     binary() | {binary(), dns:message()}.
 encode_message_axfr(Msg, Pos, SpaceLeft, CompMap, Bin) ->
-    {Section, Recs} = encode_message_pop(Msg),
-    RecsLen = length(Recs),
+    {Section, RecsLen, Recs} = encode_message_pop(Msg),
     {CompMap0, NewBin, Recs0} = encode_message_rec_list(Pos, SpaceLeft, CompMap, Recs),
     Recs0Len = length(Recs0),
     EncodedLen = RecsLen - Recs0Len,
@@ -290,18 +277,18 @@ encode_message_axfr(Msg, Pos, SpaceLeft, CompMap, Bin) ->
     end.
 
 -spec encode_message_pop(dns:message()) ->
-    {additional, dns:additional()}
-    | {answers, dns:answers()}
-    | {authority, dns:authority()}
-    | {questions, dns:questions()}.
-encode_message_pop(#dns_message{questions = [_ | _] = Recs}) ->
-    {questions, Recs};
-encode_message_pop(#dns_message{answers = [_ | _] = Recs}) ->
-    {answers, Recs};
-encode_message_pop(#dns_message{authority = [_ | _] = Recs}) ->
-    {authority, Recs};
-encode_message_pop(#dns_message{additional = Recs}) ->
-    {additional, Recs}.
+    {additional, dns:uint16(), dns:additional()}
+    | {answers, dns:uint16(), dns:answers()}
+    | {authority, dns:uint16(), dns:authority()}
+    | {questions, dns:uint16(), dns:questions()}.
+encode_message_pop(#dns_message{qc = C, questions = [_ | _] = Recs}) ->
+    {questions, C, Recs};
+encode_message_pop(#dns_message{anc = C, answers = [_ | _] = Recs}) ->
+    {answers, C, Recs};
+encode_message_pop(#dns_message{auc = C, authority = [_ | _] = Recs}) ->
+    {authority, C, Recs};
+encode_message_pop(#dns_message{adc = C, additional = Recs}) ->
+    {additional, C, Recs}.
 
 -spec encode_message_put
     (dns:message(), dns:questions(), dns:uint16(), questions) -> dns:message();
