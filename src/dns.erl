@@ -36,7 +36,7 @@ TSIG supporting functions, and various utility functions for comparing domain na
 domain names into different cases, converting to and from label lists, etc.
 """).
 
--export([decode_message/1, encode_message/1, encode_message/2]).
+-export([decode_message/1, decode_query/1, encode_message/1, encode_message/2]).
 -export([verify_tsig/3, verify_tsig/4, add_tsig/5, add_tsig/6]).
 -export([compare_dname/2, compare_labels/2, escape_label/1]).
 -export([
@@ -110,8 +110,10 @@ The general form is a 96bits header, followed by a variable number of questions,
 answers, authorities, and additional records.
 """).
 -type message_bin() :: <<_:96, _:_*8>>.
+
 ?DOC("DNS Message ID. See RFC 1035: §4.1.1.").
 -type message_id() :: uint16().
+
 ?DOC("""
 Decoding errors.
 
@@ -120,10 +122,14 @@ Can be one of the following:
 - `truncated`: the message was partially decoded, as data was found missing from the message.
 - `trailing_garbage`: the message was successfully decoded,
     but there was trailing garbage at the end of the message.
+- `notimp`: the opcode is not implemented (e.g., IQUERY, STATUS, DSO).
+    The message struct contains minimal fields needed to construct a NOTIMP response.
 """).
--type decode_error() :: formerr | truncated | trailing_garbage.
+-type decode_error() :: formerr | truncated | notimp | trailing_garbage.
+
 ?DOC("Domain name, expressed as a sequence of `t:label/0`, as defined in RFC 1035: §3.1.").
 -type dname() :: binary().
+
 ?DOC("""
 DNS labels. See RFC 1035: §2.3.1.
 
@@ -357,6 +363,27 @@ restrictions on the length. Labels must be 63 characters or less.
     {decode_error(), message() | undefined, binary()} | message().
 decode_message(MsgBin) ->
     dns_decode:decode(MsgBin).
+
+?DOC(#{group => <<"Functions: parsing">>}).
+?DOC("""
+Decode a binary DNS query message with strict header validation.
+
+Performs header guard checks before decoding the message body to prevent DoS attacks.
+For standard queries (opcode 0), validates that:
+- ANCount = 0 (queries should not have answers)
+- NSCount = 0 (queries should not have authority records)
+- QDCount = 1 (standard queries must have exactly one question)
+
+For NOTIFY (opcode 4) and UPDATE (opcode 5), allows decoding to proceed.
+For other opcodes, falls back to standard decoding.
+
+See `dns_decode:decode_query/1` for implementation details.
+""").
+-spec decode_query(message_bin()) ->
+    {decode_error(), message() | undefined, binary()}
+    | message().
+decode_query(MsgBin) ->
+    dns_decode:decode_query(MsgBin).
 
 ?DOC(#{group => <<"Functions: parsing">>}).
 ?DOC("Encode a `t:message/0` record.").
