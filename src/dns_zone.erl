@@ -568,18 +568,6 @@ rdata_error_message(<<"DHCID">>, _RData) ->
         <<"DHCID requires: \"base64data\"\n", "Example: example.com. IN DHCID ",
             "\"AAIBY2/AuCccgoJbsaxcQc9TUapptP69lOjxfNuVAA2kjEA=\"">>
     };
-rdata_error_message(<<"MX">>, _RData) ->
-    {
-        <<"Invalid MX record: expected preference and mail server">>,
-        <<"MX requires: preference mailserver\n",
-            "Example: example.com. IN MX 10 mail.example.com.">>
-    };
-rdata_error_message(<<"SRV">>, _RData) ->
-    {
-        <<"Invalid SRV record: expected priority, weight, port, and target">>,
-        <<"SRV requires: priority weight port target\n",
-            "Example: _http._tcp.example.com. IN SRV 10 20 80 www.example.com.">>
-    };
 rdata_error_message(<<"DS">>, RData) when length(RData) < 4 ->
     {
         <<"Invalid DS record: expected 4 fields ", "(keytag, algorithm, digest-type, digest), got ",
@@ -1139,6 +1127,128 @@ build_rdata("DHCID", RData, Ctx) ->
         _ ->
             {error, make_rdata_error(<<"DHCID">>, RData, Ctx)}
     end;
+build_rdata("OPENPGPKEY", RData, Ctx) ->
+    %% OPENPGPKEY format: base64-encoded data (single string)
+    %% RFC 7929 - OpenPGP Public Key
+    case RData of
+        [{string, Base64Data}] when is_list(Base64Data) ->
+            try
+                Data = base64:decode(Base64Data),
+                {ok, #dns_rrdata_openpgpkey{data = Data}}
+            catch
+                _:_ ->
+                    {error, make_rdata_error(<<"OPENPGPKEY">>, RData, Ctx)}
+            end;
+        _ ->
+            {error, make_rdata_error(<<"OPENPGPKEY">>, RData, Ctx)}
+    end;
+build_rdata("URI", RData, Ctx) ->
+    %% URI format: priority weight target
+    %% RFC 7553 - The Uniform Resource Identifier (URI) DNS Resource Record
+    case RData of
+        [{int, Priority}, {int, Weight}, {string, Target}] when
+            is_integer(Priority), is_integer(Weight), is_list(Target)
+        ->
+            BinTarget = unicode:characters_to_binary(Target),
+            case uri_string:normalize(BinTarget) of
+                {error, _, _} ->
+                    {error, make_rdata_error(<<"URI">>, RData, Ctx)};
+                NormalizedTarget ->
+                    {ok, #dns_rrdata_uri{
+                        priority = Priority,
+                        weight = Weight,
+                        target = NormalizedTarget
+                    }}
+            end;
+        _ ->
+            {error, make_rdata_error(<<"URI">>, RData, Ctx)}
+    end;
+build_rdata("RESINFO", RData, Ctx) ->
+    %% RESINFO format: text strings (same as TXT)
+    %% RFC 9606 - Resource Information (RESINFO) DNS Resource Record
+    case extract_strings(RData) of
+        {ok, Strings} -> {ok, #dns_rrdata_resinfo{data = Strings}};
+        {error, Reason} -> {error, make_semantic_error(Reason, Ctx)}
+    end;
+build_rdata("WALLET", RData, Ctx) ->
+    %% WALLET format: base64-encoded data (single string)
+    case RData of
+        [{string, Base64Data}] when is_list(Base64Data) ->
+            try
+                Data = base64:decode(Base64Data),
+                {ok, #dns_rrdata_wallet{data = Data}}
+            catch
+                _:_ ->
+                    {error, make_rdata_error(<<"WALLET">>, RData, Ctx)}
+            end;
+        _ ->
+            {error, make_rdata_error(<<"WALLET">>, RData, Ctx)}
+    end;
+build_rdata("SMIMEA", RData, Ctx) ->
+    %% SMIMEA format: usage selector matching-type cert-data(hex string)
+    %% RFC 8162 - S/MIME cert association (similar to TLSA)
+    case RData of
+        [{int, Usage}, {int, Selector}, {int, MatchingType}, {string, CertHex}] when
+            is_integer(Usage), is_integer(Selector), is_integer(MatchingType), is_list(CertHex)
+        ->
+            case hex_to_binary(CertHex) of
+                {ok, Cert} ->
+                    {ok, #dns_rrdata_smimea{
+                        usage = Usage,
+                        selector = Selector,
+                        matching_type = MatchingType,
+                        certificate = Cert
+                    }};
+                {error, _Reason} ->
+                    {error, make_rdata_error(<<"SMIMEA">>, RData, Ctx)}
+            end;
+        _ ->
+            {error, make_rdata_error(<<"SMIMEA">>, RData, Ctx)}
+    end;
+build_rdata("EUI48", RData, Ctx) ->
+    %% EUI48 format: 48-bit MAC address (hex string, 12 hex digits)
+    %% RFC 7043 - EUI-48 address
+    case RData of
+        [{string, HexAddr}] when is_list(HexAddr) ->
+            case hex_to_binary(HexAddr) of
+                {ok, Addr} when byte_size(Addr) =:= 6 ->
+                    {ok, #dns_rrdata_eui48{address = Addr}};
+                _ ->
+                    {error, make_rdata_error(<<"EUI48">>, RData, Ctx)}
+            end;
+        [{domain, HexAddr}] when is_list(HexAddr) ->
+            %% Hex strings may be parsed as domain names
+            case hex_to_binary(HexAddr) of
+                {ok, Addr} when byte_size(Addr) =:= 6 ->
+                    {ok, #dns_rrdata_eui48{address = Addr}};
+                _ ->
+                    {error, make_rdata_error(<<"EUI48">>, RData, Ctx)}
+            end;
+        _ ->
+            {error, make_rdata_error(<<"EUI48">>, RData, Ctx)}
+    end;
+build_rdata("EUI64", RData, Ctx) ->
+    %% EUI64 format: 64-bit MAC address (hex string, 16 hex digits)
+    %% RFC 7043 - EUI-64 address
+    case RData of
+        [{string, HexAddr}] when is_list(HexAddr) ->
+            case hex_to_binary(HexAddr) of
+                {ok, Addr} when byte_size(Addr) =:= 8 ->
+                    {ok, #dns_rrdata_eui64{address = Addr}};
+                _ ->
+                    {error, make_rdata_error(<<"EUI64">>, RData, Ctx)}
+            end;
+        [{domain, HexAddr}] when is_list(HexAddr) ->
+            %% Hex strings may be parsed as domain names
+            case hex_to_binary(HexAddr) of
+                {ok, Addr} when byte_size(Addr) =:= 8 ->
+                    {ok, #dns_rrdata_eui64{address = Addr}};
+                _ ->
+                    {error, make_rdata_error(<<"EUI64">>, RData, Ctx)}
+            end;
+        _ ->
+            {error, make_rdata_error(<<"EUI64">>, RData, Ctx)}
+    end;
 build_rdata("DS", RData, Ctx) ->
     %% DS format: keytag algorithm digest-type digest(hex string)
     %% RFC 4034 - Delegation Signer
@@ -1362,6 +1472,63 @@ build_rdata("NSEC", RData, Ctx) ->
             }};
         _ ->
             {error, make_rdata_error(<<"NSEC">>, RData, Ctx)}
+    end;
+build_rdata("CSYNC", RData, Ctx) ->
+    %% CSYNC format: soa_serial flags type1 type2 type3 ...
+    %% RFC 7477 - Child-to-Parent Synchronization in DNS
+    case RData of
+        [{int, SOASerial}, {int, Flags} | Types] when
+            is_integer(SOASerial), is_integer(Flags), length(Types) > 0
+        ->
+            %% Parse type names - they can be rtype tokens (parsed as domain) or labels
+            TypeNums = lists:map(
+                fun
+                    ({domain, TypeName}) when is_list(TypeName) ->
+                        type_to_number(TypeName);
+                    ({rtype, TypeName}) when is_list(TypeName) ->
+                        type_to_number(TypeName);
+                    (_) ->
+                        %% Invalid type, skip or use 0
+                        0
+                end,
+                Types
+            ),
+            %% Filter out invalid types (0)
+            ValidTypes = [T || T <- TypeNums, T =/= 0],
+            {ok, #dns_rrdata_csync{
+                soa_serial = SOASerial,
+                flags = Flags,
+                types = ValidTypes
+            }};
+        _ ->
+            {error, make_rdata_error(<<"CSYNC">>, RData, Ctx)}
+    end;
+build_rdata("DSYNC", RData, Ctx) ->
+    %% DSYNC format: rrtype scheme port target
+    %% RFC 9859 - Delegation Synchronization (DSYNC) DNS Resource Record
+    case RData of
+        [{domain, RRTypeName}, {int, Scheme}, {int, Port}, {domain, Target}] when
+            is_list(RRTypeName),
+            is_integer(Scheme),
+            Scheme >= 0,
+            Scheme =< 255,
+            is_integer(Port),
+            is_list(Target)
+        ->
+            RRType = type_to_number(RRTypeName),
+            case RRType of
+                0 ->
+                    {error, make_rdata_error(<<"DSYNC">>, RData, Ctx)};
+                _ ->
+                    {ok, #dns_rrdata_dsync{
+                        rrtype = RRType,
+                        scheme = Scheme,
+                        port = Port,
+                        target = resolve_name(Target, Ctx#parse_ctx.origin)
+                    }}
+            end;
+        _ ->
+            {error, make_rdata_error(<<"DSYNC">>, RData, Ctx)}
     end;
 build_rdata("ZONEMD", RData, Ctx) ->
     %% ZONEMD format: serial scheme algorithm hash(hex string)
@@ -1611,6 +1778,24 @@ type_to_number("CERT") ->
     ?DNS_TYPE_CERT;
 type_to_number("DHCID") ->
     ?DNS_TYPE_DHCID;
+type_to_number("OPENPGPKEY") ->
+    ?DNS_TYPE_OPENPGPKEY;
+type_to_number("CSYNC") ->
+    ?DNS_TYPE_CSYNC;
+type_to_number("SMIMEA") ->
+    ?DNS_TYPE_SMIMEA;
+type_to_number("URI") ->
+    ?DNS_TYPE_URI;
+type_to_number("RESINFO") ->
+    ?DNS_TYPE_RESINFO;
+type_to_number("DSYNC") ->
+    ?DNS_TYPE_DSYNC;
+type_to_number("WALLET") ->
+    ?DNS_TYPE_WALLET;
+type_to_number("EUI48") ->
+    ?DNS_TYPE_EUI48;
+type_to_number("EUI64") ->
+    ?DNS_TYPE_EUI64;
 type_to_number("SPF") ->
     ?DNS_TYPE_SPF;
 type_to_number("SVCB") ->

@@ -332,6 +332,14 @@ decode_rrdata(
     _MsgBin, Class, ?DNS_TYPE_AAAA, <<A:16, B:16, C:16, D:16, E:16, F:16, G:16, H:16>>
 ) when ?CLASS_IS_IN(Class) ->
     #dns_rrdata_aaaa{ip = {A, B, C, D, E, F, G, H}};
+decode_rrdata(_MsgBin, Class, ?DNS_TYPE_EUI48, Bin) when
+    ?CLASS_IS_IN(Class), 6 =:= byte_size(Bin)
+->
+    #dns_rrdata_eui48{address = Bin};
+decode_rrdata(_MsgBin, Class, ?DNS_TYPE_EUI64, Bin) when
+    ?CLASS_IS_IN(Class), 8 =:= byte_size(Bin)
+->
+    #dns_rrdata_eui64{address = Bin};
 decode_rrdata(MsgBin, _Class, ?DNS_TYPE_AFSDB, <<Subtype:16, Bin/binary>>) ->
     #dns_rrdata_afsdb{
         subtype = Subtype,
@@ -346,6 +354,28 @@ decode_rrdata(MsgBin, _Class, ?DNS_TYPE_CNAME, Bin) ->
     #dns_rrdata_cname{dname = decode_dnameonly(MsgBin, Bin)};
 decode_rrdata(_MsgBin, Class, ?DNS_TYPE_DHCID, Bin) when ?CLASS_IS_IN(Class) ->
     #dns_rrdata_dhcid{data = Bin};
+decode_rrdata(_MsgBin, Class, ?DNS_TYPE_OPENPGPKEY, Bin) when ?CLASS_IS_IN(Class) ->
+    #dns_rrdata_openpgpkey{data = Bin};
+decode_rrdata(
+    _MsgBin,
+    _Class,
+    ?DNS_TYPE_URI,
+    <<Priority:16, Weight:16, Target/binary>>
+) ->
+    case uri_string:normalize(Target) of
+        {error, Reason, _} ->
+            erlang:error({bad_uri, Target, Reason});
+        NormalizedTarget ->
+            #dns_rrdata_uri{
+                priority = Priority,
+                weight = Weight,
+                target = NormalizedTarget
+            }
+    end;
+decode_rrdata(_MsgBin, Class, ?DNS_TYPE_RESINFO, Bin) when ?CLASS_IS_IN(Class) ->
+    #dns_rrdata_resinfo{data = decode_text(Bin)};
+decode_rrdata(_MsgBin, Class, ?DNS_TYPE_WALLET, Bin) when ?CLASS_IS_IN(Class) ->
+    #dns_rrdata_wallet{data = Bin};
 decode_rrdata(_MsgBin, _Class, ?DNS_TYPE_DLV, <<KeyTag:16, Alg:8, DigestType:8, Digest/binary>>) ->
     #dns_rrdata_dlv{
         keytag = KeyTag,
@@ -624,6 +654,31 @@ decode_rrdata(MsgBin, _Class, ?DNS_TYPE_NSEC, Bin) ->
 decode_rrdata(
     _MsgBin,
     _Class,
+    ?DNS_TYPE_CSYNC,
+    <<SOASerial:32, Flags:16, TypeBMP/binary>>
+) ->
+    Types = decode_nsec_types(TypeBMP),
+    #dns_rrdata_csync{
+        soa_serial = SOASerial,
+        flags = Flags,
+        types = Types
+    };
+decode_rrdata(
+    MsgBin,
+    _Class,
+    ?DNS_TYPE_DSYNC,
+    <<RRType:16, Scheme:8, Port:16, TargetBin/binary>>
+) ->
+    Target = decode_dnameonly(MsgBin, TargetBin),
+    #dns_rrdata_dsync{
+        rrtype = RRType,
+        scheme = Scheme,
+        port = Port,
+        target = Target
+    };
+decode_rrdata(
+    _MsgBin,
+    _Class,
     ?DNS_TYPE_NSEC3,
     <<HashAlg:8, _FlagsZ:7, OptOut:1, Iterations:16, SaltLen:8/unsigned, Salt:SaltLen/binary-unit:8,
         HashLen:8/unsigned, Hash:HashLen/binary-unit:8, TypeBMP/binary>>
@@ -652,6 +707,15 @@ decode_rrdata(
     _MsgBin, _Class, ?DNS_TYPE_TLSA, <<Usage:8, Selector:8, MatchingType:8, Certificate/binary>>
 ) ->
     #dns_rrdata_tlsa{
+        usage = Usage,
+        selector = Selector,
+        matching_type = MatchingType,
+        certificate = Certificate
+    };
+decode_rrdata(
+    _MsgBin, _Class, ?DNS_TYPE_SMIMEA, <<Usage:8, Selector:8, MatchingType:8, Certificate/binary>>
+) ->
+    #dns_rrdata_smimea{
         usage = Usage,
         selector = Selector,
         matching_type = MatchingType,

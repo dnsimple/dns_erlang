@@ -32,6 +32,8 @@ groups() ->
             bad_optrr_too_large,
             decode_encode_rrdata_wire_samples,
             decode_encode_rrdata,
+            uri_decode_normalization,
+            uri_decode_invalid_error,
             decode_encode_optdata,
             decode_encode_optdata_owner,
             decode_encode_svcb_params,
@@ -608,6 +610,26 @@ decode_encode_rrdata(_) ->
             matching_type = 2,
             certificate =
                 <<"92003ba34942dc74152e2f2c408d29eca5a520e7f2e06bb944f4dca346baf63c1b177615d466f6c4b71c216a50292bd58c9ebdd2f74e38fe51ffd48c43326cbc">>
+        }},
+        {?DNS_TYPE_OPENPGPKEY, #dns_rrdata_openpgpkey{
+            data = base64:decode(
+                <<"mQINBFit2jsBEADrbl5vjVxYeAE0g0IDYCBpHirv1Sjlqxx5gjtPhb2YhvyDMXjq">>
+            )
+        }},
+        {?DNS_TYPE_SMIMEA, #dns_rrdata_smimea{
+            usage = 3,
+            selector = 1,
+            matching_type = 1,
+            certificate = base64:decode(<<"MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA">>)
+        }},
+        {?DNS_TYPE_WALLET, #dns_rrdata_wallet{
+            data = base64:decode(<<"dGVzdC13YWxsZXQtZGF0YQ==">>)
+        }},
+        {?DNS_TYPE_EUI48, #dns_rrdata_eui48{
+            address = <<16#00, 16#1A, 16#2B, 16#3C, 16#4D, 16#5E>>
+        }},
+        {?DNS_TYPE_EUI64, #dns_rrdata_eui64{
+            address = <<16#00, 16#1A, 16#2B, 16#3C, 16#4D, 16#5E, 16#6F, 16#70>>
         }}
     ],
     [
@@ -622,6 +644,81 @@ decode_encode_rrdata(_) ->
             ?assertEqual(Data, Decoded)
         end
      || {Type, Data} <- Cases
+    ].
+
+uri_decode_normalization(_) ->
+    %% Test that URI targets are normalized during decoding
+    Cases = [
+        %% {Input URI, Expected normalized URI}
+        {<<"HTTPS://EXAMPLE.COM/">>, <<"https://example.com/">>},
+        {<<"http://example.com/path">>, <<"http://example.com/path">>},
+        {<<"https://www.example.com/">>, <<"https://www.example.com/">>},
+        {<<"HTTPS://EXAMPLE.COM:443/">>, <<"https://example.com/">>}
+    ],
+    [
+        begin
+            %% Encode the URI record
+            Priority = 10,
+            Weight = 1,
+            Rdata = #dns_rrdata_uri{
+                priority = Priority,
+                weight = Weight,
+                target = InputURI
+            },
+            {Encoded, _} = dns_encode:encode_rrdata(0, ?DNS_CLASS_IN, Rdata, #{}),
+
+            %% Decode and verify normalization
+            Decoded = dns_decode:decode_rrdata(Encoded, ?DNS_CLASS_IN, ?DNS_TYPE_URI, Encoded),
+            #dns_rrdata_uri{
+                priority = DecodedPriority,
+                weight = DecodedWeight,
+                target = DecodedTarget
+            } = Decoded,
+            ?assertEqual(Priority, DecodedPriority),
+            ?assertEqual(Weight, DecodedWeight),
+            ?assertEqual(
+                ExpectedNormalized,
+                DecodedTarget,
+                io_lib:format(
+                    "URI normalization failed: ~p -> ~p (expected ~p)",
+                    [InputURI, DecodedTarget, ExpectedNormalized]
+                )
+            )
+        end
+     || {InputURI, ExpectedNormalized} <- Cases
+    ].
+
+uri_decode_invalid_error(_) ->
+    %% Test that invalid URIs throw {bad_uri, Target, Reason}
+    InvalidURIs = [
+        <<"not a valid uri">>,
+        <<"://invalid">>
+    ],
+    [
+        begin
+            Priority = 10,
+            Weight = 1,
+            %% Create wire format: Priority (16 bits) + Weight (16 bits) + Target
+            WireData = <<Priority:16, Weight:16, InvalidURI/binary>>,
+
+            %% Attempt to decode and verify it throws
+            try
+                _Decoded = dns_decode:decode_rrdata(
+                    WireData, ?DNS_CLASS_IN, ?DNS_TYPE_URI, WireData
+                ),
+                ?assert(false, io_lib:format("Expected throw for invalid URI: ~p", [InvalidURI]))
+            catch
+                error:{bad_uri, Target, Reason} ->
+                    ?assertEqual(InvalidURI, Target),
+                    ?assert(
+                        is_atom(Reason) orelse is_binary(Reason) orelse is_list(Reason),
+                        io_lib:format("Expected Reason to be atom, binary, or list, got: ~p", [
+                            Reason
+                        ])
+                    )
+            end
+        end
+     || InvalidURI <- InvalidURIs
     ].
 
 %%%===================================================================
