@@ -184,7 +184,9 @@ optcode_terms(_) ->
         ?DNS_OPCODE_QUERY_NUMBER,
         ?DNS_OPCODE_IQUERY_NUMBER,
         ?DNS_OPCODE_STATUS_NUMBER,
-        ?DNS_OPCODE_UPDATE_NUMBER
+        ?DNS_OPCODE_NOTIFY_NUMBER,
+        ?DNS_OPCODE_UPDATE_NUMBER,
+        ?DNS_OPCODE_DSO_NUMBER
     ],
     ?assertEqual(undefined, dns_names:opcode_name(?UNKNOWN_INT)),
     ?assertEqual(undefined, dns_names:name_opcode(?UNKNOWN_BIN)),
