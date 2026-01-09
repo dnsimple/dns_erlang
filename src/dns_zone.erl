@@ -1151,8 +1151,8 @@ build_rdata("URI", RData, Ctx) ->
         ->
             BinTarget = unicode:characters_to_binary(Target),
             case uri_string:normalize(BinTarget) of
-                {error, Reason, _} ->
-                    erlang:error({bad_uri, Target, Reason});
+                {error, _, _} ->
+                    {error, make_rdata_error(<<"URI">>, RData, Ctx)};
                 NormalizedTarget ->
                     {ok, #dns_rrdata_uri{
                         priority = Priority,
