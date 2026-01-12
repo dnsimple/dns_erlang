@@ -43,4 +43,5 @@ This library implements encoding and decoding of DNS packets according to the fo
 - **[RFC 9077](https://tools.ietf.org/html/rfc9077)**: NSEC and NSEC3 TTL Values
 - **[RFC 9460](https://tools.ietf.org/html/rfc9460)**: Service Binding and Parameter Specification via the DNS (DNS SVCB and HTTPS Resource Records)
 - **[RFC 9606](https://tools.ietf.org/html/rfc9606)**: DNS Resolver Information
+- **[RFC 9619](https://tools.ietf.org/html/rfc9619)**: In the DNS, QDCOUNT Is (Usually) One
 - **[RFC 9859](https://tools.ietf.org/html/rfc9859)**: Generalized DNS Notifications

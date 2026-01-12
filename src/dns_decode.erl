@@ -11,7 +11,7 @@
 -define(CLASS_IS_IN(T), (T =:= ?DNS_CLASS_IN orelse T =:= ?DNS_CLASS_NONE)).
 -define(MAX_INT32, ((1 bsl 31) - 1)).
 
--export([decode/1]).
+-export([decode/1, decode_query/1]).
 -export([
     decode_message_questions/3,
     decode_message_additional/3,
@@ -28,7 +28,11 @@
 ]).
 -endif.
 
--compile({inline, [decode_bool/1, round_pow/1, choose_next_bin/3]}).
+-elvis([
+    {elvis_style, max_function_arity, #{ignore => [{dns_decode, create_message_from_header, 14}]}},
+    {elvis_style, dont_repeat_yourself, #{ignore => [{dns_decode, decode_query, 1}]}}
+]).
+-compile({inline, [decode_bool/1, round_pow/1, choose_next_bin/3, create_message_from_header/14]}).
 
 -spec decode(dns:message_bin()) ->
     dns:message() | {dns:decode_error(), dns:message() | undefined, binary()}.
@@ -36,7 +40,156 @@ decode(
     <<Id:16, QR:1, OC:4, AA:1, TC:1, RD:1, RA:1, 0:1, AD:1, CD:1, RC:4, QC:16, ANC:16, AUC:16,
         ADC:16, Rest0/binary>> = MsgBin
 ) ->
-    Msg0 = #dns_message{
+    Msg0 = create_message_from_header(Id, QR, OC, AA, TC, RD, RA, AD, CD, RC, QC, ANC, AUC, ADC),
+    decode_body(MsgBin, Rest0, Msg0);
+decode(<<_/binary>> = MsgBin) ->
+    {formerr, undefined, MsgBin}.
+
+-spec decode_query(dns:message_bin()) ->
+    dns:message() | {dns:decode_error(), dns:message() | undefined, binary()}.
+decode_query(
+    <<Id:16, QR:1, OC:4, AA:1, TC:1, RD:1, RA:1, 0:1, AD:1, CD:1, RC:4, QC:16, ANC:16, AUC:16,
+        ADC:16, Rest0/binary>> = MsgBin
+) ->
+    %% Header validation for DNS queries to prevent DoS attacks.
+    %% - QR bit check: QR must be 0 for queries
+    %% - TC bit check: queries should never be truncated
+    %% - OC bit check: each opcode has its own sensible combination of section counts
+    %% - RCODE in queries is typically 0 (NOERROR) but most servers don't enforce this validation
+    case {QR, TC, OC, QC, ANC, AUC, ADC} of
+        %% RFC 1035: Standard queries must have exactly 1 question, no answers, no authority.
+        %% RFC 9619: A DNS message with OPCODE = 0 MUST NOT include a QDCOUNT parameter whose value
+        %% is greater than 1. It follows that the Question section of a DNS message with OPCODE = 0
+        %% MUST NOT contain more than one question.
+        {0, 0, ?DNS_OPCODE_QUERY, 1, 0, 0, _} ->
+            Msg0 = create_message_from_header(
+                Id, QR, OC, AA, TC, RD, RA, AD, CD, RC, QC, ANC, AUC, ADC
+            ),
+            decode_body(MsgBin, Rest0, Msg0);
+        %% RFC 7873: Cookie-only queries may have QDCOUNT=0 when an OPT record with a COOKIE option
+        %% is present in the additional section.
+        {0, 0, ?DNS_OPCODE_QUERY, 0, 0, 0, ADC} when ADC > 0 ->
+            %% Allow QC=0 for cookie-only queries (RFC 7873)
+            Msg0 = create_message_from_header(
+                Id, QR, OC, AA, TC, RD, RA, AD, CD, RC, QC, ANC, AUC, ADC
+            ),
+            decode_body(MsgBin, Rest0, Msg0);
+        %% Expected: QR=0, TC=0, QC=1 (typically), ANC>=0 (may contain SOA), AUC>=0
+        %% rfc1996 §3.7, 3.11: NOTIFY may contain SOA record in Answer section.
+        {0, 0, ?DNS_OPCODE_NOTIFY, 1, _, _, _} when 0 =:= AUC; 1 =:= AUC ->
+            Msg0 = create_message_from_header(
+                Id, QR, OC, AA, TC, RD, RA, AD, CD, RC, QC, ANC, AUC, ADC
+            ),
+            decode_body(MsgBin, Rest0, Msg0);
+        %% UPDATE (opcode 5) - rfc2136
+        %% Expected: QR=0, TC=0, QC=1 (ZONE section), ANC>=0 (PREREQ section),
+        %%   AUC>=0 (UPDATE section)
+        %% rfc2136 §2.3: UPDATE has ZONE section (question), PREREQ section (answer),
+        %%   UPDATE section (authority).
+        %% We allow any QC/ANC/AUC here as rfc2136 defines these sections for UPDATE.
+        %%   However, typical implementations expect QC=1 (ZONE section).
+        {0, 0, ?DNS_OPCODE_UPDATE, _, _, _, _} ->
+            Msg0 = create_message_from_header(
+                Id, QR, OC, AA, TC, RD, RA, AD, CD, RC, QC, ANC, AUC, ADC
+            ),
+            decode_body(MsgBin, Rest0, Msg0);
+        %% IQUERY (opcode 1) - RFC 1035 (obsolete per rfc3425)
+        %% STATUS (opcode 2) - RFC 1035 (Not commonly supported)
+        %% DSO (opcode 6) - rfc8490 (we don't support it)
+        {0, 0, _, _, _, _, _} when
+            ?DNS_OPCODE_IQUERY =:= OC;
+            ?DNS_OPCODE_STATUS =:= OC;
+            ?DNS_OPCODE_DSO =:= OC
+        ->
+            create_notimp_message(MsgBin, Id, OC, RD, CD, QC, Rest0);
+        %% Standard Query with invalid counts - reject with FORMERR
+        %% This catches QUERY opcode with QC != 1, ANC > 0, or AUC > 0
+        {0, 0, ?DNS_OPCODE_QUERY, _, _, _, _} ->
+            {formerr, undefined, MsgBin};
+        %% QR=1 (response) - reject with FORMERR
+        %% RFC 1035: QR=0 indicates query, QR=1 indicates response.
+        {1, _, _, _, _, _, _} ->
+            {formerr, undefined, MsgBin};
+        %% TC=1 (truncated) - reject with FORMERR
+        %% RFC 1035: TC bit indicates truncation due to message size limits.
+        %% Truncation is a response mechanism; queries should not be truncated.
+        {_, 1, _, _, _, _, _} ->
+            {formerr, undefined, MsgBin};
+        %% Reserved/Unassigned opcodes (3, 7-15) - return NOTIMP
+        %% IANA DNS Opcodes Registry: Opcodes 3 and 7-15 are reserved/unassigned.
+        _ when OC =:= 3; (OC >= 7 andalso OC =< 15) ->
+            create_notimp_message(MsgBin, Id, OC, RD, CD, QC, Rest0)
+    end;
+decode_query(MsgBin) ->
+    {formerr, undefined, MsgBin}.
+
+%% Helper function to create a minimal message struct for NOTIMP response
+%% Returns {notimp, Message, Binary} where Message contains fields needed
+%%   to construct NOTIMP response:
+%%   - id: Preserved from query (required for response matching)
+%%   - oc: Preserved from query (required to echo opcode in response)
+%%   - rd: Preserved from query (required per DNS protocol)
+%%   - cd: Preserved from query (if present)
+%%   - rc: Set to NOTIMP (4)
+%%   - qr: Set to true (response)
+%%   - qc, questions: Parsed if possible, otherwise 0/[]
+%%   - anc, auc, adc: Set to 0 (empty sections)
+-spec create_notimp_message(
+    dns:message_bin(),
+    dns:uint16(),
+    dns:opcode(),
+    0 | 1,
+    0 | 1,
+    dns:uint16(),
+    binary()
+) -> {notimp, dns:message(), binary()}.
+create_notimp_message(MsgBin, Id, OC, RD, CD, QC, Rest0) ->
+    %% Try to parse question section if present (for Query/Notify opcodes)
+    %% For IQUERY/STATUS, question format may differ, so we may not parse it
+    {Questions, Rest} =
+        case decode_message_questions(MsgBin, Rest0, QC) of
+            {Qs, Rest1} ->
+                {Qs, Rest1};
+            _ ->
+                %% Parsing failed, return empty question list
+                %% The response can still be sent with qc=0
+                {[], Rest0}
+        end,
+    Msg = #dns_message{
+        id = Id,
+        %% Response
+        qr = true,
+        %% Preserve original opcode
+        oc = OC,
+        %% Preserve RD bit
+        rd = decode_bool(RD),
+        %% Preserve CD bit if present
+        cd = decode_bool(CD),
+        rc = ?DNS_RCODE_NOTIMP,
+        qc = length(Questions),
+        questions = Questions
+    },
+    {notimp, Msg, Rest}.
+
+%% Helper function to create a dns_message record from parsed header fields
+-spec create_message_from_header(
+    dns:uint16(),
+    0 | 1,
+    dns:opcode(),
+    0 | 1,
+    0 | 1,
+    0 | 1,
+    0 | 1,
+    0 | 1,
+    0 | 1,
+    dns:rcode(),
+    dns:uint16(),
+    dns:uint16(),
+    dns:uint16(),
+    dns:uint16()
+) -> dns:message().
+create_message_from_header(Id, QR, OC, AA, TC, RD, RA, AD, CD, RC, QC, ANC, AUC, ADC) ->
+    #dns_message{
         id = Id,
         qr = decode_bool(QR),
         oc = OC,
@@ -51,7 +204,11 @@ decode(
         anc = ANC,
         auc = AUC,
         adc = ADC
-    },
+    }.
+
+-spec decode_body(dns:message_bin(), binary(), dns:message()) ->
+    dns:message() | {dns:decode_error(), dns:message() | undefined, binary()}.
+decode_body(MsgBin, Rest0, #dns_message{} = Msg0) ->
     maybe
         {Msg1, Rest1} ?= decode_questions(MsgBin, Rest0, Msg0),
         {Msg2, Rest2} ?= decode_answers(MsgBin, Rest1, Msg1),
@@ -61,9 +218,7 @@ decode(
     else
         Other ->
             Other
-    end;
-decode(<<_/binary>> = MsgBin) ->
-    {formerr, undefined, MsgBin}.
+    end.
 
 -spec decode_questions(dns:message_bin(), binary(), dns:message()) ->
     {dns:message(), binary()} | {dns:decode_error(), dns:message(), binary()}.

@@ -14,39 +14,66 @@ all() ->
 groups() ->
     [
         {all, [parallel], [
+            {group, message_basic},
+            {group, message_encoding},
+            {group, txt_records},
+            {group, edns},
+            {group, rrdata},
+            {group, svcb},
+            {group, dname_encoding},
+            {group, dname_utilities},
+            {group, decode_query}
+        ]},
+        {message_basic, [parallel], [
             message_empty,
             message_query,
+            message_other
+        ]},
+        {message_encoding, [parallel], [
             encode_message_max_size,
             encode_message_invalid_size,
-            truncated_query_enforces_opt_record,
-            message_other,
+            truncated_query_enforces_opt_record
+        ]},
+        {txt_records, [parallel], [
             long_txt,
             long_txt_not_split,
             fail_txt_not_list_of_strings,
             truncated_txt,
-            trailing_garbage_txt,
+            trailing_garbage_txt
+        ]},
+        {edns, [parallel], [
             message_edns,
             missing_additional_section,
             edns_badvers,
             optrr_too_large,
             bad_optrr_too_large,
-            decode_encode_rrdata_wire_samples,
-            decode_encode_rrdata,
             uri_decode_normalization,
             uri_decode_invalid_error,
+            decode_encode_rrdata_wire_samples,
+            decode_encode_rrdata,
             decode_encode_optdata,
-            decode_encode_optdata_owner,
+            decode_encode_optdata_owner
+        ]},
+        {rrdata, [parallel], [
+            decode_encode_rrdata_wire_samples,
+            decode_encode_rrdata
+        ]},
+        {svcb, [parallel], [
             decode_encode_svcb_params,
             svcb_key_ordering_validation,
             svcb_mandatory_self_reference,
             svcb_mandatory_missing_keys,
-            svcb_no_default_alpn_length_validation,
+            svcb_no_default_alpn_length_validation
+        ]},
+        {dname_encoding, [parallel], [
             decode_dname_2_ptr,
             decode_dname_decode_loop,
             decode_dname_bad_pointer,
             encode_dname_1,
             encode_dname_3,
-            encode_dname_4,
+            encode_dname_4
+        ]},
+        {dname_utilities, [parallel], [
             dname_to_lower_labels,
             dname_to_labels,
             labels_to_dname,
@@ -56,6 +83,24 @@ groups() ->
             dns_case_insensitive_comparison,
             dname_preserve_dot,
             encode_rec_list_accumulates_multiple_records
+        ]},
+        {decode_query, [parallel], [
+            decode_query_valid,
+            decode_query_zero_questions_with_cookie,
+            decode_query_qr_bit_rejected,
+            decode_query_tc_bit_rejected,
+            decode_query_ancount_rejected,
+            decode_query_nscount_rejected,
+            decode_query_qdcount_invalid,
+            decode_query_notify_allowed,
+            decode_query_update_allowed,
+            decode_query_too_short,
+            decode_query_iquery_notimp,
+            decode_query_status_notimp,
+            decode_query_reserved_opcode3_notimp,
+            decode_query_dso_notimp,
+            decode_query_reserved_opcode7_notimp,
+            decode_query_notimp_malformed_question
         ]}
     ].
 
@@ -1102,6 +1147,294 @@ encode_rec_list_accumulates_multiple_records(_) ->
     %% Verify we can round-trip encode/decode
     ?assertEqual(Msg, Decoded),
     ?assertEqual(MsgWithOpt, DecodedOpt).
+
+decode_query_valid(_) ->
+    %% Valid query: QDCount=1, ANCount=0, NSCount=0, Opcode=0, QR=0
+    QName = <<"example.com">>,
+    Query = #dns_query{name = QName, type = ?DNS_TYPE_A},
+    Msg = #dns_message{qc = 1, questions = [Query]},
+    Encoded = dns:encode_message(Msg),
+    Decoded = dns:decode_query(Encoded),
+    ?assertEqual(Msg, Decoded).
+
+decode_query_zero_questions_with_cookie(_) ->
+    %% RFC 7873: Cookie-only queries may have QDCount=0 when an OPT record with a COOKIE option
+    %% is present in the additional section.
+    ClientCookie = <<"12345678">>,
+    Cookie = #dns_opt_cookie{client = ClientCookie},
+    OptRR = #dns_optrr{data = [Cookie]},
+    Msg = #dns_message{
+        qc = 0,
+        adc = 1,
+        questions = [],
+        additional = [OptRR]
+    },
+    Encoded = dns:encode_message(Msg),
+    Decoded = dns:decode_query(Encoded),
+    ?assertEqual(0, Decoded#dns_message.qc),
+    ?assertEqual([], Decoded#dns_message.questions),
+    ?assertEqual(1, Decoded#dns_message.adc),
+    [DecodedOptRR] = Decoded#dns_message.additional,
+    [DecodedCookie] = DecodedOptRR#dns_optrr.data,
+    ?assertEqual(ClientCookie, DecodedCookie#dns_opt_cookie.client).
+
+decode_query_qr_bit_rejected(_) ->
+    %% Query with QR=1 (response) should be rejected
+    QName = <<"example.com">>,
+    Query = #dns_query{name = QName, type = ?DNS_TYPE_A},
+    Msg = #dns_message{qc = 1, questions = [Query]},
+    Encoded = dns:encode_message(Msg),
+    %% Modify header to set QR=1
+    <<Id:16, _QR:1, OC:4, AA:1, TC:1, RD:1, RA:1, Z:1, AD:1, CD:1, RC:4, QC:16, ANC:16, AUC:16,
+        ADC:16, Rest/binary>> = Encoded,
+    ModifiedHeader =
+        <<Id:16, 1:1, OC:4, AA:1, TC:1, RD:1, RA:1, Z:1, AD:1, CD:1, RC:4, QC:16, ANC:16, AUC:16,
+            ADC:16>>,
+    ModifiedBin = <<ModifiedHeader/binary, Rest/binary>>,
+    ?assertMatch({formerr, undefined, _}, dns:decode_query(ModifiedBin)).
+
+decode_query_tc_bit_rejected(_) ->
+    %% Query with TC=1 (truncated) should be rejected
+    %% Queries should never be truncated per RFC 1035
+    QName = <<"example.com">>,
+    Query = #dns_query{name = QName, type = ?DNS_TYPE_A},
+    Msg = #dns_message{qc = 1, questions = [Query]},
+    Encoded = dns:encode_message(Msg),
+    %% Modify header to set TC=1
+    <<Id:16, QR:1, OC:4, _AA:1, _TC:1, RD:1, RA:1, Z:1, AD:1, CD:1, RC:4, QC:16, ANC:16, AUC:16,
+        ADC:16, Rest/binary>> = Encoded,
+    ModifiedHeader =
+        <<Id:16, QR:1, OC:4, 0:1, 1:1, RD:1, RA:1, Z:1, AD:1, CD:1, RC:4, QC:16, ANC:16, AUC:16,
+            ADC:16>>,
+    ModifiedBin = <<ModifiedHeader/binary, Rest/binary>>,
+    ?assertMatch({formerr, undefined, _}, dns:decode_query(ModifiedBin)).
+
+decode_query_ancount_rejected(_) ->
+    %% Query with ANCount=1 should be rejected
+    QName = <<"example.com">>,
+    Query = #dns_query{name = QName, type = ?DNS_TYPE_A},
+    Msg = #dns_message{qc = 1, questions = [Query]},
+    Encoded = dns:encode_message(Msg),
+    %% Modify header to set ANCount=1
+    <<Id:16, QR:1, OC:4, AA:1, TC:1, RD:1, RA:1, Z:1, AD:1, CD:1, RC:4, QC:16, _ANC:16, AUC:16,
+        ADC:16, Rest/binary>> = Encoded,
+    ModifiedHeader =
+        <<Id:16, QR:1, OC:4, AA:1, TC:1, RD:1, RA:1, Z:1, AD:1, CD:1, RC:4, QC:16, 1:16, AUC:16,
+            ADC:16>>,
+    ModifiedBin = <<ModifiedHeader/binary, Rest/binary>>,
+    ?assertMatch({formerr, undefined, _}, dns:decode_query(ModifiedBin)).
+
+decode_query_nscount_rejected(_) ->
+    %% Query with NSCount=1 should be rejected
+    QName = <<"example.com">>,
+    Query = #dns_query{name = QName, type = ?DNS_TYPE_A},
+    Msg = #dns_message{qc = 1, questions = [Query]},
+    Encoded = dns:encode_message(Msg),
+    %% Modify header to set NSCount (AUC)=1
+    <<Id:16, QR:1, OC:4, AA:1, TC:1, RD:1, RA:1, Z:1, AD:1, CD:1, RC:4, QC:16, ANC:16, _AUC:16,
+        ADC:16, Rest/binary>> = Encoded,
+    ModifiedHeader =
+        <<Id:16, QR:1, OC:4, AA:1, TC:1, RD:1, RA:1, Z:1, AD:1, CD:1, RC:4, QC:16, ANC:16, 1:16,
+            ADC:16>>,
+    ModifiedBin = <<ModifiedHeader/binary, Rest/binary>>,
+    ?assertMatch({formerr, undefined, _}, dns:decode_query(ModifiedBin)).
+
+decode_query_qdcount_invalid(_) ->
+    %% Query with QDCount=2 should be rejected
+    QName = <<"example.com">>,
+    Query1 = #dns_query{name = QName, type = ?DNS_TYPE_A},
+    Query2 = #dns_query{name = <<"test.com">>, type = ?DNS_TYPE_A},
+    Msg = #dns_message{qc = 2, questions = [Query1, Query2]},
+    Encoded = dns:encode_message(Msg),
+    %% decode_query should reject QDCount=2 for opcode 0
+    ?assertMatch({formerr, undefined, _}, dns:decode_query(Encoded)),
+    %% But decode_message should still work
+    Decoded = dns:decode_message(Encoded),
+    ?assertEqual(Msg, Decoded).
+
+decode_query_notify_allowed(_) ->
+    %% NOTIFY (opcode 4) should be allowed even with Answer/Authority records
+    QName = <<"example.com">>,
+    Query = #dns_query{name = QName, type = ?DNS_TYPE_SOA},
+    Answer = #dns_rr{
+        name = QName,
+        type = ?DNS_TYPE_SOA,
+        ttl = 3600,
+        data = #dns_rrdata_soa{
+            mname = <<"ns1.example.com">>,
+            rname = <<"admin.example.com">>,
+            serial = 1,
+            refresh = 3600,
+            retry = 1800,
+            expire = 604800,
+            minimum = 86400
+        }
+    },
+    Msg = #dns_message{
+        qc = 1,
+        anc = 1,
+        auc = 1,
+        oc = 4,
+        questions = [Query],
+        answers = [Answer],
+        authority = [Answer]
+    },
+    Encoded = dns:encode_message(Msg),
+    Decoded = dns:decode_query(Encoded),
+    ?assertMatch(#dns_message{oc = 4, anc = 1, auc = 1}, Decoded).
+
+decode_query_update_allowed(_) ->
+    %% UPDATE (opcode 5) should be allowed even with Answer/Authority records
+    QName = <<"example.com">>,
+    Query = #dns_query{name = QName, type = ?DNS_TYPE_SOA},
+    Answer = #dns_rr{
+        name = QName,
+        type = ?DNS_TYPE_A,
+        ttl = 3600,
+        data = #dns_rrdata_a{ip = {127, 0, 0, 1}}
+    },
+    Msg = #dns_message{
+        qc = 1,
+        anc = 1,
+        auc = 1,
+        oc = 5,
+        questions = [Query],
+        answers = [Answer],
+        authority = [Answer]
+    },
+    Encoded = dns:encode_message(Msg),
+    Decoded = dns:decode_query(Encoded),
+    ?assertMatch(#dns_message{oc = 5, anc = 1, auc = 1}, Decoded).
+
+decode_query_too_short(_) ->
+    %% Binary shorter than 12 bytes should be rejected
+    ShortBin = <<0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10>>,
+    ?assertMatch({formerr, undefined, _}, dns:decode_query(ShortBin)),
+    %% Empty binary
+    ?assertMatch({formerr, undefined, _}, dns:decode_query(<<>>)).
+
+decode_query_iquery_notimp(_) ->
+    %% IQUERY (opcode 1) should return NOTIMP
+    %% IQUERY is obsolete per RFC 3425
+    QName = <<"example.com">>,
+    Query = #dns_query{name = QName, type = ?DNS_TYPE_A},
+    Msg = #dns_message{qc = 1, oc = ?DNS_OPCODE_IQUERY, questions = [Query]},
+    Encoded = dns:encode_message(Msg),
+    Result = dns:decode_query(Encoded),
+    ?assertMatch(
+        {notimp, #dns_message{id = _, oc = ?DNS_OPCODE_IQUERY, rc = ?DNS_RCODE_NOTIMP, qr = true},
+            _},
+        Result
+    ),
+    {notimp, NotImpMsg, _} = Result,
+    ?assertEqual(?DNS_OPCODE_IQUERY, NotImpMsg#dns_message.oc),
+    ?assertEqual(?DNS_RCODE_NOTIMP, NotImpMsg#dns_message.rc),
+    ?assertEqual(true, NotImpMsg#dns_message.qr),
+    ?assertEqual(0, NotImpMsg#dns_message.anc),
+    ?assertEqual(0, NotImpMsg#dns_message.auc),
+    ?assertEqual(0, NotImpMsg#dns_message.adc),
+    %% Question should be preserved if parsing succeeds
+    ?assertEqual(1, NotImpMsg#dns_message.qc),
+    ?assertMatch([#dns_query{name = QName}], NotImpMsg#dns_message.questions).
+
+decode_query_status_notimp(_) ->
+    %% STATUS (opcode 2) should return NOTIMP
+    QName = <<"example.com">>,
+    Query = #dns_query{name = QName, type = ?DNS_TYPE_A},
+    Msg = #dns_message{qc = 1, oc = ?DNS_OPCODE_STATUS, questions = [Query]},
+    Encoded = dns:encode_message(Msg),
+    Result = dns:decode_query(Encoded),
+    ?assertMatch(
+        {notimp, #dns_message{id = _, oc = ?DNS_OPCODE_STATUS, rc = ?DNS_RCODE_NOTIMP, qr = true},
+            _},
+        Result
+    ),
+    {notimp, NotImpMsg, _} = Result,
+    ?assertEqual(?DNS_OPCODE_STATUS, NotImpMsg#dns_message.oc),
+    ?assertEqual(?DNS_RCODE_NOTIMP, NotImpMsg#dns_message.rc).
+
+decode_query_reserved_opcode3_notimp(_) ->
+    %% Reserved/Unassigned opcode 3 should return NOTIMP
+    QName = <<"example.com">>,
+    Query = #dns_query{name = QName, type = ?DNS_TYPE_A},
+    Msg = #dns_message{qc = 1, oc = 3, questions = [Query]},
+    Encoded = dns:encode_message(Msg),
+    Result = dns:decode_query(Encoded),
+    ?assertMatch(
+        {notimp, #dns_message{id = _, oc = 3, rc = ?DNS_RCODE_NOTIMP, qr = true}, _}, Result
+    ),
+    {notimp, NotImpMsg, _} = Result,
+    ?assertEqual(3, NotImpMsg#dns_message.oc),
+    ?assertEqual(?DNS_RCODE_NOTIMP, NotImpMsg#dns_message.rc).
+
+decode_query_dso_notimp(_) ->
+    %% DSO (DNS Stateful Operations, opcode 6) should return NOTIMP
+    %% DSO is defined in RFC 8490 but is for stateful operations over TCP/TLS
+    QName = <<"example.com">>,
+    Query = #dns_query{name = QName, type = ?DNS_TYPE_A},
+    Msg = #dns_message{qc = 1, oc = ?DNS_OPCODE_DSO, questions = [Query]},
+    Encoded = dns:encode_message(Msg),
+    Result = dns:decode_query(Encoded),
+    ?assertMatch(
+        {notimp, #dns_message{id = _, oc = ?DNS_OPCODE_DSO, rc = ?DNS_RCODE_NOTIMP, qr = true}, _},
+        Result
+    ),
+    {notimp, NotImpMsg, _} = Result,
+    ?assertEqual(?DNS_OPCODE_DSO, NotImpMsg#dns_message.oc),
+    ?assertEqual(?DNS_RCODE_NOTIMP, NotImpMsg#dns_message.rc).
+
+decode_query_reserved_opcode7_notimp(_) ->
+    %% Reserved/Unassigned opcode 7 should return NOTIMP
+    QName = <<"example.com">>,
+    Query = #dns_query{name = QName, type = ?DNS_TYPE_A},
+    Msg = #dns_message{qc = 1, oc = 7, questions = [Query]},
+    Encoded = dns:encode_message(Msg),
+    Result = dns:decode_query(Encoded),
+    ?assertMatch(
+        {notimp, #dns_message{id = _, oc = 7, rc = ?DNS_RCODE_NOTIMP, qr = true}, _}, Result
+    ),
+    {notimp, NotImpMsg, _} = Result,
+    ?assertEqual(7, NotImpMsg#dns_message.oc),
+    ?assertEqual(?DNS_RCODE_NOTIMP, NotImpMsg#dns_message.rc).
+
+decode_query_notimp_malformed_question(_) ->
+    %% NOTIMP case with malformed question section
+    %% The question parsing should fail, but NOTIMP should still be returned
+    %% with empty question list (qc=0, questions=[])
+    Id = 12345,
+    %% Header format: <<Id:16, QR:1, OC:4, AA:1, TC:1, RD:1, RA:1, 0:1, AD:1, CD:1, RC:4, QC:16, ANC:16, AUC:16, ADC:16>>
+    %% For IQUERY (opcode 1): QR=0, OC=1, AA=0, TC=0, RD=0, RA=0, Z=0, AD=0, CD=0, RC=0, QC=1
+    %% Flags byte 1: QR=0, OC=1 (0001), AA=0, TC=0, RD=0, RA=0, Z=0
+    %%   = 0 0001 0 0 0 0 0 = 0001 0000 = 16
+    %% Flags byte 2: AD=0, CD=0, RC=0 (0000)
+    %%   = 0 0 0000 = 0000 0000 = 0
+    Header = <<Id:16, 0:1, 1:4, 0:1, 0:1, 0:1, 0:1, 0:1, 0:1, 0:1, 0:4, 1:16, 0:16, 0:16, 0:16>>,
+    %% Malformed question: label length byte > 63 (invalid per RFC 1035)
+    %% This will cause decode_message_questions to fail
+    MalformedQuestion = <<200, 100, 101, 102, 0, ?DNS_TYPE_A:16, ?DNS_CLASS_IN:16>>,
+    MsgBin = <<Header/binary, MalformedQuestion/binary>>,
+    Result = dns:decode_query(MsgBin),
+    ?assertMatch(
+        {notimp,
+            #dns_message{
+                id = Id,
+                oc = ?DNS_OPCODE_IQUERY,
+                rc = ?DNS_RCODE_NOTIMP,
+                qr = true,
+                qc = 0,
+                questions = []
+            },
+            _},
+        Result
+    ),
+    {notimp, NotImpMsg, _} = Result,
+    ?assertEqual(Id, NotImpMsg#dns_message.id),
+    ?assertEqual(?DNS_OPCODE_IQUERY, NotImpMsg#dns_message.oc),
+    ?assertEqual(?DNS_RCODE_NOTIMP, NotImpMsg#dns_message.rc),
+    ?assertEqual(true, NotImpMsg#dns_message.qr),
+    %% Question parsing failed, so qc should be 0 and questions should be empty
+    ?assertEqual(0, NotImpMsg#dns_message.qc),
+    ?assertEqual([], NotImpMsg#dns_message.questions).
 
 split_binary_into_chunks(Bin, Chunk) ->
     List = binary_to_list(Bin),
