@@ -86,6 +86,7 @@ groups() ->
         ]},
         {decode_query, [parallel], [
             decode_query_valid,
+            decode_query_zero_questions_with_cookie,
             decode_query_qr_bit_rejected,
             decode_query_tc_bit_rejected,
             decode_query_ancount_rejected,
@@ -1155,6 +1156,27 @@ decode_query_valid(_) ->
     Encoded = dns:encode_message(Msg),
     Decoded = dns:decode_query(Encoded),
     ?assertEqual(Msg, Decoded).
+
+decode_query_zero_questions_with_cookie(_) ->
+    %% RFC 7873: Cookie-only queries may have QDCount=0 when an OPT record with a COOKIE option
+    %% is present in the additional section.
+    ClientCookie = <<"12345678">>,
+    Cookie = #dns_opt_cookie{client = ClientCookie},
+    OptRR = #dns_optrr{data = [Cookie]},
+    Msg = #dns_message{
+        qc = 0,
+        adc = 1,
+        questions = [],
+        additional = [OptRR]
+    },
+    Encoded = dns:encode_message(Msg),
+    Decoded = dns:decode_query(Encoded),
+    ?assertEqual(0, Decoded#dns_message.qc),
+    ?assertEqual([], Decoded#dns_message.questions),
+    ?assertEqual(1, Decoded#dns_message.adc),
+    [DecodedOptRR] = Decoded#dns_message.additional,
+    [DecodedCookie] = DecodedOptRR#dns_optrr.data,
+    ?assertEqual(ClientCookie, DecodedCookie#dns_opt_cookie.client).
 
 decode_query_qr_bit_rejected(_) ->
     %% Query with QR=1 (response) should be rejected

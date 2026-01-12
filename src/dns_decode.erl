@@ -66,6 +66,14 @@ decode_query(
                 Id, QR, OC, AA, TC, RD, RA, AD, CD, RC, QC, ANC, AUC, ADC
             ),
             decode_body(MsgBin, Rest0, Msg0);
+        %% RFC 7873: Cookie-only queries may have QDCOUNT=0 when an OPT record with a COOKIE option
+        %% is present in the additional section.
+        {0, 0, ?DNS_OPCODE_QUERY, 0, 0, 0, ADC} when ADC > 0 ->
+            %% Allow QC=0 for cookie-only queries (RFC 7873)
+            Msg0 = create_message_from_header(
+                Id, QR, OC, AA, TC, RD, RA, AD, CD, RC, QC, ANC, AUC, ADC
+            ),
+            decode_body(MsgBin, Rest0, Msg0);
         %% Expected: QR=0, TC=0, QC=1 (typically), ANC>=0 (may contain SOA), AUC>=0
         %% rfc1996 §3.7, 3.11: NOTIFY may contain SOA record in Answer section.
         {0, 0, ?DNS_OPCODE_NOTIFY, 1, _, _, _} when 0 =:= AUC; 1 =:= AUC ->
