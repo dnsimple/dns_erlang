@@ -7,6 +7,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## main
 
+## 4.9.0
+
+- Add extended support for SVCB and HTTPS Resource Records — [RFC9460](https://datatracker.ietf.org/doc/rfc9460/)
+- Add support for OPENPGPKEY (Type 61) — [RFC 7929](https://datatracker.ietf.org/doc/rfc7929/)
+- Add support for SMIMEA (Type 53) — [RFC 8162](https://datatracker.ietf.org/doc/rfc8162/)
+- Add support for URI (Type 256) — [RFC 7553](https://datatracker.ietf.org/doc/rfc7553/)
+- Add support for WALLET (Type 262) — IANA Registration
+- Add support for EUI48 (Type 108) and EUI64 (Type 109) — [RFC 7043](https://datatracker.ietf.org/doc/rfc7043/)
+- Add support for CSYNC (Type 62) — [RFC 7477](https://datatracker.ietf.org/doc/rfc7477/)
+- Add support for DSYNC (Type 66) — [RFC 9859](https://datatracker.ietf.org/doc/rfc9859/)
+- Add `dns:decode_query/1` function for strict query validation to prevent DoS attacks
+- Performance improvements in message encoding (~5-15% faster for encode/1, ~0-20% faster for encode/2)
+
 ## 4.8.1
 
 - Fix bad size for reserved OptRR record during encoding
