@@ -2,6 +2,11 @@
 %% -*- erlang -*-
 %% Extract RFC references from the codebase and generate a markdown list.
 %%
+%% This script extracts RFC references from anywhere in the source files.
+%% Only uppercase "RFC" is matched (e.g., "RFC 1035" or "RFC1035").
+%% Lowercase "rfc" is NOT matched, which naturally filters out identifiers
+%% like rfc3597_data, parse_rfc3597_token, calendar:system_time_to_rfc3999/2.
+%%
 %% Usage:
 %%     # Generate RFC list to stdout
 %%     escript scripts/generate_rfc_list.escript
@@ -70,7 +75,8 @@
 main(Args) ->
     RootDir = get_root_dir(),
     Opts = parse_args(Args, []),
-    {ok, RfcPattern} = re:compile(<<"(?i)RFC[\\s-]?(\\d+)">>, [unicode]),
+    %% Only match uppercase "RFC" (not lowercase "rfc")
+    {ok, RfcPattern} = re:compile(<<"RFC[\\s-]?(\\d+)">>, [unicode]),
     io:format(standard_error, "Searching for RFC references in ~s...~n", [RootDir]),
     RfcRefs = find_rfc_references(RootDir, RfcPattern),
     RfcCount = maps:size(RfcRefs),
@@ -118,6 +124,8 @@ scan_file(File, Acc, RfcPattern) ->
     end.
 
 extract_rfc_numbers(Content, RfcPattern, File, Acc) ->
+    %% Extract all RFC references from the content
+    %% Only uppercase "RFC" is matched, so lowercase identifiers like rfc3597_data won't match
     case re:run(Content, RfcPattern, [global, {capture, all, binary}]) of
         {match, Matches} ->
             RfcNums = [RfcNum || [_, RfcNum] <- Matches],

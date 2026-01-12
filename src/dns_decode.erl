@@ -67,27 +67,27 @@ decode_query(
             ),
             decode_body(MsgBin, Rest0, Msg0);
         %% Expected: QR=0, TC=0, QC=1 (typically), ANC>=0 (may contain SOA), AUC>=0
-        %% RFC 1996 §3.7, 3.11: NOTIFY may contain SOA record in Answer section.
+        %% rfc1996 §3.7, 3.11: NOTIFY may contain SOA record in Answer section.
         {0, 0, ?DNS_OPCODE_NOTIFY, 1, _, _, _} when 0 =:= AUC; 1 =:= AUC ->
             Msg0 = create_message_from_header(
                 Id, QR, OC, AA, TC, RD, RA, AD, CD, RC, QC, ANC, AUC, ADC
             ),
             decode_body(MsgBin, Rest0, Msg0);
-        %% UPDATE (opcode 5) - RFC 2136
+        %% UPDATE (opcode 5) - rfc2136
         %% Expected: QR=0, TC=0, QC=1 (ZONE section), ANC>=0 (PREREQ section),
         %%   AUC>=0 (UPDATE section)
-        %% RFC 2136 §2.3: UPDATE has ZONE section (question), PREREQ section (answer),
+        %% rfc2136 §2.3: UPDATE has ZONE section (question), PREREQ section (answer),
         %%   UPDATE section (authority).
-        %% We allow any QC/ANC/AUC here as RFC 2136 defines these sections for UPDATE.
+        %% We allow any QC/ANC/AUC here as rfc2136 defines these sections for UPDATE.
         %%   However, typical implementations expect QC=1 (ZONE section).
         {0, 0, ?DNS_OPCODE_UPDATE, _, _, _, _} ->
             Msg0 = create_message_from_header(
                 Id, QR, OC, AA, TC, RD, RA, AD, CD, RC, QC, ANC, AUC, ADC
             ),
             decode_body(MsgBin, Rest0, Msg0);
-        %% IQUERY (opcode 1) - RFC 1035 (obsolete per RFC 3425)
+        %% IQUERY (opcode 1) - RFC 1035 (obsolete per rfc3425)
         %% STATUS (opcode 2) - RFC 1035 (Not commonly supported)
-        %% DSO (opcode 6) - RFC 8490 (we don't support it)
+        %% DSO (opcode 6) - rfc8490 (we don't support it)
         {0, 0, _, _, _, _, _} when
             ?DNS_OPCODE_IQUERY =:= OC;
             ?DNS_OPCODE_STATUS =:= OC;
