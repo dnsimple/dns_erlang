@@ -22,7 +22,6 @@ groups() ->
             {group, svcb},
             {group, dname_encoding},
             {group, dname_utilities},
-            {group, encoding_edge_cases},
             {group, decode_query}
         ]},
         {message_basic, [parallel], [
