@@ -22,6 +22,7 @@ groups() ->
             {group, svcb},
             {group, dname_encoding},
             {group, dname_utilities},
+            {group, dname_compression},
             {group, decode_query}
         ]},
         {message_basic, [parallel], [
@@ -32,7 +33,8 @@ groups() ->
         {message_encoding, [parallel], [
             encode_message_max_size,
             encode_message_invalid_size,
-            truncated_query_enforces_opt_record
+            truncated_query_enforces_opt_record,
+            encode_default_message_question_offset_correct
         ]},
         {txt_records, [parallel], [
             long_txt,
@@ -83,6 +85,27 @@ groups() ->
             dns_case_insensitive_comparison,
             dname_preserve_dot,
             encode_rec_list_accumulates_multiple_records
+        ]},
+        {dname_compression, [parallel], [
+            encode_name_compression_with_multiple_records,
+            encode_name_compression_with_cname_chain,
+            encode_name_compression_with_ns_records,
+            encode_name_compression_with_mx_records,
+            encode_name_compression_with_soa_record,
+            encode_name_compression_with_srv_records,
+            encode_name_compression_with_ptr_records,
+            encode_name_compression_with_txt_records,
+            encode_name_compression_with_multiple_sections,
+            encode_soa_rname_compresses_to_mname,
+            encode_soa_both_names_compress_to_question,
+            encode_soa_position_tracking_correct,
+            encode_mx_exchange_compresses_to_name,
+            encode_ns_dname_compresses_to_name,
+            encode_srv_target_compresses_to_name,
+            encode_ptr_dname_compresses_to_name,
+            encode_cname_dname_compresses_to_name,
+            encode_compression_pointer_valid_range,
+            encode_multiple_soa_records_compression
         ]},
         {decode_query, [parallel], [
             decode_query_valid,
@@ -229,6 +252,73 @@ truncated_query_enforces_opt_record(_) ->
                 ok =:= ?assertMatch([#dns_optrr{data = []} | _], Decoded#dns_message.additional)
         end)
     ].
+
+%% Regression test: verify that encode_default_message calculates question section
+%% name offsets from position 12 (header size) instead of 0. This ensures compression
+%% pointers are correct when answer/authority/additional sections reference question names.
+%%
+%% BEFORE THE FIX: This test would fail because:
+%% - encode_append_section was called with <<>> (empty binary)
+%% - Compression map entries were created with positions 0-11 (in header)
+%% - When answer/authority/additional sections compressed to question names,
+%%   compression pointers pointed to positions 0-11 (invalid, in header)
+%% - Decoding would throw bad_pointer or decode_loop errors
+%%
+%% AFTER THE FIX: Compression pointers correctly point to positions 12+ (in question section)
+encode_default_message_question_offset_correct(_) ->
+    QName = <<"example.com">>,
+    Question = #dns_query{name = QName, type = ?DNS_TYPE_A},
+    %% Create records in all sections that reference the same name as the question
+    %% This ensures compression is tested across all sections
+    Answer = #dns_rr{
+        name = QName,
+        type = ?DNS_TYPE_A,
+        ttl = 3600,
+        data = #dns_rrdata_a{ip = {1, 2, 3, 4}}
+    },
+    Authority = #dns_rr{
+        name = QName,
+        type = ?DNS_TYPE_NS,
+        ttl = 3600,
+        data = #dns_rrdata_ns{dname = <<"ns1.example.com">>}
+    },
+    Additional = #dns_rr{
+        name = QName,
+        type = ?DNS_TYPE_AAAA,
+        ttl = 3600,
+        data = #dns_rrdata_aaaa{ip = {0, 0, 0, 0, 0, 0, 0, 1}}
+    },
+    Msg = #dns_message{
+        qc = 1,
+        anc = 1,
+        auc = 1,
+        adc = 1,
+        questions = [Question],
+        answers = [Answer],
+        authority = [Authority],
+        additional = [Additional]
+    },
+    %% Use encode_message with max_size to trigger encode_message_default
+    %% which uses encode_append_section with the buggy <<>> accumulator
+    {false, Encoded} = dns:encode_message(Msg, #{max_size => 512}),
+    %% BEFORE THE FIX: Decoding would fail with bad_pointer or decode_loop
+    %% because compression pointers point to positions 0-11 (header bytes)
+    %% which don't contain valid DNS name encoding
+    %%
+    %% AFTER THE FIX: Decoding succeeds because compression pointers point to
+    %% positions 12+ (question section) which contain valid DNS name encoding
+    Decoded = dns:decode_message(Encoded),
+    ?assertEqual(Msg, Decoded),
+    %% Verify all sections decoded correctly
+    ?assertMatch(
+        #dns_message{
+            questions = [#dns_query{name = QName}],
+            answers = [#dns_rr{name = QName}],
+            authority = [#dns_rr{name = QName}],
+            additional = [#dns_rr{name = QName}]
+        },
+        Decoded
+    ).
 
 message_other(_) ->
     QName = <<"i            .txt.example.org">>,
@@ -1435,6 +1525,652 @@ decode_query_notimp_malformed_question(_) ->
     %% Question parsing failed, so qc should be 0 and questions should be empty
     ?assertEqual(0, NotImpMsg#dns_message.qc),
     ?assertEqual([], NotImpMsg#dns_message.questions).
+
+%%%===================================================================
+%%% Name compression tests
+%%%===================================================================
+
+%% Create a message with multiple A records sharing the same name
+%% This tests that compression pointers are correctly calculated
+encode_name_compression_with_multiple_records(_) ->
+    QName = <<"example.com">>,
+    Answers = [
+        #dns_rr{
+            name = QName,
+            type = ?DNS_TYPE_A,
+            ttl = 3600,
+            data = #dns_rrdata_a{ip = {127, 0, 0, I}}
+        }
+     || I <- lists:seq(1, 10)
+    ],
+    Msg = #dns_message{
+        qc = 1,
+        anc = 10,
+        questions = [#dns_query{name = QName, type = ?DNS_TYPE_A}],
+        answers = Answers
+    },
+    Encoded = dns:encode_message(Msg),
+    Decoded = dns:decode_message(Encoded),
+    ?assertEqual(10, length(Decoded#dns_message.answers)),
+    %% Verify all records decode correctly
+    lists:foreach(
+        fun(I) ->
+            RR = lists:nth(I, Decoded#dns_message.answers),
+            ?assertEqual(QName, RR#dns_rr.name),
+            ?assertEqual(?DNS_TYPE_A, RR#dns_rr.type),
+            ?assertMatch(#dns_rrdata_a{ip = {127, 0, 0, I}}, RR#dns_rr.data)
+        end,
+        lists:seq(1, 10)
+    ),
+    %% Verify round-trip: decoded message should match original
+    ?assertEqual(Msg, Decoded).
+
+%% Test CNAME chains with name compression
+encode_name_compression_with_cname_chain(_) ->
+    BaseName = <<"www.example.com">>,
+    CName1 = <<"cname1.example.com">>,
+    CName2 = <<"cname2.example.com">>,
+    Answers = [
+        #dns_rr{
+            name = BaseName,
+            type = ?DNS_TYPE_CNAME,
+            ttl = 3600,
+            data = #dns_rrdata_cname{dname = CName1}
+        },
+        #dns_rr{
+            name = CName1,
+            type = ?DNS_TYPE_CNAME,
+            ttl = 3600,
+            data = #dns_rrdata_cname{dname = CName2}
+        },
+        #dns_rr{
+            name = CName2,
+            type = ?DNS_TYPE_A,
+            ttl = 3600,
+            data = #dns_rrdata_a{ip = {192, 0, 2, 1}}
+        }
+    ],
+    Msg = #dns_message{
+        qc = 1,
+        anc = 3,
+        questions = [#dns_query{name = BaseName, type = ?DNS_TYPE_A}],
+        answers = Answers
+    },
+    Encoded = dns:encode_message(Msg),
+    Decoded = dns:decode_message(Encoded),
+    ?assertEqual(3, length(Decoded#dns_message.answers)),
+    %% Verify the records decode correctly (names may be compressed differently)
+    [RR1, RR2, RR3] = Decoded#dns_message.answers,
+    ?assertEqual(BaseName, RR1#dns_rr.name),
+    ?assertEqual(?DNS_TYPE_CNAME, RR1#dns_rr.type),
+    ?assertMatch(#dns_rrdata_cname{dname = CName1}, RR1#dns_rr.data),
+    ?assertEqual(CName1, RR2#dns_rr.name),
+
+    ?assertEqual(?DNS_TYPE_CNAME, RR2#dns_rr.type),
+    ?assertMatch(#dns_rrdata_cname{dname = CName2}, RR2#dns_rr.data),
+    ?assertEqual(CName2, RR3#dns_rr.name),
+    ?assertEqual(?DNS_TYPE_A, RR3#dns_rr.type),
+    ?assertMatch(#dns_rrdata_a{ip = {192, 0, 2, 1}}, RR3#dns_rr.data).
+
+%% Test NS records with name compression
+encode_name_compression_with_ns_records(_) ->
+    ZoneName = <<"example.com">>,
+    NSRecords = [
+        #dns_rr{
+            name = ZoneName,
+            type = ?DNS_TYPE_NS,
+            ttl = 3600,
+            data = #dns_rrdata_ns{dname = <<"ns", (integer_to_binary(I))/binary, ".example.com">>}
+        }
+     || I <- lists:seq(1, 5)
+    ],
+    Msg = #dns_message{
+        qc = 1,
+        auc = 5,
+        questions = [#dns_query{name = ZoneName, type = ?DNS_TYPE_NS}],
+        authority = NSRecords
+    },
+    Encoded = dns:encode_message(Msg),
+    Decoded = dns:decode_message(Encoded),
+    ?assertEqual(5, length(Decoded#dns_message.authority)),
+    %% Verify round-trip: decoded message should match original
+    ?assertEqual(Msg, Decoded).
+
+%% Test MX records with name compression
+encode_name_compression_with_mx_records(_) ->
+    DomainName = <<"example.com">>,
+    MXRecords = [
+        #dns_rr{
+            name = DomainName,
+            type = ?DNS_TYPE_MX,
+            ttl = 3600,
+            data = #dns_rrdata_mx{
+                preference = I * 10,
+                exchange = <<"mx", (integer_to_binary(I))/binary, ".example.com">>
+            }
+        }
+     || I <- lists:seq(1, 5)
+    ],
+    Msg = #dns_message{
+        qc = 1,
+        anc = 5,
+        questions = [#dns_query{name = DomainName, type = ?DNS_TYPE_MX}],
+        answers = MXRecords
+    },
+    Encoded = dns:encode_message(Msg),
+    Decoded = dns:decode_message(Encoded),
+    ?assertEqual(5, length(Decoded#dns_message.answers)),
+    %% Verify round-trip: decoded message should match original
+    ?assertEqual(Msg, Decoded).
+
+%% Test SOA record with name compression
+encode_name_compression_with_soa_record(_) ->
+    ZoneName = <<"example.com">>,
+    SOA = #dns_rr{
+        name = ZoneName,
+        type = ?DNS_TYPE_SOA,
+        ttl = 3600,
+        data = #dns_rrdata_soa{
+            mname = <<"ns1.example.com">>,
+            rname = <<"admin.example.com">>,
+            serial = 2024010101,
+            refresh = 3600,
+            retry = 1800,
+            expire = 604800,
+            minimum = 86400
+        }
+    },
+    Msg = #dns_message{
+        qc = 1,
+        auc = 1,
+        questions = [#dns_query{name = ZoneName, type = ?DNS_TYPE_SOA}],
+        authority = [SOA]
+    },
+    Encoded = dns:encode_message(Msg),
+    Decoded = dns:decode_message(Encoded),
+    ?assertEqual(1, length(Decoded#dns_message.authority)),
+    %% Verify round-trip: decoded message should match original
+    ?assertEqual(Msg, Decoded).
+
+%% Test SRV records with name compression
+encode_name_compression_with_srv_records(_) ->
+    ServiceName = <<"_http._tcp.example.com">>,
+    SRVRecords = [
+        #dns_rr{
+            name = ServiceName,
+            type = ?DNS_TYPE_SRV,
+            ttl = 3600,
+            data = #dns_rrdata_srv{
+                priority = 10,
+                weight = I,
+                port = 80 + I,
+                target = <<"server", (integer_to_binary(I))/binary, ".example.com">>
+            }
+        }
+     || I <- lists:seq(1, 5)
+    ],
+    Msg = #dns_message{
+        qc = 1,
+        anc = 5,
+        questions = [#dns_query{name = ServiceName, type = ?DNS_TYPE_SRV}],
+        answers = SRVRecords
+    },
+    Encoded = dns:encode_message(Msg),
+    Decoded = dns:decode_message(Encoded),
+    ?assertEqual(5, length(Decoded#dns_message.answers)),
+    %% Verify round-trip: decoded message should match original
+    ?assertEqual(Msg, Decoded).
+
+%% Test PTR records with name compression
+encode_name_compression_with_ptr_records(_) ->
+    PtrName = <<"1.0.0.127.in-addr.arpa">>,
+    PTRRecords = [
+        #dns_rr{
+            name = PtrName,
+            type = ?DNS_TYPE_PTR,
+            ttl = 3600,
+            data = #dns_rrdata_ptr{
+                dname = <<"host", (integer_to_binary(I))/binary, ".example.com">>
+            }
+        }
+     || I <- lists:seq(1, 5)
+    ],
+    Msg = #dns_message{
+        qc = 1,
+        anc = 5,
+        questions = [#dns_query{name = PtrName, type = ?DNS_TYPE_PTR}],
+        answers = PTRRecords
+    },
+    Encoded = dns:encode_message(Msg),
+    Decoded = dns:decode_message(Encoded),
+    ?assertEqual(5, length(Decoded#dns_message.answers)),
+    Encoded2 = dns:encode_message(Decoded),
+    ?assertEqual(Encoded, Encoded2).
+
+%% Test TXT records with name compression
+encode_name_compression_with_txt_records(_) ->
+    DomainName = <<"example.com">>,
+    TXTRecords = [
+        #dns_rr{
+            name = DomainName,
+            type = ?DNS_TYPE_TXT,
+            ttl = 3600,
+            data = #dns_rrdata_txt{txt = [<<"text", (integer_to_binary(I))/binary>>]}
+        }
+     || I <- lists:seq(1, 5)
+    ],
+    Msg = #dns_message{
+        qc = 1,
+        anc = 5,
+        questions = [#dns_query{name = DomainName, type = ?DNS_TYPE_TXT}],
+        answers = TXTRecords
+    },
+    Encoded = dns:encode_message(Msg),
+    Decoded = dns:decode_message(Encoded),
+    ?assertEqual(5, length(Decoded#dns_message.answers)),
+    %% Verify round-trip: decoded message should match original
+    ?assertEqual(Msg, Decoded).
+
+%% Test name compression across multiple sections (questions, answers, authority, additional)
+encode_name_compression_with_multiple_sections(_) ->
+    DomainName = <<"example.com">>,
+    Questions = [#dns_query{name = DomainName, type = ?DNS_TYPE_A}],
+    Answers = [
+        #dns_rr{
+            name = DomainName,
+            type = ?DNS_TYPE_A,
+            ttl = 3600,
+            data = #dns_rrdata_a{ip = {192, 0, 2, I}}
+        }
+     || I <- lists:seq(1, 3)
+    ],
+    Authority = [
+        #dns_rr{
+            name = DomainName,
+            type = ?DNS_TYPE_NS,
+            ttl = 3600,
+            data = #dns_rrdata_ns{
+                dname = <<"ns", (integer_to_binary(I))/binary, ".", DomainName/binary>>
+            }
+        }
+     || I <- lists:seq(1, 2)
+    ],
+    Additional = [
+        #dns_rr{
+            name = <<"ns", (integer_to_binary(I))/binary, ".", DomainName/binary>>,
+            type = ?DNS_TYPE_A,
+            ttl = 3600,
+            data = #dns_rrdata_a{ip = {192, 0, 2, 10 + I}}
+        }
+     || I <- lists:seq(1, 2)
+    ],
+    Msg = #dns_message{
+        qc = 1,
+        anc = 3,
+        auc = 2,
+        adc = 2,
+        questions = Questions,
+        answers = Answers,
+        authority = Authority,
+        additional = Additional
+    },
+    Encoded = dns:encode_message(Msg),
+    Decoded = dns:decode_message(Encoded),
+    ?assertEqual(1, length(Decoded#dns_message.questions)),
+    ?assertEqual(3, length(Decoded#dns_message.answers)),
+    ?assertEqual(2, length(Decoded#dns_message.authority)),
+    ?assertEqual(2, length(Decoded#dns_message.additional)),
+    %% Verify questions
+    [Q] = Decoded#dns_message.questions,
+    ?assertEqual(DomainName, Q#dns_query.name),
+    %% Verify answers
+    lists:foreach(
+        fun(I) ->
+            RR = lists:nth(I, Decoded#dns_message.answers),
+            ?assertEqual(DomainName, RR#dns_rr.name),
+            ?assertEqual(?DNS_TYPE_A, RR#dns_rr.type),
+            ?assertMatch(#dns_rrdata_a{ip = {192, 0, 2, I}}, RR#dns_rr.data)
+        end,
+        lists:seq(1, 3)
+    ),
+    %% Verify authority
+    lists:foreach(
+        fun(I) ->
+            RR = lists:nth(I, Decoded#dns_message.authority),
+            ?assertEqual(DomainName, RR#dns_rr.name),
+            ?assertEqual(?DNS_TYPE_NS, RR#dns_rr.type),
+            ExpectedDName = <<"ns", (integer_to_binary(I))/binary, ".", DomainName/binary>>,
+            ?assertMatch(#dns_rrdata_ns{dname = ExpectedDName}, RR#dns_rr.data)
+        end,
+        lists:seq(1, 2)
+    ),
+    %% Verify additional
+    lists:foreach(
+        fun(I) ->
+            RR = lists:nth(I, Decoded#dns_message.additional),
+            ExpectedName = <<"ns", (integer_to_binary(I))/binary, ".", DomainName/binary>>,
+            ExpectedIP = {192, 0, 2, 10 + I},
+            ?assertEqual(ExpectedName, RR#dns_rr.name),
+            ?assertEqual(?DNS_TYPE_A, RR#dns_rr.type),
+            ?assertMatch(#dns_rrdata_a{ip = ExpectedIP}, RR#dns_rr.data)
+        end,
+        lists:seq(1, 2)
+    ).
+
+%%%===================================================================
+%%% Regression tests for name compression bugs
+%%%===================================================================
+
+%% Regression: SOA record where rname should compress to mname
+%% This tests that when encoding rname after mname in SOA, the compression
+%% map is correctly updated and rname can reference mname if they share suffixes
+encode_soa_rname_compresses_to_mname(_) ->
+    ZoneName = <<"example.com">>,
+    MName = <<"ns1.example.com">>,
+    RName = <<"admin.example.com">>,
+    SOA = #dns_rr{
+        name = ZoneName,
+        type = ?DNS_TYPE_SOA,
+        ttl = 3600,
+        data = #dns_rrdata_soa{
+            mname = MName,
+            rname = RName,
+            serial = 2024010101,
+            refresh = 3600,
+            retry = 1800,
+            expire = 604800,
+            minimum = 86400
+        }
+    },
+    Msg = #dns_message{
+        qc = 1,
+        auc = 1,
+        questions = [#dns_query{name = ZoneName, type = ?DNS_TYPE_SOA}],
+        authority = [SOA]
+    },
+    Encoded = dns:encode_message(Msg),
+    Decoded = dns:decode_message(Encoded),
+    ?assertEqual(1, length(Decoded#dns_message.authority)),
+    [DecodedSOA] = Decoded#dns_message.authority,
+    ?assertEqual(ZoneName, DecodedSOA#dns_rr.name),
+    ?assertEqual(?DNS_TYPE_SOA, DecodedSOA#dns_rr.type),
+    #dns_rrdata_soa{
+        mname = DecodedMName,
+        rname = DecodedRName
+    } = DecodedSOA#dns_rr.data,
+    %% Both names should decode correctly
+    ?assertEqual(MName, DecodedMName),
+    ?assertEqual(RName, DecodedRName),
+    %% Verify round-trip
+    ?assertEqual(Msg, Decoded).
+
+%% Regression: SOA record where both mname and rname should compress to question name
+%% This tests compression across sections (question -> authority RR data)
+encode_soa_both_names_compress_to_question(_) ->
+    ZoneName = <<"example.com">>,
+    MName = <<"ns1.example.com">>,
+    RName = <<"admin.example.com">>,
+    SOA = #dns_rr{
+        name = ZoneName,
+        type = ?DNS_TYPE_SOA,
+        ttl = 3600,
+        data = #dns_rrdata_soa{
+            mname = MName,
+            rname = RName,
+            serial = 2024010101,
+            refresh = 3600,
+            retry = 1800,
+            expire = 604800,
+            minimum = 86400
+        }
+    },
+    Msg = #dns_message{
+        qc = 1,
+        auc = 1,
+        questions = [#dns_query{name = ZoneName, type = ?DNS_TYPE_SOA}],
+        authority = [SOA]
+    },
+    Encoded = dns:encode_message(Msg),
+    Decoded = dns:decode_message(Encoded),
+    ?assertEqual(Msg, Decoded),
+    %% Verify the encoded message can be decoded without errors
+    ?assertMatch(#dns_message{}, Decoded).
+
+%% Regression: Position tracking when encoding SOA with multiple domain names
+%% This ensures that positions are calculated relative to message start, not fragment start
+encode_soa_position_tracking_correct(_) ->
+    ZoneName = <<"example.com">>,
+    %% Use names that share common suffixes to test compression
+    MName = <<"ns1.example.com">>,
+    RName = <<"admin.example.com">>,
+    SOA = #dns_rr{
+        name = ZoneName,
+        type = ?DNS_TYPE_SOA,
+        ttl = 3600,
+        data = #dns_rrdata_soa{
+            mname = MName,
+            rname = RName,
+            serial = 2024010101,
+            refresh = 3600,
+            retry = 1800,
+            expire = 604800,
+            minimum = 86400
+        }
+    },
+    Msg = #dns_message{
+        qc = 1,
+        auc = 1,
+        questions = [#dns_query{name = ZoneName, type = ?DNS_TYPE_SOA}],
+        authority = [SOA]
+    },
+    Encoded = dns:encode_message(Msg),
+    %% Decode and verify no compression pointer errors (like bad_pointer)
+    Decoded = dns:decode_message(Encoded),
+    ?assertEqual(Msg, Decoded),
+    %% Verify compression pointers are within valid range (0-16383)
+    %% by checking the encoded binary doesn't contain invalid pointers
+    %% A compression pointer is: 11xxxxxx xxxxxxxx where xxxxxxxx xxxxxxxx < 16384
+    %% Invalid would be >= 16384, which would be >= 0xC000
+    %% We verify by ensuring decode succeeds
+    ?assertMatch(#dns_message{}, Decoded).
+
+%% Regression: MX record where exchange should compress to record name
+encode_mx_exchange_compresses_to_name(_) ->
+    DomainName = <<"example.com">>,
+    Exchange = <<"mail.example.com">>,
+    MX = #dns_rr{
+        name = DomainName,
+        type = ?DNS_TYPE_MX,
+        ttl = 3600,
+        data = #dns_rrdata_mx{
+            preference = 10,
+            exchange = Exchange
+        }
+    },
+    Msg = #dns_message{
+        qc = 1,
+        anc = 1,
+        questions = [#dns_query{name = DomainName, type = ?DNS_TYPE_MX}],
+        answers = [MX]
+    },
+    Encoded = dns:encode_message(Msg),
+    Decoded = dns:decode_message(Encoded),
+    ?assertEqual(Msg, Decoded),
+    [DecodedMX] = Decoded#dns_message.answers,
+    #dns_rrdata_mx{exchange = DecodedExchange} = DecodedMX#dns_rr.data,
+    ?assertEqual(Exchange, DecodedExchange).
+
+%% Regression: NS record where dname should compress to record name
+encode_ns_dname_compresses_to_name(_) ->
+    ZoneName = <<"example.com">>,
+    NSDName = <<"ns1.example.com">>,
+    NS = #dns_rr{
+        name = ZoneName,
+        type = ?DNS_TYPE_NS,
+        ttl = 3600,
+        data = #dns_rrdata_ns{dname = NSDName}
+    },
+    Msg = #dns_message{
+        qc = 1,
+        auc = 1,
+        questions = [#dns_query{name = ZoneName, type = ?DNS_TYPE_NS}],
+        authority = [NS]
+    },
+    Encoded = dns:encode_message(Msg),
+    Decoded = dns:decode_message(Encoded),
+    ?assertEqual(Msg, Decoded),
+    [DecodedNS] = Decoded#dns_message.authority,
+    #dns_rrdata_ns{dname = DecodedDName} = DecodedNS#dns_rr.data,
+    ?assertEqual(NSDName, DecodedDName).
+
+%% Regression: SRV record where target should compress to record name
+encode_srv_target_compresses_to_name(_) ->
+    ServiceName = <<"_http._tcp.example.com">>,
+    Target = <<"server.example.com">>,
+    SRV = #dns_rr{
+        name = ServiceName,
+        type = ?DNS_TYPE_SRV,
+        ttl = 3600,
+        data = #dns_rrdata_srv{
+            priority = 10,
+            weight = 5,
+            port = 80,
+            target = Target
+        }
+    },
+    Msg = #dns_message{
+        qc = 1,
+        anc = 1,
+        questions = [#dns_query{name = ServiceName, type = ?DNS_TYPE_SRV}],
+        answers = [SRV]
+    },
+    Encoded = dns:encode_message(Msg),
+    Decoded = dns:decode_message(Encoded),
+    ?assertEqual(Msg, Decoded),
+    [DecodedSRV] = Decoded#dns_message.answers,
+    #dns_rrdata_srv{target = DecodedTarget} = DecodedSRV#dns_rr.data,
+    ?assertEqual(Target, DecodedTarget).
+
+%% Regression: PTR record where dname should compress
+encode_ptr_dname_compresses_to_name(_) ->
+    PtrName = <<"1.0.0.127.in-addr.arpa">>,
+    DName = <<"host.example.com">>,
+    PTR = #dns_rr{
+        name = PtrName,
+        type = ?DNS_TYPE_PTR,
+        ttl = 3600,
+        data = #dns_rrdata_ptr{dname = DName}
+    },
+    Msg = #dns_message{
+        qc = 1,
+        anc = 1,
+        questions = [#dns_query{name = PtrName, type = ?DNS_TYPE_PTR}],
+        answers = [PTR]
+    },
+    Encoded = dns:encode_message(Msg),
+    Decoded = dns:decode_message(Encoded),
+    ?assertEqual(Msg, Decoded),
+    [DecodedPTR] = Decoded#dns_message.answers,
+    #dns_rrdata_ptr{dname = DecodedDName} = DecodedPTR#dns_rr.data,
+    ?assertEqual(DName, DecodedDName).
+
+%% Regression: CNAME record where dname should compress to record name
+encode_cname_dname_compresses_to_name(_) ->
+    BaseName = <<"www.example.com">>,
+    CNameTarget = <<"cname.example.com">>,
+    CNAME = #dns_rr{
+        name = BaseName,
+        type = ?DNS_TYPE_CNAME,
+        ttl = 3600,
+        data = #dns_rrdata_cname{dname = CNameTarget}
+    },
+    Msg = #dns_message{
+        qc = 1,
+        anc = 1,
+        questions = [#dns_query{name = BaseName, type = ?DNS_TYPE_CNAME}],
+        answers = [CNAME]
+    },
+    Encoded = dns:encode_message(Msg),
+    Decoded = dns:decode_message(Encoded),
+    ?assertEqual(Msg, Decoded),
+    [DecodedCNAME] = Decoded#dns_message.answers,
+    #dns_rrdata_cname{dname = DecodedDName} = DecodedCNAME#dns_rr.data,
+    ?assertEqual(CNameTarget, DecodedDName).
+
+%% Regression: Compression pointers must be within valid range (0-16383)
+%% This test ensures compression pointers are never >= 16384 (0xC000)
+encode_compression_pointer_valid_range(_) ->
+    %% Create a message with many records to test compression pointer calculation
+    QName = <<"example.com">>,
+    Answers = [
+        #dns_rr{
+            name = QName,
+            type = ?DNS_TYPE_A,
+            ttl = 3600,
+            data = #dns_rrdata_a{ip = {127, 0, 0, I}}
+        }
+     || I <- lists:seq(1, 50)
+    ],
+    Msg = #dns_message{
+        qc = 1,
+        anc = 50,
+        questions = [#dns_query{name = QName, type = ?DNS_TYPE_A}],
+        answers = Answers
+    },
+    Encoded = dns:encode_message(Msg),
+    %% Decode should succeed without bad_pointer errors
+    Decoded = dns:decode_message(Encoded),
+    ?assertEqual(Msg, Decoded),
+    %% Verify all answers decoded correctly
+    ?assertEqual(50, length(Decoded#dns_message.answers)).
+
+%% Regression: Multiple SOA records with compression
+%% This tests that compression map is correctly maintained across multiple SOA records
+encode_multiple_soa_records_compression(_) ->
+    Zone1 = <<"zone1.example.com">>,
+    Zone2 = <<"zone2.example.com">>,
+    SOA1 = #dns_rr{
+        name = Zone1,
+        type = ?DNS_TYPE_SOA,
+        ttl = 3600,
+        data = #dns_rrdata_soa{
+            mname = <<"ns1.example.com">>,
+            rname = <<"admin.example.com">>,
+            serial = 2024010101,
+            refresh = 3600,
+            retry = 1800,
+            expire = 604800,
+            minimum = 86400
+        }
+    },
+    SOA2 = #dns_rr{
+        name = Zone2,
+        type = ?DNS_TYPE_SOA,
+        ttl = 3600,
+        data = #dns_rrdata_soa{
+            mname = <<"ns2.example.com">>,
+            rname = <<"admin.example.com">>,
+            serial = 2024010102,
+            refresh = 3600,
+            retry = 1800,
+            expire = 604800,
+            minimum = 86400
+        }
+    },
+    Msg = #dns_message{
+        qc = 2,
+        auc = 2,
+        questions = [
+            #dns_query{name = Zone1, type = ?DNS_TYPE_SOA},
+            #dns_query{name = Zone2, type = ?DNS_TYPE_SOA}
+        ],
+        authority = [SOA1, SOA2]
+    },
+    Encoded = dns:encode_message(Msg),
+    Decoded = dns:decode_message(Encoded),
+    ?assertEqual(2, length(Decoded#dns_message.authority)),
+    %% Verify round-trip
+    ?assertEqual(Msg, Decoded).
 
 split_binary_into_chunks(Bin, Chunk) ->
     List = binary_to_list(Bin),

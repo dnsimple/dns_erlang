@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## main
 
+## 4.9.1
+
+- Fix a bug that would incorrectly calculate pointers, introduced in 4.9.1
+
 ## 4.9.0
 
 - Add extended support for SVCB and HTTPS Resource Records — [RFC9460](https://datatracker.ietf.org/doc/rfc9460/)

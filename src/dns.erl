@@ -376,8 +376,6 @@ For standard queries (opcode 0), validates that:
 
 For NOTIFY (opcode 4) and UPDATE (opcode 5), allows decoding to proceed.
 For other opcodes, falls back to standard decoding.
-
-See `dns_decode:decode_query/1` for implementation details.
 """).
 -spec decode_query(message_bin()) ->
     {decode_error(), message() | undefined, binary()}

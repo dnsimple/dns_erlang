@@ -141,7 +141,12 @@ encode_message_default(
     PreservedOptRRBinSize = preserve_optrr_size(Additional),
     SpaceLeft0 = MaxSize - ?HEADER_SIZE - PreservedOptRRBinSize,
     %% RFC6891 §7, the question section MUST always be present
-    {Acc1, CompMap1} = encode_append_section(<<>>, #{}, Questions),
+    %% Pass a 12-byte placeholder header so position calculations start from 12 (header size)
+    %% instead of 0. This ensures compression pointers are calculated correctly.
+    HeaderPlaceholder = <<0:96>>,
+    {Acc1WithHeader, CompMap1} = encode_append_section(HeaderPlaceholder, #{}, Questions),
+    %% Extract the question section (skip the 12-byte header placeholder)
+    Acc1 = binary_part(Acc1WithHeader, ?HEADER_SIZE, byte_size(Acc1WithHeader) - ?HEADER_SIZE),
     Acc1Size = byte_size(Acc1),
     SpaceLeft1 = SpaceLeft0 - Acc1Size,
     Pos1 = ?HEADER_SIZE + Acc1Size,
@@ -394,7 +399,7 @@ encode_message_rec_list([Rec | Rest] = Recs, CompMap, Pos, SpaceLeft, Body) ->
             NewBinSize = byte_size(NewBody) - byte_size(Body),
             Pos1 = Pos + NewBinSize,
             SpaceLeft1 = SpaceLeft - NewBinSize,
-            encode_message_rec_list(Rest, CompMap1, Pos1, SpaceLeft1, Body);
+            encode_message_rec_list(Rest, CompMap1, Pos1, SpaceLeft1, NewBody);
         not_appended ->
             {CompMap, Body, Recs}
     end;
@@ -475,7 +480,7 @@ encode_message_rec_unbounded(
 ) ->
     {Acc1, CompMap0} = encode_append_dname(Acc, CompMap, byte_size(Acc), N),
     Acc2 = <<Acc1/binary, T:16, C:16, TTL:32>>,
-    {DBin, CompMap1} = encode_rrdata(byte_size(Acc2), C, D, CompMap0),
+    {DBin, CompMap1} = encode_rrdata(byte_size(Acc2) + 2, C, D, CompMap0),
     Acc3 = <<Acc2/binary, (byte_size(DBin)):16, DBin/binary>>,
     {Acc3, CompMap1}.
 
