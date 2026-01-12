@@ -63,7 +63,8 @@
     <<"7871">> => <<"Client Subnet in DNS Queries">>,
     <<"7873">> => <<"Domain Name System (DNS) Cookies">>,
     <<"8764">> => <<"DNS Long-Lived Queries (LLQ)">>,
-    <<"8914">> => <<"Extended DNS Errors">>
+    <<"8914">> => <<"Extended DNS Errors">>,
+    <<"9619">> => <<"In the DNS, QDCOUNT Is (Usually) One">>
 }).
 
 main(Args) ->

@@ -58,6 +58,9 @@ decode_query(
     %% - RCODE in queries is typically 0 (NOERROR) but most servers don't enforce this validation
     case {QR, TC, OC, QC, ANC, AUC, ADC} of
         %% RFC 1035: Standard queries must have exactly 1 question, no answers, no authority.
+        %% RFC 9619: A DNS message with OPCODE = 0 MUST NOT include a QDCOUNT parameter whose value
+        %% is greater than 1. It follows that the Question section of a DNS message with OPCODE = 0
+        %% MUST NOT contain more than one question.
         {0, 0, ?DNS_OPCODE_QUERY, 1, 0, 0, _} ->
             Msg0 = create_message_from_header(
                 Id, QR, OC, AA, TC, RD, RA, AD, CD, RC, QC, ANC, AUC, ADC
