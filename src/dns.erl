@@ -234,6 +234,7 @@ restrictions on the length. Labels must be 63 characters or less.
     | #dns_rrdata_spf{}
     | #dns_rrdata_srv{}
     | #dns_rrdata_svcb{}
+    | #dns_rrdata_https{}
     | #dns_rrdata_sshfp{}
     | #dns_rrdata_tlsa{}
     | #dns_rrdata_smimea{}
@@ -241,7 +242,8 @@ restrictions on the length. Labels must be 63 characters or less.
     | #dns_rrdata_txt{}
     | #dns_rrdata_uri{}
     | #dns_rrdata_resinfo{}
-    | #dns_rrdata_wallet{}.
+    | #dns_rrdata_wallet{}
+    | #dns_rrdata_zonemd{}.
 ?DOC(#{group => <<"Types: records">>}).
 -type records() :: additional() | answers() | authority() | questions().
 ?DOC(#{group => <<"Types: records">>}).
