@@ -4,9 +4,13 @@ all: build
 build:
 	rebar3 compile
 
-.PHONY: doc
-doc:
-	rebar3 edoc
+.PHONY: docs
+docs:
+	rebar3 ex_doc
+
+.PHONY: json-docs
+json-docs:
+	escript scripts/generate_json_docs.escript --output src/JSON_FORMAT.md
 
 .PHONY: clean
 clean:

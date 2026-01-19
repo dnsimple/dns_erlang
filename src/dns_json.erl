@@ -1,13 +1,5 @@
 -module(dns_json).
--moduledoc """
-The `dns_json` module provides functions for converting DNS records to and from
-map representations suitable for JSON encoding/decoding.
-
-Records are converted to maps where keys are record field names (as atoms) and
-values are the record field values. Special handling is applied for certain
-field types (e.g., IP addresses are converted to strings, binary data may be
-base64 or hex encoded).
-""".
+-moduledoc {file, "JSON_FORMAT.md"}.
 -moduledoc #{since => "v5.0.0"}.
 
 -export([to_map/1, from_map/1]).
