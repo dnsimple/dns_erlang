@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## main
 
+### Added
+
+- Add new `dns_json` module for bidirectional Record <-> JSON/Map transcoding
+
+### Changed
+
+- Require OTP 27 or later (minimum_otp_vsn set to "27")
+
+### Removed
+
+- Removed old `dns_record` and `dns_record_info` modules
+
 ## 4.9.1
 
 - Fix a bug that would incorrectly calculate pointers, introduced in 4.9.1
