@@ -911,7 +911,9 @@ test_error_cases(_Config) ->
         ~"ttl" => 3600,
         ~"data" => #{~"other" => ~"value"}
     },
-    ?assertError({unknown_type_cannot_convert_to_rrdata, _}, dns_json:from_map(UnknownTypeNoDataMap)),
+    ?assertError(
+        {unknown_type_cannot_convert_to_rrdata, _}, dns_json:from_map(UnknownTypeNoDataMap)
+    ),
 
     %% Test integer class value
     IntClassMap = #{
@@ -976,7 +978,9 @@ test_error_cases(_Config) ->
         data = ~"raw-binary-data"
     },
     UnknownTypeBinaryMap = dns_json:to_map(UnknownTypeBinary),
-    ?assertEqual(#{~"data" => base64:encode(~"raw-binary-data")}, maps:get(~"data", UnknownTypeBinaryMap)),
+    ?assertEqual(
+        #{~"data" => base64:encode(~"raw-binary-data")}, maps:get(~"data", UnknownTypeBinaryMap)
+    ),
 
     %% Test record_type_from_key for "rr" key (dns_rr is not RRDATA, so it processes as regular record)
     %% This will fail because the fields don't match, but it tests record_type_from_key(~"rr")
@@ -991,7 +995,9 @@ test_error_cases(_Config) ->
     end,
 
     %% Test record_key_name error case (unknown record type) - line 104
-    ?assertError({unknown_record_type, unknown_tag}, dns_json:to_map({unknown_tag, field1, field2})),
+    ?assertError(
+        {unknown_record_type, unknown_tag}, dns_json:to_map({unknown_tag, field1, field2})
+    ),
 
     %% Test to_map_rrdata with tuple (not binary) - line 328
     %% This is already covered by normal dns_rr records, but let's make sure
