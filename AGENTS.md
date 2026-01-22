@@ -28,6 +28,7 @@ dns_erlang is an Erlang DNS message library supporting most common record types,
 ## Architecture
 
 **Core Modules:**
+
 - `dns.erl` - Main public API: encode/decode messages, TSIG operations, domain name utilities
 - `dns_encode.erl` - Wire format encoding (DNS records to binary)
 - `dns_decode.erl` - Wire format decoding (binary to DNS records)
@@ -38,11 +39,13 @@ dns_erlang is an Erlang DNS message library supporting most common record types,
 - `dns_zone.erl` - Zone file parsing (RFC 1035 format)
 
 **Headers (include/):**
+
 - `dns.hrl` - Main header (includes dns_terms.hrl and dns_records.hrl)
 - `dns_terms.hrl` - DNS constants (types, classes, opcodes, rcodes, algorithms)
 - `dns_records.hrl` - Erlang record definitions for DNS structures
 
 **Generated Files (excluded from formatting/linting):**
+
 - `src/DNS-ASN1.erl`, `include/DNS-ASN1.hrl` - ASN.1 generated code
 - `src/dns_zone_lexer.erl` - Generated from dns_zone_lexer.xrl
 - `src/dns_zone_parser.erl` - Generated from dns_zone_parser.yrl
