@@ -4,9 +4,9 @@ all: build
 build:
 	rebar3 compile
 
-.PHONY: doc
-doc:
-	rebar3 edoc
+.PHONY: docs
+docs:
+	rebar3 ex_doc
 
 .PHONY: clean
 clean:
@@ -28,6 +28,10 @@ test: all check-no-change-action
 .PHONY: format
 format: build
 	rebar3 fmt
+
+.PHONY: lint
+lint: build
+	rebar3 lint
 
 # Will capture any reference to "(?i)RFC[\\s-]?(\\d+)" in src and include files.
 # It runs on CI. When adding support for new RFCs, you should add any reference to it it code
