@@ -246,9 +246,7 @@ Parse zone file content from a string or binary with options.
 """).
 -spec parse_string(binary() | string(), parse_options()) ->
     {ok, [dns:rr()]} | {error, error_detail()}.
-parse_string(Data, Options) when is_list(Data) ->
-    dns_zone_decode:parse_string(Data, Options);
-parse_string(Data, Options) when is_binary(Data) ->
+parse_string(Data, Options) ->
     dns_zone_decode:parse_string(Data, Options).
 
 ?DOC("""

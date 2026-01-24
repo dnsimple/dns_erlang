@@ -2010,7 +2010,7 @@ handle_include(Filename, Origin, Ctx) ->
         default_class => Ctx#parse_ctx.default_class,
         base_dir => Ctx#parse_ctx.base_dir
     },
-    case dns_zone_decode:parse_file(FullPath, IncludeOpts) of
+    case parse_file(FullPath, IncludeOpts) of
         {ok, Records} ->
             {ok, Ctx, Records};
         {error, ErrorDetail} ->
