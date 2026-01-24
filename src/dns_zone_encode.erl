@@ -11,7 +11,7 @@
 -dialyzer(no_improper_lists).
 -elvis([{elvis_style, dont_repeat_yourself, #{ignore => [{dns_zone_encode, encode_rdata}]}}]).
 
--export([encode_rr/2, encode_string/3, encode_file/4]).
+-export([encode_rdata/1, encode_rr/2, encode_string/3, encode_file/4]).
 
 -define(DEFAULT_ORIGIN, <<>>).
 -define(DEFAULT_RELATIVE_NAMES, true).
@@ -58,6 +58,67 @@ encode_rr(#dns_rr{name = Name, type = Type, class = Class, ttl = TTL, data = Dat
         _ ->
             [OwnerName, <<"\t">>, EncodedTTL, <<"\t">> | Tail]
     end.
+
+-spec encode_rdata(dns:rrdata()) -> iodata().
+encode_rdata(RData) ->
+    Type = rdata_to_type(RData),
+    encode_rdata(Type, RData, <<>>, true, #{}).
+
+%% Deduce DNS type from RDATA record structure
+-spec rdata_to_type(dns:rrdata()) -> dns:type().
+rdata_to_type(#dns_rrdata_a{}) -> ?DNS_TYPE_A;
+rdata_to_type(#dns_rrdata_aaaa{}) -> ?DNS_TYPE_AAAA;
+rdata_to_type(#dns_rrdata_ns{}) -> ?DNS_TYPE_NS;
+rdata_to_type(#dns_rrdata_cname{}) -> ?DNS_TYPE_CNAME;
+rdata_to_type(#dns_rrdata_ptr{}) -> ?DNS_TYPE_PTR;
+rdata_to_type(#dns_rrdata_mx{}) -> ?DNS_TYPE_MX;
+rdata_to_type(#dns_rrdata_txt{}) -> ?DNS_TYPE_TXT;
+rdata_to_type(#dns_rrdata_spf{}) -> ?DNS_TYPE_SPF;
+rdata_to_type(#dns_rrdata_soa{}) -> ?DNS_TYPE_SOA;
+rdata_to_type(#dns_rrdata_srv{}) -> ?DNS_TYPE_SRV;
+rdata_to_type(#dns_rrdata_caa{}) -> ?DNS_TYPE_CAA;
+rdata_to_type(#dns_rrdata_dname{}) -> ?DNS_TYPE_DNAME;
+rdata_to_type(#dns_rrdata_mb{}) -> ?DNS_TYPE_MB;
+rdata_to_type(#dns_rrdata_mg{}) -> ?DNS_TYPE_MG;
+rdata_to_type(#dns_rrdata_mr{}) -> ?DNS_TYPE_MR;
+rdata_to_type(#dns_rrdata_minfo{}) -> ?DNS_TYPE_MINFO;
+rdata_to_type(#dns_rrdata_rp{}) -> ?DNS_TYPE_RP;
+rdata_to_type(#dns_rrdata_afsdb{}) -> ?DNS_TYPE_AFSDB;
+rdata_to_type(#dns_rrdata_rt{}) -> ?DNS_TYPE_RT;
+rdata_to_type(#dns_rrdata_kx{}) -> ?DNS_TYPE_KX;
+rdata_to_type(#dns_rrdata_cert{}) -> ?DNS_TYPE_CERT;
+rdata_to_type(#dns_rrdata_dhcid{}) -> ?DNS_TYPE_DHCID;
+rdata_to_type(#dns_rrdata_openpgpkey{}) -> ?DNS_TYPE_OPENPGPKEY;
+rdata_to_type(#dns_rrdata_smimea{}) -> ?DNS_TYPE_SMIMEA;
+rdata_to_type(#dns_rrdata_csync{}) -> ?DNS_TYPE_CSYNC;
+rdata_to_type(#dns_rrdata_uri{}) -> ?DNS_TYPE_URI;
+rdata_to_type(#dns_rrdata_resinfo{}) -> ?DNS_TYPE_RESINFO;
+rdata_to_type(#dns_rrdata_dsync{}) -> ?DNS_TYPE_DSYNC;
+rdata_to_type(#dns_rrdata_wallet{}) -> ?DNS_TYPE_WALLET;
+rdata_to_type(#dns_rrdata_eui48{}) -> ?DNS_TYPE_EUI48;
+rdata_to_type(#dns_rrdata_eui64{}) -> ?DNS_TYPE_EUI64;
+rdata_to_type(#dns_rrdata_zonemd{}) -> ?DNS_TYPE_ZONEMD;
+rdata_to_type(#dns_rrdata_svcb{}) -> ?DNS_TYPE_SVCB;
+rdata_to_type(#dns_rrdata_https{}) -> ?DNS_TYPE_HTTPS;
+rdata_to_type(#dns_rrdata_loc{}) -> ?DNS_TYPE_LOC;
+rdata_to_type(#dns_rrdata_ipseckey{}) -> ?DNS_TYPE_IPSECKEY;
+rdata_to_type(#dns_rrdata_hinfo{}) -> ?DNS_TYPE_HINFO;
+rdata_to_type(#dns_rrdata_naptr{}) -> ?DNS_TYPE_NAPTR;
+rdata_to_type(#dns_rrdata_sshfp{}) -> ?DNS_TYPE_SSHFP;
+rdata_to_type(#dns_rrdata_tlsa{}) -> ?DNS_TYPE_TLSA;
+rdata_to_type(#dns_rrdata_ds{}) -> ?DNS_TYPE_DS;
+rdata_to_type(#dns_rrdata_cds{}) -> ?DNS_TYPE_CDS;
+rdata_to_type(#dns_rrdata_dlv{}) -> ?DNS_TYPE_DLV;
+rdata_to_type(#dns_rrdata_dnskey{}) -> ?DNS_TYPE_DNSKEY;
+rdata_to_type(#dns_rrdata_cdnskey{}) -> ?DNS_TYPE_CDNSKEY;
+rdata_to_type(#dns_rrdata_key{}) -> ?DNS_TYPE_KEY;
+rdata_to_type(#dns_rrdata_nxt{}) -> ?DNS_TYPE_NXT;
+rdata_to_type(#dns_rrdata_nsec{}) -> ?DNS_TYPE_NSEC;
+rdata_to_type(#dns_rrdata_nsec3{}) -> ?DNS_TYPE_NSEC3;
+rdata_to_type(#dns_rrdata_nsec3param{}) -> ?DNS_TYPE_NSEC3PARAM;
+rdata_to_type(#dns_rrdata_rrsig{}) -> ?DNS_TYPE_RRSIG;
+rdata_to_type(#dns_rrdata_tsig{}) -> ?DNS_TYPE_TSIG;
+rdata_to_type(_) -> error(badarg).
 
 %% ============================================================================
 %% Helper Functions

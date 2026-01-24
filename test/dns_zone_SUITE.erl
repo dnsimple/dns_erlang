@@ -47,6 +47,7 @@ groups() ->
             {group, error_cases}
         ]},
         {encoding_tests, [parallel], [
+            encode_rdata_helper,
             %% Basic record types
             encode_a_record,
             encode_aaaa_record,
@@ -5536,3 +5537,61 @@ encode_file_three_args_with_options(_Config) ->
     after
         file:delete(TestFile)
     end.
+
+encode_rdata_helper(_Config) ->
+    %% Test encode_rdata/1 helper function with defaults (type deduced from record)
+    %% Test A record
+    RDataA = #dns_rrdata_a{ip = {192, 0, 2, 1}},
+    RDataStrA = dns_zone:encode_rdata(RDataA),
+    RDataStrABin = iolist_to_binary(RDataStrA),
+    %% inet:ntoa returns a string, convert to binary for comparison
+    ExpectedA = list_to_binary(inet:ntoa({192, 0, 2, 1})),
+    ?assertEqual(ExpectedA, RDataStrABin),
+
+    %% Test NS record
+    RDataNS = #dns_rrdata_ns{dname = <<"ns1.example.com.">>},
+    RDataStrNS = dns_zone:encode_rdata(RDataNS),
+    RDataStrNSBin = iolist_to_binary(RDataStrNS),
+    ?assertEqual(<<"ns1.example.com.">>, RDataStrNSBin),
+
+    %% Test MX record
+    RDataMX = #dns_rrdata_mx{
+        preference = 10,
+        exchange = <<"mail.example.com.">>
+    },
+    RDataStrMX = dns_zone:encode_rdata(RDataMX),
+    RDataStrMXBin = iolist_to_binary(RDataStrMX),
+    ?assertNotEqual(nomatch, string:find(RDataStrMXBin, "10")),
+    ?assertNotEqual(nomatch, string:find(RDataStrMXBin, "mail.example.com.")),
+
+    %% Test TXT record
+    RDataTXT = #dns_rrdata_txt{txt = [<<"test">>]},
+    RDataStrTXT = dns_zone:encode_rdata(RDataTXT),
+    RDataStrTXTBin = iolist_to_binary(RDataStrTXT),
+    ?assertNotEqual(nomatch, string:find(RDataStrTXTBin, "test")),
+
+    %% Test SOA record
+    RDataSOA = #dns_rrdata_soa{
+        mname = <<"ns1.example.com.">>,
+        rname = <<"admin.example.com.">>,
+        serial = 2024010101,
+        refresh = 3600,
+        retry = 1800,
+        expire = 604800,
+        minimum = 86400
+    },
+    RDataStrSOA = dns_zone:encode_rdata(RDataSOA),
+    RDataStrSOABin = iolist_to_binary(RDataStrSOA),
+    ?assertNotEqual(nomatch, string:find(RDataStrSOABin, "ns1.example.com.")),
+    ?assertNotEqual(nomatch, string:find(RDataStrSOABin, "admin.example.com.")),
+
+    %% Test CAA record
+    RDataCAA = #dns_rrdata_caa{
+        flags = 0,
+        tag = <<"issue">>,
+        value = <<"letsencrypt.org">>
+    },
+    RDataStrCAA = dns_zone:encode_rdata(RDataCAA),
+    RDataStrCAABin = iolist_to_binary(RDataStrCAA),
+    ?assertNotEqual(nomatch, string:find(RDataStrCAABin, "issue")),
+    ?assertNotEqual(nomatch, string:find(RDataStrCAABin, "letsencrypt.org")).
