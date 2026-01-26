@@ -292,7 +292,7 @@ do_escape_string(<<>>, Acc) ->
 do_escape_string(<<$\\, Rest/binary>>, Acc) ->
     do_escape_string(Rest, <<Acc/binary, "\\\\">>);
 do_escape_string(<<$", Rest/binary>>, Acc) ->
-    do_escape_string(Rest, <<Acc/binary, "\"">>);
+    do_escape_string(Rest, <<Acc/binary, "\\\"">>);
 do_escape_string(<<C, Rest/binary>>, Acc) when C >= 32, C =< 126 ->
     do_escape_string(Rest, <<Acc/binary, C>>);
 do_escape_string(<<C, Rest/binary>>, Acc) ->
@@ -307,7 +307,6 @@ encode_svcb_params(Params) when map_size(Params) =:= 0 ->
     <<>>;
 encode_svcb_params(Params) ->
     ParamList = encode_svcb_params_list(Params, []),
-    %% Join with spaces
     join_with_spaces(ParamList).
 
 -spec join_with_spaces([iodata()]) -> iodata().
@@ -317,57 +316,57 @@ join_with_spaces([First | Rest]) ->
     lists:foldl(fun(P, Acc) -> [Acc, " ", P] end, First, Rest).
 
 -spec encode_svcb_params_list(dns:svcb_svc_params(), [iodata()]) -> [iodata()].
-encode_svcb_params_list(Params, Acc) ->
-    maps:fold(
+encode_svcb_params_list(SvcParams, Acc) ->
+    SortedParams = lists:sort(maps:to_list(SvcParams)),
+    lists:foldr(
         fun
-            (?DNS_SVCB_PARAM_MANDATORY, Keys, Acc0) ->
+            ({?DNS_SVCB_PARAM_MANDATORY, Keys}, Acc0) ->
                 KeyNames = [svcb_param_key_name(K) || K <- Keys],
-                [["mandatory=", lists:join(",", KeyNames)] | Acc0];
-            (?DNS_SVCB_PARAM_ALPN, Protocols, Acc0) ->
-                ProtocolStrs = [binary_to_list(P) || P <- Protocols],
-                [["alpn=", lists:join(",", ProtocolStrs)] | Acc0];
-            (?DNS_SVCB_PARAM_NO_DEFAULT_ALPN, none, Acc0) ->
+                [[<<"mandatory=\"">>, lists:join(",", KeyNames), <<"\"">>] | Acc0];
+            ({?DNS_SVCB_PARAM_ALPN, Protocols}, Acc0) ->
+                % ProtocolStrs = [binary_to_list(P) || P <- Protocols],
+                [[<<"alpn=\"">>, lists:join(",", Protocols), <<"\"">>] | Acc0];
+            ({?DNS_SVCB_PARAM_NO_DEFAULT_ALPN, none}, Acc0) ->
                 [<<"no-default-alpn">> | Acc0];
-            (?DNS_SVCB_PARAM_PORT, Port, Acc0) ->
-                [["port=", integer_to_binary(Port)] | Acc0];
-            (?DNS_SVCB_PARAM_IPV4HINT, IPs, Acc0) ->
+            ({?DNS_SVCB_PARAM_PORT, Port}, Acc0) ->
+                [[<<"port=\"">>, integer_to_binary(Port), <<"\"">>] | Acc0];
+            ({?DNS_SVCB_PARAM_IPV4HINT, IPs}, Acc0) ->
                 IPStrs = [inet:ntoa(IP) || IP <- IPs],
-                [["ipv4hint=", lists:join(",", IPStrs)] | Acc0];
-            (?DNS_SVCB_PARAM_IPV6HINT, IPs, Acc0) ->
+                [[<<"ipv4hint=\"">>, lists:join(",", IPStrs), <<"\"">>] | Acc0];
+            ({?DNS_SVCB_PARAM_IPV6HINT, IPs}, Acc0) ->
                 IPStrs = [inet:ntoa(IP) || IP <- IPs],
-                [["ipv6hint=", lists:join(",", IPStrs)] | Acc0];
-            (?DNS_SVCB_PARAM_ECH, ECHConfig, Acc0) ->
-                [["ech=", base64:encode(ECHConfig)] | Acc0];
-            (KeyNum, none, Acc0) when is_integer(KeyNum) ->
-                [["key", integer_to_binary(KeyNum)] | Acc0];
-            (KeyNum, Value, Acc0) when is_integer(KeyNum), is_binary(Value) ->
+                [[<<"ipv6hint=\"">>, lists:join(",", IPStrs), <<"\"">>] | Acc0];
+            ({?DNS_SVCB_PARAM_ECH, ECHConfig}, Acc0) ->
+                [[<<"ech=\"">>, base64:encode(ECHConfig), <<"\"">>] | Acc0];
+            ({KeyNum, none}, Acc0) when is_integer(KeyNum) ->
+                [[<<"key">>, integer_to_binary(KeyNum)] | Acc0];
+            ({KeyNum, Value}, Acc0) when is_integer(KeyNum), is_binary(Value) ->
                 KeyNumBin = integer_to_binary(KeyNum),
                 EscapedValue = encode_quoted_string(Value),
-                [["key", KeyNumBin, "=\"", EscapedValue, "\""] | Acc0]
+                [[<<"key">>, KeyNumBin, "=", EscapedValue] | Acc0]
         end,
         Acc,
-        Params
+        SortedParams
     ).
 
 %% Get SVCB parameter key name from number
--spec svcb_param_key_name(dns:uint16()) -> string().
+-spec svcb_param_key_name(dns:uint16()) -> unicode:chardata().
 svcb_param_key_name(?DNS_SVCB_PARAM_MANDATORY) ->
-    "mandatory";
+    <<"mandatory">>;
 svcb_param_key_name(?DNS_SVCB_PARAM_ALPN) ->
-    "alpn";
+    <<"alpn">>;
 svcb_param_key_name(?DNS_SVCB_PARAM_NO_DEFAULT_ALPN) ->
-    "no-default-alpn";
+    <<"no-default-alpn">>;
 svcb_param_key_name(?DNS_SVCB_PARAM_PORT) ->
-    "port";
+    <<"port">>;
 svcb_param_key_name(?DNS_SVCB_PARAM_IPV4HINT) ->
-    "ipv4hint";
+    <<"ipv4hint">>;
 svcb_param_key_name(?DNS_SVCB_PARAM_IPV6HINT) ->
-    "ipv6hint";
+    <<"ipv6hint">>;
 svcb_param_key_name(?DNS_SVCB_PARAM_ECH) ->
-    "ech";
+    <<"ech">>;
 svcb_param_key_name(KeyNum) ->
-    KeyNumBin = integer_to_binary(KeyNum),
-    "key" ++ binary_to_list(KeyNumBin).
+    <<"key", (integer_to_binary(KeyNum))/binary>>.
 
 %% ============================================================================
 %% Zone-Level Encoding

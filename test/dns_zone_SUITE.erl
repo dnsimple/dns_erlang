@@ -3958,14 +3958,17 @@ encode_svcb_record(_Config) ->
             target_name = <<"target.example.com.">>,
             svc_params = #{
                 ?DNS_SVCB_PARAM_PORT => 443,
-                ?DNS_SVCB_PARAM_ALPN => [<<"h2">>, <<"http/1.1">>]
+                ?DNS_SVCB_PARAM_ALPN => [<<"h2">>, <<"http/1.1">>],
+                3232 => <<"custom\"text">>
             }
         }
     },
-    Line = dns_zone:encode_rr(RR),
+    Line = iolist_to_binary(dns_zone:encode_rr(RR)),
+    ?assertNotEqual(nomatch, string:find(Line, "SVCB")),
     ?assertNotEqual(nomatch, string:find(Line, "1")),
     ?assertNotEqual(nomatch, string:find(Line, "target.example.com.")),
-    ?assertNotEqual(nomatch, string:find(Line, "SVCB")).
+    Match = <<"alpn=\"h2,http/1.1\" port=\"443\" key3232=\"custom\\\"text\"">>,
+    ?assertNotMatch(nomatch, string:find(Line, Match), Line).
 
 encode_https_record(_Config) ->
     RR = #dns_rr{
