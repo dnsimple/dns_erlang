@@ -14,7 +14,7 @@ This module provides strictly reversible domain name operations for use in DNS
 message encoding and decoding.
 """).
 
--export([split/1, join/1]).
+-export([split/1, join/1, join/2]).
 -export([from_wire/1, from_wire/2]).
 -export([to_wire/1, to_wire/3]).
 -export([to_lower/1, to_upper/1]).
@@ -147,6 +147,11 @@ do_split(<<$\\, $\\, Cs/binary>>, Label) ->
 do_split(<<C, Cs/binary>>, Label) ->
     do_split(Cs, <<Label/binary, C>>).
 
+?DOC(#{equiv => join(Labels, subdomain)}).
+-spec join(Labels :: labels()) -> dname().
+join(Labels) ->
+    join(Labels, subdomain).
+
 ?DOC("""
 Join labels into domain name.
 
@@ -155,34 +160,43 @@ dots and backslashes in labels as needed.
 
 Returns an empty binary for an empty list.
 
+Note that it does not automatically append a trailing dot at the end of the domain.
+
 ## Examples:
 
-    1> dns_domain:join([<<"www">>, <<"example">>, <<"com">>]).
+    1> dns_domain:join([<<"www">>, <<"example">>, <<"com">>], subdomain).
     <<"www.example.com">>
 
-    2> dns_domain:join([<<"test.label">>, <<"com">>]).
+    2> dns_domain:join([<<"test.label">>, <<"com">>], subdomain).
     <<"test\\.label.com">>
 
-    3> dns_domain:join([<<"test\\label">>, <<"com">>]).
+    3> dns_domain:join([<<"test\\label">>, <<"com">>], subdomain).
     <<"test\\\\label.com">>
 
-    4> dns_domain:join([]).
+    4> dns_domain:join([], subdomain).
     <<>>
 
-    5> dns_domain:join([<<"example">>]).
-    <<"example">>
-""").
--spec join(Labels :: labels()) -> dname().
-join([]) ->
-    <<>>;
-join([First | Rest]) ->
-    %% Escape and build in single pass per label
-    build_joined(Rest, escape_direct(First, <<>>)).
+    5> dns_domain:join([], fqdn).
+    <<".">>
 
-build_joined([], Acc) ->
+    5> dns_domain:join([<<"example">>], fqdn).
+    <<"example.">>
+""").
+-spec join(Labels :: labels(), subdomain | fqdn) -> dname().
+join([], subdomain) ->
+    <<>>;
+join([], fqdn) ->
+    <<$.>>;
+join([First | Rest], Type) ->
+    %% Escape and build in single pass per label
+    build_joined(Rest, escape_direct(First, <<>>), Type).
+
+build_joined([], Acc, subdomain) ->
     Acc;
-build_joined([Label | Rest], Acc) ->
-    build_joined(Rest, escape_direct(Label, <<Acc/binary, $.>>)).
+build_joined([], Acc, fqdn) ->
+    <<Acc/binary, ".">>;
+build_joined([Label | Rest], Acc, Type) ->
+    build_joined(Rest, escape_direct(Label, <<Acc/binary, $.>>), Type).
 
 %% Always iterates - no pre-check
 escape_direct(<<>>, Acc) ->

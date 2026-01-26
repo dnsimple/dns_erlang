@@ -144,7 +144,7 @@ split_boundaries(_) ->
 %% ============================================================================
 
 join_basic(_) ->
-    Cases = [
+    SubDomains = [
         {[<<"example">>, <<"com">>], <<"example.com">>},
         {[<<"www">>, <<"example">>, <<"com">>], <<"www.example.com">>},
         {[<<"a">>, <<"b">>, <<"c">>], <<"a.b.c">>},
@@ -152,13 +152,21 @@ join_basic(_) ->
         {[<<"test">>], <<"test">>},
         {[<<"singlelabel">>], <<"singlelabel">>}
     ],
-    [?assertEqual(Expect, dns_domain:join(Input)) || {Input, Expect} <- Cases].
+    [?assertEqual(Expect, dns_domain:join(Input, subdomain)) || {Input, Expect} <- SubDomains],
+    Fqdns = [
+        {[<<"example">>, <<"com">>], <<"example.com.">>},
+        {[<<"www">>, <<"example">>, <<"com">>], <<"www.example.com.">>},
+        {[<<"www">>, <<"example">>, <<"com.">>], <<"www.example.com\\..">>},
+        {[<<"a">>, <<"b">>, <<"c">>], <<"a.b.c.">>},
+        {[<<"a">>, <<"b">>, <<"c">>, <<"d">>, <<"e">>], <<"a.b.c.d.e.">>},
+        {[<<"test">>], <<"test.">>},
+        {[<<"singlelabel">>], <<"singlelabel.">>}
+    ],
+    [?assertEqual(Expect, dns_domain:join(Input, fqdn)) || {Input, Expect} <- Fqdns].
 
 join_empty_cases(_) ->
-    Cases = [
-        {[], <<>>}
-    ],
-    [?assertEqual(Expect, dns_domain:join(Input)) || {Input, Expect} <- Cases].
+    ?assertEqual(<<>>, dns_domain:join([], subdomain)),
+    ?assertEqual(<<".">>, dns_domain:join([], fqdn)).
 
 join_escaped_chars(_) ->
     Cases = [
@@ -1034,7 +1042,7 @@ are_equal_labels_basic(_) ->
 %% ============================================================================
 
 split_join_roundtrip(_) ->
-    Cases = [
+    SplitJoin = [
         <<"example.com">>,
         <<"www.example.com">>,
         <<"a.b.c.d.e">>,
@@ -1042,7 +1050,16 @@ split_join_roundtrip(_) ->
         <<"back\\\\slash.com">>,
         <<"mixed\\.dots\\\\and\\\\.backslashes">>
     ],
-    [?assertEqual(Name, dns_domain:join(dns_domain:split(Name))) || Name <- Cases].
+    [?assertEqual(Name, dns_domain:join(dns_domain:split(Name))) || Name <- SplitJoin],
+    JoinSplit = [
+        [<<"example">>, <<"com">>],
+        [<<"www">>, <<"example">>, <<"com">>],
+        [<<"a">>, <<"b">>, <<"c">>, <<"d">>, <<"e">>],
+        [<<"escaped\\.dot">>, <<"com">>],
+        [<<"back\\\\slash">>, <<"com">>],
+        [<<"mixed\\.dots\\\\and\\\\.backslashes">>]
+    ],
+    [?assertEqual(Labels, dns_domain:split(dns_domain:join(Labels))) || Labels <- JoinSplit].
 
 wire_roundtrip(_) ->
     Cases = [
