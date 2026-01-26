@@ -18,6 +18,7 @@ message encoding and decoding.
 -export([from_wire/1, from_wire/2]).
 -export([to_wire/1, to_wire/3]).
 -export([to_lower/1, to_upper/1]).
+-export([are_equal/2, are_equal_labels/2]).
 -export([escape_label/1, unescape_label/1]).
 
 ?DOC("Text representation of domain name: \"www.example.com\"").
@@ -716,3 +717,41 @@ upper_byte(X) ->
             234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250,
             251, 252, 253, 254, 255}
     ).
+
+%% ============================================================================
+%% Comparison Functions
+%% ============================================================================
+
+?DOC(#{group => <<"Functions: comparison">>}).
+?DOC("""
+Compare two domain names case-insensitively.
+
+Returns `true` if the names are equal, `false` otherwise.
+""").
+-spec are_equal(dname(), dname()) -> boolean().
+are_equal(Name, Name) ->
+    true;
+are_equal(NameA, NameB) ->
+    to_lower(NameA) =:= to_lower(NameB).
+
+?DOC(#{group => <<"Functions: comparison">>}).
+?DOC("""
+Compare two label lists case-insensitively.
+
+Returns `true` if the label lists are equal, `false` otherwise.
+""").
+-spec are_equal_labels(labels(), labels()) -> boolean().
+are_equal_labels(LabelsA, LabelsB) when is_list(LabelsA), is_list(LabelsB) ->
+    do_are_equal_labels(LabelsA, LabelsB).
+
+-spec do_are_equal_labels(labels(), labels()) -> boolean().
+do_are_equal_labels([], []) ->
+    true;
+do_are_equal_labels([LA | LabelsA], [LA | LabelsB]) ->
+    do_are_equal_labels(LabelsA, LabelsB);
+do_are_equal_labels([LA | LabelsA], [LB | LabelsB]) ->
+    to_lower(LA) =:= to_lower(LB) andalso do_are_equal_labels(LabelsA, LabelsB);
+do_are_equal_labels([], [_ | _]) ->
+    false;
+do_are_equal_labels([_ | _], []) ->
+    false.

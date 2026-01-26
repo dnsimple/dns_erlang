@@ -204,7 +204,7 @@ gen_nsec3(RRs, ZoneName, Alg, Salt, Iterations, TTL, Class, Opts) ->
     Unsorted = lists:foldl(
         fun
             ({{Name, SClass}, Types}, Acc) when SClass =:= Class ->
-                DName = dns_encode:encode_dname(Name),
+                DName = dns_domain:to_wire(Name),
                 HashedName = ih(Alg, Salt, DName, Iterations),
                 HexdHashName = base32:encode(HashedName, [hex, nopad]),
                 NewName = <<HexdHashName/binary, $., ZoneName/binary>>,
@@ -280,7 +280,7 @@ add_next_hash(
 
 -spec normalise_rr(dns:rr()) -> dns:rr().
 normalise_rr(#dns_rr{name = Name} = RR) ->
-    RR#dns_rr{name = dns:dname_to_lower(Name)}.
+    RR#dns_rr{name = dns_domain:to_lower(Name)}.
 
 -spec build_rrmap([dns:rr()], [integer()]) -> [{_, _}].
 build_rrmap(RR, BaseTypes) ->
@@ -577,7 +577,7 @@ build_sig_input(
     TTL
 ) when is_integer(Alg) ->
     Datas = lists:sort([canonical_rrdata_bin(RR) || RR <- RRs]),
-    NameBin = dns_encode:encode_dname(dns:dname_to_lower(Name)),
+    NameBin = dns_domain:to_wire(dns_domain:to_lower(Name)),
     RecordBase = <<NameBin/binary, Type:16, Class:16, TTL:32>>,
     RRSetBin = [
         <<RecordBase/binary, (byte_size(Data)):16, Data/binary>>
@@ -665,17 +665,17 @@ canonical_rrdata_bin(#dns_rr{class = Class, data = Data0}) ->
 ?DOC("Converts a resource record data record to DNSSEC canonical form.").
 -spec canonical_rrdata_form(dns:rrdata()) -> dns:rrdata().
 canonical_rrdata_form(#dns_rrdata_afsdb{hostname = Hostname} = Data) ->
-    Data#dns_rrdata_afsdb{hostname = dns:dname_to_lower(Hostname)};
+    Data#dns_rrdata_afsdb{hostname = dns_domain:to_lower(Hostname)};
 canonical_rrdata_form(#dns_rrdata_cname{dname = DName} = Data) ->
-    Data#dns_rrdata_cname{dname = dns:dname_to_lower(DName)};
+    Data#dns_rrdata_cname{dname = dns_domain:to_lower(DName)};
 canonical_rrdata_form(#dns_rrdata_dname{dname = DName} = Data) ->
-    Data#dns_rrdata_dname{dname = dns:dname_to_lower(DName)};
+    Data#dns_rrdata_dname{dname = dns_domain:to_lower(DName)};
 canonical_rrdata_form(#dns_rrdata_kx{exchange = Exchange} = Data) ->
-    Data#dns_rrdata_kx{exchange = dns:dname_to_lower(Exchange)};
+    Data#dns_rrdata_kx{exchange = dns_domain:to_lower(Exchange)};
 canonical_rrdata_form(#dns_rrdata_mb{madname = MaDname} = Data) ->
-    Data#dns_rrdata_mb{madname = dns:dname_to_lower(MaDname)};
+    Data#dns_rrdata_mb{madname = dns_domain:to_lower(MaDname)};
 canonical_rrdata_form(#dns_rrdata_mg{madname = MaDname} = Data) ->
-    Data#dns_rrdata_mg{madname = dns:dname_to_lower(MaDname)};
+    Data#dns_rrdata_mg{madname = dns_domain:to_lower(MaDname)};
 canonical_rrdata_form(
     #dns_rrdata_minfo{
         rmailbx = RmailBx,
@@ -683,46 +683,46 @@ canonical_rrdata_form(
     } = Data
 ) ->
     Data#dns_rrdata_minfo{
-        rmailbx = dns:dname_to_lower(RmailBx),
-        emailbx = dns:dname_to_lower(EmailBx)
+        rmailbx = dns_domain:to_lower(RmailBx),
+        emailbx = dns_domain:to_lower(EmailBx)
     };
 canonical_rrdata_form(#dns_rrdata_mr{newname = NewName} = Data) ->
-    Data#dns_rrdata_mr{newname = dns:dname_to_lower(NewName)};
+    Data#dns_rrdata_mr{newname = dns_domain:to_lower(NewName)};
 canonical_rrdata_form(#dns_rrdata_mx{exchange = Exchange} = Data) ->
-    Data#dns_rrdata_mx{exchange = dns:dname_to_lower(Exchange)};
+    Data#dns_rrdata_mx{exchange = dns_domain:to_lower(Exchange)};
 canonical_rrdata_form(#dns_rrdata_naptr{replacement = Replacement} = Data) ->
-    Data#dns_rrdata_naptr{replacement = dns:dname_to_lower(Replacement)};
+    Data#dns_rrdata_naptr{replacement = dns_domain:to_lower(Replacement)};
 canonical_rrdata_form(#dns_rrdata_ns{dname = DName} = Data) ->
-    Data#dns_rrdata_ns{dname = dns:dname_to_lower(DName)};
+    Data#dns_rrdata_ns{dname = dns_domain:to_lower(DName)};
 canonical_rrdata_form(#dns_rrdata_nsec{next_dname = NextDname} = Data) ->
-    Data#dns_rrdata_nsec{next_dname = dns:dname_to_lower(NextDname)};
+    Data#dns_rrdata_nsec{next_dname = dns_domain:to_lower(NextDname)};
 canonical_rrdata_form(#dns_rrdata_nxt{dname = DName} = Data) ->
-    Data#dns_rrdata_nxt{dname = dns:dname_to_lower(DName)};
+    Data#dns_rrdata_nxt{dname = dns_domain:to_lower(DName)};
 canonical_rrdata_form(#dns_rrdata_ptr{dname = DName} = Data) ->
-    Data#dns_rrdata_ptr{dname = dns:dname_to_lower(DName)};
+    Data#dns_rrdata_ptr{dname = dns_domain:to_lower(DName)};
 canonical_rrdata_form(#dns_rrdata_rp{mbox = Mbox, txt = Txt} = Data) ->
     Data#dns_rrdata_rp{
-        mbox = dns:dname_to_lower(Mbox),
-        txt = dns:dname_to_lower(Txt)
+        mbox = dns_domain:to_lower(Mbox),
+        txt = dns_domain:to_lower(Txt)
     };
 canonical_rrdata_form(#dns_rrdata_rrsig{signers_name = SignersName} = Data) ->
-    Data#dns_rrdata_rrsig{signers_name = dns:dname_to_lower(SignersName)};
+    Data#dns_rrdata_rrsig{signers_name = dns_domain:to_lower(SignersName)};
 canonical_rrdata_form(#dns_rrdata_rt{host = Host} = Data) ->
-    Data#dns_rrdata_rt{host = dns:dname_to_lower(Host)};
+    Data#dns_rrdata_rt{host = dns_domain:to_lower(Host)};
 canonical_rrdata_form(#dns_rrdata_soa{mname = Mname, rname = Rname} = Data) ->
     Data#dns_rrdata_soa{
-        mname = dns:dname_to_lower(Mname),
-        rname = dns:dname_to_lower(Rname)
+        mname = dns_domain:to_lower(Mname),
+        rname = dns_domain:to_lower(Rname)
     };
 canonical_rrdata_form(#dns_rrdata_srv{target = Target} = Data) ->
-    Data#dns_rrdata_srv{target = dns:dname_to_lower(Target)};
+    Data#dns_rrdata_srv{target = dns_domain:to_lower(Target)};
 canonical_rrdata_form(X) ->
     X.
 
 -spec name_ancestors(iodata(), iodata()) -> binary() | [binary()].
 name_ancestors(Name, ZoneName) ->
-    NameLwr = dns:dname_to_lower(iolist_to_binary(Name)),
-    ZoneNameLwr = dns:dname_to_lower(iolist_to_binary(ZoneName)),
+    NameLwr = dns_domain:to_lower(iolist_to_binary(Name)),
+    ZoneNameLwr = dns_domain:to_lower(iolist_to_binary(ZoneName)),
     gen_name_ancestors(NameLwr, ZoneNameLwr).
 
 -spec gen_name_ancestors(binary() | [binary()], binary() | [binary(), ...]) ->
@@ -736,7 +736,7 @@ gen_name_ancestors(Name, ZoneName) when
     Offset = byte_size(Name) - byte_size(ZoneName) - 1,
     case Name of
         <<RelName:Offset/binary, $., ZoneName/binary>> ->
-            case dns:dname_to_labels(RelName) of
+            case dns_domain:split(RelName) of
                 [_] ->
                     [];
                 [_ | Labels0] ->
@@ -787,11 +787,11 @@ do_count_labels(List) when is_list(List) ->
 
 -spec normalise_dname(iodata()) -> binary().
 normalise_dname(Name) ->
-    dns:dname_to_lower(iolist_to_binary(Name)).
+    dns_domain:to_lower(iolist_to_binary(Name)).
 
 -spec normalise_dname_to_labels(binary()) -> [binary()].
 normalise_dname_to_labels(Name) ->
-    dns:dname_to_labels(normalise_dname(Name)).
+    dns_domain:split(normalise_dname(Name)).
 
 -spec decode_asn1_dss_sig(binary()) -> {integer(), integer()}.
 decode_asn1_dss_sig(Bin) when is_binary(Bin) ->

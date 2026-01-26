@@ -21,8 +21,7 @@ groups() ->
             {group, to_wire_tests},
             {group, from_wire_tests},
             {group, compression_tests},
-            {group, reversibility_tests},
-            {group, equivalence_tests}
+            {group, reversibility_tests}
         ]},
         {split_tests, [parallel], [
             split_basic,
@@ -49,7 +48,12 @@ groups() ->
             to_lower_chunking,
             to_upper_basic,
             to_upper_chunking,
-            case_roundtrip
+            case_roundtrip,
+            case_conversion_comprehensive
+        ]},
+        {comparison_tests, [parallel], [
+            are_equal_basic,
+            are_equal_labels_basic
         ]},
         {to_wire_tests, [parallel], [
             to_wire_basic,
@@ -70,6 +74,7 @@ groups() ->
             compression_encoding_prior_only,
             compression_encoding_invalid_pointer,
             compression_encoding_position_limit,
+            compression_encoding_case_insensitive,
             compression_encoding_errors,
             compression_decoding_basic,
             compression_decoding_nested,
@@ -83,13 +88,6 @@ groups() ->
             split_join_roundtrip,
             wire_roundtrip,
             wire_roundtrip_with_escapes
-        ]},
-        {equivalence_tests, [parallel], [
-            split_equivalent_to_existing,
-            join_equivalent_to_existing,
-            to_wire_equivalent_to_existing,
-            from_wire_equivalent_to_existing,
-            compression_equivalent_to_existing
         ]}
     ].
 
@@ -452,12 +450,52 @@ case_roundtrip(_) ->
      || Name <- Cases
     ].
 
+case_conversion_comprehensive(_) ->
+    ToUpperCases = [
+        {<<"example.com">>, <<"EXAMPLE.COM">>},
+        {<<"ExAmPle.CoM">>, <<"EXAMPLE.COM">>},
+        {<<"www.example.com">>, <<"WWW.EXAMPLE.COM">>},
+        {<<"test-1.example.com">>, <<"TEST-1.EXAMPLE.COM">>},
+        {<<"escaped\\.dot.example.com">>, <<"ESCAPED\\.DOT.EXAMPLE.COM">>},
+        {<<>>, <<>>},
+        {<<"thisisaverylongsubdomainnamewithmanycharacters.example.com">>,
+            <<"THISISAVERYLONGSUBDOMAINNAMEWITHMANYCHARACTERS.EXAMPLE.COM">>},
+        {<<"ab">>, <<"AB">>},
+        {<<"abcd">>, <<"ABCD">>},
+        {<<"abcdef">>, <<"ABCDEF">>},
+        {<<"abcdefgh">>, <<"ABCDEFGH">>},
+        {<<"_srv._tcp.example.com">>, <<"_SRV._TCP.EXAMPLE.COM">>},
+        {<<"ns1.dnsprovider.net">>, <<"NS1.DNSPROVIDER.NET">>}
+    ],
+    [
+        ?assertEqual(Expected, dns_domain:to_upper(Input))
+     || {Input, Expected} <- ToUpperCases
+    ],
+    ToLowerCases = [
+        {<<"EXAMPLE.COM">>, <<"example.com">>},
+        {<<"ExAmPle.CoM">>, <<"example.com">>},
+        {<<"SUB.DOMAIN.EXAMPLE.COM">>, <<"sub.domain.example.com">>},
+        {<<"TEST_2.EXAMPLE.COM">>, <<"test_2.example.com">>},
+        {<<"LABEL\\.WITH\\.ESCAPED.DOTS">>, <<"label\\.with\\.escaped.dots">>},
+        {<<"A">>, <<"a">>},
+        {<<"ABC">>, <<"abc">>},
+        {<<"ABCDE">>, <<"abcde">>},
+        {<<"ABCDEFG">>, <<"abcdefg">>},
+        {<<"_XMPP-SERVER._TCP.EXAMPLE.COM">>, <<"_xmpp-server._tcp.example.com">>},
+        {<<"MAIL.EXAMPLE.ORG">>, <<"mail.example.org">>}
+    ],
+    [
+        ?assertEqual(Expected, dns_domain:to_lower(Input))
+     || {Input, Expected} <- ToLowerCases
+    ].
+
 %% ============================================================================
 %% To Wire Tests
 %% ============================================================================
 
 to_wire_basic(_) ->
     Cases = [
+        {<<"example">>, <<7, "example", 0>>},
         {<<"example.com.">>, <<7, "example", 3, "com", 0>>},
         {<<"example.com">>, <<7, "example", 3, "com", 0>>},
         {<<"www.example.com">>, <<3, "www", 7, "example", 3, "com", 0>>},
@@ -714,6 +752,19 @@ compression_encoding_position_limit(_) ->
     %% Should not add to compression map when position >= 2^14
     ?assertEqual(undefined, maps:get([<<"example">>, <<"com">>], NewCompMap, undefined)).
 
+compression_encoding_case_insensitive(_) ->
+    %% Test that case-insensitive compression works (same name in different cases compresses to same pointer)
+    CompMap = #{},
+    Pos = 0,
+    {Wire0, CM0} = dns_domain:to_wire(CompMap, Pos, <<"example">>),
+    %% Append "example" again - should use compression pointer
+    {Wire1, _} = dns_domain:to_wire(CM0, byte_size(Wire0), <<"example">>),
+    %% Append "EXAMPLE" (case-insensitive, should also use compression)
+    {Wire2, _} = dns_domain:to_wire(CM0, byte_size(Wire0), <<"EXAMPLE">>),
+    ?assertEqual(<<7, 101, 120, 97, 109, 112, 108, 101, 0>>, Wire0),
+    ?assertEqual(<<192, 0>>, Wire1),
+    ?assertEqual(Wire1, Wire2).
+
 compression_encoding_errors(_) ->
     %% Test edge cases for to_wire/3 (compression version)
     CompMap = #{},
@@ -757,12 +808,15 @@ compression_encoding_errors(_) ->
 
 compression_decoding_basic(_) ->
     MsgBin = <<7, "example", 3, "com", 0, 192, 0>>,
-    {Name1, Rest1} = dns_domain:from_wire(MsgBin, MsgBin),
-    ?assertEqual(<<"example.com">>, Name1),
-    ?assertEqual(<<192, 0>>, Rest1),
-    {Name2, Rest2} = dns_domain:from_wire(MsgBin, Rest1),
-    ?assertEqual(<<"example.com">>, Name2),
-    ?assertEqual(<<>>, Rest2).
+    Cases = [
+        {{<<7, 101, 120, 97, 109, 112, 108, 101, 0>>, <<3:2, 0:14>>}, {<<"example">>, <<>>}},
+        {{MsgBin, MsgBin}, {<<"example.com">>, <<192, 0>>}},
+        {{MsgBin, <<192, 0>>}, {<<"example.com">>, <<>>}}
+    ],
+    [
+        ?assertEqual(Expected, dns_domain:from_wire(MsgInput, DataInput))
+     || {{MsgInput, DataInput}, Expected} <- Cases
+    ].
 
 compression_decoding_nested(_) ->
     %% Build message with nested compression
@@ -776,41 +830,47 @@ compression_decoding_nested(_) ->
     Pos3 = Pos2 + byte_size(Wire2),
     {Wire3, _CompMap3} = dns_domain:to_wire(CompMap2, Pos3, Name2),
     MsgBin = <<Wire1/binary, Wire2/binary, Wire3/binary>>,
-    {Decoded1, Rest1} = dns_domain:from_wire(MsgBin, MsgBin),
-    ?assertEqual(Name1, Decoded1),
-    {Decoded2, Rest2} = dns_domain:from_wire(MsgBin, Rest1),
-    ?assertEqual(Name2, Decoded2),
-    {Decoded3, Rest3} = dns_domain:from_wire(MsgBin, Rest2),
-    ?assertEqual(Name2, Decoded3),
-    ?assertEqual(<<>>, Rest3).
+    Rest1 = <<Wire2/binary, Wire3/binary>>,
+    Rest2 = <<Wire3/binary>>,
+    Cases = [
+        {{MsgBin, MsgBin}, {Name1, Rest1}},
+        {{MsgBin, Rest1}, {Name2, Rest2}},
+        {{MsgBin, Rest2}, {Name2, <<>>}}
+    ],
+    [
+        ?assertEqual(Expected, dns_domain:from_wire(MsgInput, DataInput))
+     || {{MsgInput, DataInput}, Expected} <- Cases
+    ].
 
 compression_decoding_chain(_) ->
     %% Test decoding a chain of compression pointers
     MsgBin = <<7, "example", 3, "com", 0, 192, 0, 192, 0, 192, 0>>,
-    {Name1, Rest1} = dns_domain:from_wire(MsgBin, MsgBin),
-    ?assertEqual(<<"example.com">>, Name1),
-    {Name2, Rest2} = dns_domain:from_wire(MsgBin, Rest1),
-    ?assertEqual(<<"example.com">>, Name2),
-    {Name3, Rest3} = dns_domain:from_wire(MsgBin, Rest2),
-    ?assertEqual(<<"example.com">>, Name3),
-    {Name4, Rest4} = dns_domain:from_wire(MsgBin, Rest3),
-    ?assertEqual(<<"example.com">>, Name4),
-    ?assertEqual(<<>>, Rest4).
+    Rest1 = <<192, 0, 192, 0, 192, 0>>,
+    Rest2 = <<192, 0, 192, 0>>,
+    Rest3 = <<192, 0>>,
+    Cases = [
+        {{MsgBin, MsgBin}, {<<"example.com">>, Rest1}},
+        {{MsgBin, Rest1}, {<<"example.com">>, Rest2}},
+        {{MsgBin, Rest2}, {<<"example.com">>, Rest3}},
+        {{MsgBin, Rest3}, {<<"example.com">>, <<>>}}
+    ],
+    [
+        ?assertEqual(Expected, dns_domain:from_wire(MsgInput, DataInput))
+     || {{MsgInput, DataInput}, Expected} <- Cases
+    ].
 
 compression_decoding_first_label_pointer(_) ->
     %% Test compression pointer as first label (from_wire_first_compressed with pointer)
     MsgBin = <<7, "example", 3, "com", 0, 192, 0>>,
-    {Name, Rest} = dns_domain:from_wire(MsgBin, <<192, 0>>),
-    ?assertEqual(<<"example.com">>, Name),
-    ?assertEqual(<<>>, Rest),
-    %% Test compression pointer as first label with trailing data
-    {Name2, Rest2} = dns_domain:from_wire(MsgBin, <<192, 0, 1, 2, 3>>),
-    ?assertEqual(<<"example.com">>, Name2),
-    ?assertEqual(<<1, 2, 3>>, Rest2),
-    %% Test from_wire/2 with <<0, Rest/binary>> (empty name)
-    {EmptyName, EmptyRest} = dns_domain:from_wire(MsgBin, <<0, 1, 2, 3>>),
-    ?assertEqual(<<>>, EmptyName),
-    ?assertEqual(<<1, 2, 3>>, EmptyRest),
+    Cases = [
+        {{MsgBin, <<192, 0>>}, {<<"example.com">>, <<>>}},
+        {{MsgBin, <<192, 0, 1, 2, 3>>}, {<<"example.com">>, <<1, 2, 3>>}},
+        {{MsgBin, <<0, 1, 2, 3>>}, {<<>>, <<1, 2, 3>>}}
+    ],
+    [
+        ?assertEqual(Expected, dns_domain:from_wire(MsgInput, DataInput))
+     || {{MsgInput, DataInput}, Expected} <- Cases
+    ],
     %% Test from_wire_first_compressed with empty data (truncated)
     ?assertError(truncated, dns_domain:from_wire(MsgBin, <<>>)),
     %% Test from_wire_first_compressed with truncated label
@@ -818,33 +878,27 @@ compression_decoding_first_label_pointer(_) ->
 
 compression_decoding_empty_after_pointer(_) ->
     %% Test empty data after compression pointer
-    %% Create a message where compression pointer is followed by nothing
-    %% This tests from_wire_rest_compressed with <<>> after pointer
     CompMap = #{},
     {Wire1, CompMap1} = dns_domain:to_wire(CompMap, 0, <<"example.com">>),
     Pos2 = byte_size(Wire1),
     {Wire2, _} = dns_domain:to_wire(CompMap1, Pos2, <<"test.example.com">>),
     MsgBin2 = <<Wire1/binary, Wire2/binary>>,
-    %% Decode first name
-    {Name1, Rest1} = dns_domain:from_wire(MsgBin2, MsgBin2),
-    ?assertEqual(<<"example.com">>, Name1),
-    %% Decode second name which uses compression
-    {Name2, Rest2} = dns_domain:from_wire(MsgBin2, Rest1),
-    ?assertEqual(<<"test.example.com">>, Name2),
-    ?assertEqual(<<>>, Rest2),
-    %% Test from_wire_rest_compressed with empty data after compression pointer
-    %% Build a message with compression pointer at end
+    Rest1 = Wire2,
     {Wire3, CompMap3} = dns_domain:to_wire(#{}, 0, <<"test.com">>),
     Pos4 = byte_size(Wire3),
     {Wire4, _} = dns_domain:to_wire(CompMap3, Pos4, <<"test.com">>),
     MsgBin3 = <<Wire3/binary, Wire4/binary>>,
-    %% Wire4 is just a compression pointer, decode it
-    {Name3, Rest3} = dns_domain:from_wire(MsgBin3, <<Wire3/binary, Wire4/binary>>),
-    ?assertEqual(<<"test.com">>, Name3),
-    %% Now decode the compression pointer
-    {Name4, Rest4} = dns_domain:from_wire(MsgBin3, Rest3),
-    ?assertEqual(<<"test.com">>, Name4),
-    ?assertEqual(<<>>, Rest4).
+    Rest3 = Wire4,
+    Cases = [
+        {{MsgBin2, MsgBin2}, {<<"example.com">>, Rest1}},
+        {{MsgBin2, Rest1}, {<<"test.example.com">>, <<>>}},
+        {{MsgBin3, MsgBin3}, {<<"test.com">>, Rest3}},
+        {{MsgBin3, Rest3}, {<<"test.com">>, <<>>}}
+    ],
+    [
+        ?assertEqual(Expected, dns_domain:from_wire(MsgInput, DataInput))
+     || {{MsgInput, DataInput}, Expected} <- Cases
+    ].
 
 compression_decoding_errors(_) ->
     MsgBin = <<7, "example", 3, "com", 0>>,
@@ -927,7 +981,8 @@ compression_decoding_errors(_) ->
         %% Truncated: label length byte but insufficient data (line 632)
         {{MsgBin, <<3, "www", 5, "ab">>}, truncated},
         %% decode_loop - self-referencing pointer in first_compressed: Count 0 -> 2 -> 4, 4 > 2
-        {{<<192, 0>>, <<192, 0>>}, decode_loop}
+        {{<<3:2, 42:14>>, <<3:2, 42:14>>}, {bad_pointer, 42}},
+        {{<<3:2, 0:14>>, <<3:2, 0:14>>}, decode_loop}
         %% Note: decode_loop in rest_compressed (line 617) appears unreachable in practice.
         %% It requires NewCount = Count + 2 > byte_size(MsgBin) where Count > 0 in rest_compressed.
         %% Count starts at 0 when entering rest_compressed, so we'd need byte_size(MsgBin) < 2,
@@ -938,6 +993,40 @@ compression_decoding_errors(_) ->
     [
         ?assertError(Expected, dns_domain:from_wire(MsgInput, DataInput))
      || {{MsgInput, DataInput}, Expected} <- RestErrorCases
+    ].
+
+%% ============================================================================
+%% Comparison Tests
+%% ============================================================================
+
+are_equal_basic(_) ->
+    Cases = [
+        {{<<"example.com">>, <<"EXAMPLE.COM">>}, true},
+        {{<<"www.EXAMPLE.com">>, <<"WWW.example.COM">>}, true},
+        {{dns_domain:to_upper(<<"example.com">>), dns_domain:to_lower(<<"EXAMPLE.COM">>)}, true},
+        {{<<"example.com">>, <<"different.com">>}, false},
+        {{<<"example.com">>, <<"example.org">>}, false},
+        {{<<>>, <<>>}, true},
+        {{<<"example.com">>, <<>>}, false}
+    ],
+    [
+        ?assertEqual(Expected, dns_domain:are_equal(NameA, NameB))
+     || {{NameA, NameB}, Expected} <- Cases
+    ].
+
+are_equal_labels_basic(_) ->
+    Cases = [
+        {{[<<"example">>, <<"com">>], [<<"EXAMPLE">>, <<"COM">>]}, true},
+        {{[<<"www">>, <<"example">>, <<"com">>], [<<"WWW">>, <<"example">>, <<"COM">>]}, true},
+        {{[<<"www">>, <<"EXAMPLE">>, <<"com">>], [<<"WWW">>, <<"example">>, <<"COM">>]}, true},
+        {{[<<"www">>, <<"different">>, <<"com">>], [<<"WWW">>, <<"example">>, <<"COM">>]}, false},
+        {{[<<"www">>, <<"example">>], [<<"www">>, <<"example">>, <<"com">>]}, false},
+        {{[<<"www">>, <<"example">>, <<"com">>], [<<"www">>, <<"example">>]}, false},
+        {{[], []}, true}
+    ],
+    [
+        ?assertEqual(Expected, dns_domain:are_equal_labels(LabelsA, LabelsB))
+     || {{LabelsA, LabelsB}, Expected} <- Cases
     ].
 
 %% ============================================================================
@@ -985,121 +1074,6 @@ wire_roundtrip_with_escapes(_) ->
         end
      || Name <- Cases
     ].
-
-%% ============================================================================
-%% Equivalence Tests
-%% ============================================================================
-
-split_equivalent_to_existing(_) ->
-    Cases = [
-        <<>>,
-        <<$.>>,
-        <<"example.com">>,
-        <<"www.example.com">>,
-        <<"a.b.c">>,
-        <<"a.b.c.d.e">>,
-        <<"test">>,
-        <<"escaped\\.dot.com">>,
-        <<"back\\\\slash.com">>,
-        <<"a\\.b.c\\.d.e">>
-    ],
-    [
-        begin
-            Existing = dns:dname_to_labels(Name),
-            Split = dns_domain:split(Name),
-            ?assertEqual(Existing, Split)
-        end
-     || Name <- Cases
-    ].
-
-join_equivalent_to_existing(_) ->
-    Cases = [
-        [<<"example">>, <<"com">>],
-        [<<"www">>, <<"example">>, <<"com">>],
-        [<<"a">>, <<"b">>, <<"c">>],
-        [<<"a.b">>, <<"c">>],
-        [<<"a\\">>, <<"b">>],
-        [<<"test">>]
-    ],
-    [
-        begin
-            Existing = dns:labels_to_dname(Labels),
-            Join = dns_domain:join(Labels),
-            ?assertEqual(Existing, Join)
-        end
-     || Labels <- Cases
-    ],
-    ?assertEqual(<<>>, dns_domain:join([])).
-
-to_wire_equivalent_to_existing(_) ->
-    Cases = [
-        <<>>,
-        <<$.>>,
-        <<"example.com">>,
-        <<"www.example.com">>,
-        <<"test">>,
-        <<"a.b.c">>,
-        <<"a.b.c.d.e">>
-    ],
-    [
-        begin
-            Existing = dns_encode:encode_dname(Name),
-            Wire = dns_domain:to_wire(Name),
-            ?assertEqual(Existing, Wire)
-        end
-     || Name <- Cases
-    ].
-
-from_wire_equivalent_to_existing(_) ->
-    Cases = [
-        <<0>>,
-        <<7, "example", 3, "com", 0>>,
-        <<3, "www", 7, "example", 3, "com", 0>>,
-        <<4, "test", 0>>,
-        <<1, "a", 1, "b", 1, "c", 0>>,
-        <<1, "a", 1, "b", 1, "c", 1, "d", 1, "e", 0>>
-    ],
-    [
-        begin
-            {Existing, <<>>} = dns_decode:decode_dname(Wire, Wire),
-            {DirectResult, <<>>} = dns_domain:from_wire(Wire),
-            ?assertEqual(Existing, DirectResult)
-        end
-     || Wire <- Cases
-    ],
-    PtrCases = [
-        <<7, "example", 3, "com", 0, 192, 0>>
-    ],
-    [
-        begin
-            {Existing, RemainingExisting} = dns_decode:decode_dname(Wire, Wire),
-            {DirectResult, RemainingResult} = dns_domain:from_wire(Wire),
-            ?assertEqual(Existing, DirectResult),
-            ?assertEqual(RemainingExisting, RemainingResult)
-        end
-     || Wire <- PtrCases
-    ].
-
-compression_equivalent_to_existing(_) ->
-    CompMap = #{},
-    Pos = 0,
-    Name = <<"example.com">>,
-    {Wire1New, CompMap1New} = dns_domain:to_wire(CompMap, Pos, Name),
-    Pos2 = byte_size(Wire1New),
-    {Wire2New, _CompMap2New} = dns_domain:to_wire(CompMap1New, Pos2, Name),
-    {Wire1Old, CompMap1Old} = dns_encode:encode_dname(CompMap, Pos, Name),
-    Pos2Old = byte_size(Wire1Old),
-    {Wire2Old, _CompMap2Old} = dns_encode:encode_dname(CompMap1Old, Pos2Old, Name),
-    ?assertEqual(Wire1Old, Wire1New),
-    ?assertEqual(Wire2Old, Wire2New),
-    MsgBinNew = <<Wire1New/binary, Wire2New/binary>>,
-    MsgBinOld = <<Wire1Old/binary, Wire2Old/binary>>,
-    {Decoded1New, Rest1New} = dns_domain:from_wire(MsgBinNew, MsgBinNew),
-    {Decoded1Old, Rest1Old} = dns_decode:decode_dname(MsgBinOld, MsgBinOld),
-    ?assertEqual(Decoded1Old, Decoded1New),
-    {Decoded2New, _Rest2New} = dns_domain:from_wire(MsgBinNew, Rest1New),
-    {Decoded2Old, _Rest2Old} = dns_decode:decode_dname(MsgBinOld, Rest1Old),
-    ?assertEqual(Decoded2Old, Decoded2New).
 
 %% ============================================================================
 %% Error Tests
