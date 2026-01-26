@@ -101,7 +101,7 @@ ok = dns_zone:encode_file(Records, <<"example.com.">>, "output.zone").
 -export([encode_file/3, encode_file/4]).
 -export([encode_string/2, encode_string/3]).
 -export([encode_rr/1, encode_rr/2]).
--export([encode_rdata/1]).
+-export([encode_rdata/2]).
 -export([format_error/1]).
 
 ?DOC("""
@@ -365,20 +365,20 @@ Encode RDATA (record data) to zone file format with default options.
 ```erl
 % Encode an A record RDATA
 RData = #dns_rrdata_a{ip = {192, 0, 2, 1}},
-RDataStr = dns_zone:encode_rdata(RData).
+RDataStr = dns_zone:encode_rdata(?DNS_TYPE_A, RData).
 % Returns: "192.0.2.1"
 
 % Encode an NS record RDATA
 RData = #dns_rrdata_ns{dname = <<"ns1.example.com.">>},
-RDataStr = dns_zone:encode_rdata(RData).
+RDataStr = dns_zone:encode_rdata(?DNS_TYPE_NS, RData).
 % Returns: "ns1.example.com."
 ```
 
 For more control over encoding (e.g., relative names, origin), use `encode_rr/2` instead.
 """).
--spec encode_rdata(dns:rrdata()) -> iodata().
-encode_rdata(RData) ->
-    dns_zone_encode:encode_rdata(RData).
+-spec encode_rdata(dns:type(), dns:rrdata()) -> iodata().
+encode_rdata(Type, RData) ->
+    dns_zone_encode:encode_rdata(Type, RData).
 
 ?DOC("""
 Format a parse error into a human-readable string.

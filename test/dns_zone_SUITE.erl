@@ -5545,7 +5545,7 @@ encode_rdata_helper(_Config) ->
     %% Test encode_rdata/1 helper function with defaults (type deduced from record)
     %% Test A record
     RDataA = #dns_rrdata_a{ip = {192, 0, 2, 1}},
-    RDataStrA = dns_zone:encode_rdata(RDataA),
+    RDataStrA = dns_zone:encode_rdata(?DNS_TYPE_A, RDataA),
     RDataStrABin = iolist_to_binary(RDataStrA),
     %% inet:ntoa returns a string, convert to binary for comparison
     ExpectedA = list_to_binary(inet:ntoa({192, 0, 2, 1})),
@@ -5553,7 +5553,7 @@ encode_rdata_helper(_Config) ->
 
     %% Test NS record
     RDataNS = #dns_rrdata_ns{dname = <<"ns1.example.com.">>},
-    RDataStrNS = dns_zone:encode_rdata(RDataNS),
+    RDataStrNS = dns_zone:encode_rdata(?DNS_TYPE_NS, RDataNS),
     RDataStrNSBin = iolist_to_binary(RDataStrNS),
     ?assertEqual(<<"ns1.example.com.">>, RDataStrNSBin),
 
@@ -5562,14 +5562,14 @@ encode_rdata_helper(_Config) ->
         preference = 10,
         exchange = <<"mail.example.com.">>
     },
-    RDataStrMX = dns_zone:encode_rdata(RDataMX),
+    RDataStrMX = dns_zone:encode_rdata(?DNS_TYPE_MX, RDataMX),
     RDataStrMXBin = iolist_to_binary(RDataStrMX),
     ?assertNotEqual(nomatch, string:find(RDataStrMXBin, "10")),
     ?assertNotEqual(nomatch, string:find(RDataStrMXBin, "mail.example.com.")),
 
     %% Test TXT record
     RDataTXT = #dns_rrdata_txt{txt = [<<"test">>]},
-    RDataStrTXT = dns_zone:encode_rdata(RDataTXT),
+    RDataStrTXT = dns_zone:encode_rdata(?DNS_TYPE_TXT, RDataTXT),
     RDataStrTXTBin = iolist_to_binary(RDataStrTXT),
     ?assertNotEqual(nomatch, string:find(RDataStrTXTBin, "test")),
 
@@ -5583,7 +5583,7 @@ encode_rdata_helper(_Config) ->
         expire = 604800,
         minimum = 86400
     },
-    RDataStrSOA = dns_zone:encode_rdata(RDataSOA),
+    RDataStrSOA = dns_zone:encode_rdata(?DNS_TYPE_SOA, RDataSOA),
     RDataStrSOABin = iolist_to_binary(RDataStrSOA),
     ?assertNotEqual(nomatch, string:find(RDataStrSOABin, "ns1.example.com.")),
     ?assertNotEqual(nomatch, string:find(RDataStrSOABin, "admin.example.com.")),
@@ -5594,7 +5594,7 @@ encode_rdata_helper(_Config) ->
         tag = <<"issue">>,
         value = <<"letsencrypt.org">>
     },
-    RDataStrCAA = dns_zone:encode_rdata(RDataCAA),
+    RDataStrCAA = dns_zone:encode_rdata(?DNS_TYPE_CAA, RDataCAA),
     RDataStrCAABin = iolist_to_binary(RDataStrCAA),
     ?assertNotEqual(nomatch, string:find(RDataStrCAABin, "issue")),
     ?assertNotEqual(nomatch, string:find(RDataStrCAABin, "letsencrypt.org")).
