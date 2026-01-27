@@ -736,7 +736,6 @@ upper_byte(X) ->
 %% Comparison Functions
 %% ============================================================================
 
-?DOC(#{group => <<"Functions: comparison">>}).
 ?DOC("""
 Compare two domain names case-insensitively.
 
@@ -748,7 +747,6 @@ are_equal(Name, Name) ->
 are_equal(NameA, NameB) ->
     to_lower(NameA) =:= to_lower(NameB).
 
-?DOC(#{group => <<"Functions: comparison">>}).
 ?DOC("""
 Compare two label lists case-insensitively.
 
