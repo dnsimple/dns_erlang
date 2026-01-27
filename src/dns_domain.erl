@@ -63,20 +63,18 @@ Raises `{invalid_dname, empty_label}` if the name contains contiguous dots.
 
 ## Examples:
 
-    1> dns_domain:split(<<"www.example.com">>).
-    [<<"www">>, <<"example">>, <<"com">>]
-
-    2> dns_domain:split(<<"example.com.">>).
-    [<<"example">>, <<"com">>]
-
-    3> dns_domain:split(<<"test\\.label.com">>).
-    [<<"test.label">>, <<"com">>]
-
-    4> dns_domain:split(<<>>).
-    []
-
-    5> dns_domain:split(<<"example..com">>).
-    ** exception error: {invalid_dname, empty_label}
+```erlang
+1> dns_domain:split(<<"www.example.com">>).
+[<<"www">>, <<"example">>, <<"com">>]
+2> dns_domain:split(<<"example.com.">>).
+[<<"example">>, <<"com">>]
+3> dns_domain:split(<<"test\\.label.com">>).
+[<<"test.label">>, <<"com">>]
+4> dns_domain:split(<<>>).
+[]
+5> dns_domain:split(<<"example..com">>).
+** exception error: {invalid_dname, empty_label}
+```
 """).
 -spec split(dname()) -> labels().
 split(Name) when is_binary(Name) ->
@@ -164,23 +162,20 @@ Note that it does not automatically append a trailing dot at the end of the doma
 
 ## Examples:
 
-    1> dns_domain:join([<<"www">>, <<"example">>, <<"com">>], subdomain).
-    <<"www.example.com">>
-
-    2> dns_domain:join([<<"test.label">>, <<"com">>], subdomain).
-    <<"test\\.label.com">>
-
-    3> dns_domain:join([<<"test\\label">>, <<"com">>], subdomain).
-    <<"test\\\\label.com">>
-
-    4> dns_domain:join([], subdomain).
-    <<>>
-
-    5> dns_domain:join([], fqdn).
-    <<".">>
-
-    5> dns_domain:join([<<"example">>], fqdn).
-    <<"example.">>
+```erlang
+1> dns_domain:join([<<"www">>, <<"example">>, <<"com">>], subdomain).
+<<"www.example.com">>
+2> dns_domain:join([<<"test.label">>, <<"com">>], subdomain).
+<<"test\\.label.com">>
+3> dns_domain:join([<<"test\\label">>, <<"com">>], subdomain).
+<<"test\\\\label.com">>
+4> dns_domain:join([], subdomain).
+<<>>
+5> dns_domain:join([], fqdn).
+<<".">>
+5> dns_domain:join([<<"example">>], fqdn).
+<<"example.">>
+```
 """).
 -spec join(Labels :: labels(), subdomain | fqdn) -> dname().
 join([], subdomain) ->
@@ -219,17 +214,16 @@ that will be joined with other labels.
 
 ## Examples:
 
-    1> dns_domain:escape_label(<<"test">>).
-    <<"test">>
-
-    2> dns_domain:escape_label(<<"test.label">>).
-    <<"test\\.label">>
-
-    3> dns_domain:escape_label(<<"test\\label">>).
-    <<"test\\\\label">>
-
-    4> dns_domain:escape_label(<<"test\\.label">>).
-    <<"test\\\\.label">>
+```erlang
+1> dns_domain:escape_label(<<"test">>).
+<<"test">>
+2> dns_domain:escape_label(<<"test.label">>).
+<<"test\\.label">>
+3> dns_domain:escape_label(<<"test\\label">>).
+<<"test\\\\label">>
+4> dns_domain:escape_label(<<"test\\.label">>).
+<<"test\\\\.label">>
+```
 """).
 -spec escape_label(label()) -> label().
 escape_label(Label) ->
@@ -271,17 +265,16 @@ Use this when parsing labels that may contain escaped characters.
 
 ## Examples:
 
-    1> dns_domain:unescape_label(<<"test">>).
-    <<"test">>
-
-    2> dns_domain:unescape_label(<<"test\\.label">>).
-    <<"test.label">>
-
-    3> dns_domain:unescape_label(<<"test\\\\label">>).
-    <<"test\\label">>
-
-    4> dns_domain:unescape_label(<<"test\\\\.label">>).
-    <<"test\\.label">>
+```erlang
+1> dns_domain:unescape_label(<<"test">>).
+<<"test">>
+2> dns_domain:unescape_label(<<"test\\.label">>).
+<<"test.label">>
+3> dns_domain:unescape_label(<<"test\\\\label">>).
+<<"test\\label">>
+4> dns_domain:unescape_label(<<"test\\\\.label">>).
+<<"test\\.label">>
+```
 """).
 -spec unescape_label(label()) -> label().
 unescape_label(Label) ->
@@ -331,17 +324,16 @@ Returns `<<0>>` for empty names or root.
 
 ## Examples:
 
-    1> dns_domain:to_wire(<<"www.example.com">>).
-    <<3,119,119,119,7,101,120,97,109,112,108,101,3,99,111,109,0>>
-
-    2> dns_domain:to_wire(<<"example.com">>).
-    <<7,101,120,97,109,112,108,101,3,99,111,109,0>>
-
-    3> dns_domain:to_wire(<<>>).
-    <<0>>
-
-    4> dns_domain:to_wire(<<"example..com">>).
-    ** exception error: {invalid_dname, empty_label}
+```erlang
+1> dns_domain:to_wire(<<"www.example.com">>).
+<<3,119,119,119,7,101,120,97,109,112,108,101,3,99,111,109,0>>
+2> dns_domain:to_wire(<<"example.com">>).
+<<7,101,120,97,109,112,108,101,3,99,111,109,0>>
+3> dns_domain:to_wire(<<>>).
+<<0>>
+4> dns_domain:to_wire(<<"example..com">>).
+** exception error: {invalid_dname, empty_label}
+```
 """).
 -spec to_wire(dname()) -> wire().
 to_wire(Name) ->
@@ -367,18 +359,18 @@ Use this when encoding DNS messages where multiple names may share suffixes
 
 ## Examples:
 
-    > CompMap = #{}, Pos = 0.
-    > {Wire1, CompMap1} = dns_domain:to_wire(CompMap, Pos, <<"example.com">>).
-    {<<7,101,120,97,109,112,108,101,3,99,111,109,0>>, #{...}}
-
-    > Pos2 = byte_size(Wire1).
-    > {Wire2, _} = dns_domain:to_wire(CompMap1, Pos2, <<"www.example.com">>).
-    {<<3,119,119,119,192,0>>, #{...}}
-    %% Wire2 uses compression pointer (192,0) pointing to position 0
-
-    > {Wire3, _} = dns_domain:to_wire(CompMap1, Pos2, <<"example.com">>).
-    {<<192,0>>, #{...}}
-    %% Wire3 is just a compression pointer since the name was seen before
+```erlang
+1> CompMap = #{}, Pos = 0.
+2> {Wire1, CompMap1} = dns_domain:to_wire(CompMap, Pos, <<"example.com">>).
+{<<7,101,120,97,109,112,108,101,3,99,111,109,0>>, #{...}}
+3> Pos2 = byte_size(Wire1).
+4> {Wire2, _} = dns_domain:to_wire(CompMap1, Pos2, <<"www.example.com">>).
+{<<3,119,119,119,192,0>>, #{...}}
+%% Wire2 uses compression pointer (192,0) pointing to position 0
+5> {Wire3, _} = dns_domain:to_wire(CompMap1, Pos2, <<"example.com">>).
+{<<192,0>>, #{...}}
+%% Wire3 is just a compression pointer since the name was seen before
+```
 """).
 -spec to_wire(compmap(), non_neg_integer(), dname()) -> {wire(), compmap()}.
 to_wire(CompMap, Pos, Name) when is_binary(Name) ->
@@ -425,17 +417,17 @@ Raises `{too_many_labels, Count}` if the name contains more than 127 labels.
 
 ## Examples:
 
-    1> Wire = <<3,119,119,119,7,101,120,97,109,112,108,101,3,99,111,109,0>>.
-    2> {Dname, Rest} = dns_domain:from_wire(Wire).
-    {<<"www.example.com">>, <<>>}
-
-    3> Wire2 = <<7,101,120,97,109,112,108,101,3,99,111,109,0,1,2,3>>.
-    4> {Dname2, Rest2} = dns_domain:from_wire(Wire2).
-    {<<"example.com">>, <<1,2,3>>}
-
-    5> Wire3 = <<0>>.
-    6> {Dname3, Rest3} = dns_domain:from_wire(Wire3).
-    {<<>>, <<>>}
+```erlang
+1> Wire = <<3,119,119,119,7,101,120,97,109,112,108,101,3,99,111,109,0>>.
+2> {Dname, Rest} = dns_domain:from_wire(Wire).
+{<<"www.example.com">>, <<>>}
+3> Wire2 = <<7,101,120,97,109,112,108,101,3,99,111,109,0,1,2,3>>.
+4> {Dname2, Rest2} = dns_domain:from_wire(Wire2).
+{<<"example.com">>, <<1,2,3>>}
+5> Wire3 = <<0>>.
+6> {Dname3, Rest3} = dns_domain:from_wire(Wire3).
+{<<>>, <<>>}
+```
 """).
 -spec from_wire(wire()) -> {dname(), wire()}.
 from_wire(Bin) when is_binary(Bin) ->
@@ -540,15 +532,16 @@ compression pointer is invalid or points outside the message.
 
 ## Examples:
 
-    > MsgBin = <<7,101,120,97,109,112,108,101,3,99,111,109,0,3,119,119,119,192,0>>.
-    > %% First name at position 0: "example.com"
-    > %% Second name at position 13: "www.example.com" (uses compression pointer)
-    > {Dname1, Rest1} = dns_domain:from_wire(MsgBin, MsgBin).
-    {<<"example.com">>, <<3,119,119,119,192,0>>}
-
-    > {Dname2, Rest2} = dns_domain:from_wire(MsgBin, Rest1).
-    {<<"www.example.com">>, <<>>}
-    %% Resolved compression pointer to decode "www.example.com"
+```erlang
+1> MsgBin = <<7,101,120,97,109,112,108,101,3,99,111,109,0,3,119,119,119,192,0>>.
+%% First name at position 0: "example.com"
+%% Second name at position 13: "www.example.com" (uses compression pointer)
+2> {Dname1, Rest1} = dns_domain:from_wire(MsgBin, MsgBin).
+{<<"example.com">>, <<3,119,119,119,192,0>>}
+3> {Dname2, Rest2} = dns_domain:from_wire(MsgBin, Rest1).
+{<<"www.example.com">>, <<>>}
+%% Resolved compression pointer to decode "www.example.com"
+```
 """).
 -spec from_wire(MsgBin :: wire(), DataBin :: wire()) -> {dname(), wire()}.
 from_wire(MsgBin, DataBin) when is_binary(MsgBin), is_binary(DataBin) ->
