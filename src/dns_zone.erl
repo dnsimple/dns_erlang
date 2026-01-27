@@ -7,9 +7,9 @@
 -define(DOC(Str), -compile([])).
 -endif.
 ?MODULEDOC("""
-DNS Zone File Parser
+DNS Zone File Parser and Encoder
 
-This module provides functionality to parse DNS zone files according to
+This module provides functionality to parse and encode DNS zone files according to
 [RFC 1035](https://datatracker.ietf.org/doc/html/rfc1035) and related
 specifications.
 
@@ -52,6 +52,8 @@ The parser uses Erlang's parsetools (leex and yecc) for lexical analysis and par
 
 ## Examples
 
+### Parsing
+
 ```erl
 % Parse a zone file from disk
 {ok, Records} = dns_zone:parse_file("example.com.zone").
@@ -69,11 +71,37 @@ www 3600 IN A 192.0.2.1
 \">>,
 {ok, Records} = dns_zone:parse_string(ZoneData).
 ```
+
+### Encoding
+
+```erl
+% Encode a single record
+RR = #dns_rr{
+    name = <<"www.example.com.">>,
+    type = ?DNS_TYPE_A,
+    class = ?DNS_CLASS_IN,
+    ttl = 3600,
+    data = #dns_rrdata_a{ip = {192, 0, 2, 1}}
+},
+Line = dns_zone:encode_rr(RR, #{origin => <<"example.com.">>, relative_names => true}).
+% Returns: "www 3600 IN A 192.0.2.1"
+
+% Encode a complete zone
+Records = [...],
+ZoneData = dns_zone:encode_string(Records, #{origin => <<"example.com">>, default_ttl => 3600}).
+
+% Write zone to file
+ok = dns_zone:encode_file(Records, <<"example.com.">>, "output.zone").
+```
 """).
 
 %% Public API
 -export([parse_file/1, parse_file/2]).
 -export([parse_string/1, parse_string/2]).
+-export([encode_file/2, encode_file/3]).
+-export([encode_string/1, encode_string/2]).
+-export([encode_rr/1, encode_rr/2]).
+-export([encode_rdata/2, encode_rdata/3]).
 -export([format_error/1]).
 
 ?DOC("""
@@ -104,7 +132,7 @@ Error location information.
 -type error_location() :: #{
     line => pos_integer(),
     column => pos_integer() | undefined,
-    file => file:filename() | undefined
+    file => file:filename_all() | undefined
 }.
 
 ?DOC("""
@@ -136,7 +164,26 @@ Detailed error information with context and suggestions.
     details => term()
 }.
 
--export_type([parse_options/0, error_detail/0, error_location/0, error_type/0]).
+-export_type([parse_options/0, encode_options/0, error_detail/0, error_location/0, error_type/0]).
+
+?DOC("""
+Options for encoding zone files.
+
+- `origin => Domain` - Origin domain for relative name calculation (default: `<<>>`)
+- `relative_names => boolean()` - Use @ and relative names (default: `true`)
+- `ttl_format => seconds | units` - TTL format: `3600` or `1h` (default: `seconds`)
+- `default_ttl => TTL` - Include $TTL directive if set (default: `undefined`)
+- `omit_class => boolean()` - Omit IN class (default: `false`)
+- `separator => binary()` - Separator between fields (default: `<<" ">>`)
+""").
+-type encode_options() :: #{
+    origin => dns:dname(),
+    relative_names => boolean(),
+    ttl_format => seconds | units,
+    default_ttl => dns:ttl() | undefined,
+    omit_class => boolean(),
+    separator => binary()
+}.
 
 %% ============================================================================
 %% Public API
@@ -203,6 +250,126 @@ Parse zone file content from a string or binary with options.
     {ok, [dns:rr()]} | {error, error_detail()}.
 parse_string(Data, Options) ->
     dns_zone_decode:parse_string(Data, Options).
+
+?DOC(#{equiv => encode_file(Records, Filename, #{})}).
+-spec encode_file([dns:rr()], file:filename()) -> ok | {error, term()}.
+encode_file(Records, Filename) ->
+    encode_file(Records, Filename, #{}).
+
+?DOC("""
+Encode a list of DNS resource records and write to a zone file with options.
+""").
+-spec encode_file([dns:rr()], file:filename(), encode_options()) ->
+    ok | {error, term()}.
+encode_file(Records, Filename, Options) ->
+    dns_zone_encode:encode_file(Records, Filename, Options).
+
+?DOC(#{equiv => encode_string(Records, #{})}).
+-spec encode_string([dns:rr()]) -> iodata().
+encode_string(Records) ->
+    encode_string(Records, #{}).
+
+?DOC("""
+Encode a list of DNS resource records to zone file format with options.
+
+## Examples
+
+```erl
+Records = [...],
+ZoneData = dns_zone:encode_string(Records, #{
+    origin => <<"example.com">>,
+    default_ttl => 3600,
+    relative_names => true
+}).
+```
+""").
+-spec encode_string([dns:rr()], encode_options()) -> iodata().
+encode_string(Records, Options) ->
+    dns_zone_encode:encode_string(Records, Options).
+
+?DOC("""
+Encode a single DNS resource record to zone file format.
+
+Returns a string representing the record in zone file format.
+
+## Examples
+
+```erl
+RR = #dns_rr{
+    name = <<"www.example.com.">>,
+    type = ?DNS_TYPE_A,
+    class = ?DNS_CLASS_IN,
+    ttl = 3600,
+    data = #dns_rrdata_a{ip = {192, 0, 2, 1}}
+},
+Line = dns_zone:encode_rr(RR).
+% Returns: \"www.example.com. 3600 IN A 192.0.2.1\"
+```
+""").
+-spec encode_rr(dns:rr()) -> iodata().
+encode_rr(RR) ->
+    encode_rr(RR, #{}).
+
+?DOC("""
+Encode a single DNS resource record to zone file format with options.
+
+Options (all optional):
+- `origin => Domain` - Origin domain for relative name calculation
+- `relative_names => boolean()` - Use @ and relative names (default: `true`)
+- `ttl_format => seconds | units` - TTL format: `3600` or `1h` (default: `seconds`)
+- `omit_class => boolean()` - Omit IN class (default: `false`)
+
+## Examples
+
+```erl
+RR = #dns_rr{
+    name = <<"www.example.com.">>,
+    type = ?DNS_TYPE_A,
+    class = ?DNS_CLASS_IN,
+    ttl = 3600,
+    data = #dns_rrdata_a{ip = {192, 0, 2, 1}}
+},
+Line = dns_zone:encode_rr(RR, #{origin => <<"example.com.">>, relative_names => true}).
+% Returns: "www 3600 IN A 192.0.2.1"
+```
+""").
+-spec encode_rr(dns:rr(), encode_options()) -> iodata().
+encode_rr(RR, Options) ->
+    dns_zone_encode:encode_rr(RR, Options).
+
+?DOC(#{equiv => encode_rdata(Type, RData, #{})}).
+-spec encode_rdata(dns:type(), dns:rrdata()) -> iodata().
+encode_rdata(Type, RData) ->
+    dns_zone_encode:encode_rdata(Type, RData).
+
+?DOC("""
+Encode RDATA (record data) to zone file format with options.
+
+Options (all optional):
+- `origin => Domain` - Origin domain for relative name calculation (default: `<<>>`)
+- `relative_names => boolean()` - Use @ and relative names (default: `true`)
+- `separator => binary()` - Separator between fields (default: `<<" ">>`)
+
+## Examples
+
+```erl
+% Encode an MX record RDATA with custom separator
+RData = #dns_rrdata_mx{preference = 10, exchange = <<"mail.example.com.">>},
+RDataStr = dns_zone:encode_rdata(?DNS_TYPE_MX, RData, #{separator => <<"\t">>}).
+% Returns: "10\tmail.example.com."
+
+% Encode an NS record RDATA with relative names
+RData = #dns_rrdata_ns{dname = <<"ns1.example.com.">>},
+RDataStr = dns_zone:encode_rdata(?DNS_TYPE_NS, RData, #{
+    origin => <<"example.com.">>,
+    relative_names => true
+}).
+% Returns: "ns1" (if ns1 is under example.com.)
+```
+""").
+-spec encode_rdata(dns:type(), dns:rrdata(), encode_options()) -> iodata().
+encode_rdata(Type, RData, Options) ->
+    dns_zone_encode:encode_rdata(Type, RData, Options).
 
 ?DOC("""
 Format a parse error into a human-readable string.

@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Add DNS zone file encoding functionality — convert DNS resource records to RFC 1035 zone file format
 - `dns_domain:to_lower/1` and `dns_domain:to_upper/1` for case conversion
 - `dns_domain:are_equal/2` and `dns_domain:are_equal_labels/2` for case-insensitive comparison
 - `dns_domain:escape_label/1` and `dns_domain:unescape_label/1` for label escaping
