@@ -18,7 +18,7 @@ prop_encode_decode_roundtrip() ->
             %% Don't set origin to avoid $ORIGIN directive affecting parsing
             Opts = #{relative_names => false},
             try
-                Encoded = dns_zone:encode_string(Records, <<>>, Opts),
+                Encoded = dns_zone:encode_string(Records, Opts),
                 EncodedStr = iolist_to_binary(Encoded),
                 case dns_zone:parse_string(EncodedStr, Opts) of
                     {ok, DecodedRecords} ->
@@ -43,7 +43,7 @@ prop_decode_encode_roundtrip() ->
             case dns_zone:parse_string(ZoneString) of
                 {ok, Records} ->
                     Origin = extract_origin(ZoneString),
-                    Encoded = dns_zone:encode_string(Records, Origin, #{}),
+                    Encoded = dns_zone:encode_string(Records, #{origin => Origin}),
                     EncodedStr = iolist_to_binary(Encoded),
                     %% Parse back and verify records are equivalent
                     case dns_zone:parse_string(EncodedStr) of

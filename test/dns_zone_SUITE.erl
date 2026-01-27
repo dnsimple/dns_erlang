@@ -172,7 +172,6 @@ groups() ->
             encode_origin_line_with_origin,
             encode_ttl_line_with_default,
             encode_ttl_line_without_default,
-            encode_string_two_args,
             encode_string_two_args_empty,
             encode_string_two_args_single_record,
             encode_string_two_args_multiple_records,
@@ -4194,7 +4193,7 @@ encode_with_default_ttl(_Config) ->
             data = #dns_rrdata_a{ip = {192, 0, 2, 1}}
         }
     ],
-    ZoneData = dns_zone:encode_string(Records, <<"example.com.">>, #{default_ttl => 7200}),
+    ZoneData = dns_zone:encode_string(Records, #{origin => <<"example.com.">>, default_ttl => 7200}),
     ZoneStr = iolist_to_binary(ZoneData),
     ?assertNotEqual(nomatch, string:find(binary_to_list(ZoneStr), "$TTL")).
 
@@ -4208,7 +4207,7 @@ encode_without_default_ttl(_Config) ->
             data = #dns_rrdata_a{ip = {192, 0, 2, 1}}
         }
     ],
-    ZoneData = dns_zone:encode_string(Records, <<"example.com.">>, #{}),
+    ZoneData = dns_zone:encode_string(Records, #{origin => <<"example.com.">>}),
     ZoneStr = iolist_to_binary(ZoneData),
     ?assertEqual(nomatch, string:find(binary_to_list(ZoneStr), "$TTL")).
 
@@ -4265,7 +4264,7 @@ encode_unknown_type_rfc3597(_Config) ->
     ?assertNotEqual(nomatch, string:find(Line, "5")).
 
 encode_empty_zone(_Config) ->
-    ZoneData = dns_zone:encode_string([], <<"example.com.">>, #{}),
+    ZoneData = dns_zone:encode_string([], #{origin => <<"example.com.">>}),
     ZoneStr = iolist_to_binary(ZoneData),
     ?assert(byte_size(ZoneStr) >= 0).
 
@@ -4305,7 +4304,7 @@ encode_string_with_sorting(_Config) ->
             data = #dns_rrdata_ns{dname = <<"ns1.example.com.">>}
         }
     ],
-    ZoneData = dns_zone:encode_string(Records, <<"example.com.">>, #{}),
+    ZoneData = dns_zone:encode_string(Records, #{origin => <<"example.com.">>}),
     ZoneStr = iolist_to_binary(ZoneData),
     ZoneList = binary_to_list(ZoneStr),
     %% SOA should come first
@@ -4326,14 +4325,14 @@ encode_string_with_directives(_Config) ->
             data = #dns_rrdata_a{ip = {192, 0, 2, 1}}
         }
     ],
-    ZoneData = dns_zone:encode_string(Records, <<"example.com.">>, #{default_ttl => 3600}),
+    ZoneData = dns_zone:encode_string(Records, #{origin => <<"example.com.">>, default_ttl => 3600}),
     ZoneStr = iolist_to_binary(ZoneData),
     ZoneList = binary_to_list(ZoneStr),
     ?assertNotEqual(nomatch, string:find(ZoneList, "$ORIGIN")),
     ?assertNotEqual(nomatch, string:find(ZoneList, "$TTL")).
 
 encode_string_empty_records(_Config) ->
-    ZoneData = dns_zone:encode_string([], <<"example.com.">>, #{}),
+    ZoneData = dns_zone:encode_string([], #{origin => <<"example.com.">>}),
     ZoneStr = iolist_to_binary(ZoneData),
     ZoneList = binary_to_list(ZoneStr),
     ?assertNotEqual(nomatch, string:find(ZoneList, "$ORIGIN")).
@@ -4349,7 +4348,7 @@ encode_file_success(_Config) ->
         }
     ],
     Filename = filename:join(?config(priv_dir, _Config), "test_zone.zone"),
-    ok = dns_zone:encode_file(Records, <<"example.com.">>, Filename, #{}),
+    ok = dns_zone:encode_file(Records, Filename, #{origin => <<"example.com.">>}),
     {ok, Content} = file:read_file(Filename),
     ?assert(byte_size(Content) > 0),
     file:delete(Filename).
@@ -4365,7 +4364,9 @@ encode_file_error(_Config) ->
         }
     ],
     %% Try to write to invalid path
-    {error, _} = dns_zone:encode_file(Records, <<"example.com.">>, "/invalid/path/zone.zone", #{}).
+    {error, _} = dns_zone:encode_file(Records, "/invalid/path/zone.zone", #{
+        origin => <<"example.com.">>
+    }).
 
 %% ============================================================================
 %% Round-Trip Tests
@@ -4381,7 +4382,7 @@ encode_round_trip_complex(_Config) ->
     ZoneData =
         <<"$ORIGIN example.com.\n$TTL 3600\n@ IN SOA ns1.example.com. admin.example.com. (\n   2024010101\n   3600\n   1800\n   604800\n   86400\n  )\n@ IN NS ns1.example.com.\nwww IN A 192.0.2.1\n">>,
     {ok, Records} = dns_zone:parse_string(ZoneData),
-    Encoded = dns_zone:encode_string(Records, <<"example.com.">>, #{}),
+    Encoded = dns_zone:encode_string(Records, #{origin => <<"example.com.">>}),
     EncodedStr = iolist_to_binary(Encoded),
     ?assert(byte_size(EncodedStr) > 0),
     %% Parse back and verify
@@ -4427,7 +4428,7 @@ encode_round_trip_all_types(_Config) ->
             data = #dns_rrdata_txt{txt = [<<"test">>]}
         }
     ],
-    Encoded = dns_zone:encode_string(TestRecords, <<"example.com.">>, #{}),
+    Encoded = dns_zone:encode_string(TestRecords, #{origin => <<"example.com.">>}),
     EncodedStr = iolist_to_binary(Encoded),
     {ok, ParsedRecords} = dns_zone:parse_string(EncodedStr),
     ?assert(length(ParsedRecords) =:= length(TestRecords)).
@@ -4654,7 +4655,7 @@ encode_string_only_soa(_Config) ->
             }
         }
     ],
-    ZoneData = dns_zone:encode_string(Records, <<"example.com.">>, #{}),
+    ZoneData = dns_zone:encode_string(Records, #{origin => <<"example.com.">>}),
     ZoneStr = iolist_to_binary(ZoneData),
     ?assert(byte_size(ZoneStr) > 0).
 
@@ -4676,7 +4677,7 @@ encode_string_only_ns(_Config) ->
             data = #dns_rrdata_ns{dname = <<"ns2.example.com.">>}
         }
     ],
-    ZoneData = dns_zone:encode_string(Records, <<"example.com.">>, #{}),
+    ZoneData = dns_zone:encode_string(Records, #{origin => <<"example.com.">>}),
     ZoneStr = iolist_to_binary(ZoneData),
     ?assert(byte_size(ZoneStr) > 0).
 
@@ -4733,7 +4734,7 @@ encode_origin_without_trailing_dot(_Config) ->
         ttl = 3600,
         data = #dns_rrdata_a{ip = {192, 0, 2, 1}}
     },
-    ZoneData = dns_zone:encode_string([RR], <<"example.com">>, #{}),
+    ZoneData = dns_zone:encode_string([RR], #{origin => <<"example.com">>}),
     ZoneStr = iolist_to_binary(ZoneData),
     %% Should add trailing dot to origin in $ORIGIN directive
     ?assertNotEqual(nomatch, string:find(ZoneStr, "$ORIGIN example.com.")).
@@ -4876,7 +4877,7 @@ encode_file_to_disk(_Config) ->
     ],
     TestFile = "/tmp/test_zone_encode.zone",
     try
-        ok = dns_zone:encode_file(Records, <<"example.com.">>, TestFile, #{}),
+        ok = dns_zone:encode_file(Records, TestFile, #{origin => <<"example.com.">>}),
         {ok, Content} = file:read_file(TestFile),
         ?assertNotEqual(0, byte_size(Content)),
         ?assertNotEqual(nomatch, string:find(Content, "example.com"))
@@ -4932,11 +4933,11 @@ encode_origin_edge_cases(_Config) ->
             data = #dns_rrdata_a{ip = {192, 0, 2, 1}}
         }
     ],
-    Encoded1 = dns_zone:encode_string(Records, <<>>, #{}),
+    Encoded1 = dns_zone:encode_string(Records, #{origin => <<>>}),
     ?assert(is_list(Encoded1) orelse is_binary(Encoded1)),
 
     %% Origin without trailing dot
-    Encoded2 = dns_zone:encode_string(Records, <<"example.com">>, #{}),
+    Encoded2 = dns_zone:encode_string(Records, #{origin => <<"example.com">>}),
     ?assert(is_list(Encoded2) orelse is_binary(Encoded2)).
 
 encode_ttl_edge_cases(_Config) ->
@@ -5275,7 +5276,7 @@ encode_origin_line_empty(_Config) ->
             data = #dns_rrdata_a{ip = {192, 0, 2, 1}}
         }
     ],
-    Encoded = dns_zone:encode_string(Records, <<>>, #{}),
+    Encoded = dns_zone:encode_string(Records, #{origin => <<>>}),
     ?assert(is_list(Encoded) orelse is_binary(Encoded)).
 
 encode_origin_line_with_origin(_Config) ->
@@ -5289,7 +5290,7 @@ encode_origin_line_with_origin(_Config) ->
             data = #dns_rrdata_a{ip = {192, 0, 2, 1}}
         }
     ],
-    Encoded = dns_zone:encode_string(Records, <<"example.com.">>, #{}),
+    Encoded = dns_zone:encode_string(Records, #{origin => <<"example.com.">>}),
     EncodedStr = iolist_to_binary(Encoded),
     ?assertNotEqual(nomatch, string:find(EncodedStr, "$ORIGIN")).
 
@@ -5304,7 +5305,7 @@ encode_ttl_line_with_default(_Config) ->
             data = #dns_rrdata_a{ip = {192, 0, 2, 1}}
         }
     ],
-    Encoded = dns_zone:encode_string(Records, <<"example.com.">>, #{default_ttl => 7200}),
+    Encoded = dns_zone:encode_string(Records, #{origin => <<"example.com.">>, default_ttl => 7200}),
     EncodedStr = iolist_to_binary(Encoded),
     ?assertNotEqual(nomatch, string:find(EncodedStr, "$TTL")).
 
@@ -5319,33 +5320,18 @@ encode_ttl_line_without_default(_Config) ->
             data = #dns_rrdata_a{ip = {192, 0, 2, 1}}
         }
     ],
-    Encoded = dns_zone:encode_string(Records, <<"example.com.">>, #{}),
-    %% May or may not have $TTL directive depending on implementation
-    ?assert(is_list(Encoded) orelse is_binary(Encoded)).
-
-encode_string_two_args(_Config) ->
-    %% Test encode_string/2 (without options)
-    Records = [
-        #dns_rr{
-            name = <<"example.com.">>,
-            type = ?DNS_TYPE_A,
-            class = ?DNS_CLASS_IN,
-            ttl = 3600,
-            data = #dns_rrdata_a{ip = {192, 0, 2, 1}}
-        }
-    ],
-    Encoded = dns_zone:encode_string(Records, <<"example.com.">>),
+    Encoded = dns_zone:encode_string(Records, #{origin => <<"example.com.">>}),
     ?assert(is_list(Encoded) orelse is_binary(Encoded)),
     EncodedStr = iolist_to_binary(Encoded),
     ?assertNotEqual(0, byte_size(EncodedStr)).
 
 encode_string_two_args_empty(_Config) ->
     %% Test encode_string/2 with empty records
-    Encoded = dns_zone:encode_string([], <<"example.com.">>),
+    Encoded = dns_zone:encode_string([], #{origin => <<"example.com.">>}),
     ?assert(is_list(Encoded) orelse is_binary(Encoded)).
 
 encode_string_two_args_single_record(_Config) ->
-    %% Test encode_string/2 with single record
+    %% Test encode_string/1 with single record
     Records = [
         #dns_rr{
             name = <<"www.example.com.">>,
@@ -5355,13 +5341,13 @@ encode_string_two_args_single_record(_Config) ->
             data = #dns_rrdata_a{ip = {192, 0, 2, 1}}
         }
     ],
-    Encoded = dns_zone:encode_string(Records, <<"example.com.">>),
+    Encoded = dns_zone:encode_string(Records, #{origin => <<"example.com.">>}),
     EncodedStr = iolist_to_binary(Encoded),
     ?assertNotEqual(nomatch, string:find(EncodedStr, "www")),
     ?assertNotEqual(nomatch, string:find(EncodedStr, "192.0.2.1")).
 
 encode_string_two_args_multiple_records(_Config) ->
-    %% Test encode_string/2 with multiple records
+    %% Test encode_string/1 with multiple records
     Records = [
         #dns_rr{
             name = <<"example.com.">>,
@@ -5385,7 +5371,7 @@ encode_string_two_args_multiple_records(_Config) ->
             data = #dns_rrdata_a{ip = {192, 0, 2, 2}}
         }
     ],
-    Encoded = dns_zone:encode_string(Records, <<"example.com.">>),
+    Encoded = dns_zone:encode_string(Records, #{origin => <<"example.com.">>}),
     EncodedStr = iolist_to_binary(Encoded),
     ?assertNotEqual(nomatch, string:find(EncodedStr, "ns1")),
     ?assertNotEqual(nomatch, string:find(EncodedStr, "www")),
@@ -5427,14 +5413,14 @@ encode_string_two_args_different_types(_Config) ->
             data = #dns_rrdata_txt{txt = [<<"v=spf1">>, <<"mx">>]}
         }
     ],
-    Encoded = dns_zone:encode_string(Records, <<"example.com.">>),
+    Encoded = dns_zone:encode_string(Records, #{origin => <<"example.com.">>}),
     EncodedStr = iolist_to_binary(Encoded),
     ?assertNotEqual(nomatch, string:find(EncodedStr, "SOA")),
     ?assertNotEqual(nomatch, string:find(EncodedStr, "MX")),
     ?assertNotEqual(nomatch, string:find(EncodedStr, "TXT")).
 
 encode_string_three_args_with_options(_Config) ->
-    %% Test encode_string/3 with various options
+    %% Test encode_string/2 with various options
     Records = [
         #dns_rr{
             name = <<"www.example.com.">>,
@@ -5445,19 +5431,23 @@ encode_string_three_args_with_options(_Config) ->
         }
     ],
     %% Test with relative_names option
-    Encoded1 = dns_zone:encode_string(Records, <<"example.com.">>, #{relative_names => true}),
+    Encoded1 = dns_zone:encode_string(Records, #{
+        origin => <<"example.com.">>, relative_names => true
+    }),
     ?assert(is_list(Encoded1) orelse is_binary(Encoded1)),
 
     %% Test with relative_names false
-    Encoded2 = dns_zone:encode_string(Records, <<"example.com.">>, #{relative_names => false}),
+    Encoded2 = dns_zone:encode_string(Records, #{
+        origin => <<"example.com.">>, relative_names => false
+    }),
     ?assert(is_list(Encoded2) orelse is_binary(Encoded2)),
 
     %% Test with ttl_format units
-    Encoded3 = dns_zone:encode_string(Records, <<"example.com.">>, #{ttl_format => units}),
+    Encoded3 = dns_zone:encode_string(Records, #{origin => <<"example.com.">>, ttl_format => units}),
     ?assert(is_list(Encoded3) orelse is_binary(Encoded3)),
 
     %% Test with omit_class true
-    Encoded4 = dns_zone:encode_string(Records, <<"example.com.">>, #{omit_class => true}),
+    Encoded4 = dns_zone:encode_string(Records, #{origin => <<"example.com.">>, omit_class => true}),
     ?assert(is_list(Encoded4) orelse is_binary(Encoded4)).
 
 encode_string_three_args_all_options(_Config) ->
@@ -5471,7 +5461,8 @@ encode_string_three_args_all_options(_Config) ->
             data = #dns_rrdata_a{ip = {192, 0, 2, 1}}
         }
     ],
-    Encoded = dns_zone:encode_string(Records, <<"example.com.">>, #{
+    Encoded = dns_zone:encode_string(Records, #{
+        origin => <<"example.com.">>,
         relative_names => true,
         ttl_format => units,
         default_ttl => 7200,
@@ -5482,7 +5473,7 @@ encode_string_three_args_all_options(_Config) ->
     ?assertNotEqual(0, byte_size(EncodedStr)).
 
 encode_file_three_args(_Config) ->
-    %% Test encode_file/3 (without options)
+    %% Test encode_file/2 (without options)
     Records = [
         #dns_rr{
             name = <<"example.com.">>,
@@ -5494,7 +5485,7 @@ encode_file_three_args(_Config) ->
     ],
     TestFile = "/tmp/test_encode_file_three_args.zone",
     try
-        ok = dns_zone:encode_file(Records, <<"example.com.">>, TestFile),
+        ok = dns_zone:encode_file(Records, TestFile, #{origin => <<"example.com.">>}),
         {ok, Content} = file:read_file(TestFile),
         ?assertNotEqual(0, byte_size(Content)),
         ?assertNotEqual(nomatch, string:find(Content, "example.com"))
@@ -5503,10 +5494,10 @@ encode_file_three_args(_Config) ->
     end.
 
 encode_file_three_args_empty(_Config) ->
-    %% Test encode_file/3 with empty records
+    %% Test encode_file/2 with empty records
     TestFile = "/tmp/test_encode_file_empty.zone",
     try
-        ok = dns_zone:encode_file([], <<"example.com.">>, TestFile),
+        ok = dns_zone:encode_file([], TestFile, #{origin => <<"example.com.">>}),
         {ok, Content} = file:read_file(TestFile),
         ?assert(is_binary(Content))
     after
@@ -5514,7 +5505,7 @@ encode_file_three_args_empty(_Config) ->
     end.
 
 encode_file_three_args_multiple_records(_Config) ->
-    %% Test encode_file/3 with multiple records
+    %% Test encode_file/2 with multiple records
     Records = [
         #dns_rr{
             name = <<"example.com.">>,
@@ -5533,7 +5524,7 @@ encode_file_three_args_multiple_records(_Config) ->
     ],
     TestFile = "/tmp/test_encode_file_multiple.zone",
     try
-        ok = dns_zone:encode_file(Records, <<"example.com.">>, TestFile),
+        ok = dns_zone:encode_file(Records, TestFile, #{origin => <<"example.com.">>}),
         {ok, Content} = file:read_file(TestFile),
         ContentStr = binary_to_list(Content),
         ?assertNotEqual(nomatch, string:find(ContentStr, "ns1")),
@@ -5543,7 +5534,7 @@ encode_file_three_args_multiple_records(_Config) ->
     end.
 
 encode_file_three_args_verify_content(_Config) ->
-    %% Test encode_file/3 and verify file content matches encode_string
+    %% Test encode_file/2 and verify file content matches encode_string
     Records = [
         #dns_rr{
             name = <<"www.example.com.">>,
@@ -5556,11 +5547,11 @@ encode_file_three_args_verify_content(_Config) ->
     TestFile = "/tmp/test_encode_file_verify.zone",
     try
         %% Encode to string first
-        StringEncoded = dns_zone:encode_string(Records, <<"example.com.">>),
+        StringEncoded = dns_zone:encode_string(Records, #{origin => <<"example.com.">>}),
         StringContent = iolist_to_binary(StringEncoded),
 
         %% Encode to file
-        ok = dns_zone:encode_file(Records, <<"example.com.">>, TestFile),
+        ok = dns_zone:encode_file(Records, TestFile, #{origin => <<"example.com.">>}),
         {ok, FileContent} = file:read_file(TestFile),
 
         %% Content should match (allowing for newlines/formatting differences)
@@ -5570,7 +5561,7 @@ encode_file_three_args_verify_content(_Config) ->
     end.
 
 encode_file_three_args_with_options(_Config) ->
-    %% Test encode_file/3 with options (via encode_file/4)
+    %% Test encode_file/2 with options (via encode_file/3)
     Records = [
         #dns_rr{
             name = <<"www.example.com.">>,
@@ -5582,8 +5573,8 @@ encode_file_three_args_with_options(_Config) ->
     ],
     TestFile = "/tmp/test_encode_file_options.zone",
     try
-        %% Test that encode_file/3 calls encode_file/4 with empty options
-        ok = dns_zone:encode_file(Records, <<"example.com.">>, TestFile),
+        %% Test that encode_file/2 calls encode_file/3 with empty options
+        ok = dns_zone:encode_file(Records, TestFile, #{origin => <<"example.com.">>}),
         {ok, Content} = file:read_file(TestFile),
         ?assertNotEqual(0, byte_size(Content))
     after

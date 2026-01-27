@@ -11,7 +11,7 @@
 -dialyzer(no_improper_lists).
 -elvis([{elvis_style, dont_repeat_yourself, #{ignore => [{dns_zone_encode, encode_rdata}]}}]).
 
--export([encode_rdata/2, encode_rdata/3, encode_rr/2, encode_string/3, encode_file/4]).
+-export([encode_rdata/2, encode_rdata/3, encode_rr/2, encode_string/2, encode_file/3]).
 
 -define(DEFAULT_ORIGIN, <<>>).
 -define(DEFAULT_RELATIVE_NAMES, true).
@@ -19,15 +19,15 @@
 -define(DEFAULT_OMIT_CLASS, false).
 -define(DEFAULT_SEPARATOR, <<" ">>).
 
--spec encode_file([dns:rr()], dns:dname(), file:filename(), dns_zone:encode_options()) ->
+-spec encode_file([dns:rr()], file:filename(), dns_zone:encode_options()) ->
     ok | {error, term()}.
-encode_file(Records, Origin, Filename, Opts) ->
-    IOData = encode_string(Records, Origin, Opts),
+encode_file(Records, Filename, Opts) ->
+    IOData = encode_string(Records, Opts),
     file:write_file(Filename, IOData).
 
--spec encode_string([dns:rr()], dns:dname(), dns_zone:encode_options()) -> iodata().
-encode_string(Records, Origin, Opts) ->
-    LwrOrigin = dns:dname_to_lower(Origin),
+-spec encode_string([dns:rr()], dns_zone:encode_options()) -> iodata().
+encode_string(Records, Opts) ->
+    LwrOrigin = dns:dname_to_lower(maps:get(origin, Opts, ?DEFAULT_ORIGIN)),
     SortedRecords = sort_zone_records(Records),
     build_zone_lines(SortedRecords, LwrOrigin, Opts).
 

@@ -88,7 +88,7 @@ Line = dns_zone:encode_rr(RR, #{origin => <<"example.com.">>, relative_names => 
 
 % Encode a complete zone
 Records = [...],
-ZoneData = dns_zone:encode_string(Records, <<"example.com.">>, #{default_ttl => 3600}).
+ZoneData = dns_zone:encode_string(Records, #{origin => <<"example.com">>, default_ttl => 3600}).
 
 % Write zone to file
 ok = dns_zone:encode_file(Records, <<"example.com.">>, "output.zone").
@@ -98,8 +98,8 @@ ok = dns_zone:encode_file(Records, <<"example.com.">>, "output.zone").
 %% Public API
 -export([parse_file/1, parse_file/2]).
 -export([parse_string/1, parse_string/2]).
--export([encode_file/3, encode_file/4]).
--export([encode_string/2, encode_string/3]).
+-export([encode_file/2, encode_file/3]).
+-export([encode_string/1, encode_string/2]).
 -export([encode_rr/1, encode_rr/2]).
 -export([encode_rdata/2, encode_rdata/3]).
 -export([format_error/1]).
@@ -251,46 +251,23 @@ Parse zone file content from a string or binary with options.
 parse_string(Data, Options) ->
     dns_zone_decode:parse_string(Data, Options).
 
-?DOC("""
-Encode a list of DNS resource records and write to a zone file.
-
-## Examples
-
-```erl
-Records = [...],
-ok = dns_zone:encode_file(Records, <<"example.com.">>, "example.com.zone").
-```
-""").
--spec encode_file([dns:rr()], dns:dname(), file:filename()) -> ok | {error, term()}.
-encode_file(Records, Origin, Filename) ->
-    encode_file(Records, Origin, Filename, #{}).
+?DOC(#{equiv => encode_file(Records, Filename, #{})}).
+-spec encode_file([dns:rr()], file:filename()) -> ok | {error, term()}.
+encode_file(Records, Filename) ->
+    encode_file(Records, Filename, #{}).
 
 ?DOC("""
 Encode a list of DNS resource records and write to a zone file with options.
 """).
--spec encode_file([dns:rr()], dns:dname(), file:filename(), encode_options()) ->
+-spec encode_file([dns:rr()], file:filename(), encode_options()) ->
     ok | {error, term()}.
-encode_file(Records, Origin, Filename, Options) ->
-    dns_zone_encode:encode_file(Records, Origin, Filename, Options).
+encode_file(Records, Filename, Options) ->
+    dns_zone_encode:encode_file(Records, Filename, Options).
 
-?DOC("""
-Encode a list of DNS resource records to zone file format.
-
-Returns iodata representing the zone file content.
-
-## Examples
-
-```erl
-Records = [
-    #dns_rr{name = <<"example.com.">>, type = ?DNS_TYPE_SOA, ...},
-    #dns_rr{name = <<"example.com.">>, type = ?DNS_TYPE_NS, ...}
-],
-ZoneData = dns_zone:encode_string(Records, <<"example.com.">>).
-```
-""").
--spec encode_string([dns:rr()], dns:dname()) -> iodata().
-encode_string(Records, Origin) ->
-    encode_string(Records, Origin, #{}).
+?DOC(#{equiv => encode_string(Records, #{})}).
+-spec encode_string([dns:rr()]) -> iodata().
+encode_string(Records) ->
+    encode_string(Records, #{}).
 
 ?DOC("""
 Encode a list of DNS resource records to zone file format with options.
@@ -299,15 +276,16 @@ Encode a list of DNS resource records to zone file format with options.
 
 ```erl
 Records = [...],
-ZoneData = dns_zone:encode_string(Records, <<"example.com.">>, #{
+ZoneData = dns_zone:encode_string(Records, #{
+    origin => <<"example.com">>,
     default_ttl => 3600,
     relative_names => true
 }).
 ```
 """).
--spec encode_string([dns:rr()], dns:dname(), encode_options()) -> iodata().
-encode_string(Records, Origin, Options) ->
-    dns_zone_encode:encode_string(Records, Origin, Options).
+-spec encode_string([dns:rr()], encode_options()) -> iodata().
+encode_string(Records, Options) ->
+    dns_zone_encode:encode_string(Records, Options).
 
 ?DOC("""
 Encode a single DNS resource record to zone file format.
