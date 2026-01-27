@@ -101,7 +101,7 @@ ok = dns_zone:encode_file(Records, <<"example.com.">>, "output.zone").
 -export([encode_file/3, encode_file/4]).
 -export([encode_string/2, encode_string/3]).
 -export([encode_rr/1, encode_rr/2]).
--export([encode_rdata/2]).
+-export([encode_rdata/2, encode_rdata/3]).
 -export([format_error/1]).
 
 ?DOC("""
@@ -174,13 +174,15 @@ Options for encoding zone files.
 - `ttl_format => seconds | units` - TTL format: `3600` or `1h` (default: `seconds`)
 - `default_ttl => TTL` - Include $TTL directive if set (default: `undefined`)
 - `omit_class => boolean()` - Omit IN class (default: `false`)
+- `separator => binary()` - Separator between fields (default: `<<" ">>`)
 """).
 -type encode_options() :: #{
     origin => dns:dname(),
     relative_names => boolean(),
     ttl_format => seconds | units,
     default_ttl => dns:ttl() | undefined,
-    omit_class => boolean()
+    omit_class => boolean(),
+    separator => binary()
 }.
 
 %% ============================================================================
@@ -357,28 +359,39 @@ Line = dns_zone:encode_rr(RR, #{origin => <<"example.com.">>, relative_names => 
 encode_rr(RR, Options) ->
     dns_zone_encode:encode_rr(RR, Options).
 
+?DOC(#{equiv => encode_rdata(Type, RData, #{})}).
+-spec encode_rdata(dns:type(), dns:rrdata()) -> iodata().
+encode_rdata(Type, RData) ->
+    dns_zone_encode:encode_rdata(Type, RData).
+
 ?DOC("""
-Encode RDATA (record data) to zone file format with default options.
+Encode RDATA (record data) to zone file format with options.
+
+Options (all optional):
+- `origin => Domain` - Origin domain for relative name calculation (default: `<<>>`)
+- `relative_names => boolean()` - Use @ and relative names (default: `true`)
+- `separator => binary()` - Separator between fields (default: `<<" ">>`)
 
 ## Examples
 
 ```erl
-% Encode an A record RDATA
-RData = #dns_rrdata_a{ip = {192, 0, 2, 1}},
-RDataStr = dns_zone:encode_rdata(?DNS_TYPE_A, RData).
-% Returns: "192.0.2.1"
+% Encode an MX record RDATA with custom separator
+RData = #dns_rrdata_mx{preference = 10, exchange = <<"mail.example.com.">>},
+RDataStr = dns_zone:encode_rdata(?DNS_TYPE_MX, RData, #{separator => <<"\t">>}).
+% Returns: "10\tmail.example.com."
 
-% Encode an NS record RDATA
+% Encode an NS record RDATA with relative names
 RData = #dns_rrdata_ns{dname = <<"ns1.example.com.">>},
-RDataStr = dns_zone:encode_rdata(?DNS_TYPE_NS, RData).
-% Returns: "ns1.example.com."
+RDataStr = dns_zone:encode_rdata(?DNS_TYPE_NS, RData, #{
+    origin => <<"example.com.">>,
+    relative_names => true
+}).
+% Returns: "ns1" (if ns1 is under example.com.)
 ```
-
-For more control over encoding (e.g., relative names, origin), use `encode_rr/2` instead.
 """).
--spec encode_rdata(dns:type(), dns:rrdata()) -> iodata().
-encode_rdata(Type, RData) ->
-    dns_zone_encode:encode_rdata(Type, RData).
+-spec encode_rdata(dns:type(), dns:rrdata(), encode_options()) -> iodata().
+encode_rdata(Type, RData, Options) ->
+    dns_zone_encode:encode_rdata(Type, RData, Options).
 
 ?DOC("""
 Format a parse error into a human-readable string.

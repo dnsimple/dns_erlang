@@ -48,6 +48,7 @@ groups() ->
         ]},
         {encoding_tests, [parallel], [
             encode_rdata_helper,
+            encode_rdata_with_separator,
             %% Basic record types
             encode_a_record,
             encode_aaaa_record,
@@ -109,6 +110,7 @@ groups() ->
             encode_omit_class,
             encode_with_class,
             encode_different_classes,
+            encode_separator_option,
             encode_with_default_ttl,
             encode_without_default_ttl,
             %% Edge cases
@@ -4135,6 +4137,53 @@ encode_different_classes(_Config) ->
     ?assertNotEqual(nomatch, string:find(dns_zone:encode_rr(CH), "CH")),
     ?assertNotEqual(nomatch, string:find(dns_zone:encode_rr(HS), "HS")).
 
+encode_separator_option(_Config) ->
+    RR = #dns_rr{
+        name = <<"example.com.">>,
+        type = ?DNS_TYPE_A,
+        class = ?DNS_CLASS_IN,
+        ttl = 3600,
+        data = #dns_rrdata_a{ip = {192, 0, 2, 1}}
+    },
+    %% Test default separator (single space)
+    LineDefault = iolist_to_binary(dns_zone:encode_rr(RR, #{})),
+    ?assertNotEqual(nomatch, binary:match(LineDefault, <<" ">>)),
+    %% Test custom separator (tab)
+    LineTab = iolist_to_binary(dns_zone:encode_rr(RR, #{separator => <<"\t">>})),
+    ?assertNotEqual(nomatch, binary:match(LineTab, <<"\t">>)),
+    ?assertEqual(nomatch, binary:match(LineTab, <<" ">>)),
+    %% Test custom separator (multiple spaces)
+    LineMultiSpace = iolist_to_binary(dns_zone:encode_rr(RR, #{separator => <<"  ">>})),
+    ?assertNotEqual(nomatch, binary:match(LineMultiSpace, <<"  ">>)),
+    %% Test with a record that has multiple fields (MX record)
+    MXRR = #dns_rr{
+        name = <<"example.com.">>,
+        type = ?DNS_TYPE_MX,
+        class = ?DNS_CLASS_IN,
+        ttl = 3600,
+        data = #dns_rrdata_mx{preference = 10, exchange = <<"mail.example.com.">>}
+    },
+    MXLineTab = iolist_to_binary(dns_zone:encode_rr(MXRR, #{separator => <<"\t">>})),
+    ?assertNotEqual(nomatch, binary:match(MXLineTab, <<"\t">>)),
+    %% Test with SOA record (multiple fields)
+    SOARR = #dns_rr{
+        name = <<"example.com.">>,
+        type = ?DNS_TYPE_SOA,
+        class = ?DNS_CLASS_IN,
+        ttl = 3600,
+        data = #dns_rrdata_soa{
+            mname = <<"ns1.example.com.">>,
+            rname = <<"admin.example.com.">>,
+            serial = 1,
+            refresh = 3600,
+            retry = 1800,
+            expire = 604800,
+            minimum = 86400
+        }
+    },
+    SOALineTab = iolist_to_binary(dns_zone:encode_rr(SOARR, #{separator => <<"\t">>})),
+    ?assertNotEqual(nomatch, binary:match(SOALineTab, <<"\t">>)).
+
 encode_with_default_ttl(_Config) ->
     Records = [
         #dns_rr{
@@ -5540,6 +5589,39 @@ encode_file_three_args_with_options(_Config) ->
     after
         file:delete(TestFile)
     end.
+
+encode_rdata_with_separator(_Config) ->
+    %% Test encode_rdata/3 with custom separator
+    MXData = #dns_rrdata_mx{preference = 10, exchange = <<"mail.example.com.">>},
+    %% Default separator (space)
+    DefaultResult = iolist_to_binary(dns_zone:encode_rdata(?DNS_TYPE_MX, MXData)),
+    ?assertNotEqual(nomatch, binary:match(DefaultResult, <<" ">>)),
+    %% Custom separator (tab)
+    TabResult = iolist_to_binary(
+        dns_zone:encode_rdata(?DNS_TYPE_MX, MXData, #{separator => <<"\t">>})
+    ),
+    ?assertNotEqual(nomatch, binary:match(TabResult, <<"\t">>)),
+    ?assertEqual(nomatch, binary:match(TabResult, <<" ">>)),
+    %% Test with SOA record (multiple fields)
+    SOAData = #dns_rrdata_soa{
+        mname = <<"ns1.example.com.">>,
+        rname = <<"admin.example.com.">>,
+        serial = 1,
+        refresh = 3600,
+        retry = 1800,
+        expire = 604800,
+        minimum = 86400
+    },
+    SOATabResult = iolist_to_binary(
+        dns_zone:encode_rdata(?DNS_TYPE_SOA, SOAData, #{separator => <<"\t">>})
+    ),
+    ?assertNotEqual(nomatch, binary:match(SOATabResult, <<"\t">>)),
+    %% Test with TXT record (quoted strings)
+    TXTData = #dns_rrdata_txt{txt = [<<"value1">>, <<"value2">>]},
+    TXTTabResult = iolist_to_binary(
+        dns_zone:encode_rdata(?DNS_TYPE_TXT, TXTData, #{separator => <<"\t">>})
+    ),
+    ?assertNotEqual(nomatch, binary:match(TXTTabResult, <<"\t">>)).
 
 encode_rdata_helper(_Config) ->
     %% Test encode_rdata/1 helper function with defaults (type deduced from record)

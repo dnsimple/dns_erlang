@@ -11,12 +11,13 @@
 -dialyzer(no_improper_lists).
 -elvis([{elvis_style, dont_repeat_yourself, #{ignore => [{dns_zone_encode, encode_rdata}]}}]).
 
--export([encode_rdata/2, encode_rr/2, encode_string/3, encode_file/4]).
+-export([encode_rdata/2, encode_rdata/3, encode_rr/2, encode_string/3, encode_file/4]).
 
 -define(DEFAULT_ORIGIN, <<>>).
 -define(DEFAULT_RELATIVE_NAMES, true).
 -define(DEFAULT_TTL_FORMAT, seconds).
 -define(DEFAULT_OMIT_CLASS, false).
+-define(DEFAULT_SEPARATOR, <<" ">>).
 
 -spec encode_file([dns:rr()], dns:dname(), file:filename(), dns_zone:encode_options()) ->
     ok | {error, term()}.
@@ -37,31 +38,39 @@ encode_rr(#dns_rr{name = Name, type = Type, class = Class, ttl = TTL, data = Dat
     OmitClass = maps:get(omit_class, Opts, ?DEFAULT_OMIT_CLASS),
     TTLFormat = maps:get(ttl_format, Opts, ?DEFAULT_TTL_FORMAT),
     RelativeNames = maps:get(relative_names, Opts, ?DEFAULT_RELATIVE_NAMES),
+    Separator = maps:get(separator, Opts, ?DEFAULT_SEPARATOR),
     OwnerName = encode_dname(LwrName, LwrOrigin, RelativeNames),
     EncodedTTL = encode_ttl(TTL, TTLFormat),
     EncodedClass = maybe_encode_class(Class, OmitClass),
     TypeBin = encode_type(Type),
-    RDataStr = encode_rdata(Type, Data, LwrOrigin, RelativeNames, Opts),
-    %% Combine all parts with spaces
+    RDataStr = encode_rdata(Type, Data, LwrOrigin, RelativeNames, Separator),
+    %% Combine all parts with separator
     %% Format: owner [TTL] [class] type rdata
     %% If TTL is empty and class is omitted, we still need proper spacing
     Tail =
         case EncodedClass of
             <<>> ->
-                [TypeBin, <<" ">>, RDataStr];
+                [TypeBin, Separator, RDataStr];
             _ ->
-                [EncodedClass, <<" ">>, TypeBin, <<" ">>, RDataStr]
+                [EncodedClass, Separator, TypeBin, Separator, RDataStr]
         end,
     case EncodedTTL of
         <<>> ->
-            [OwnerName, <<" ">> | Tail];
+            [OwnerName, Separator | Tail];
         _ ->
-            [OwnerName, <<" ">>, EncodedTTL, <<" ">> | Tail]
+            [OwnerName, Separator, EncodedTTL, Separator | Tail]
     end.
 
 -spec encode_rdata(dns:type(), dns:rrdata()) -> iodata().
 encode_rdata(Type, RData) ->
-    encode_rdata(Type, RData, <<>>, true, #{}).
+    encode_rdata(Type, RData, <<>>, true, ?DEFAULT_SEPARATOR).
+
+-spec encode_rdata(dns:type(), dns:rrdata(), dns_zone:encode_options()) -> iodata().
+encode_rdata(Type, RData, Opts) ->
+    Origin = dns:dname_to_lower(maps:get(origin, Opts, ?DEFAULT_ORIGIN)),
+    RelativeNames = maps:get(relative_names, Opts, ?DEFAULT_RELATIVE_NAMES),
+    Separator = maps:get(separator, Opts, ?DEFAULT_SEPARATOR),
+    encode_rdata(Type, RData, Origin, RelativeNames, Separator).
 
 %% ============================================================================
 %% Helper Functions
@@ -206,21 +215,21 @@ make_relative(Name, Origin) ->
 %% Encode quoted string (for TXT, SPF, etc.)
 %% TXT records can have multiple strings
 %% SPF records are same format as TXT
--spec encode_quoted_strings([binary()]) -> binary().
-encode_quoted_strings([]) ->
+-spec encode_quoted_strings([binary()], binary()) -> binary().
+encode_quoted_strings([], _Separator) ->
     <<>>;
-encode_quoted_strings([String]) ->
+encode_quoted_strings([String], _Separator) ->
     encode_quoted_string(String);
-encode_quoted_strings([String | Strings]) ->
+encode_quoted_strings([String | Strings], Separator) ->
     Acc = encode_quoted_string(String),
-    encode_more_quoted_strings(Strings, Acc).
+    encode_more_quoted_strings(Strings, Acc, Separator).
 
--spec encode_more_quoted_strings([binary()], binary()) -> binary().
-encode_more_quoted_strings([], Acc) ->
+-spec encode_more_quoted_strings([binary()], binary(), binary()) -> binary().
+encode_more_quoted_strings([], Acc, _Separator) ->
     Acc;
-encode_more_quoted_strings([S | Strings], Acc) ->
-    Acc1 = do_escape_string(S, <<Acc/binary, " ", $">>),
-    encode_more_quoted_strings(Strings, <<Acc1/binary, $">>).
+encode_more_quoted_strings([S | Strings], Acc, Separator) ->
+    Acc1 = do_escape_string(S, <<Acc/binary, Separator/binary, $">>),
+    encode_more_quoted_strings(Strings, <<Acc1/binary, $">>, Separator).
 
 -spec encode_quoted_string(binary()) -> binary().
 encode_quoted_string(Bin) ->
@@ -245,18 +254,18 @@ do_escape_string(<<C, Rest/binary>>, Acc) ->
     do_escape_string(Rest, <<Acc/binary, Escape/binary>>).
 
 %% Encode SVCB/HTTPS service parameters
--spec encode_svcb_params(dns:svcb_svc_params()) -> iodata().
-encode_svcb_params(Params) when map_size(Params) =:= 0 ->
+-spec encode_svcb_params(dns:svcb_svc_params(), binary()) -> iodata().
+encode_svcb_params(Params, _Separator) when map_size(Params) =:= 0 ->
     <<>>;
-encode_svcb_params(Params) ->
+encode_svcb_params(Params, Separator) ->
     ParamList = encode_svcb_params_list(Params, []),
-    join_with_spaces(ParamList).
+    join_with_spaces(ParamList, Separator).
 
--spec join_with_spaces([iodata()]) -> iodata().
-join_with_spaces([]) ->
+-spec join_with_spaces([iodata()], binary()) -> iodata().
+join_with_spaces([], _Separator) ->
     <<>>;
-join_with_spaces([First | Rest]) ->
-    lists:foldl(fun(P, Acc) -> [Acc, " ", P] end, First, Rest).
+join_with_spaces([First | Rest], Separator) ->
+    lists:foldl(fun(P, Acc) -> [Acc, Separator, P] end, First, Rest).
 
 -spec encode_svcb_params_list(dns:svcb_svc_params(), [iodata()]) -> [iodata()].
 encode_svcb_params_list(SvcParams, Acc) ->
@@ -267,7 +276,6 @@ encode_svcb_params_list(SvcParams, Acc) ->
                 KeyNames = [svcb_param_key_name(K) || K <- Keys],
                 [[<<"mandatory=\"">>, lists:join(",", KeyNames), <<"\"">>] | Acc0];
             ({?DNS_SVCB_PARAM_ALPN, Protocols}, Acc0) ->
-                % ProtocolStrs = [binary_to_list(P) || P <- Protocols],
                 [[<<"alpn=\"">>, lists:join(",", Protocols), <<"\"">>] | Acc0];
             ({?DNS_SVCB_PARAM_NO_DEFAULT_ALPN, none}, Acc0) ->
                 [<<"no-default-alpn">> | Acc0];
@@ -392,29 +400,30 @@ encode_salt_hex(Salt) ->
     dns:dname(),
     dns:svcb_svc_params(),
     dns:dname(),
-    boolean()
+    boolean(),
+    binary()
 ) -> string().
-encode_svcb_record(Priority, Target, Params, Origin, RelativeNames) ->
+encode_svcb_record(Priority, Target, Params, Origin, RelativeNames, Separator) ->
     LwrTarget = dns:dname_to_lower(Target),
     LwrOrigin = dns:dname_to_lower(Origin),
     PriorityBin = integer_to_binary(Priority),
     TargetStr = encode_dname(LwrTarget, LwrOrigin, RelativeNames),
-    ParamsStr = encode_svcb_params(Params),
+    ParamsStr = encode_svcb_params(Params, Separator),
     case ParamsStr of
-        <<>> -> join_rdata_fields([PriorityBin, TargetStr]);
-        _ -> join_rdata_fields([PriorityBin, TargetStr, ParamsStr])
+        <<>> -> join_rdata_fields([PriorityBin, TargetStr], Separator);
+        _ -> join_rdata_fields([PriorityBin, TargetStr, ParamsStr], Separator)
     end.
 
-%% Helper: Join RDATA fields with tabs
--spec join_rdata_fields([iodata()]) -> iodata().
-join_rdata_fields(Fields) ->
-    lists:join(<<" ">>, Fields).
+%% Helper: Join RDATA fields with separator
+-spec join_rdata_fields([iodata()], binary()) -> iodata().
+join_rdata_fields(Fields, Separator) ->
+    lists:join(Separator, Fields).
 
 %% Helper: Encode DS/CDS/DLV/DNSKEY/CDNSKEY record
 %% Encodes 3 integer fields and a data field (hex or base64 encoded)
--spec encode_key_record(dns:uint16(), dns:uint8(), dns:uint8(), iodata(), hex | base64) ->
+-spec encode_key_record(dns:uint16(), dns:uint8(), dns:uint8(), iodata(), hex | base64, binary()) ->
     iodata().
-encode_key_record(Field1, Field2, Field3, Data, Encoding) ->
+encode_key_record(Field1, Field2, Field3, Data, Encoding, Separator) ->
     Field1Bin = integer_to_binary(Field1),
     Field2Bin = integer_to_binary(Field2),
     Field3Bin = integer_to_binary(Field3),
@@ -424,35 +433,40 @@ encode_key_record(Field1, Field2, Field3, Data, Encoding) ->
             hex -> binary:encode_hex(DataBin);
             base64 -> base64:encode(DataBin)
         end,
-    join_rdata_fields([Field1Bin, Field2Bin, Field3Bin, EncodedData]).
+    join_rdata_fields([Field1Bin, Field2Bin, Field3Bin, EncodedData], Separator).
 
 %% Assumes origin is always in lowercase
--spec encode_rdata(dns:type(), dns:rrdata(), dns:dname(), boolean(), dns_zone:encode_options()) ->
-    iodata().
-encode_rdata(?DNS_TYPE_A, #dns_rrdata_a{ip = IP}, _Origin, _RelativeNames, _Opts) ->
+-spec encode_rdata(dns:type(), dns:rrdata(), dns:dname(), boolean(), binary()) -> iodata().
+encode_rdata(?DNS_TYPE_A, #dns_rrdata_a{ip = IP}, _Origin, _RelativeNames, _Separator) ->
     "" ++ _ = inet:ntoa(IP);
-encode_rdata(?DNS_TYPE_AAAA, #dns_rrdata_aaaa{ip = IP}, _Origin, _RelativeNames, _Opts) ->
+encode_rdata(?DNS_TYPE_AAAA, #dns_rrdata_aaaa{ip = IP}, _Origin, _RelativeNames, _Separator) ->
     "" ++ _ = inet:ntoa(IP);
-encode_rdata(?DNS_TYPE_NS, #dns_rrdata_ns{dname = DName}, Origin, RelativeNames, _Opts) ->
+encode_rdata(?DNS_TYPE_NS, #dns_rrdata_ns{dname = DName}, Origin, RelativeNames, _Separator) ->
     encode_dname(dns:dname_to_lower(DName), Origin, RelativeNames);
-encode_rdata(?DNS_TYPE_CNAME, #dns_rrdata_cname{dname = DName}, Origin, RelativeNames, _Opts) ->
+encode_rdata(
+    ?DNS_TYPE_CNAME,
+    #dns_rrdata_cname{dname = DName},
+    Origin,
+    RelativeNames,
+    _Separator
+) ->
     encode_dname(dns:dname_to_lower(DName), Origin, RelativeNames);
-encode_rdata(?DNS_TYPE_PTR, #dns_rrdata_ptr{dname = DName}, Origin, RelativeNames, _Opts) ->
+encode_rdata(?DNS_TYPE_PTR, #dns_rrdata_ptr{dname = DName}, Origin, RelativeNames, _Separator) ->
     encode_dname(DName, Origin, RelativeNames);
 encode_rdata(
     ?DNS_TYPE_MX,
     #dns_rrdata_mx{preference = Pref, exchange = Exchange},
     Origin,
     RelativeNames,
-    _Opts
+    Separator
 ) ->
     PrefBin = integer_to_binary(Pref),
     ExchangeStr = encode_dname(dns:dname_to_lower(Exchange), Origin, RelativeNames),
-    [PrefBin, <<" ">> | ExchangeStr];
-encode_rdata(?DNS_TYPE_TXT, #dns_rrdata_txt{txt = Strings}, _Origin, _RelativeNames, _Opts) ->
-    encode_quoted_strings(Strings);
-encode_rdata(?DNS_TYPE_SPF, #dns_rrdata_spf{spf = Strings}, _Origin, _RelativeNames, _Opts) ->
-    encode_quoted_strings(Strings);
+    [PrefBin, Separator | ExchangeStr];
+encode_rdata(?DNS_TYPE_TXT, #dns_rrdata_txt{txt = Strings}, _Origin, _RelativeNames, Separator) ->
+    encode_quoted_strings(Strings, Separator);
+encode_rdata(?DNS_TYPE_SPF, #dns_rrdata_spf{spf = Strings}, _Origin, _RelativeNames, Separator) ->
+    encode_quoted_strings(Strings, Separator);
 encode_rdata(
     ?DNS_TYPE_SOA,
     #dns_rrdata_soa{
@@ -466,7 +480,7 @@ encode_rdata(
     },
     Origin,
     RelativeNames,
-    _Opts
+    Separator
 ) ->
     MNameStr = encode_dname(dns:dname_to_lower(MName), Origin, RelativeNames),
     RNameStr = encode_dname(dns:dname_to_lower(RName), Origin, RelativeNames),
@@ -475,9 +489,12 @@ encode_rdata(
     RetryBin = integer_to_binary(Retry),
     ExpireBin = integer_to_binary(Expire),
     MinimumBin = integer_to_binary(Minimum),
-    join_rdata_fields([
-        MNameStr, RNameStr, SerialBin, RefreshBin, RetryBin, ExpireBin, MinimumBin
-    ]);
+    join_rdata_fields(
+        [
+            MNameStr, RNameStr, SerialBin, RefreshBin, RetryBin, ExpireBin, MinimumBin
+        ],
+        Separator
+    );
 encode_rdata(
     ?DNS_TYPE_SRV,
     #dns_rrdata_srv{
@@ -488,13 +505,13 @@ encode_rdata(
     },
     Origin,
     RelativeNames,
-    _Opts
+    Separator
 ) ->
     PriorityBin = integer_to_binary(Priority),
     WeightBin = integer_to_binary(Weight),
     PortBin = integer_to_binary(Port),
     TargetStr = encode_dname(dns:dname_to_lower(Target), Origin, RelativeNames),
-    join_rdata_fields([PriorityBin, WeightBin, PortBin, TargetStr]);
+    join_rdata_fields([PriorityBin, WeightBin, PortBin, TargetStr], Separator);
 encode_rdata(
     ?DNS_TYPE_CAA,
     #dns_rrdata_caa{
@@ -504,14 +521,14 @@ encode_rdata(
     },
     _Origin,
     _RelativeNames,
-    _Opts
+    Separator
 ) ->
     FlagsBin = integer_to_binary(Flags),
     %% CAA tag should always be quoted to ensure it's parsed as a string token
     %% (unquoted tags like "9" might be parsed as integers)
     TagBin = encode_quoted_string(Tag),
     ValueBin = encode_quoted_string(Value),
-    join_rdata_fields([FlagsBin, TagBin, ValueBin]);
+    join_rdata_fields([FlagsBin, TagBin, ValueBin], Separator);
 encode_rdata(
     ?DNS_TYPE_NAPTR,
     #dns_rrdata_naptr{
@@ -524,7 +541,7 @@ encode_rdata(
     },
     Origin,
     RelativeNames,
-    _Opts
+    Separator
 ) ->
     OrderBin = integer_to_binary(Order),
     PrefBin = integer_to_binary(Preference),
@@ -532,7 +549,9 @@ encode_rdata(
     ServicesBin = encode_quoted_string(Services),
     RegexpBin = encode_quoted_string(Regexp),
     ReplacementStr = encode_dname(dns:dname_to_lower(Replacement), Origin, RelativeNames),
-    join_rdata_fields([OrderBin, PrefBin, FlagsBin, ServicesBin, RegexpBin, ReplacementStr]);
+    join_rdata_fields(
+        [OrderBin, PrefBin, FlagsBin, ServicesBin, RegexpBin, ReplacementStr], Separator
+    );
 encode_rdata(
     ?DNS_TYPE_HINFO,
     #dns_rrdata_hinfo{
@@ -541,9 +560,9 @@ encode_rdata(
     },
     _Origin,
     _RelativeNames,
-    _Opts
+    Separator
 ) ->
-    encode_quoted_strings([CPU, OS]);
+    encode_quoted_strings([CPU, OS], Separator);
 encode_rdata(
     ?DNS_TYPE_RP,
     #dns_rrdata_rp{
@@ -552,11 +571,11 @@ encode_rdata(
     },
     Origin,
     RelativeNames,
-    _Opts
+    Separator
 ) ->
     MboxStr = encode_dname(dns:dname_to_lower(Mbox), Origin, RelativeNames),
     TxtStr = encode_dname(dns:dname_to_lower(Txt), Origin, RelativeNames),
-    join_rdata_fields([MboxStr, TxtStr]);
+    join_rdata_fields([MboxStr, TxtStr], Separator);
 encode_rdata(
     ?DNS_TYPE_AFSDB,
     #dns_rrdata_afsdb{
@@ -565,11 +584,11 @@ encode_rdata(
     },
     Origin,
     RelativeNames,
-    _Opts
+    Separator
 ) ->
     SubtypeBin = integer_to_binary(Subtype),
     HostnameStr = encode_dname(dns:dname_to_lower(Hostname), Origin, RelativeNames),
-    join_rdata_fields([SubtypeBin, HostnameStr]);
+    join_rdata_fields([SubtypeBin, HostnameStr], Separator);
 encode_rdata(
     ?DNS_TYPE_RT,
     #dns_rrdata_rt{
@@ -578,11 +597,11 @@ encode_rdata(
     },
     Origin,
     RelativeNames,
-    _Opts
+    Separator
 ) ->
     PrefBin = integer_to_binary(Preference),
     HostStr = encode_dname(dns:dname_to_lower(Host), Origin, RelativeNames),
-    join_rdata_fields([PrefBin, HostStr]);
+    join_rdata_fields([PrefBin, HostStr], Separator);
 encode_rdata(
     ?DNS_TYPE_KX,
     #dns_rrdata_kx{
@@ -591,18 +610,24 @@ encode_rdata(
     },
     Origin,
     RelativeNames,
-    _Opts
+    Separator
 ) ->
     PrefBin = integer_to_binary(Preference),
     ExchangeStr = encode_dname(dns:dname_to_lower(Exchange), Origin, RelativeNames),
-    join_rdata_fields([PrefBin, ExchangeStr]);
-encode_rdata(?DNS_TYPE_DNAME, #dns_rrdata_dname{dname = DName}, Origin, RelativeNames, _Opts) ->
+    join_rdata_fields([PrefBin, ExchangeStr], Separator);
+encode_rdata(
+    ?DNS_TYPE_DNAME,
+    #dns_rrdata_dname{dname = DName},
+    Origin,
+    RelativeNames,
+    _Separator
+) ->
     encode_dname(dns:dname_to_lower(DName), Origin, RelativeNames);
-encode_rdata(?DNS_TYPE_MB, #dns_rrdata_mb{madname = DName}, Origin, RelativeNames, _Opts) ->
+encode_rdata(?DNS_TYPE_MB, #dns_rrdata_mb{madname = DName}, Origin, RelativeNames, _Separator) ->
     encode_dname(dns:dname_to_lower(DName), Origin, RelativeNames);
-encode_rdata(?DNS_TYPE_MG, #dns_rrdata_mg{madname = DName}, Origin, RelativeNames, _Opts) ->
+encode_rdata(?DNS_TYPE_MG, #dns_rrdata_mg{madname = DName}, Origin, RelativeNames, _Separator) ->
     encode_dname(dns:dname_to_lower(DName), Origin, RelativeNames);
-encode_rdata(?DNS_TYPE_MR, #dns_rrdata_mr{newname = DName}, Origin, RelativeNames, _Opts) ->
+encode_rdata(?DNS_TYPE_MR, #dns_rrdata_mr{newname = DName}, Origin, RelativeNames, _Separator) ->
     encode_dname(dns:dname_to_lower(DName), Origin, RelativeNames);
 encode_rdata(
     ?DNS_TYPE_MINFO,
@@ -612,11 +637,11 @@ encode_rdata(
     },
     Origin,
     RelativeNames,
-    _Opts
+    Separator
 ) ->
     RMailbxStr = encode_dname(dns:dname_to_lower(RMailbx), Origin, RelativeNames),
     EmailBxStr = encode_dname(dns:dname_to_lower(EmailBx), Origin, RelativeNames),
-    join_rdata_fields([RMailbxStr, EmailBxStr]);
+    join_rdata_fields([RMailbxStr, EmailBxStr], Separator);
 encode_rdata(
     ?DNS_TYPE_DS,
     #dns_rrdata_ds{
@@ -627,9 +652,9 @@ encode_rdata(
     },
     _Origin,
     _RelativeNames,
-    _Opts
+    Separator
 ) ->
-    encode_key_record(KeyTag, Alg, DigestType, Digest, hex);
+    encode_key_record(KeyTag, Alg, DigestType, Digest, hex, Separator);
 encode_rdata(
     ?DNS_TYPE_CDS,
     #dns_rrdata_cds{
@@ -640,9 +665,9 @@ encode_rdata(
     },
     _Origin,
     _RelativeNames,
-    _Opts
+    Separator
 ) ->
-    encode_key_record(KeyTag, Alg, DigestType, Digest, hex);
+    encode_key_record(KeyTag, Alg, DigestType, Digest, hex, Separator);
 encode_rdata(
     ?DNS_TYPE_DLV,
     #dns_rrdata_dlv{
@@ -653,9 +678,9 @@ encode_rdata(
     },
     _Origin,
     _RelativeNames,
-    _Opts
+    Separator
 ) ->
-    encode_key_record(KeyTag, Alg, DigestType, Digest, hex);
+    encode_key_record(KeyTag, Alg, DigestType, Digest, hex, Separator);
 encode_rdata(
     ?DNS_TYPE_DNSKEY,
     #dns_rrdata_dnskey{
@@ -666,9 +691,9 @@ encode_rdata(
     },
     _Origin,
     _RelativeNames,
-    _Opts
+    Separator
 ) ->
-    encode_key_record(Flags, Protocol, Alg, PublicKey, base64);
+    encode_key_record(Flags, Protocol, Alg, PublicKey, base64, Separator);
 encode_rdata(
     ?DNS_TYPE_CDNSKEY,
     #dns_rrdata_cdnskey{
@@ -679,9 +704,9 @@ encode_rdata(
     },
     _Origin,
     _RelativeNames,
-    _Opts
+    Separator
 ) ->
-    encode_key_record(Flags, Protocol, Alg, PublicKey, base64);
+    encode_key_record(Flags, Protocol, Alg, PublicKey, base64, Separator);
 encode_rdata(
     ?DNS_TYPE_RRSIG,
     #dns_rrdata_rrsig{
@@ -697,7 +722,7 @@ encode_rdata(
     },
     Origin,
     RelativeNames,
-    _Opts
+    Separator
 ) ->
     TypeCoveredBin = encode_type(TypeCovered),
     AlgBin = integer_to_binary(Alg),
@@ -708,17 +733,20 @@ encode_rdata(
     KeyTagBin = integer_to_binary(KeyTag),
     SignersNameStr = encode_dname(dns:dname_to_lower(SignersName), Origin, RelativeNames),
     SignatureB64 = base64:encode(Signature),
-    join_rdata_fields([
-        TypeCoveredBin,
-        AlgBin,
-        LabelsBin,
-        OriginalTTLBin,
-        ExpirationBin,
-        InceptionBin,
-        KeyTagBin,
-        SignersNameStr,
-        SignatureB64
-    ]);
+    join_rdata_fields(
+        [
+            TypeCoveredBin,
+            AlgBin,
+            LabelsBin,
+            OriginalTTLBin,
+            ExpirationBin,
+            InceptionBin,
+            KeyTagBin,
+            SignersNameStr,
+            SignatureB64
+        ],
+        Separator
+    );
 encode_rdata(
     ?DNS_TYPE_NSEC,
     #dns_rrdata_nsec{
@@ -727,11 +755,11 @@ encode_rdata(
     },
     Origin,
     RelativeNames,
-    _Opts
+    Separator
 ) ->
     NextDNameStr = encode_dname(dns:dname_to_lower(NextDName), Origin, RelativeNames),
     TypeStrs = [encode_type(T) || T <- Types],
-    join_rdata_fields([NextDNameStr | TypeStrs]);
+    join_rdata_fields([NextDNameStr | TypeStrs], Separator);
 encode_rdata(
     ?DNS_TYPE_NSEC3,
     #dns_rrdata_nsec3{
@@ -744,7 +772,7 @@ encode_rdata(
     },
     _Origin,
     _RelativeNames,
-    _Opts
+    Separator
 ) ->
     HashAlgBin = integer_to_binary(HashAlg),
     FlagsBin = integer_to_binary(
@@ -757,7 +785,9 @@ encode_rdata(
     SaltHex = encode_salt_hex(Salt),
     HashHex = base32:encode(Hash, [hex]),
     TypeBins = [encode_type(T) || T <- Types],
-    join_rdata_fields([HashAlgBin, FlagsBin, IterationsBin, SaltHex, HashHex | TypeBins]);
+    join_rdata_fields(
+        [HashAlgBin, FlagsBin, IterationsBin, SaltHex, HashHex | TypeBins], Separator
+    );
 encode_rdata(
     ?DNS_TYPE_NSEC3PARAM,
     #dns_rrdata_nsec3param{
@@ -768,13 +798,13 @@ encode_rdata(
     },
     _Origin,
     _RelativeNames,
-    _Opts
+    Separator
 ) ->
     HashAlgBin = integer_to_binary(HashAlg),
     FlagsBin = integer_to_binary(Flags),
     IterationsBin = integer_to_binary(Iterations),
     SaltHex = encode_salt_hex(Salt),
-    join_rdata_fields([HashAlgBin, FlagsBin, IterationsBin, SaltHex]);
+    join_rdata_fields([HashAlgBin, FlagsBin, IterationsBin, SaltHex], Separator);
 encode_rdata(
     ?DNS_TYPE_SSHFP,
     #dns_rrdata_sshfp{
@@ -784,12 +814,12 @@ encode_rdata(
     },
     _Origin,
     _RelativeNames,
-    _Opts
+    Separator
 ) ->
     AlgBin = integer_to_binary(Alg),
     FpTypeBin = integer_to_binary(FpType),
     FpHex = binary:encode_hex(Fp),
-    join_rdata_fields([AlgBin, FpTypeBin, FpHex]);
+    join_rdata_fields([AlgBin, FpTypeBin, FpHex], Separator);
 encode_rdata(
     ?DNS_TYPE_TLSA,
     #dns_rrdata_tlsa{
@@ -800,13 +830,13 @@ encode_rdata(
     },
     _Origin,
     _RelativeNames,
-    _Opts
+    Separator
 ) ->
     UsageBin = integer_to_binary(Usage),
     SelectorBin = integer_to_binary(Selector),
     MatchingTypeBin = integer_to_binary(MatchingType),
     CertHex = binary:encode_hex(Cert),
-    join_rdata_fields([UsageBin, SelectorBin, MatchingTypeBin, CertHex]);
+    join_rdata_fields([UsageBin, SelectorBin, MatchingTypeBin, CertHex], Separator);
 encode_rdata(
     ?DNS_TYPE_SMIMEA,
     #dns_rrdata_smimea{
@@ -817,14 +847,14 @@ encode_rdata(
     },
     _Origin,
     _RelativeNames,
-    _Opts
+    Separator
 ) ->
     %% Same format as TLSA
     UsageBin = integer_to_binary(Usage),
     SelectorBin = integer_to_binary(Selector),
     MatchingTypeBin = integer_to_binary(MatchingType),
     CertHex = binary:encode_hex(Cert),
-    join_rdata_fields([UsageBin, SelectorBin, MatchingTypeBin, CertHex]);
+    join_rdata_fields([UsageBin, SelectorBin, MatchingTypeBin, CertHex], Separator);
 encode_rdata(
     ?DNS_TYPE_CERT,
     #dns_rrdata_cert{
@@ -835,25 +865,30 @@ encode_rdata(
     },
     _Origin,
     _RelativeNames,
-    _Opts
+    Separator
 ) ->
     TypeBin = integer_to_binary(Type),
     KeyTagBin = integer_to_binary(KeyTag),
     AlgBin = integer_to_binary(Alg),
     %% CERT can be base64 or hex, prefer base64
     CertBin = base64:encode(Cert),
-    join_rdata_fields([TypeBin, KeyTagBin, AlgBin, CertBin]);
-encode_rdata(?DNS_TYPE_DHCID, #dns_rrdata_dhcid{data = Data}, _Origin, _RelativeNames, _Opts) ->
-    DataB64 = base64:encode(Data),
-    binary_to_list(DataB64);
+    join_rdata_fields([TypeBin, KeyTagBin, AlgBin, CertBin], Separator);
 encode_rdata(
-    ?DNS_TYPE_OPENPGPKEY, #dns_rrdata_openpgpkey{data = Data}, _Origin, _RelativeNames, _Opts
+    ?DNS_TYPE_DHCID,
+    #dns_rrdata_dhcid{data = Data},
+    _Origin,
+    _RelativeNames,
+    _Separator
 ) ->
-    DataB64 = base64:encode(Data),
-    binary_to_list(DataB64);
-encode_rdata(?DNS_TYPE_WALLET, #dns_rrdata_wallet{data = Data}, _Origin, _RelativeNames, _Opts) ->
-    DataB64 = base64:encode(Data),
-    binary_to_list(DataB64);
+    base64:encode(Data);
+encode_rdata(
+    ?DNS_TYPE_OPENPGPKEY, #dns_rrdata_openpgpkey{data = Data}, _Origin, _RelativeNames, _Separator
+) ->
+    base64:encode(Data);
+encode_rdata(
+    ?DNS_TYPE_WALLET, #dns_rrdata_wallet{data = Data}, _Origin, _RelativeNames, _Separator
+) ->
+    base64:encode(Data);
 encode_rdata(
     ?DNS_TYPE_URI,
     #dns_rrdata_uri{
@@ -863,19 +898,22 @@ encode_rdata(
     },
     _Origin,
     _RelativeNames,
-    _Opts
+    Separator
 ) ->
     PriorityBin = integer_to_binary(Priority),
     WeightBin = integer_to_binary(Weight),
-    TargetBin = binary_to_list(Target),
-    join_rdata_fields([PriorityBin, WeightBin, TargetBin]);
+    join_rdata_fields([PriorityBin, WeightBin, Target], Separator);
 encode_rdata(
-    ?DNS_TYPE_RESINFO, #dns_rrdata_resinfo{data = Strings}, _Origin, _RelativeNames, _Opts
+    ?DNS_TYPE_RESINFO, #dns_rrdata_resinfo{data = Strings}, _Origin, _RelativeNames, Separator
 ) ->
-    encode_quoted_strings(Strings);
-encode_rdata(?DNS_TYPE_EUI48, #dns_rrdata_eui48{address = Addr}, _Origin, _RelativeNames, _Opts) ->
+    encode_quoted_strings(Strings, Separator);
+encode_rdata(
+    ?DNS_TYPE_EUI48, #dns_rrdata_eui48{address = Addr}, _Origin, _RelativeNames, _Separator
+) ->
     binary:encode_hex(Addr);
-encode_rdata(?DNS_TYPE_EUI64, #dns_rrdata_eui64{address = Addr}, _Origin, _RelativeNames, _Opts) ->
+encode_rdata(
+    ?DNS_TYPE_EUI64, #dns_rrdata_eui64{address = Addr}, _Origin, _RelativeNames, _Separator
+) ->
     binary:encode_hex(Addr);
 encode_rdata(
     ?DNS_TYPE_ZONEMD,
@@ -887,13 +925,13 @@ encode_rdata(
     },
     _Origin,
     _RelativeNames,
-    _Opts
+    Separator
 ) ->
     SerialBin = integer_to_binary(Serial),
     SchemeBin = integer_to_binary(Scheme),
     AlgorithmBin = integer_to_binary(Algorithm),
     HashHex = binary:encode_hex(Hash),
-    join_rdata_fields([SerialBin, SchemeBin, AlgorithmBin, HashHex]);
+    join_rdata_fields([SerialBin, SchemeBin, AlgorithmBin, HashHex], Separator);
 encode_rdata(
     ?DNS_TYPE_CSYNC,
     #dns_rrdata_csync{
@@ -903,12 +941,12 @@ encode_rdata(
     },
     _Origin,
     _RelativeNames,
-    _Opts
+    Separator
 ) ->
     SOASerialBin = integer_to_binary(SOASerial),
     FlagsBin = integer_to_binary(Flags),
     TypeStrs = [encode_type(T) || T <- Types],
-    join_rdata_fields([SOASerialBin, FlagsBin | TypeStrs]);
+    join_rdata_fields([SOASerialBin, FlagsBin | TypeStrs], Separator);
 encode_rdata(
     ?DNS_TYPE_DSYNC,
     #dns_rrdata_dsync{
@@ -919,13 +957,13 @@ encode_rdata(
     },
     Origin,
     RelativeNames,
-    _Opts
+    Separator
 ) ->
     RRTypeStr = encode_type(RRType),
     SchemeBin = integer_to_binary(Scheme),
     PortBin = integer_to_binary(Port),
     TargetStr = encode_dname(dns:dname_to_lower(Target), Origin, RelativeNames),
-    join_rdata_fields([RRTypeStr, SchemeBin, PortBin, TargetStr]);
+    join_rdata_fields([RRTypeStr, SchemeBin, PortBin, TargetStr], Separator);
 encode_rdata(
     ?DNS_TYPE_SVCB,
     #dns_rrdata_svcb{
@@ -935,9 +973,9 @@ encode_rdata(
     },
     Origin,
     RelativeNames,
-    _Opts
+    Separator
 ) ->
-    encode_svcb_record(Priority, Target, Params, Origin, RelativeNames);
+    encode_svcb_record(Priority, Target, Params, Origin, RelativeNames, Separator);
 encode_rdata(
     ?DNS_TYPE_HTTPS,
     #dns_rrdata_https{
@@ -947,9 +985,9 @@ encode_rdata(
     },
     Origin,
     RelativeNames,
-    _Opts
+    Separator
 ) ->
-    encode_svcb_record(Priority, Target, Params, Origin, RelativeNames);
+    encode_svcb_record(Priority, Target, Params, Origin, RelativeNames, Separator);
 %% LOC record (RFC 1876) - complex encoding
 %% TODO: Implement proper LOC encoding with degrees/minutes/seconds format
 %% Current implementation uses simplified integer format
@@ -965,7 +1003,7 @@ encode_rdata(
     },
     _Origin,
     _RelativeNames,
-    _Opts
+    Separator
 ) ->
     %% LOC format: lat lon alt size horiz_prec vert_prec
     %% Coordinates are in 1/1000th of a second
@@ -978,7 +1016,7 @@ encode_rdata(
     LatBin = integer_to_binary(Lat),
     LonBin = integer_to_binary(Lon),
     AltBin = integer_to_binary(Alt),
-    join_rdata_fields([LatBin, LonBin, AltBin, SizeBin, HorizBin, VertBin]);
+    join_rdata_fields([LatBin, LonBin, AltBin, SizeBin, HorizBin, VertBin], Separator);
 encode_rdata(
     ?DNS_TYPE_IPSECKEY,
     #dns_rrdata_ipseckey{
@@ -989,7 +1027,7 @@ encode_rdata(
     },
     Origin,
     RelativeNames,
-    _Opts
+    Separator
 ) ->
     PrecedenceBin = integer_to_binary(Precedence),
     AlgBin = integer_to_binary(Alg),
@@ -1006,7 +1044,7 @@ encode_rdata(
                 encode_dname(dns:dname_to_lower(DName), Origin, RelativeNames)
         end,
     PublicKeyHex = binary:encode_hex(PublicKey),
-    join_rdata_fields([PrecedenceBin, AlgBin, GatewayStr, PublicKeyHex]);
+    join_rdata_fields([PrecedenceBin, AlgBin, GatewayStr, PublicKeyHex], Separator);
 encode_rdata(
     ?DNS_TYPE_KEY,
     #dns_rrdata_key{
@@ -1020,7 +1058,7 @@ encode_rdata(
     },
     _Origin,
     _RelativeNames,
-    _Opts
+    Separator
 ) ->
     %% Construct flags: Type (2 bits) | Reserved (1 bit) | XT (1 bit) | Reserved (2 bits) |
     %%                  NameType (2 bits) | Reserved (4 bits) | Sig (4 bits)
@@ -1031,7 +1069,7 @@ encode_rdata(
     %% public_key can be iodata, convert to binary first
     PublicKeyBin = iolist_to_binary(PublicKey),
     PublicKeyB64 = base64:encode(PublicKeyBin),
-    join_rdata_fields([FlagsBin, ProtocolBin, AlgBin, PublicKeyB64]);
+    join_rdata_fields([FlagsBin, ProtocolBin, AlgBin, PublicKeyB64], Separator);
 encode_rdata(
     ?DNS_TYPE_NXT,
     #dns_rrdata_nxt{
@@ -1040,11 +1078,11 @@ encode_rdata(
     },
     Origin,
     RelativeNames,
-    _Opts
+    Separator
 ) ->
     DNameStr = encode_dname(dns:dname_to_lower(DName), Origin, RelativeNames),
     TypeBins = [encode_type(T) || T <- Types],
-    join_rdata_fields([DNameStr | TypeBins]);
+    join_rdata_fields([DNameStr | TypeBins], Separator);
 encode_rdata(
     ?DNS_TYPE_TSIG,
     #dns_rrdata_tsig{
@@ -1058,7 +1096,7 @@ encode_rdata(
     },
     Origin,
     RelativeNames,
-    _Opts
+    Separator
 ) ->
     AlgStr = encode_dname(dns:dname_to_lower(Alg), Origin, RelativeNames),
     TimeBin = integer_to_binary(Time),
@@ -1077,20 +1115,23 @@ encode_rdata(
             _ ->
                 base64:encode(Other)
         end,
-    join_rdata_fields([
-        AlgStr,
-        TimeBin,
-        FudgeBin,
-        MACSizeBin,
-        MACB64,
-        MsgIDBin,
-        ErrBin,
-        OtherLenBin,
-        OtherBin
-    ]);
+    join_rdata_fields(
+        [
+            AlgStr,
+            TimeBin,
+            FudgeBin,
+            MACSizeBin,
+            MACB64,
+            MsgIDBin,
+            ErrBin,
+            OtherLenBin,
+            OtherBin
+        ],
+        Separator
+    );
 %% RFC 3597 fallback for unknown types
-encode_rdata(_Type, Data, _Origin, _RelativeNames, _Opts) when is_binary(Data) ->
+encode_rdata(_Type, Data, _Origin, _RelativeNames, Separator) when is_binary(Data) ->
     Length = byte_size(Data),
     Hex = binary:encode_hex(Data),
     LengthBin = integer_to_binary(Length),
-    <<"\\# ", LengthBin/binary, " ", Hex/binary>>.
+    [<<"\\#">>, Separator, LengthBin, Separator, Hex].
