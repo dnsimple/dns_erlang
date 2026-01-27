@@ -4,6 +4,7 @@
 -behaviour(ct_suite).
 
 -include_lib("stdlib/include/assert.hrl").
+-include_lib("proper/include/proper.hrl").
 -include_lib("dns_erlang/include/dns.hrl").
 
 -spec all() -> [ct_suite:ct_test_def()].
@@ -21,7 +22,8 @@ groups() ->
             {group, to_wire_tests},
             {group, from_wire_tests},
             {group, compression_tests},
-            {group, reversibility_tests}
+            {group, reversibility_tests},
+            {group, property_tests}
         ]},
         {split_tests, [parallel], [
             split_basic,
@@ -88,6 +90,16 @@ groups() ->
             split_join_roundtrip,
             wire_roundtrip,
             wire_roundtrip_with_escapes
+        ]},
+        {property_tests, [parallel], [
+            prop_split_join_roundtrip,
+            prop_join_split_roundtrip,
+            prop_wire_roundtrip,
+            prop_escape_unescape_roundtrip,
+            prop_case_idempotent,
+            prop_case_roundtrip,
+            prop_are_equal_case_insensitive,
+            prop_are_equal_labels_case_insensitive
         ]}
     ].
 
@@ -1116,3 +1128,119 @@ compression_errors(_) ->
     SmallMsg = <<7, "example", 3, "com", 0>>,
     PointerBeyond = <<192, 20>>,
     ?assertError({bad_pointer, 20}, dns_domain:from_wire(SmallMsg, PointerBeyond)).
+
+%% ============================================================================
+%% Property Tests
+%% ============================================================================
+
+prop_split_join_roundtrip(_Config) ->
+    Property = ?FORALL(
+        Labels,
+        dns_prop_generator:valid_labels(),
+        dns_domain:are_equal_labels(Labels, dns_domain:split(dns_domain:join(Labels)))
+    ),
+    run_prop(?FUNCTION_NAME, Property, 1000).
+
+prop_join_split_roundtrip(_Config) ->
+    Property = ?FORALL(
+        Name,
+        dns_prop_generator:valid_dname(),
+        dns_domain:are_equal(Name, dns_domain:join(dns_domain:split(Name)))
+    ),
+    run_prop(?FUNCTION_NAME, Property, 1000).
+
+prop_wire_roundtrip(_Config) ->
+    Property = ?FORALL(
+        Name,
+        dns_prop_generator:valid_dname(),
+        begin
+            Wire = dns_domain:to_wire(Name),
+            {Decoded, <<>>} = dns_domain:from_wire(Wire),
+            dns_domain:are_equal(Name, Decoded)
+        end
+    ),
+    run_prop(?FUNCTION_NAME, Property, 1000).
+
+prop_escape_unescape_roundtrip(_Config) ->
+    Property = ?FORALL(
+        Label,
+        dns_prop_generator:valid_label(),
+        Label =:= dns_domain:unescape_label(dns_domain:escape_label(Label))
+    ),
+    run_prop(?FUNCTION_NAME, Property, 1000).
+
+prop_case_idempotent(_Config) ->
+    Property = ?FORALL(
+        Name,
+        dns_prop_generator:valid_dname(),
+        begin
+            Lower = dns_domain:to_lower(Name),
+            Upper = dns_domain:to_upper(Name),
+            %% both should be idempotent
+            Lower =:= dns_domain:to_lower(Lower) andalso
+                Upper =:= dns_domain:to_upper(Upper)
+        end
+    ),
+    run_prop(?FUNCTION_NAME, Property, 1000).
+
+prop_case_roundtrip(_Config) ->
+    Property = ?FORALL(
+        Name,
+        dns_prop_generator:valid_dname(),
+        begin
+            Lower = dns_domain:to_lower(Name),
+            Upper = dns_domain:to_upper(Name),
+            %% Roundtrip: to_upper(to_lower(X)) = to_upper(X)
+            dns_domain:to_upper(Lower) =:= Upper andalso
+                %% Roundtrip: to_lower(to_upper(X)) = to_lower(X)
+                dns_domain:to_lower(Upper) =:= Lower
+        end
+    ),
+    run_prop(?FUNCTION_NAME, Property, 1000).
+
+prop_are_equal_case_insensitive(_Config) ->
+    Property = ?FORALL(
+        Name,
+        dns_prop_generator:valid_dname(),
+        begin
+            Lower = dns_domain:to_lower(Name),
+            Upper = dns_domain:to_upper(Name),
+            %% Name should equal its lower/upper case versions
+            dns_domain:are_equal(Name, Lower) andalso
+                dns_domain:are_equal(Name, Upper) andalso
+                dns_domain:are_equal(Lower, Upper)
+        end
+    ),
+    run_prop(?FUNCTION_NAME, Property, 1000).
+
+prop_are_equal_labels_case_insensitive(_Config) ->
+    Property = ?FORALL(
+        Labels,
+        dns_prop_generator:valid_labels(),
+        begin
+            LowerLabels = [dns_domain:to_lower(L) || L <- Labels],
+            UpperLabels = [dns_domain:to_upper(L) || L <- Labels],
+            %% Labels should equal their lower/upper case versions
+            dns_domain:are_equal_labels(Labels, LowerLabels) andalso
+                dns_domain:are_equal_labels(Labels, UpperLabels) andalso
+                dns_domain:are_equal_labels(LowerLabels, UpperLabels)
+        end
+    ),
+    run_prop(?FUNCTION_NAME, Property, 1000).
+
+%% ============================================================================
+%% Property Test Helper
+%% ============================================================================
+
+run_prop(PropName, Property, NumTests) ->
+    Opts = [
+        quiet,
+        long_result,
+        {start_size, 2},
+        {numtests, NumTests},
+        {numworkers, erlang:system_info(schedulers_online)}
+    ],
+    case proper:quickcheck(proper:conjunction([{PropName, Property}]), Opts) of
+        true -> ok;
+        Res -> ct:fail(Res)
+    end.
