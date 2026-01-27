@@ -2499,7 +2499,7 @@ parse_mr_record_relative(_Config) ->
 
 parse_root_domain(_Config) ->
     %% Test root domain (.)
-    Zone = <<".\t3600\tIN\tNS\ta.root-servers.net.\n">>,
+    Zone = <<". 3600 IN NS a.root-servers.net.\n">>,
     {ok, [RR]} = dns_zone:parse_string(Zone),
     ?assertEqual(<<".">>, RR#dns_rr.name).
 
@@ -3255,7 +3255,7 @@ parse_invalid_aaaa_record(_Config) ->
 
 parse_zone_only_whitespace(_Config) ->
     %% Zone with only whitespace should return empty list
-    Zone = <<"   \n\t\n  \n">>,
+    Zone = <<"   \n \n  \n">>,
     {ok, []} = dns_zone:parse_string(Zone, #{origin => <<"example.com.">>}).
 
 %% ============================================================================
@@ -4262,7 +4262,7 @@ encode_string_with_sorting(_Config) ->
     %% SOA should come first
     SOAPos = string:str(ZoneList, "SOA"),
     NSPos = string:str(ZoneList, "NS"),
-    APos = string:str(ZoneList, "\tA\t"),
+    APos = string:str(ZoneList, " A "),
     ?assert(SOAPos > 0),
     ?assert(NSPos > SOAPos),
     ?assert(APos > NSPos).
@@ -4323,14 +4323,14 @@ encode_file_error(_Config) ->
 %% ============================================================================
 
 encode_round_trip_simple(_Config) ->
-    ZoneData = <<"example.com.\t3600\tIN\tA\t192.0.2.1\n">>,
+    ZoneData = <<"example.com. 3600 IN A 192.0.2.1\n">>,
     {ok, [RR]} = dns_zone:parse_string(ZoneData),
     Encoded = dns_zone:encode_rr(RR),
     ?assertNotEqual(nomatch, string:find(Encoded, "192.0.2.1")).
 
 encode_round_trip_complex(_Config) ->
     ZoneData =
-        <<"$ORIGIN example.com.\n$TTL 3600\n@\tIN\tSOA\tns1.example.com.\tadmin.example.com.\t(\n\t\t\t2024010101\n\t\t\t3600\n\t\t\t1800\n\t\t\t604800\n\t\t\t86400\n\t\t)\n@\tIN\tNS\tns1.example.com.\nwww\tIN\tA\t192.0.2.1\n">>,
+        <<"$ORIGIN example.com.\n$TTL 3600\n@ IN SOA ns1.example.com. admin.example.com. (\n   2024010101\n   3600\n   1800\n   604800\n   86400\n  )\n@ IN NS ns1.example.com.\nwww IN A 192.0.2.1\n">>,
     {ok, Records} = dns_zone:parse_string(ZoneData),
     Encoded = dns_zone:encode_string(Records, <<"example.com.">>, #{}),
     EncodedStr = iolist_to_binary(Encoded),

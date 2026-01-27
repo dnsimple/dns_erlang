@@ -42,21 +42,21 @@ encode_rr(#dns_rr{name = Name, type = Type, class = Class, ttl = TTL, data = Dat
     EncodedClass = maybe_encode_class(Class, OmitClass),
     TypeBin = encode_type(Type),
     RDataStr = encode_rdata(Type, Data, LwrOrigin, RelativeNames, Opts),
-    %% Combine all parts with tabs
+    %% Combine all parts with spaces
     %% Format: owner [TTL] [class] type rdata
     %% If TTL is empty and class is omitted, we still need proper spacing
     Tail =
         case EncodedClass of
             <<>> ->
-                [TypeBin, <<"\t">>, RDataStr];
+                [TypeBin, <<" ">>, RDataStr];
             _ ->
-                [EncodedClass, <<"\t">>, TypeBin, <<"\t">>, RDataStr]
+                [EncodedClass, <<" ">>, TypeBin, <<" ">>, RDataStr]
         end,
     case EncodedTTL of
         <<>> ->
-            [OwnerName, <<"\t">> | Tail];
+            [OwnerName, <<" ">> | Tail];
         _ ->
-            [OwnerName, <<"\t">>, EncodedTTL, <<"\t">> | Tail]
+            [OwnerName, <<" ">>, EncodedTTL, <<" ">> | Tail]
     end.
 
 -spec encode_rdata(dns:type(), dns:rrdata()) -> iodata().
@@ -408,7 +408,7 @@ encode_svcb_record(Priority, Target, Params, Origin, RelativeNames) ->
 %% Helper: Join RDATA fields with tabs
 -spec join_rdata_fields([iodata()]) -> iodata().
 join_rdata_fields(Fields) ->
-    lists:join(<<"\t">>, Fields).
+    lists:join(<<" ">>, Fields).
 
 %% Helper: Encode DS/CDS/DLV/DNSKEY/CDNSKEY record
 %% Encodes 3 integer fields and a data field (hex or base64 encoded)
@@ -448,7 +448,7 @@ encode_rdata(
 ) ->
     PrefBin = integer_to_binary(Pref),
     ExchangeStr = encode_dname(dns:dname_to_lower(Exchange), Origin, RelativeNames),
-    [PrefBin, <<"\t">> | ExchangeStr];
+    [PrefBin, <<" ">> | ExchangeStr];
 encode_rdata(?DNS_TYPE_TXT, #dns_rrdata_txt{txt = Strings}, _Origin, _RelativeNames, _Opts) ->
     encode_quoted_strings(Strings);
 encode_rdata(?DNS_TYPE_SPF, #dns_rrdata_spf{spf = Strings}, _Origin, _RelativeNames, _Opts) ->

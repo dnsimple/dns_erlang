@@ -611,7 +611,7 @@ valid_zone_string() ->
                                 end,
                             RDataStr = format_rdata(Type, Data),
                             lists:flatten(
-                                io_lib:format("~s\t~s\t~s\t~s\t~s\n", [
+                                io_lib:format("~s ~s ~s ~s ~s\n", [
                                     NameStr, TTLStr, ClassStr, TypeStr, RDataStr
                                 ])
                             )

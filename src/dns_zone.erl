@@ -84,7 +84,7 @@ RR = #dns_rr{
     data = #dns_rrdata_a{ip = {192, 0, 2, 1}}
 },
 Line = dns_zone:encode_rr(RR, #{origin => <<"example.com.">>, relative_names => true}).
-% Returns: "www\t3600\tIN\tA\t192.0.2.1"
+% Returns: "www 3600 IN A 192.0.2.1"
 
 % Encode a complete zone
 Records = [...],
@@ -323,7 +323,7 @@ RR = #dns_rr{
     data = #dns_rrdata_a{ip = {192, 0, 2, 1}}
 },
 Line = dns_zone:encode_rr(RR).
-% Returns: "www.example.com.\t3600\tIN\tA\t192.0.2.1"
+% Returns: "www.example.com. 3600 IN A 192.0.2.1"
 ```
 """).
 -spec encode_rr(dns:rr()) -> iodata().
@@ -350,7 +350,7 @@ RR = #dns_rr{
     data = #dns_rrdata_a{ip = {192, 0, 2, 1}}
 },
 Line = dns_zone:encode_rr(RR, #{origin => <<"example.com.">>, relative_names => true}).
-% Returns: "www\t3600\tIN\tA\t192.0.2.1"
+% Returns: "www 3600 IN A 192.0.2.1"
 ```
 """).
 -spec encode_rr(dns:rr(), encode_options()) -> iodata().
