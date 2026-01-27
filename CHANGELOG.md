@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## main
 
+- Add DNS zone file encoding functionality — convert DNS resource records to RFC 1035 zone file format
+
 ## 4.9.1
 
 - Fix a bug that would incorrectly calculate pointers, introduced in 4.9.1
