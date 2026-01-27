@@ -1085,6 +1085,80 @@ build_rdata("DS", RData, Ctx) ->
         _ ->
             {error, make_rdata_error(<<"DS">>, RData, Ctx)}
     end;
+build_rdata("CDS", RData, Ctx) ->
+    %% CDS format: keytag algorithm digest-type digest(hex string)
+    %% RFC 7344 - Child DS
+    %% Same format as DS
+    case RData of
+        [{int, KeyTag}, {int, Alg}, {int, DigestType}, {string, DigestHex}] when
+            is_integer(KeyTag), is_integer(Alg), is_integer(DigestType), is_list(DigestHex)
+        ->
+            case hex_to_binary(DigestHex) of
+                {ok, Digest} ->
+                    {ok, #dns_rrdata_cds{
+                        keytag = KeyTag,
+                        alg = Alg,
+                        digest_type = DigestType,
+                        digest = Digest
+                    }};
+                {error, _Reason} ->
+                    {error, make_rdata_error(<<"CDS">>, RData, Ctx)}
+            end;
+        [{int, KeyTag}, {int, Alg}, {int, DigestType}, {domain, DigestHex}] when
+            is_integer(KeyTag), is_integer(Alg), is_integer(DigestType), is_list(DigestHex)
+        ->
+            %% Hex strings are unquoted and may be parsed as domain names
+            case hex_to_binary(DigestHex) of
+                {ok, Digest} ->
+                    {ok, #dns_rrdata_cds{
+                        keytag = KeyTag,
+                        alg = Alg,
+                        digest_type = DigestType,
+                        digest = Digest
+                    }};
+                {error, _Reason} ->
+                    {error, make_rdata_error(<<"CDS">>, RData, Ctx)}
+            end;
+        _ ->
+            {error, make_rdata_error(<<"CDS">>, RData, Ctx)}
+    end;
+build_rdata("DLV", RData, Ctx) ->
+    %% DLV format: keytag algorithm digest-type digest(hex string)
+    %% RFC 4431 - DNSSEC Lookaside Validation
+    %% Same format as DS
+    case RData of
+        [{int, KeyTag}, {int, Alg}, {int, DigestType}, {string, DigestHex}] when
+            is_integer(KeyTag), is_integer(Alg), is_integer(DigestType), is_list(DigestHex)
+        ->
+            case hex_to_binary(DigestHex) of
+                {ok, Digest} ->
+                    {ok, #dns_rrdata_dlv{
+                        keytag = KeyTag,
+                        alg = Alg,
+                        digest_type = DigestType,
+                        digest = Digest
+                    }};
+                {error, _Reason} ->
+                    {error, make_rdata_error(<<"DLV">>, RData, Ctx)}
+            end;
+        [{int, KeyTag}, {int, Alg}, {int, DigestType}, {domain, DigestHex}] when
+            is_integer(KeyTag), is_integer(Alg), is_integer(DigestType), is_list(DigestHex)
+        ->
+            %% Hex strings are unquoted and may be parsed as domain names
+            case hex_to_binary(DigestHex) of
+                {ok, Digest} ->
+                    {ok, #dns_rrdata_dlv{
+                        keytag = KeyTag,
+                        alg = Alg,
+                        digest_type = DigestType,
+                        digest = Digest
+                    }};
+                {error, _Reason} ->
+                    {error, make_rdata_error(<<"DLV">>, RData, Ctx)}
+            end;
+        _ ->
+            {error, make_rdata_error(<<"DLV">>, RData, Ctx)}
+    end;
 build_rdata("DNSKEY", RData, Ctx) ->
     %% DNSKEY format: flags protocol algorithm public-key(base64 string)
     %% RFC 4034 - DNS Public Key
@@ -1130,6 +1204,109 @@ build_rdata("DNSKEY", RData, Ctx) ->
             end;
         _ ->
             {error, make_rdata_error(<<"DNSKEY">>, RData, Ctx)}
+    end;
+build_rdata("CDNSKEY", RData, Ctx) ->
+    %% CDNSKEY format: flags protocol algorithm public-key(base64 string)
+    %% RFC 7344 - Child DNSKEY
+    %% Same format as DNSKEY
+    case RData of
+        [{int, Flags}, {int, Protocol}, {int, Alg}, {string, PublicKeyB64}] when
+            is_integer(Flags), is_integer(Protocol), is_integer(Alg), is_list(PublicKeyB64)
+        ->
+            try
+                PublicKey = base64:decode(PublicKeyB64),
+                %% Calculate keytag (RFC 4034 Appendix B)
+                KeyTag = calculate_keytag(Flags, Protocol, Alg, PublicKey),
+                {ok, #dns_rrdata_cdnskey{
+                    flags = Flags,
+                    protocol = Protocol,
+                    alg = Alg,
+                    public_key = PublicKey,
+                    keytag = KeyTag
+                }}
+            catch
+                _:_ ->
+                    {error, make_rdata_error(<<"CDNSKEY">>, RData, Ctx)}
+            end;
+        [{int, Flags}, {int, Protocol}, {int, Alg}, {domain, PublicKeyB64}] when
+            is_integer(Flags), is_integer(Protocol), is_integer(Alg), is_list(PublicKeyB64)
+        ->
+            %% Base64 strings are unquoted and may be parsed as domain names
+            try
+                PublicKey = base64:decode(PublicKeyB64),
+                %% Calculate keytag (RFC 4034 Appendix B)
+                KeyTag = calculate_keytag(Flags, Protocol, Alg, PublicKey),
+                {ok, #dns_rrdata_cdnskey{
+                    flags = Flags,
+                    protocol = Protocol,
+                    alg = Alg,
+                    public_key = PublicKey,
+                    keytag = KeyTag
+                }}
+            catch
+                _:_ ->
+                    {error, make_rdata_error(<<"CDNSKEY">>, RData, Ctx)}
+            end;
+        _ ->
+            {error, make_rdata_error(<<"CDNSKEY">>, RData, Ctx)}
+    end;
+build_rdata("KEY", RData, Ctx) ->
+    %% KEY format: flags protocol algorithm public-key(base64 string)
+    %% RFC 2535 - DNS Security Extensions
+    %% Similar to DNSKEY but with different flag structure
+    %% Base64 strings are often unquoted, so they may be parsed as labels/domains
+    case RData of
+        [{int, Flags}, {int, Protocol}, {int, Alg}, {string, PublicKeyB64}] when
+            is_integer(Flags), is_integer(Protocol), is_integer(Alg), is_list(PublicKeyB64)
+        ->
+            try
+                PublicKey = base64:decode(PublicKeyB64),
+                %% Extract flag fields from 16-bit flags value
+                %% Type (bits 0-1), XT (bit 3), NameType (bits 6-7), Sig (bits 12-15)
+                Type = (Flags bsr 14) band 16#3,
+                XT = (Flags bsr 12) band 16#1,
+                NameType = (Flags bsr 8) band 16#3,
+                Sig = Flags band 16#F,
+                {ok, #dns_rrdata_key{
+                    type = Type,
+                    xt = XT,
+                    name_type = NameType,
+                    sig = Sig,
+                    protocol = Protocol,
+                    alg = Alg,
+                    public_key = PublicKey
+                }}
+            catch
+                _:_ ->
+                    {error, make_rdata_error(<<"KEY">>, RData, Ctx)}
+            end;
+        [{int, Flags}, {int, Protocol}, {int, Alg}, {domain, PublicKeyB64}] when
+            is_integer(Flags), is_integer(Protocol), is_integer(Alg), is_list(PublicKeyB64)
+        ->
+            %% Base64 strings are unquoted and may be parsed as domain names
+            %% Convert to string and try to decode
+            try
+                PublicKey = base64:decode(PublicKeyB64),
+                %% Extract flag fields from 16-bit flags value
+                Type = (Flags bsr 14) band 16#3,
+                XT = (Flags bsr 12) band 16#1,
+                NameType = (Flags bsr 8) band 16#3,
+                Sig = Flags band 16#F,
+                {ok, #dns_rrdata_key{
+                    type = Type,
+                    xt = XT,
+                    name_type = NameType,
+                    sig = Sig,
+                    protocol = Protocol,
+                    alg = Alg,
+                    public_key = PublicKey
+                }}
+            catch
+                _:_ ->
+                    {error, make_rdata_error(<<"KEY">>, RData, Ctx)}
+            end;
+        _ ->
+            {error, make_rdata_error(<<"KEY">>, RData, Ctx)}
     end;
 build_rdata("SVCB", RData, Ctx) ->
     %% RFC 9460 - Service Binding
@@ -1272,6 +1449,147 @@ build_rdata("NSEC", RData, Ctx) ->
         _ ->
             {error, make_rdata_error(<<"NSEC">>, RData, Ctx)}
     end;
+build_rdata("NXT", RData, Ctx) ->
+    %% NXT format: next_dname type1 type2 type3 ...
+    %% RFC 2535 - DNSSEC authenticated denial of existence (obsoleted by NSEC)
+    %% Similar format to NSEC
+    case RData of
+        [{domain, NextDName} | Types] when is_list(NextDName), length(Types) > 0 ->
+            %% Parse type names - they can be rtype tokens (parsed as domain) or labels
+            TypeNums = lists:map(
+                fun
+                    ({domain, TypeName}) when is_list(TypeName) ->
+                        type_to_number(TypeName);
+                    ({rtype, TypeName}) when is_list(TypeName) ->
+                        type_to_number(TypeName);
+                    (_) ->
+                        %% Invalid type, skip or use 0
+                        0
+                end,
+                Types
+            ),
+            %% Filter out invalid types (0)
+            ValidTypes = [T || T <- TypeNums, T =/= 0],
+            NextDNameBin = resolve_name(NextDName, Ctx#parse_ctx.origin),
+            {ok, #dns_rrdata_nxt{
+                dname = NextDNameBin,
+                types = ValidTypes
+            }};
+        _ ->
+            {error, make_rdata_error(<<"NXT">>, RData, Ctx)}
+    end;
+build_rdata("NSEC3", RData, Ctx) ->
+    %% NSEC3 format: hash_alg flags iterations salt hash type1 type2 type3 ...
+    %% RFC 5155 - DNSSEC Hashed Authenticated Denial of Existence
+    %% Salt can be "-" for empty, otherwise hex string
+    %% Hash is base32hex encoded
+    case RData of
+        [{int, HashAlg}, {int, Flags}, {int, Iterations}, SaltToken, HashToken | Types] when
+            is_integer(HashAlg),
+            is_integer(Flags),
+            is_integer(Iterations),
+            length(Types) > 0
+        ->
+            %% Parse salt (can be "-" for empty, or hex string)
+            Salt =
+                case SaltToken of
+                    {string, "-"} ->
+                        <<>>;
+                    {string, SaltHex} when is_list(SaltHex) ->
+                        case hex_to_binary(SaltHex) of
+                            {ok, S} -> S;
+                            {error, _} -> <<>>
+                        end;
+                    {domain, "-"} ->
+                        <<>>;
+                    {domain, SaltHex} when is_list(SaltHex) ->
+                        case hex_to_binary(SaltHex) of
+                            {ok, S} -> S;
+                            {error, _} -> <<>>
+                        end;
+                    _ ->
+                        <<>>
+                end,
+            %% Parse hash (base32hex encoded)
+            Hash =
+                case HashToken of
+                    {string, HashB32} when is_list(HashB32) ->
+                        try
+                            base32:decode(list_to_binary(HashB32), [hex])
+                        catch
+                            _:_ -> <<>>
+                        end;
+                    {domain, HashB32} when is_list(HashB32) ->
+                        try
+                            base32:decode(list_to_binary(HashB32), [hex])
+                        catch
+                            _:_ -> <<>>
+                        end;
+                    _ ->
+                        <<>>
+                end,
+            %% Parse type names
+            TypeNums = lists:map(
+                fun
+                    ({domain, TypeName}) when is_list(TypeName) ->
+                        type_to_number(TypeName);
+                    ({rtype, TypeName}) when is_list(TypeName) ->
+                        type_to_number(TypeName);
+                    (_) ->
+                        0
+                end,
+                Types
+            ),
+            ValidTypes = [T || T <- TypeNums, T =/= 0],
+            OptOut = (Flags band 16#01) =/= 0,
+            {ok, #dns_rrdata_nsec3{
+                hash_alg = HashAlg,
+                opt_out = OptOut,
+                iterations = Iterations,
+                salt = Salt,
+                hash = Hash,
+                types = ValidTypes
+            }};
+        _ ->
+            {error, make_rdata_error(<<"NSEC3">>, RData, Ctx)}
+    end;
+build_rdata("NSEC3PARAM", RData, Ctx) ->
+    %% NSEC3PARAM format: hash_alg flags iterations salt
+    %% RFC 5155 - NSEC3 Parameters
+    %% Salt can be "-" for empty, otherwise hex string
+    case RData of
+        [{int, HashAlg}, {int, Flags}, {int, Iterations}, SaltToken] when
+            is_integer(HashAlg), is_integer(Flags), is_integer(Iterations)
+        ->
+            %% Parse salt (can be "-" for empty, or hex string)
+            Salt =
+                case SaltToken of
+                    {string, "-"} ->
+                        <<>>;
+                    {string, SaltHex} when is_list(SaltHex) ->
+                        case hex_to_binary(SaltHex) of
+                            {ok, S} -> S;
+                            {error, _} -> <<>>
+                        end;
+                    {domain, "-"} ->
+                        <<>>;
+                    {domain, SaltHex} when is_list(SaltHex) ->
+                        case hex_to_binary(SaltHex) of
+                            {ok, S} -> S;
+                            {error, _} -> <<>>
+                        end;
+                    _ ->
+                        <<>>
+                end,
+            {ok, #dns_rrdata_nsec3param{
+                hash_alg = HashAlg,
+                flags = Flags,
+                iterations = Iterations,
+                salt = Salt
+            }};
+        _ ->
+            {error, make_rdata_error(<<"NSEC3PARAM">>, RData, Ctx)}
+    end;
 build_rdata("CSYNC", RData, Ctx) ->
     %% CSYNC format: soa_serial flags type1 type2 type3 ...
     %% RFC 7477 - Child-to-Parent Synchronization in DNS
@@ -1366,8 +1684,79 @@ build_rdata("ZONEMD", RData, Ctx) ->
         _ ->
             {error, make_rdata_error(<<"ZONEMD">>, RData, Ctx)}
     end;
+build_rdata("LOC", RData, Ctx) ->
+    %% LOC format: lat lon alt size horiz_prec vert_prec
+    %% RFC 1876 - Geographic Location
+    %% Simplified format: integers for lat, lon, alt, size, horiz, vert
+    %% Coordinates are in 1/1000th of a second (milliseconds of arc)
+    case RData of
+        [
+            {int, Lat},
+            {int, Lon},
+            {int, Alt},
+            {int, Size},
+            {int, Horiz},
+            {int, Vert}
+        ] when
+            is_integer(Lat),
+            is_integer(Lon),
+            is_integer(Alt),
+            is_integer(Size),
+            is_integer(Horiz),
+            is_integer(Vert)
+        ->
+            {ok, #dns_rrdata_loc{
+                size = Size,
+                horiz = Horiz,
+                vert = Vert,
+                lat = Lat,
+                lon = Lon,
+                alt = Alt
+            }};
+        _ ->
+            {error, make_rdata_error(<<"LOC">>, RData, Ctx)}
+    end;
+build_rdata("IPSECKEY", RData, Ctx) ->
+    %% IPSECKEY format: precedence algorithm gateway public_key(hex)
+    %% RFC 4025 - Storing IPsec Keying Material in DNS
+    %% Gateway can be IPv4, IPv6, or domain name (0 length = none)
+    case RData of
+        [{int, Precedence}, {int, Alg}, GatewayToken, {string, PublicKeyHex}] when
+            is_integer(Precedence), is_integer(Alg), is_list(PublicKeyHex)
+        ->
+            Gateway = parse_ipseckey_gateway(GatewayToken, Ctx),
+            case hex_to_binary(PublicKeyHex) of
+                {ok, PublicKey} ->
+                    {ok, #dns_rrdata_ipseckey{
+                        precedence = Precedence,
+                        alg = Alg,
+                        gateway = Gateway,
+                        public_key = PublicKey
+                    }};
+                {error, _Reason} ->
+                    {error, make_rdata_error(<<"IPSECKEY">>, RData, Ctx)}
+            end;
+        [{int, Precedence}, {int, Alg}, GatewayToken, {domain, PublicKeyHex}] when
+            is_integer(Precedence), is_integer(Alg), is_list(PublicKeyHex)
+        ->
+            %% Hex strings may be parsed as domain names
+            Gateway = parse_ipseckey_gateway(GatewayToken, Ctx),
+            case hex_to_binary(PublicKeyHex) of
+                {ok, PublicKey} ->
+                    {ok, #dns_rrdata_ipseckey{
+                        precedence = Precedence,
+                        alg = Alg,
+                        gateway = Gateway,
+                        public_key = PublicKey
+                    }};
+                {error, _Reason} ->
+                    {error, make_rdata_error(<<"IPSECKEY">>, RData, Ctx)}
+            end;
+        _ ->
+            {error, make_rdata_error(<<"IPSECKEY">>, RData, Ctx)}
+    end;
 build_rdata(Type, _RData, Ctx) ->
-    %% Unsupported or complex record types (LOC, etc.)
+    %% Unsupported or complex record types
     %% These are typically auto-generated or use RFC 3597 format
     {error, make_semantic_error({unsupported_type, Type}, Ctx)}.
 
@@ -1723,6 +2112,25 @@ hex_to_binary(HexBin) when is_binary(HexBin) ->
         error:badarg ->
             {error, {invalid_hex_data, HexBin}}
     end.
+
+%% Parse IPSECKEY gateway field (can be IPv4, IPv6, domain name, or "." for none)
+-spec parse_ipseckey_gateway(rdata(), parse_ctx()) -> inet:ip_address() | dns:dname() | <<>>.
+parse_ipseckey_gateway({domain, "."}, _Ctx) ->
+    <<>>;
+parse_ipseckey_gateway({domain, GatewayStr}, Ctx) when is_list(GatewayStr) ->
+    %% Try to parse as IP address first, then fall back to domain name
+    case inet:parse_address(GatewayStr) of
+        {ok, IP} -> IP;
+        {error, _} -> resolve_name(GatewayStr, Ctx#parse_ctx.origin)
+    end;
+parse_ipseckey_gateway({string, GatewayStr}, Ctx) when is_list(GatewayStr) ->
+    %% Try to parse as IP address first, then fall back to domain name
+    case inet:parse_address(GatewayStr) of
+        {ok, IP} -> IP;
+        {error, _} -> resolve_name(GatewayStr, Ctx#parse_ctx.origin)
+    end;
+parse_ipseckey_gateway(_, _Ctx) ->
+    <<>>.
 
 %% Parse SVCB/HTTPS service parameters directly from RDATA
 %% Handles both parsed key=value pairs and labels containing = (from lexer)
