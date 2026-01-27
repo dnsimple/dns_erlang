@@ -325,7 +325,7 @@ RR = #dns_rr{
     data = #dns_rrdata_a{ip = {192, 0, 2, 1}}
 },
 Line = dns_zone:encode_rr(RR).
-% Returns: "www.example.com. 3600 IN A 192.0.2.1"
+% Returns: \"www.example.com. 3600 IN A 192.0.2.1\"
 ```
 """).
 -spec encode_rr(dns:rr()) -> iodata().
