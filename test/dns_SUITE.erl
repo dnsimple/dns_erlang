@@ -20,7 +20,6 @@ groups() ->
             {group, edns},
             {group, rrdata},
             {group, svcb},
-            {group, dname_encoding},
             {group, dname_utilities},
             {group, dname_compression},
             {group, decode_query}
@@ -67,22 +66,7 @@ groups() ->
             svcb_mandatory_missing_keys,
             svcb_no_default_alpn_length_validation
         ]},
-        {dname_encoding, [parallel], [
-            decode_dname_2_ptr,
-            decode_dname_decode_loop,
-            decode_dname_bad_pointer,
-            encode_dname_1,
-            encode_dname_3,
-            encode_dname_4
-        ]},
         {dname_utilities, [parallel], [
-            dname_to_lower_labels,
-            dname_to_labels,
-            labels_to_dname,
-            dname_to_upper,
-            dname_to_lower,
-            dname_case_conversion,
-            dns_case_insensitive_comparison,
             dname_preserve_dot,
             encode_rec_list_accumulates_multiple_records
         ]},
@@ -557,7 +541,10 @@ bad_optrr_too_large(Config) ->
 %% it is.
 optrr_too_large(_Config, Anc) ->
     %% Regression: test `optrr_too_large` going wrong
-    QName = iolist_to_binary(lists:duplicate(255, $a)),
+    %% Create a valid large domain name using multiple labels (max 63 bytes each)
+    %% 4 labels of 62 bytes each = 4 * 63 (length byte + label) + 1 (root) = 253 bytes (valid, < 255)
+    Label63 = iolist_to_binary(lists:duplicate(62, $a)),
+    QName = dns_domain:join([Label63, Label63, Label63, Label63]),
     Question = #dns_query{name = QName, type = ?DNS_TYPE_A},
     Answers = [
         #dns_rr{
@@ -579,19 +566,16 @@ optrr_too_large(_Config, Anc) ->
     },
     case Anc of
         14 ->
-            ?assert(byte_size(dns:encode_message(Msg)) =< 512);
+            Encoded = dns:encode_message(Msg),
+            ?assert(byte_size(Encoded) =< 512, Anc);
         _ ->
-            ?assert(byte_size(dns:encode_message(Msg)) > 512)
+            Encoded = dns:encode_message(Msg),
+            ?assert(byte_size(Encoded) > 512, Anc)
     end,
-    try
-        Result = dns:encode_message(Msg, #{max_size => 512}),
-        ?assertMatch({false, _}, Result),
-        {false, Encoded} = Result,
-        ?assert(is_binary(Encoded) andalso byte_size(Encoded) > 0)
-    catch
-        Error:Reason:Stacktrace ->
-            ct:fail("Error: ~p:~p~n~p", [Error, Reason, Stacktrace])
-    end.
+    Result = dns:encode_message(Msg, #{max_size => 512}),
+    ?assertMatch({false, _}, Result),
+    {false, EncodedWithLimit} = Result,
+    ?assert(is_binary(EncodedWithLimit) andalso byte_size(EncodedWithLimit) > 0).
 
 %%%===================================================================
 %%% Record data functions
@@ -941,7 +925,7 @@ svcb_key_ordering_validation(_) ->
     AlpnBin = <<AlpnKey:16, (byte_size(AlpnValue)):16, AlpnValue/binary>>,
     OutOfOrderBin = <<PortBin/binary, AlpnBin/binary>>,
     ?assertException(
-        throw,
+        error,
         {svcb_key_ordering_error, {prev_key, PortKey}, {current_key, AlpnKey}},
         dns_decode:decode_svcb_svc_params(OutOfOrderBin)
     ).
@@ -953,7 +937,7 @@ svcb_mandatory_self_reference(_) ->
     MandatoryValue = <<MandatoryKey:16>>,
     MandatoryBin = <<MandatoryKey:16, (byte_size(MandatoryValue)):16, MandatoryValue/binary>>,
     ?assertException(
-        throw,
+        error,
         {svcb_mandatory_validation_error, {mandatory_self_reference, MandatoryKey}},
         dns_decode:decode_svcb_svc_params(MandatoryBin)
     ).
@@ -966,7 +950,7 @@ svcb_mandatory_missing_keys(_) ->
     MandatoryValue = <<PortKey:16>>,
     MandatoryBin = <<MandatoryKey:16, (byte_size(MandatoryValue)):16, MandatoryValue/binary>>,
     ?assertException(
-        throw,
+        error,
         {svcb_mandatory_validation_error, {missing_mandatory_keys, [PortKey]}},
         dns_decode:decode_svcb_svc_params(MandatoryBin)
     ).
@@ -977,193 +961,14 @@ svcb_no_default_alpn_length_validation(_) ->
     %% Create NO_DEFAULT_ALPN with non-zero length (should be 0)
     InvalidBin = <<NoDefaultAlpnKey:16, 1:16, 0:8>>,
     ?assertException(
-        throw,
+        error,
         {svcb_bad_no_default_alpn, 1},
         dns_decode:decode_svcb_svc_params(InvalidBin)
     ).
 
 %%%===================================================================
-%%% Domain name functions
+%%% dname_utilities Tests
 %%%===================================================================
-
-decode_dname_2_ptr(_) ->
-    Cases = [{<<7, 101, 120, 97, 109, 112, 108, 101, 0>>, <<3:2, 0:14>>}],
-    [
-        ?assertEqual({<<"example">>, <<>>}, dns_decode:decode_dname(DataBin, MsgBin))
-     || {MsgBin, DataBin} <- Cases
-    ].
-
-decode_dname_decode_loop(_) ->
-    Bin = <<3:2, 0:14>>,
-    ?assertException(throw, decode_loop, dns_decode:decode_dname(Bin, Bin)).
-
-decode_dname_bad_pointer(_) ->
-    Case = <<3:2, 42:14>>,
-    ?assertException(throw, bad_pointer, dns_decode:decode_dname(Case, Case)).
-
-encode_dname_1(_) ->
-    Cases = [
-        {<<"example">>, <<7, 101, 120, 97, 109, 112, 108, 101, 0>>}
-    ],
-    [?assertEqual(Expect, dns_encode:encode_dname(Input)) || {Input, Expect} <- Cases].
-
-encode_dname_3(_) ->
-    {Bin, _CompMap} = dns_encode:encode_dname(#{}, 0, <<"example">>),
-    ?assertEqual(<<7, 101, 120, 97, 109, 112, 108, 101, 0>>, Bin).
-
-encode_dname_4(_) ->
-    {Bin0, CM0} = dns_encode:encode_append_dname(<<>>, #{}, 0, <<"example">>),
-    {Bin1, _} = dns_encode:encode_append_dname(Bin0, CM0, byte_size(Bin0), <<"example">>),
-    {Bin2, _} = dns_encode:encode_append_dname(Bin0, CM0, byte_size(Bin0), <<"EXAMPLE">>),
-    MP = (1 bsl 14),
-    MPB = <<0:MP/unit:8>>,
-    {_, CM1} = dns_encode:encode_append_dname(MPB, #{}, MP, <<"example">>),
-    Cases = [
-        {<<7, 101, 120, 97, 109, 112, 108, 101, 0>>, Bin0},
-        {<<7, 101, 120, 97, 109, 112, 108, 101, 0, 192, 0>>, Bin1},
-        {Bin1, Bin2},
-        {#{}, CM1}
-    ],
-    [?assertEqual(Expect, Result) || {Expect, Result} <- Cases].
-
-dname_to_lower_labels(_) ->
-    Cases = [
-        {<<>>, []},
-        {<<".">>, []},
-        {<<"A.B.C">>, [<<"a">>, <<"b">>, <<"c">>]},
-        {<<"A.B.C.">>, [<<"a">>, <<"b">>, <<"c">>]},
-        {<<"A\\.B.c">>, [<<"a.b">>, <<"c">>]},
-        {<<"A\\\\.b.C">>, [<<"a\\">>, <<"b">>, <<"c">>]}
-    ],
-    [?assertEqual(Expect, dns:dname_to_lower_labels(Arg)) || {Arg, Expect} <- Cases].
-
-dname_to_labels(_) ->
-    Cases = [
-        {<<>>, []},
-        {<<".">>, []},
-        {<<"a.b.c">>, [<<"a">>, <<"b">>, <<"c">>]},
-        {<<"a.b.c.">>, [<<"a">>, <<"b">>, <<"c">>]},
-        {<<"a\\.b.c">>, [<<"a.b">>, <<"c">>]},
-        {<<"a\\\\.b.c">>, [<<"a\\">>, <<"b">>, <<"c">>]}
-    ],
-    [?assertEqual(Expect, dns:dname_to_labels(Arg)) || {Arg, Expect} <- Cases].
-
-labels_to_dname(_) ->
-    Cases = [
-        {[<<"a">>, <<"b">>, <<"c">>], <<"a.b.c">>},
-        {[<<"a.b">>, <<"c">>], <<"a\\.b.c">>},
-        {[<<"a\\">>, <<"b">>, <<"c">>], <<"a\\\\.b.c">>}
-    ],
-    [?assertEqual(Expect, dns:labels_to_dname(Arg)) || {Arg, Expect} <- Cases].
-
-dname_to_upper(_) ->
-    Cases = [{<<"Y">>, <<"Y">>}, {<<"y">>, <<"Y">>}],
-    [?assertEqual(Expect, dns:dname_to_upper(Arg)) || {Arg, Expect} <- Cases].
-
-dname_to_lower(_) ->
-    Cases = [{<<"Y">>, <<"y">>}, {<<"y">>, <<"y">>}],
-    [?assertEqual(Expect, dns:dname_to_lower(Arg)) || {Arg, Expect} <- Cases].
-
-dname_case_conversion(_) ->
-    [
-        %% Basic domain name tests
-        ?assertEqual(<<"EXAMPLE.COM">>, dns:dname_to_upper(<<"example.com">>)),
-        ?assertEqual(<<"example.com">>, dns:dname_to_lower(<<"EXAMPLE.COM">>)),
-
-        %% Mixed case input tests
-        ?assertEqual(<<"EXAMPLE.COM">>, dns:dname_to_upper(<<"ExAmPle.CoM">>)),
-        ?assertEqual(<<"example.com">>, dns:dname_to_lower(<<"ExAmPle.CoM">>)),
-
-        %% Tests with subdomains
-        ?assertEqual(<<"WWW.EXAMPLE.COM">>, dns:dname_to_upper(<<"www.example.com">>)),
-        ?assertEqual(
-            <<"sub.domain.example.com">>, dns:dname_to_lower(<<"SUB.DOMAIN.EXAMPLE.COM">>)
-        ),
-
-        %% Tests with special characters (which should remain unchanged)
-        ?assertEqual(<<"TEST-1.EXAMPLE.COM">>, dns:dname_to_upper(<<"test-1.example.com">>)),
-        ?assertEqual(<<"test_2.example.com">>, dns:dname_to_lower(<<"TEST_2.EXAMPLE.COM">>)),
-
-        %% Tests with dots and escaping (common in DNS)
-        ?assertEqual(
-            <<"ESCAPED\\.DOT.EXAMPLE.COM">>, dns:dname_to_upper(<<"escaped\\.dot.example.com">>)
-        ),
-        ?assertEqual(
-            <<"label\\.with\\.escaped.dots">>, dns:dname_to_lower(<<"LABEL\\.WITH\\.ESCAPED.DOTS">>)
-        ),
-
-        %% Tests with empty or single character domains
-        ?assertEqual(<<>>, dns:dname_to_upper(<<>>)),
-        ?assertEqual(<<"a">>, dns:dname_to_lower(<<"A">>)),
-
-        %% Test with long domain name to check chunking behavior
-        ?assertEqual(
-            <<"THISISAVERYLONGSUBDOMAINNAMEWITHMANYCHARACTERS.EXAMPLE.COM">>,
-            dns:dname_to_upper(<<"thisisaverylongsubdomainnamewithmanycharacters.example.com">>)
-        ),
-
-        %% Test with various lengths to ensure all chunk size code paths are tested
-
-        % 2 chars
-        ?assertEqual(<<"AB">>, dns:dname_to_upper(<<"ab">>)),
-        % 3 chars
-        ?assertEqual(<<"abc">>, dns:dname_to_lower(<<"ABC">>)),
-        % 4 chars
-        ?assertEqual(<<"ABCD">>, dns:dname_to_upper(<<"abcd">>)),
-        % 5 chars
-        ?assertEqual(<<"abcde">>, dns:dname_to_lower(<<"ABCDE">>)),
-        % 6 chars
-        ?assertEqual(<<"ABCDEF">>, dns:dname_to_upper(<<"abcdef">>)),
-        % 7 chars
-        ?assertEqual(<<"abcdefg">>, dns:dname_to_lower(<<"ABCDEFG">>)),
-        % 8 chars
-        ?assertEqual(<<"ABCDEFGH">>, dns:dname_to_upper(<<"abcdefgh">>)),
-
-        %% DNS specific examples - common DNS record types
-        ?assertEqual(<<"_SRV._TCP.EXAMPLE.COM">>, dns:dname_to_upper(<<"_srv._tcp.example.com">>)),
-        ?assertEqual(
-            <<"_xmpp-server._tcp.example.com">>,
-            dns:dname_to_lower(<<"_XMPP-SERVER._TCP.EXAMPLE.COM">>)
-        ),
-
-        %% Real-world examples
-        ?assertEqual(<<"NS1.DNSPROVIDER.NET">>, dns:dname_to_upper(<<"ns1.dnsprovider.net">>)),
-        ?assertEqual(<<"mail.example.org">>, dns:dname_to_lower(<<"MAIL.EXAMPLE.ORG">>))
-    ].
-
-%% Test specifically checking that case normalization doesn't affect DNS name comparison
-dns_case_insensitive_comparison(_) ->
-    [
-        ?assert(dns:compare_dname(<<"example.com">>, <<"EXAMPLE.COM">>)),
-        ?assert(dns:compare_dname(<<"www.EXAMPLE.com">>, <<"WWW.example.COM">>)),
-        ?assert(
-            dns:compare_dname(
-                dns:dname_to_upper(<<"example.com">>), dns:dname_to_lower(<<"EXAMPLE.COM">>)
-            )
-        ),
-        ?assert(dns:compare_labels([<<"example">>, <<"com">>], [<<"EXAMPLE">>, <<"COM">>])),
-        ?assert(
-            dns:compare_labels([<<"www">>, <<"example">>, <<"com">>], [
-                <<"WWW">>, <<"example">>, <<"COM">>
-            ])
-        ),
-        ?assert(
-            dns:compare_labels([<<"www">>, <<"EXAMPLE">>, <<"com">>], [
-                <<"WWW">>, <<"example">>, <<"COM">>
-            ])
-        ),
-        ?assertNot(
-            dns:compare_labels([<<"www">>, <<"different">>, <<"com">>], [
-                <<"WWW">>, <<"example">>, <<"COM">>
-            ])
-        ),
-        ?assertNot(
-            dns:compare_labels([<<"www">>, <<"example">>], [<<"www">>, <<"example">>, <<"com">>])
-        ),
-        ?assertNot(
-            dns:compare_labels([<<"www">>, <<"example">>, <<"com">>], [<<"www">>, <<"example">>])
-        )
-    ].
 
 dname_preserve_dot(_) ->
     Query = #dns_query{name = <<"example\\.com">>, class = 1, type = 1},

@@ -452,7 +452,7 @@ helper_verify_rrset_test_cases(Config) ->
                             } = RR,
                             Dict
                         ) ->
-                            Key = {dns:dname_to_lower(Name), Class, Type},
+                            Key = {dns_domain:to_lower(Name), Class, Type},
                             dict:append(Key, RR, Dict);
                         (
                             #dns_rr{
@@ -462,7 +462,7 @@ helper_verify_rrset_test_cases(Config) ->
                             } = RR,
                             Dict
                         ) ->
-                            Key = {dns:dname_to_lower(Name), Class, Type},
+                            Key = {dns_domain:to_lower(Name), Class, Type},
                             dict:append(Key, RR, Dict)
                     end,
                     dict:new(),

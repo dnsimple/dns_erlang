@@ -21,7 +21,6 @@
 
 -ifdef(TEST).
 -export([
-    decode_dname/2,
     decode_rrdata/4,
     decode_optrrdata/1,
     decode_svcb_svc_params/1
@@ -32,7 +31,7 @@
     {elvis_style, max_function_arity, #{ignore => [{dns_decode, create_message_from_header, 14}]}},
     {elvis_style, dont_repeat_yourself, #{ignore => [{dns_decode, decode_query, 1}]}}
 ]).
--compile({inline, [decode_bool/1, round_pow/1, choose_next_bin/3, create_message_from_header/14]}).
+-compile({inline, [decode_bool/1, round_pow/1, create_message_from_header/14]}).
 
 -spec decode(dns:message_bin()) ->
     dns:message() | {dns:decode_error(), dns:message() | undefined, binary()}.
@@ -279,7 +278,7 @@ decode_message_questions(_MsgBin, DataBin, 0, RRs) ->
 decode_message_questions(_MsgBin, <<>>, _Count, RRs) ->
     {truncated, lists:reverse(RRs), <<>>};
 decode_message_questions(MsgBin, DataBin, Count, RRs) ->
-    try decode_dname(MsgBin, DataBin) of
+    try dns_domain:from_wire(MsgBin, DataBin) of
         {Name, <<Type:16, Class:16, RB/binary>>} ->
             R = #dns_query{name = Name, type = Type, class = Class},
             decode_message_questions(MsgBin, RB, Count - 1, [R | RRs]);
@@ -306,7 +305,7 @@ do_decode_message_additional(_MsgBin, DataBin, 0, RRs) ->
 do_decode_message_additional(_MsgBin, <<>>, _Count, RRs) ->
     {truncated, lists:reverse(RRs), <<>>};
 do_decode_message_additional(MsgBin, DataBin, Count, RRs) ->
-    try decode_dname(MsgBin, DataBin) of
+    try dns_domain:from_wire(MsgBin, DataBin) of
         {<<>>,
             <<?DNS_TYPE_OPT:16/unsigned, UPS:16/unsigned, ExtRcode:8, Version:8, DNSSEC:1, _Z:15,
                 EDataLen:16, EDataBin:EDataLen/binary, RemBin/binary>>} ->
@@ -355,7 +354,7 @@ do_decode_message_body(_MsgBin, DataBin, 0, RRs) ->
 do_decode_message_body(_MsgBin, <<>>, _Count, RRs) ->
     {truncated, lists:reverse(RRs), <<>>};
 do_decode_message_body(MsgBin, DataBin, Count, RRs) ->
-    try decode_dname(MsgBin, DataBin) of
+    try dns_domain:from_wire(MsgBin, DataBin) of
         {Name,
             <<Type:16/unsigned, Class:16/unsigned, TTL:32/signed, Len:16, RdataBin:Len/binary,
                 RemBin/binary>>} ->
@@ -377,44 +376,6 @@ do_decode_message_body(MsgBin, DataBin, Count, RRs) ->
         _:_ ->
             {formerr, lists:reverse(RRs), DataBin}
     end.
-
--spec decode_dname(dns:message_bin(), nonempty_binary()) -> {dns:dname(), binary()}.
-decode_dname(MsgBin, DataBin) ->
-    decode_dname(MsgBin, DataBin, DataBin, <<>>, 0).
-
--spec decode_dname(
-    dns:message_bin(), nonempty_binary(), nonempty_binary(), binary(), non_neg_integer()
-) ->
-    {dns:dname(), binary()}.
-decode_dname(MsgBin, _DataBin, _RemBin, _DName, Count) when Count > byte_size(MsgBin) ->
-    throw(decode_loop);
-decode_dname(_MsgBin, <<0, DataRBin/binary>>, RBin, DName0, Count) ->
-    NewRemBin = choose_next_bin(Count, DataRBin, RBin),
-    NewDName =
-        case DName0 of
-            <<$., DName/binary>> -> DName;
-            <<>> -> <<>>
-        end,
-    {NewDName, NewRemBin};
-decode_dname(MsgBin, <<0:2, Len:6, Label0:Len/binary, DataRemBin/binary>>, RemBin, DName, Count) ->
-    Label = dns:escape_label(Label0),
-    NewRemBin = choose_next_bin(Count, DataRemBin, RemBin),
-    NewDName = <<DName/binary, $., Label/binary>>,
-    decode_dname(MsgBin, DataRemBin, NewRemBin, NewDName, Count);
-decode_dname(MsgBin, <<3:2, Ptr:14, DataRBin/binary>>, RBin, DName, Count) ->
-    NewRemBin = choose_next_bin(Count, DataRBin, RBin),
-    NewCount = Count + 2,
-    case MsgBin of
-        <<_:Ptr/binary, NewDataBin/binary>> ->
-            decode_dname(MsgBin, NewDataBin, NewRemBin, DName, NewCount);
-        _ ->
-            throw(bad_pointer)
-    end.
-
-choose_next_bin(0, DataRBin, _RBin) ->
-    DataRBin;
-choose_next_bin(_, _DataRBin, RBin) ->
-    RBin.
 
 -spec decode_optrrdata(binary()) -> [dns:optrr_elem()].
 decode_optrrdata(Bin) ->
@@ -727,7 +688,7 @@ decode_rrdata(
         public_key = PublicKey
     };
 decode_rrdata(MsgBin, _Class, ?DNS_TYPE_IPSECKEY, <<Precedence:8, 3:8, Algorithm:8, Bin/binary>>) ->
-    {Gateway, PublicKey} = decode_dname(MsgBin, Bin),
+    {Gateway, PublicKey} = dns_domain:from_wire(MsgBin, Bin),
     #dns_rrdata_ipseckey{
         precedence = Precedence,
         alg = Algorithm,
@@ -773,7 +734,7 @@ decode_rrdata(MsgBin, _Class, ?DNS_TYPE_MB, Bin) ->
 decode_rrdata(MsgBin, _Class, ?DNS_TYPE_MG, Bin) ->
     #dns_rrdata_mg{madname = decode_dnameonly(MsgBin, Bin)};
 decode_rrdata(MsgBin, _Class, ?DNS_TYPE_MINFO, Bin) when is_binary(Bin) ->
-    {RMB, EMB} = decode_dname(Bin, MsgBin),
+    {RMB, EMB} = dns_domain:from_wire(Bin, MsgBin),
     #dns_rrdata_minfo{rmailbx = RMB, emailbx = decode_dnameonly(MsgBin, EMB)};
 decode_rrdata(MsgBin, _Class, ?DNS_TYPE_MR, Bin) ->
     #dns_rrdata_mr{newname = decode_dnameonly(MsgBin, Bin)};
@@ -803,7 +764,7 @@ decode_rrdata(
 decode_rrdata(MsgBin, _Class, ?DNS_TYPE_NS, Bin) ->
     #dns_rrdata_ns{dname = decode_dnameonly(MsgBin, Bin)};
 decode_rrdata(MsgBin, _Class, ?DNS_TYPE_NSEC, Bin) ->
-    {NextDName, TypeBMP} = decode_dname(MsgBin, Bin),
+    {NextDName, TypeBMP} = dns_domain:from_wire(MsgBin, Bin),
     Types = decode_nsec_types(TypeBMP),
     #dns_rrdata_nsec{next_dname = NextDName, types = Types};
 decode_rrdata(
@@ -877,12 +838,12 @@ decode_rrdata(
         certificate = Certificate
     };
 decode_rrdata(MsgBin, _Class, ?DNS_TYPE_NXT, Bin) ->
-    {NxtDName, BMP} = decode_dname(MsgBin, Bin),
+    {NxtDName, BMP} = dns_domain:from_wire(MsgBin, Bin),
     #dns_rrdata_nxt{dname = NxtDName, types = decode_nxt_bmp(BMP)};
 decode_rrdata(MsgBin, _Class, ?DNS_TYPE_PTR, Bin) ->
     #dns_rrdata_ptr{dname = decode_dnameonly(MsgBin, Bin)};
 decode_rrdata(MsgBin, _Class, ?DNS_TYPE_RP, Bin) ->
-    {Mbox, TxtBin} = decode_dname(MsgBin, Bin),
+    {Mbox, TxtBin} = dns_domain:from_wire(MsgBin, Bin),
     #dns_rrdata_rp{mbox = Mbox, txt = decode_dnameonly(MsgBin, TxtBin)};
 decode_rrdata(
     MsgBin,
@@ -890,7 +851,7 @@ decode_rrdata(
     ?DNS_TYPE_RRSIG,
     <<Type:16, Alg:8, Labels:8, TTL:32, Expire:32, Inception:32, KeyTag:16, Bin/binary>>
 ) ->
-    {SigName, Sig} = decode_dname(MsgBin, Bin),
+    {SigName, Sig} = dns_domain:from_wire(MsgBin, Bin),
     #dns_rrdata_rrsig{
         type_covered = Type,
         alg = Alg,
@@ -905,8 +866,8 @@ decode_rrdata(
 decode_rrdata(MsgBin, _Class, ?DNS_TYPE_RT, <<Pref:16, Bin/binary>>) ->
     #dns_rrdata_rt{preference = Pref, host = decode_dnameonly(MsgBin, Bin)};
 decode_rrdata(MsgBin, _Class, ?DNS_TYPE_SOA, Bin) ->
-    {MName, RNBin} = decode_dname(MsgBin, Bin),
-    {RName, Rest} = decode_dname(MsgBin, RNBin),
+    {MName, RNBin} = dns_domain:from_wire(MsgBin, Bin),
+    {RName, Rest} = dns_domain:from_wire(MsgBin, RNBin),
     <<Ser:32, Ref:32, Ret:32, Exp:32, Min:32>> = Rest,
     #dns_rrdata_soa{
         mname = MName,
@@ -939,17 +900,17 @@ decode_rrdata(
 ) ->
     #dns_rrdata_sshfp{alg = Alg, fp_type = FPType, fp = FingerPrint};
 decode_rrdata(MsgBin, _Class, ?DNS_TYPE_SVCB, <<SvcPriority:16, Bin/binary>>) ->
-    {TargetName, SvcParamsBin} = decode_dname(MsgBin, Bin),
+    {TargetName, SvcParamsBin} = dns_domain:from_wire(MsgBin, Bin),
     SvcParams = decode_svcb_svc_params(SvcParamsBin),
     #dns_rrdata_svcb{svc_priority = SvcPriority, target_name = TargetName, svc_params = SvcParams};
 decode_rrdata(MsgBin, _Class, ?DNS_TYPE_HTTPS, <<SvcPriority:16, Bin/binary>>) ->
-    {TargetName, SvcParamsBin} = decode_dname(MsgBin, Bin),
+    {TargetName, SvcParamsBin} = dns_domain:from_wire(MsgBin, Bin),
     SvcParams = decode_svcb_svc_params(SvcParamsBin),
     #dns_rrdata_https{svc_priority = SvcPriority, target_name = TargetName, svc_params = SvcParams};
 decode_rrdata(MsgBin, _Class, ?DNS_TYPE_TSIG, Bin) ->
     {Alg,
         <<Time:48, Fudge:16, MS:16, MAC:MS/bytes, MsgId:16, ErrInt:16, OtherLen:16,
-            Other:OtherLen/binary>>} = decode_dname(MsgBin, Bin),
+            Other:OtherLen/binary>>} = dns_domain:from_wire(MsgBin, Bin),
     #dns_rrdata_tsig{
         alg = Alg,
         time = Time,
@@ -966,9 +927,9 @@ decode_rrdata(_MsgBin, _Class, _Type, Bin) ->
 
 -spec decode_dnameonly(dns:message_bin(), nonempty_binary()) -> binary().
 decode_dnameonly(MsgBin, Bin) ->
-    case decode_dname(MsgBin, Bin) of
+    case dns_domain:from_wire(MsgBin, Bin) of
         {DName, <<>>} -> DName;
-        _ -> throw(trailing_garbage)
+        _ -> error(trailing_garbage)
     end.
 
 %% Helper function to decode RSA keys for DNSKEY and CDNSKEY records
@@ -1077,7 +1038,7 @@ decode_svcb_svc_params(
             ?DNS_SVCB_PARAM_NO_DEFAULT_ALPN when Len =:= 0 ->
                 SvcParams#{?DNS_SVCB_PARAM_NO_DEFAULT_ALPN => none};
             ?DNS_SVCB_PARAM_NO_DEFAULT_ALPN ->
-                throw({svcb_bad_no_default_alpn, Len});
+                error({svcb_bad_no_default_alpn, Len});
             ?DNS_SVCB_PARAM_PORT when Len =:= 2 ->
                 <<Port:16/integer>> = ValueBin,
                 SvcParams#{?DNS_SVCB_PARAM_PORT => Port};
@@ -1096,7 +1057,7 @@ decode_svcb_svc_params(
 decode_svcb_svc_params(<<Key:16, Len:16, _:Len/binary, _/binary>>, _, PrevKey) when
     Key =< PrevKey
 ->
-    throw({svcb_key_ordering_error, {prev_key, PrevKey}, {current_key, Key}}).
+    error({svcb_key_ordering_error, {prev_key, PrevKey}, {current_key, Key}}).
 
 %% Validate mandatory parameter self-consistency
 %% RFC 9460: Keys listed in mandatory parameter must exist in SvcParams
@@ -1107,7 +1068,7 @@ validate_mandatory_params(#{?DNS_SVCB_PARAM_MANDATORY := MandatoryKeys} = SvcPar
     case lists:member(?DNS_SVCB_PARAM_MANDATORY, MandatoryKeys) of
         true ->
             Reason = {mandatory_self_reference, ?DNS_SVCB_PARAM_MANDATORY},
-            throw({svcb_mandatory_validation_error, Reason});
+            error({svcb_mandatory_validation_error, Reason});
         false ->
             %% Check that all mandatory keys exist in SvcParams
             MissingKeys = [K || K <- MandatoryKeys, not maps:is_key(K, SvcParams)],
@@ -1116,7 +1077,7 @@ validate_mandatory_params(#{?DNS_SVCB_PARAM_MANDATORY := MandatoryKeys} = SvcPar
                     SvcParams;
                 _ ->
                     Reason = {missing_mandatory_keys, MissingKeys},
-                    throw({svcb_mandatory_validation_error, Reason})
+                    error({svcb_mandatory_validation_error, Reason})
             end
     end;
 validate_mandatory_params(SvcParams) ->

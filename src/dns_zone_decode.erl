@@ -189,7 +189,7 @@ capitalize(Atom) ->
 %% Initialize parser context from options
 -spec init_context(parse_options(), [string()]) -> parse_ctx().
 init_context(Options, SourceLines) ->
-    Origin = dns:dname_to_lower(maps:get(origin, Options, <<>>)),
+    Origin = dns_domain:to_lower(maps:get(origin, Options, <<>>)),
     DefaultTTL = maps:get(default_ttl, Options, 0),
     DefaultClass = maps:get(default_class, Options, ?DNS_CLASS_IN),
     BaseDir = maps:get(base_dir, Options, ""),
@@ -469,7 +469,7 @@ process_entry(empty, Ctx) ->
     {ok, Ctx, []};
 process_entry({directive, origin, Origin0}, Ctx) ->
     %% Update the origin
-    Origin = dns:dname_to_lower(ensure_binary(Origin0)),
+    Origin = dns_domain:to_lower(ensure_binary(Origin0)),
     NewOrigin = ensure_fqdn(Origin),
     NewCtx = Ctx#parse_ctx{origin = NewOrigin, last_owner = NewOrigin},
     {ok, NewCtx, []};
@@ -537,7 +537,7 @@ ensure_ttl(_) -> undefined.
     parse_ctx()
 ) -> {ok, dns:rr(), parse_ctx()} | {error, error_detail()}.
 build_rr(Owner, TTL, Class, Type, RData, Ctx) ->
-    ResolvedOwner = dns:dname_to_lower(resolved_owner(Owner, Ctx)),
+    ResolvedOwner = dns_domain:to_lower(resolved_owner(Owner, Ctx)),
     ResolvedTTL = resolved_ttl(TTL, Ctx),
     ResolvedClass = resolved_class(Class, Ctx),
     TypeNum = type_to_number(Type),
@@ -1802,7 +1802,7 @@ extract_strings(RData) when is_list(RData) ->
 -spec resolve_name(string(), binary()) -> binary().
 resolve_name(Name, Origin) when is_list(Name) ->
     %% Convert string name to binary for final record
-    BinName = dns:dname_to_lower(list_to_binary(Name)),
+    BinName = dns_domain:to_lower(list_to_binary(Name)),
     case is_fqdn(Name) of
         true ->
             BinName;

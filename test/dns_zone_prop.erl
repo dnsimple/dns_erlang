@@ -123,8 +123,8 @@ simple_valid_rr() ->
         ?LET(
             {Name, Class, TTL, Data},
             {
-                simple_dname(),
-                dns_class(),
+                dns_prop_generator:simple_dname(),
+                dns_prop_generator:dns_class(),
                 range(0, 2147483647),
                 rdata(Type)
             },
@@ -141,12 +141,12 @@ simple_valid_rr() ->
 complex_valid_rr() ->
     ?LET(
         Type,
-        dns_type(),
+        dns_prop_generator:dns_type(),
         ?LET(
             {Name, Class, TTL, Data},
             {
-                simple_dname(),
-                dns_class(),
+                dns_prop_generator:simple_dname(),
+                dns_prop_generator:dns_class(),
                 range(0, 2147483647),
                 rdata(Type)
             },
@@ -160,44 +160,17 @@ complex_valid_rr() ->
         )
     ).
 
-simple_dname() ->
-    ?LET(
-        {Label1, Label2},
-        {label(), label()},
-        <<Label1/binary, $., Label2/binary, $.>>
-    ).
-
 dname() ->
     ?LET(
         Labels,
         non_empty(list(label())),
-        begin
-            DName = lists:foldl(
-                fun(Label, Acc) ->
-                    case Acc of
-                        <<>> -> Label;
-                        _ -> <<Acc/binary, $., Label/binary>>
-                    end
-                end,
-                <<>>,
-                Labels
-            ),
-            <<DName/binary, $.>>
-        end
+        dns_domain:join(Labels, fqdn)
     ).
 
 label() ->
-    ?LET(
-        {First, Rest},
-        {letter(), list(oneof([letter(), digit(), $-, $_]))},
-        list_to_binary([First | Rest])
-    ).
-
-letter() ->
-    oneof(lists:seq($a, $z) ++ lists:seq($A, $Z)).
-
-digit() ->
-    oneof(lists:seq($0, $9)).
+    %% Zone prop uses letter() as first character and doesn't enforce 63-byte limit
+    %% (to test edge cases with longer labels)
+    dns_prop_generator:label().
 
 %% String generator that excludes quote characters (quotes must be paired at boundaries)
 quoted_string() ->
@@ -224,81 +197,18 @@ quoted_string() ->
         list_to_binary(Bytes)
     ).
 
-%% CAA tag generator - must be pure ASCII alphanumeric (RFC 6844)
+%% Generate a CAA tag (RFC 6844: pure ASCII alphanumeric, may include dash)
+%% Must start with a letter, rest can be letters, digits, or dash (no underscore)
 caa_tag() ->
     ?LET(
         {First, Rest},
-        {letter(), list(oneof([letter(), digit(), $-]))},
+        {dns_prop_generator:letter(), list(oneof([dns_prop_generator:letter_or_digit(), $-]))},
         list_to_binary([First | Rest])
     ).
 
 %% CAA value generator - uses quoted_string to avoid internal quotes
 caa_value() ->
     quoted_string().
-
-dns_type() ->
-    oneof([
-        ?DNS_TYPE_A,
-        ?DNS_TYPE_AAAA,
-        ?DNS_TYPE_NS,
-        ?DNS_TYPE_CNAME,
-        ?DNS_TYPE_PTR,
-        ?DNS_TYPE_MX,
-        ?DNS_TYPE_TXT,
-        ?DNS_TYPE_SPF,
-        ?DNS_TYPE_SOA,
-        ?DNS_TYPE_SRV,
-        ?DNS_TYPE_CAA,
-        ?DNS_TYPE_NAPTR,
-        ?DNS_TYPE_HINFO,
-        ?DNS_TYPE_RP,
-        ?DNS_TYPE_AFSDB,
-        ?DNS_TYPE_RT,
-        ?DNS_TYPE_KX,
-        ?DNS_TYPE_DNAME,
-        ?DNS_TYPE_MB,
-        ?DNS_TYPE_MG,
-        ?DNS_TYPE_MR,
-        ?DNS_TYPE_MINFO,
-        ?DNS_TYPE_DS,
-        ?DNS_TYPE_CDS,
-        ?DNS_TYPE_DLV,
-        ?DNS_TYPE_DNSKEY,
-        ?DNS_TYPE_CDNSKEY,
-        ?DNS_TYPE_RRSIG,
-        ?DNS_TYPE_NSEC,
-        ?DNS_TYPE_NSEC3,
-        ?DNS_TYPE_NSEC3PARAM,
-        ?DNS_TYPE_SSHFP,
-        ?DNS_TYPE_TLSA,
-        ?DNS_TYPE_SMIMEA,
-        ?DNS_TYPE_CERT,
-        ?DNS_TYPE_DHCID,
-        ?DNS_TYPE_OPENPGPKEY,
-        ?DNS_TYPE_WALLET,
-        ?DNS_TYPE_URI,
-        ?DNS_TYPE_RESINFO,
-        ?DNS_TYPE_EUI48,
-        ?DNS_TYPE_EUI64,
-        ?DNS_TYPE_ZONEMD,
-        ?DNS_TYPE_CSYNC,
-        ?DNS_TYPE_DSYNC,
-        ?DNS_TYPE_SVCB,
-        ?DNS_TYPE_HTTPS,
-        ?DNS_TYPE_LOC,
-        ?DNS_TYPE_IPSECKEY,
-        ?DNS_TYPE_KEY,
-        ?DNS_TYPE_NXT,
-        ?DNS_TYPE_TSIG
-    ]).
-
-dns_class() ->
-    oneof([
-        ?DNS_CLASS_IN,
-        ?DNS_CLASS_CH,
-        ?DNS_CLASS_HS,
-        ?DNS_CLASS_CS
-    ]).
 
 rdata(Type) ->
     case Type of
@@ -324,15 +234,15 @@ rdata(Type) ->
                 #dns_rrdata_aaaa{ip = {A, B, C, D, E, F, G, H}}
             );
         ?DNS_TYPE_NS ->
-            ?LET(Name, simple_dname(), #dns_rrdata_ns{dname = Name});
+            ?LET(Name, dns_prop_generator:simple_dname(), #dns_rrdata_ns{dname = Name});
         ?DNS_TYPE_CNAME ->
-            ?LET(Name, simple_dname(), #dns_rrdata_cname{dname = Name});
+            ?LET(Name, dns_prop_generator:simple_dname(), #dns_rrdata_cname{dname = Name});
         ?DNS_TYPE_PTR ->
-            ?LET(Name, simple_dname(), #dns_rrdata_ptr{dname = Name});
+            ?LET(Name, dns_prop_generator:simple_dname(), #dns_rrdata_ptr{dname = Name});
         ?DNS_TYPE_MX ->
             ?LET(
                 {Pref, Exchange},
-                {range(0, 65535), simple_dname()},
+                {range(0, 65535), dns_prop_generator:simple_dname()},
                 #dns_rrdata_mx{preference = Pref, exchange = Exchange}
             );
         ?DNS_TYPE_TXT ->
@@ -351,8 +261,8 @@ rdata(Type) ->
             ?LET(
                 {MName, RName, Serial, Refresh, Retry, Expire, Minimum},
                 {
-                    simple_dname(),
-                    simple_dname(),
+                    dns_prop_generator:simple_dname(),
+                    dns_prop_generator:simple_dname(),
                     range(0, 2147483647),
                     range(0, 2147483647),
                     range(0, 2147483647),
@@ -372,7 +282,12 @@ rdata(Type) ->
         ?DNS_TYPE_SRV ->
             ?LET(
                 {Priority, Weight, Port, Target},
-                {range(0, 65535), range(0, 65535), range(0, 65535), simple_dname()},
+                {
+                    range(0, 65535),
+                    range(0, 65535),
+                    range(0, 65535),
+                    dns_prop_generator:simple_dname()
+                },
                 #dns_rrdata_srv{
                     priority = Priority,
                     weight = Weight,
@@ -411,14 +326,14 @@ rdata(Type) ->
         ?DNS_TYPE_NXT ->
             ?LET(
                 {DName, Types},
-                {simple_dname(), non_empty(list(range(1, 65535)))},
+                {dns_prop_generator:simple_dname(), non_empty(list(range(1, 65535)))},
                 #dns_rrdata_nxt{dname = DName, types = Types}
             );
         ?DNS_TYPE_TSIG ->
             ?LET(
                 {Alg, Time, Fudge, MAC, MsgID, Err, Other},
                 {
-                    simple_dname(),
+                    dns_prop_generator:simple_dname(),
                     range(0, 281474976710655),
                     range(0, 65535),
                     binary(),
@@ -528,7 +443,7 @@ rdata(Type) ->
                     range(0, 255),
                     range(0, 255),
                     frequency([
-                        {1, simple_dname()},
+                        {1, dns_prop_generator:simple_dname()},
                         {1, {192, 168, 1, 1}},
                         {1, {16#2001, 16#0db8, 16#85a3, 0, 0, 0, 16#8a2e, 16#0370}}
                     ]),
@@ -685,28 +600,28 @@ extract_origin(ZoneString) ->
 
 %% Normalize RR for comparison (handles domain name case differences)
 normalize_rr(#dns_rr{name = Name, data = Data} = RR) ->
-    NormalizedName = dns:dname_to_lower(Name),
+    NormalizedName = dns_domain:to_lower(Name),
     NormalizedData = normalize_rdata_dnames(Data),
     RR#dns_rr{name = NormalizedName, data = NormalizedData}.
 
 %% Normalize domain names in RDATA (only for types that contain domain names)
 normalize_rdata_dnames(#dns_rrdata_ns{dname = DName} = R) ->
-    R#dns_rrdata_ns{dname = dns:dname_to_lower(DName)};
+    R#dns_rrdata_ns{dname = dns_domain:to_lower(DName)};
 normalize_rdata_dnames(#dns_rrdata_cname{dname = DName} = R) ->
-    R#dns_rrdata_cname{dname = dns:dname_to_lower(DName)};
+    R#dns_rrdata_cname{dname = dns_domain:to_lower(DName)};
 normalize_rdata_dnames(#dns_rrdata_ptr{dname = DName} = R) ->
-    R#dns_rrdata_ptr{dname = dns:dname_to_lower(DName)};
+    R#dns_rrdata_ptr{dname = dns_domain:to_lower(DName)};
 normalize_rdata_dnames(#dns_rrdata_mx{exchange = Ex} = R) ->
-    R#dns_rrdata_mx{exchange = dns:dname_to_lower(Ex)};
+    R#dns_rrdata_mx{exchange = dns_domain:to_lower(Ex)};
 normalize_rdata_dnames(#dns_rrdata_soa{mname = M, rname = RName} = R) ->
-    R#dns_rrdata_soa{mname = dns:dname_to_lower(M), rname = dns:dname_to_lower(RName)};
+    R#dns_rrdata_soa{mname = dns_domain:to_lower(M), rname = dns_domain:to_lower(RName)};
 normalize_rdata_dnames(#dns_rrdata_srv{target = T} = R) ->
-    R#dns_rrdata_srv{target = dns:dname_to_lower(T)};
+    R#dns_rrdata_srv{target = dns_domain:to_lower(T)};
 normalize_rdata_dnames(#dns_rrdata_nxt{dname = DName, types = Types} = R) ->
-    R#dns_rrdata_nxt{dname = dns:dname_to_lower(DName), types = Types};
+    R#dns_rrdata_nxt{dname = dns_domain:to_lower(DName), types = Types};
 normalize_rdata_dnames(#dns_rrdata_tsig{alg = Alg} = R) ->
-    R#dns_rrdata_tsig{alg = dns:dname_to_lower(Alg)};
+    R#dns_rrdata_tsig{alg = dns_domain:to_lower(Alg)};
 normalize_rdata_dnames(#dns_rrdata_ipseckey{gateway = Gateway} = R) when is_binary(Gateway) ->
-    R#dns_rrdata_ipseckey{gateway = dns:dname_to_lower(Gateway)};
+    R#dns_rrdata_ipseckey{gateway = dns_domain:to_lower(Gateway)};
 normalize_rdata_dnames(Other) ->
     Other.

@@ -25,7 +25,7 @@ verify_tsig(MsgBin, Name, Secret) ->
     {ok, dns:tsig_mac()} | {error, dns:tsig_error()}.
 verify_tsig(MsgBin, Name, Secret, Options) ->
     {UnsignedMsgBin, #dns_rr{name = TName, data = TData}} = strip_tsig(MsgBin),
-    case dns:compare_dname(Name, TName) of
+    case dns_domain:are_equal(Name, TName) of
         true ->
             do_verify_tsig(UnsignedMsgBin, TData, Name, Secret, Options);
         false ->
@@ -43,7 +43,7 @@ do_verify_tsig(UnsignedMsgBin, TData, Name, Secret, Options) ->
     } = TData,
     Now = maps:get(time, Options, erlang:system_time(second)),
     Fudge = maps:get(fudge, Options, ?DEFAULT_TSIG_FUDGE),
-    EncodedName = dns_encode:encode_dname(Name),
+    EncodedName = dns_domain:to_wire(Name),
     Options1 = Options#{fudge => CFudge, errcode => Err},
     case gen_tsig_mac(Alg, UnsignedMsgBin, EncodedName, Secret, Time, Other, Options1) of
         {ok, SMAC} ->
@@ -82,7 +82,7 @@ add_tsig(Msg, Alg, Name, Secret, ErrCode, Options) ->
     Time = maps:get(time, Options, erlang:system_time(second)),
     Fudge = maps:get(fudge, Options, ?DEFAULT_TSIG_FUDGE),
     Other = maps:get(other, Options, <<>>),
-    EncName = dns_encode:encode_dname(Name),
+    EncName = dns_domain:to_wire(Name),
     Options1 = Options#{errcode => ErrCode},
     {ok, MAC} = gen_tsig_mac(Alg, MsgBin, EncName, Secret, Time, Other, Options1),
     Data = #dns_rrdata_tsig{
@@ -112,7 +112,7 @@ strip_tsig(
 ) when
     ADC =:= 0
 ->
-    throw(no_tsig);
+    error(no_tsig);
 strip_tsig(
     <<_Id:16, QR:1, OC:4, AA:1, TC:1, RD:1, RA:1, PR:1, Z:2, RC:4, QC:16, ANC:16, AUC:16, ADC:16,
         HRB/binary>> = MsgBin
@@ -129,15 +129,15 @@ strip_tsig(
                     AUC:16, UnsignedADC:16, UnsignedBodyBin/binary>>,
             {UnsignedMsgBin, TSigRR};
         {[#dns_rr{data = #dns_rrdata_tsig{}}], _} ->
-            throw(trailing_garbage);
+            error(trailing_garbage);
         _ ->
-            throw(no_tsig)
+            error(no_tsig)
     end.
 
 -spec encode_message_tsig_size(binary(), dns:message_bin(), bitstring()) -> pos_integer().
 encode_message_tsig_size(EncodedName, Alg, Other) ->
     NameSize = byte_size(EncodedName),
-    AlgSize = byte_size(dns_encode:encode_dname(Alg)),
+    AlgSize = byte_size(dns_domain:to_wire(Alg)),
     MACSize =
         case Alg of
             ?DNS_TSIG_ALG_MD5 -> 16;
@@ -175,7 +175,7 @@ encode_message_tsig_add(
         {ok, MAC} ->
             MS = byte_size(MAC),
             OLen = byte_size(Other),
-            AlgBin = dns_encode:encode_dname(LowerAlg),
+            AlgBin = dns_domain:to_wire(LowerAlg),
             TSIGData =
                 <<AlgBin/binary, Time:48, Fudge:16, MS:16, MAC:MS/binary, OrigMsgId:16, Err:16,
                     OLen:16, Other:OLen/binary>>,
@@ -204,7 +204,7 @@ gen_tsig_mac(Alg, Msg, NameBin, Secret, Time, Other, Options) ->
     Tail = maps:get(tail, Options, false),
     Fudge = maps:get(fudge, Options, ?DEFAULT_TSIG_FUDGE),
     Err = maps:get(errcode, Options, ?DNS_TSIGERR_NOERROR),
-    AlgBin = dns_encode:encode_dname(Alg),
+    AlgBin = dns_domain:to_wire(Alg),
     OLen = byte_size(Other),
     PMAC =
         case MAC of
@@ -257,7 +257,7 @@ hmac_type(?DNS_TSIG_ALG_SHA384) ->
 hmac_type(?DNS_TSIG_ALG_SHA512) ->
     sha512;
 hmac_type(Alg) ->
-    case dns:dname_to_lower(Alg) of
+    case dns_domain:to_lower(Alg) of
         Alg -> undefined;
         AlgLower -> hmac_type(AlgLower)
     end.

@@ -27,14 +27,14 @@ encode_file(Records, Filename, Opts) ->
 
 -spec encode_string([dns:rr()], dns_zone:encode_options()) -> iodata().
 encode_string(Records, Opts) ->
-    LwrOrigin = dns:dname_to_lower(maps:get(origin, Opts, ?DEFAULT_ORIGIN)),
+    LwrOrigin = dns_domain:to_lower(maps:get(origin, Opts, ?DEFAULT_ORIGIN)),
     SortedRecords = sort_zone_records(Records),
     build_zone_lines(SortedRecords, LwrOrigin, Opts).
 
 -spec encode_rr(dns:rr(), dns_zone:encode_options()) -> iolist().
 encode_rr(#dns_rr{name = Name, type = Type, class = Class, ttl = TTL, data = Data}, Opts) ->
-    LwrName = dns:dname_to_lower(Name),
-    LwrOrigin = dns:dname_to_lower(maps:get(origin, Opts, ?DEFAULT_ORIGIN)),
+    LwrName = dns_domain:to_lower(Name),
+    LwrOrigin = dns_domain:to_lower(maps:get(origin, Opts, ?DEFAULT_ORIGIN)),
     OmitClass = maps:get(omit_class, Opts, ?DEFAULT_OMIT_CLASS),
     TTLFormat = maps:get(ttl_format, Opts, ?DEFAULT_TTL_FORMAT),
     RelativeNames = maps:get(relative_names, Opts, ?DEFAULT_RELATIVE_NAMES),
@@ -67,7 +67,7 @@ encode_rdata(Type, RData) ->
 
 -spec encode_rdata(dns:type(), dns:rrdata(), dns_zone:encode_options()) -> iodata().
 encode_rdata(Type, RData, Opts) ->
-    Origin = dns:dname_to_lower(maps:get(origin, Opts, ?DEFAULT_ORIGIN)),
+    Origin = dns_domain:to_lower(maps:get(origin, Opts, ?DEFAULT_ORIGIN)),
     RelativeNames = maps:get(relative_names, Opts, ?DEFAULT_RELATIVE_NAMES),
     Separator = maps:get(separator, Opts, ?DEFAULT_SEPARATOR),
     encode_rdata(Type, RData, Origin, RelativeNames, Separator).
@@ -189,8 +189,8 @@ encode_type(Type) ->
 %% Returns relative atom if name equals origin, otherwise returns relative dname binary
 -spec make_relative(dns:dname(), dns:dname()) -> dns:dname() | relative.
 make_relative(Name, Origin) ->
-    NameLower = dns:dname_to_lower(Name),
-    OriginLower = dns:dname_to_lower(Origin),
+    NameLower = dns_domain:to_lower(Name),
+    OriginLower = dns_domain:to_lower(Origin),
     case NameLower =:= OriginLower of
         true ->
             relative;
@@ -348,8 +348,8 @@ sort_zone_records(Records) ->
 %% Compare two RRs by name for sorting
 -spec compare_rr_by_name(dns:rr(), dns:rr()) -> boolean().
 compare_rr_by_name(#dns_rr{name = Name1}, #dns_rr{name = Name2}) ->
-    Name1Lower = dns:dname_to_lower(Name1),
-    Name2Lower = dns:dname_to_lower(Name2),
+    Name1Lower = dns_domain:to_lower(Name1),
+    Name2Lower = dns_domain:to_lower(Name2),
     Name1Lower < Name2Lower.
 
 %% Build zone file lines from sorted records
@@ -404,8 +404,8 @@ encode_salt_hex(Salt) ->
     binary()
 ) -> string().
 encode_svcb_record(Priority, Target, Params, Origin, RelativeNames, Separator) ->
-    LwrTarget = dns:dname_to_lower(Target),
-    LwrOrigin = dns:dname_to_lower(Origin),
+    LwrTarget = dns_domain:to_lower(Target),
+    LwrOrigin = dns_domain:to_lower(Origin),
     PriorityBin = integer_to_binary(Priority),
     TargetStr = encode_dname(LwrTarget, LwrOrigin, RelativeNames),
     ParamsStr = encode_svcb_params(Params, Separator),
@@ -442,7 +442,7 @@ encode_rdata(?DNS_TYPE_A, #dns_rrdata_a{ip = IP}, _Origin, _RelativeNames, _Sepa
 encode_rdata(?DNS_TYPE_AAAA, #dns_rrdata_aaaa{ip = IP}, _Origin, _RelativeNames, _Separator) ->
     "" ++ _ = inet:ntoa(IP);
 encode_rdata(?DNS_TYPE_NS, #dns_rrdata_ns{dname = DName}, Origin, RelativeNames, _Separator) ->
-    encode_dname(dns:dname_to_lower(DName), Origin, RelativeNames);
+    encode_dname(dns_domain:to_lower(DName), Origin, RelativeNames);
 encode_rdata(
     ?DNS_TYPE_CNAME,
     #dns_rrdata_cname{dname = DName},
@@ -450,7 +450,7 @@ encode_rdata(
     RelativeNames,
     _Separator
 ) ->
-    encode_dname(dns:dname_to_lower(DName), Origin, RelativeNames);
+    encode_dname(dns_domain:to_lower(DName), Origin, RelativeNames);
 encode_rdata(?DNS_TYPE_PTR, #dns_rrdata_ptr{dname = DName}, Origin, RelativeNames, _Separator) ->
     encode_dname(DName, Origin, RelativeNames);
 encode_rdata(
@@ -461,7 +461,7 @@ encode_rdata(
     Separator
 ) ->
     PrefBin = integer_to_binary(Pref),
-    ExchangeStr = encode_dname(dns:dname_to_lower(Exchange), Origin, RelativeNames),
+    ExchangeStr = encode_dname(dns_domain:to_lower(Exchange), Origin, RelativeNames),
     [PrefBin, Separator | ExchangeStr];
 encode_rdata(?DNS_TYPE_TXT, #dns_rrdata_txt{txt = Strings}, _Origin, _RelativeNames, Separator) ->
     encode_quoted_strings(Strings, Separator);
@@ -482,8 +482,8 @@ encode_rdata(
     RelativeNames,
     Separator
 ) ->
-    MNameStr = encode_dname(dns:dname_to_lower(MName), Origin, RelativeNames),
-    RNameStr = encode_dname(dns:dname_to_lower(RName), Origin, RelativeNames),
+    MNameStr = encode_dname(dns_domain:to_lower(MName), Origin, RelativeNames),
+    RNameStr = encode_dname(dns_domain:to_lower(RName), Origin, RelativeNames),
     SerialBin = integer_to_binary(Serial),
     RefreshBin = integer_to_binary(Refresh),
     RetryBin = integer_to_binary(Retry),
@@ -510,7 +510,7 @@ encode_rdata(
     PriorityBin = integer_to_binary(Priority),
     WeightBin = integer_to_binary(Weight),
     PortBin = integer_to_binary(Port),
-    TargetStr = encode_dname(dns:dname_to_lower(Target), Origin, RelativeNames),
+    TargetStr = encode_dname(dns_domain:to_lower(Target), Origin, RelativeNames),
     join_rdata_fields([PriorityBin, WeightBin, PortBin, TargetStr], Separator);
 encode_rdata(
     ?DNS_TYPE_CAA,
@@ -548,7 +548,7 @@ encode_rdata(
     FlagsBin = encode_quoted_string(Flags),
     ServicesBin = encode_quoted_string(Services),
     RegexpBin = encode_quoted_string(Regexp),
-    ReplacementStr = encode_dname(dns:dname_to_lower(Replacement), Origin, RelativeNames),
+    ReplacementStr = encode_dname(dns_domain:to_lower(Replacement), Origin, RelativeNames),
     join_rdata_fields(
         [OrderBin, PrefBin, FlagsBin, ServicesBin, RegexpBin, ReplacementStr], Separator
     );
@@ -573,8 +573,8 @@ encode_rdata(
     RelativeNames,
     Separator
 ) ->
-    MboxStr = encode_dname(dns:dname_to_lower(Mbox), Origin, RelativeNames),
-    TxtStr = encode_dname(dns:dname_to_lower(Txt), Origin, RelativeNames),
+    MboxStr = encode_dname(dns_domain:to_lower(Mbox), Origin, RelativeNames),
+    TxtStr = encode_dname(dns_domain:to_lower(Txt), Origin, RelativeNames),
     join_rdata_fields([MboxStr, TxtStr], Separator);
 encode_rdata(
     ?DNS_TYPE_AFSDB,
@@ -587,7 +587,7 @@ encode_rdata(
     Separator
 ) ->
     SubtypeBin = integer_to_binary(Subtype),
-    HostnameStr = encode_dname(dns:dname_to_lower(Hostname), Origin, RelativeNames),
+    HostnameStr = encode_dname(dns_domain:to_lower(Hostname), Origin, RelativeNames),
     join_rdata_fields([SubtypeBin, HostnameStr], Separator);
 encode_rdata(
     ?DNS_TYPE_RT,
@@ -600,7 +600,7 @@ encode_rdata(
     Separator
 ) ->
     PrefBin = integer_to_binary(Preference),
-    HostStr = encode_dname(dns:dname_to_lower(Host), Origin, RelativeNames),
+    HostStr = encode_dname(dns_domain:to_lower(Host), Origin, RelativeNames),
     join_rdata_fields([PrefBin, HostStr], Separator);
 encode_rdata(
     ?DNS_TYPE_KX,
@@ -613,7 +613,7 @@ encode_rdata(
     Separator
 ) ->
     PrefBin = integer_to_binary(Preference),
-    ExchangeStr = encode_dname(dns:dname_to_lower(Exchange), Origin, RelativeNames),
+    ExchangeStr = encode_dname(dns_domain:to_lower(Exchange), Origin, RelativeNames),
     join_rdata_fields([PrefBin, ExchangeStr], Separator);
 encode_rdata(
     ?DNS_TYPE_DNAME,
@@ -622,13 +622,13 @@ encode_rdata(
     RelativeNames,
     _Separator
 ) ->
-    encode_dname(dns:dname_to_lower(DName), Origin, RelativeNames);
+    encode_dname(dns_domain:to_lower(DName), Origin, RelativeNames);
 encode_rdata(?DNS_TYPE_MB, #dns_rrdata_mb{madname = DName}, Origin, RelativeNames, _Separator) ->
-    encode_dname(dns:dname_to_lower(DName), Origin, RelativeNames);
+    encode_dname(dns_domain:to_lower(DName), Origin, RelativeNames);
 encode_rdata(?DNS_TYPE_MG, #dns_rrdata_mg{madname = DName}, Origin, RelativeNames, _Separator) ->
-    encode_dname(dns:dname_to_lower(DName), Origin, RelativeNames);
+    encode_dname(dns_domain:to_lower(DName), Origin, RelativeNames);
 encode_rdata(?DNS_TYPE_MR, #dns_rrdata_mr{newname = DName}, Origin, RelativeNames, _Separator) ->
-    encode_dname(dns:dname_to_lower(DName), Origin, RelativeNames);
+    encode_dname(dns_domain:to_lower(DName), Origin, RelativeNames);
 encode_rdata(
     ?DNS_TYPE_MINFO,
     #dns_rrdata_minfo{
@@ -639,8 +639,8 @@ encode_rdata(
     RelativeNames,
     Separator
 ) ->
-    RMailbxStr = encode_dname(dns:dname_to_lower(RMailbx), Origin, RelativeNames),
-    EmailBxStr = encode_dname(dns:dname_to_lower(EmailBx), Origin, RelativeNames),
+    RMailbxStr = encode_dname(dns_domain:to_lower(RMailbx), Origin, RelativeNames),
+    EmailBxStr = encode_dname(dns_domain:to_lower(EmailBx), Origin, RelativeNames),
     join_rdata_fields([RMailbxStr, EmailBxStr], Separator);
 encode_rdata(
     ?DNS_TYPE_DS,
@@ -731,7 +731,7 @@ encode_rdata(
     ExpirationBin = integer_to_binary(Expiration),
     InceptionBin = integer_to_binary(Inception),
     KeyTagBin = integer_to_binary(KeyTag),
-    SignersNameStr = encode_dname(dns:dname_to_lower(SignersName), Origin, RelativeNames),
+    SignersNameStr = encode_dname(dns_domain:to_lower(SignersName), Origin, RelativeNames),
     SignatureB64 = base64:encode(Signature),
     join_rdata_fields(
         [
@@ -757,7 +757,7 @@ encode_rdata(
     RelativeNames,
     Separator
 ) ->
-    NextDNameStr = encode_dname(dns:dname_to_lower(NextDName), Origin, RelativeNames),
+    NextDNameStr = encode_dname(dns_domain:to_lower(NextDName), Origin, RelativeNames),
     TypeStrs = [encode_type(T) || T <- Types],
     join_rdata_fields([NextDNameStr | TypeStrs], Separator);
 encode_rdata(
@@ -962,7 +962,7 @@ encode_rdata(
     RRTypeStr = encode_type(RRType),
     SchemeBin = integer_to_binary(Scheme),
     PortBin = integer_to_binary(Port),
-    TargetStr = encode_dname(dns:dname_to_lower(Target), Origin, RelativeNames),
+    TargetStr = encode_dname(dns_domain:to_lower(Target), Origin, RelativeNames),
     join_rdata_fields([RRTypeStr, SchemeBin, PortBin, TargetStr], Separator);
 encode_rdata(
     ?DNS_TYPE_SVCB,
@@ -1041,7 +1041,7 @@ encode_rdata(
                 "" ++ _ = inet:ntoa(IPv6);
             DName when is_binary(DName) ->
                 %% Domain name
-                encode_dname(dns:dname_to_lower(DName), Origin, RelativeNames)
+                encode_dname(dns_domain:to_lower(DName), Origin, RelativeNames)
         end,
     PublicKeyHex = binary:encode_hex(PublicKey),
     join_rdata_fields([PrecedenceBin, AlgBin, GatewayStr, PublicKeyHex], Separator);
@@ -1080,7 +1080,7 @@ encode_rdata(
     RelativeNames,
     Separator
 ) ->
-    DNameStr = encode_dname(dns:dname_to_lower(DName), Origin, RelativeNames),
+    DNameStr = encode_dname(dns_domain:to_lower(DName), Origin, RelativeNames),
     TypeBins = [encode_type(T) || T <- Types],
     join_rdata_fields([DNameStr | TypeBins], Separator);
 encode_rdata(
@@ -1098,7 +1098,7 @@ encode_rdata(
     RelativeNames,
     Separator
 ) ->
-    AlgStr = encode_dname(dns:dname_to_lower(Alg), Origin, RelativeNames),
+    AlgStr = encode_dname(dns_domain:to_lower(Alg), Origin, RelativeNames),
     TimeBin = integer_to_binary(Time),
     FudgeBin = integer_to_binary(Fudge),
     MACSize = byte_size(MAC),
