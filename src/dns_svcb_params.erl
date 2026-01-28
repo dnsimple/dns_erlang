@@ -18,18 +18,13 @@
 
 -type error_callback() :: fun((term()) -> term()).
 
--export_type([zone_rdata/0, error_callback/0]).
+-type escape_callback() :: fun((binary()) -> binary()).
 
--export([
-    to_wire/1,
-    from_wire/1,
-    to_json/1,
-    from_json/1
-]).
+-export_type([zone_rdata/0, error_callback/0, escape_callback/0]).
 
--export([
-    from_zone/2
-]).
+-export([to_wire/1, from_wire/1]).
+-export([to_json/1, from_json/1]).
+-export([from_zone/2, to_zone/3]).
 
 %% ============================================================================
 %% High-level conversion functions
@@ -408,3 +403,55 @@ validate_mandatory_params(#{?DNS_SVCB_PARAM_MANDATORY := MandatoryKeys} = SvcPar
     end;
 validate_mandatory_params(SvcParams) ->
     SvcParams.
+
+%% ============================================================================
+%% Zone Format Encoding (internal -> zone file format)
+%% ============================================================================
+
+%% Encode SVCB/HTTPS service parameters to zone file format
+%% Takes params, separator, and an escape function for unknown key values
+-spec to_zone(dns:svcb_svc_params(), binary(), escape_callback()) -> iodata().
+to_zone(Params, _Separator, _EscapeFun) when map_size(Params) =:= 0 ->
+    <<>>;
+to_zone(Params, Separator, EscapeFun) ->
+    ParamList = to_zone_list(Params, [], EscapeFun),
+    join_with_spaces(ParamList, Separator).
+
+-spec join_with_spaces([iodata()], binary()) -> iodata().
+join_with_spaces([], _Separator) ->
+    <<>>;
+join_with_spaces([First | Rest], Separator) ->
+    lists:foldl(fun(P, Acc) -> [Acc, Separator, P] end, First, Rest).
+
+-spec to_zone_list(dns:svcb_svc_params(), [iodata()], escape_callback()) -> [iodata()].
+to_zone_list(SvcParams, Acc, EscapeFun) ->
+    SortedParams = lists:sort(maps:to_list(SvcParams)),
+    lists:foldr(
+        fun
+            ({?DNS_SVCB_PARAM_MANDATORY, Keys}, Acc0) ->
+                KeyNames = [dns_names:svcb_param_name(K) || K <- Keys],
+                [[<<"mandatory=\"">>, lists:join(",", KeyNames), <<"\"">>] | Acc0];
+            ({?DNS_SVCB_PARAM_ALPN, Protocols}, Acc0) ->
+                [[<<"alpn=\"">>, lists:join(",", Protocols), <<"\"">>] | Acc0];
+            ({?DNS_SVCB_PARAM_NO_DEFAULT_ALPN, none}, Acc0) ->
+                [<<"no-default-alpn">> | Acc0];
+            ({?DNS_SVCB_PARAM_PORT, Port}, Acc0) ->
+                [[<<"port=\"">>, integer_to_binary(Port), <<"\"">>] | Acc0];
+            ({?DNS_SVCB_PARAM_IPV4HINT, IPs}, Acc0) ->
+                IPStrs = [inet:ntoa(IP) || IP <- IPs],
+                [[<<"ipv4hint=\"">>, lists:join(",", IPStrs), <<"\"">>] | Acc0];
+            ({?DNS_SVCB_PARAM_IPV6HINT, IPs}, Acc0) ->
+                IPStrs = [inet:ntoa(IP) || IP <- IPs],
+                [[<<"ipv6hint=\"">>, lists:join(",", IPStrs), <<"\"">>] | Acc0];
+            ({?DNS_SVCB_PARAM_ECH, ECHConfig}, Acc0) ->
+                [[<<"ech=\"">>, base64:encode(ECHConfig), <<"\"">>] | Acc0];
+            ({KeyNum, none}, Acc0) when is_integer(KeyNum) ->
+                [[<<"key">>, integer_to_binary(KeyNum)] | Acc0];
+            ({KeyNum, Value}, Acc0) when is_integer(KeyNum), is_binary(Value) ->
+                KeyNumBin = integer_to_binary(KeyNum),
+                EscapedValue = EscapeFun(Value),
+                [[<<"key">>, KeyNumBin, "=", EscapedValue] | Acc0]
+        end,
+        Acc,
+        SortedParams
+    ).
