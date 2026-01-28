@@ -20,12 +20,11 @@
 
 -type escape_callback() :: fun((binary()) -> binary()).
 
--type format() :: wire | zone | json.
 -export_type([zone_rdata/0, error_callback/0, escape_callback/0]).
 
 -export([to_wire/1, from_wire/1]).
 -export([to_json/1, from_json/1]).
--export([from_zone/2, to_zone/3]).
+-export([to_zone/3, from_zone/2]).
 
 -spec to_wire(dns:svcb_svc_params()) -> binary().
 to_wire(SvcParams) ->
@@ -110,11 +109,40 @@ to_json(SvcParams) ->
 
 -spec from_json(map()) -> dns:svcb_svc_params().
 from_json(JsonMap) ->
-    #{
-        dns_names:name_svcb_param(K) =>
-            decode_value_from_json(dns_names:name_svcb_param(K), V)
-     || K := V <- JsonMap
-    }.
+    SvcParams = parse_svcb_params_from_json(maps:to_list(JsonMap), #{}),
+    validate_mandatory_params(json, SvcParams).
+
+-spec parse_svcb_params_from_json([{binary(), term()}], dns:svcb_svc_params()) ->
+    dns:svcb_svc_params().
+parse_svcb_params_from_json([], Acc) ->
+    Acc;
+parse_svcb_params_from_json([{Key, Value} | Rest], Acc) ->
+    ParamKey = dns_names:name_svcb_param(Key),
+    NewAcc =
+        case ParamKey of
+            undefined ->
+                Acc;
+            ?DNS_SVCB_PARAM_MANDATORY when is_list(Value) ->
+                KeyNums = [dns_names:name_svcb_param(K) || K <- Value],
+                Acc#{ParamKey => KeyNums};
+            ?DNS_SVCB_PARAM_ALPN when is_list(Value) ->
+                Acc#{ParamKey => Value};
+            ?DNS_SVCB_PARAM_NO_DEFAULT_ALPN when Value =:= ~"none" orelse Value =:= none ->
+                Acc#{ParamKey => none};
+            ?DNS_SVCB_PARAM_PORT when is_integer(Value) ->
+                Acc#{ParamKey => Value};
+            ?DNS_SVCB_PARAM_ECH when is_binary(Value) ->
+                Acc#{ParamKey => Value};
+            ?DNS_SVCB_PARAM_IPV4HINT when is_list(Value) ->
+                IPs = [parse_ipv4_for_json(IP) || IP <- Value],
+                Acc#{ParamKey => IPs};
+            ?DNS_SVCB_PARAM_IPV6HINT when is_list(Value) ->
+                IPs = [parse_ipv6_for_json(IP) || IP <- Value],
+                Acc#{ParamKey => IPs};
+            NNNN when is_integer(NNNN) ->
+                Acc#{NNNN => Value}
+        end,
+    parse_svcb_params_from_json(Rest, NewAcc).
 
 %% Parse SVCB/HTTPS service parameters from zone parser's rdata format
 %% Handles both parsed key=value pairs and labels containing = (from lexer)
@@ -275,8 +303,9 @@ parse_mandatory_keys_for_zone([Key | _], MakeError, _) ->
 
 %% Validate mandatory params for wire format (throws on error)
 -spec validate_mandatory_params
-    (wire, dns:svcb_svc_params()) -> dns:svcb_svc_params() | no_return();
-    (zone, dns:svcb_svc_params()) -> {ok, dns:svcb_svc_params()} | no_return() | {error, term()}.
+    (wire, dns:svcb_svc_params()) -> dns:svcb_svc_params();
+    (zone, dns:svcb_svc_params()) -> {ok, dns:svcb_svc_params()} | {error, term()};
+    (json, dns:svcb_svc_params()) -> dns:svcb_svc_params().
 validate_mandatory_params(wire, SvcParams) ->
     case validate_mandatory_params_core(SvcParams) of
         {error, Reason} ->
@@ -290,6 +319,13 @@ validate_mandatory_params(zone, SvcParams) ->
             {error, Error};
         SvcParams ->
             {ok, SvcParams}
+    end;
+validate_mandatory_params(json, SvcParams) ->
+    case validate_mandatory_params_core(SvcParams) of
+        {error, Error} ->
+            error({svcb_mandatory_validation_error, Error});
+        SvcParams ->
+            SvcParams
     end.
 
 %% Core validation logic - returns validation result without throwing
@@ -315,88 +351,50 @@ validate_mandatory_params_core(SvcParams) ->
 
 -spec encode_value_to_json(dns:uint16(), dynamic()) -> term().
 encode_value_to_json(?DNS_SVCB_PARAM_MANDATORY, Value) when is_list(Value) ->
-    [integer_to_binary(V) || V <- Value];
+    [dns_names:svcb_param_name(K) || K <- Value];
 encode_value_to_json(?DNS_SVCB_PARAM_ALPN, Value) when is_list(Value) ->
-    encode_alpn_list(json, Value);
+    Value;
 encode_value_to_json(?DNS_SVCB_PARAM_NO_DEFAULT_ALPN, none) ->
     ~"none";
 encode_value_to_json(?DNS_SVCB_PARAM_PORT, Value) when is_integer(Value) ->
-    integer_to_binary(Value);
+    Value;
 encode_value_to_json(?DNS_SVCB_PARAM_IPV4HINT, Value) when is_list(Value) ->
     [list_to_binary(inet:ntoa(V)) || V <- Value];
 encode_value_to_json(?DNS_SVCB_PARAM_ECH, Value) when is_binary(Value) ->
-    base64:encode(Value);
+    Value;
 encode_value_to_json(?DNS_SVCB_PARAM_IPV6HINT, Value) when is_list(Value) ->
     [list_to_binary(inet:ntoa(V)) || V <- Value];
 encode_value_to_json(Key, Value) when is_integer(Key) ->
-    encode_unknown_key(json, Key, Value, fun(V) -> V end).
-
--spec decode_value_from_json(dns:uint16(), term()) -> term().
-decode_value_from_json(?DNS_SVCB_PARAM_MANDATORY, Value) when is_list(Value) ->
-    [binary_to_integer(V) || V <- Value];
-decode_value_from_json(?DNS_SVCB_PARAM_ALPN, Value) when is_list(Value) ->
-    decode_alpn_list(json, Value);
-decode_value_from_json(?DNS_SVCB_PARAM_NO_DEFAULT_ALPN, ~"none") ->
-    none;
-decode_value_from_json(?DNS_SVCB_PARAM_PORT, Value) when is_binary(Value) ->
-    binary_to_integer(Value);
-decode_value_from_json(?DNS_SVCB_PARAM_IPV4HINT, Value) when is_list(Value) ->
-    %% Parse IPv4 addresses from JSON format - fail on any invalid IP
-    decode_ipv4_list_from_json(Value);
-decode_value_from_json(?DNS_SVCB_PARAM_ECH, Value) when is_binary(Value) ->
-    base64:decode(Value);
-decode_value_from_json(?DNS_SVCB_PARAM_IPV6HINT, Value) when is_list(Value) ->
-    %% Parse IPv6 addresses from JSON format - fail on any invalid IP
-    decode_ipv6_list_from_json(Value);
-decode_value_from_json(Key, Value) when is_integer(Key) ->
-    %% Unknown key - decode as binary
-    decode_unknown_key(json, Key, Value);
-decode_value_from_json(_Key, Value) ->
     Value.
 
 %% ============================================================================
 %% Helpers
 %% ============================================================================
 
-%% Decode IPv4 list from JSON format - throws on invalid IP
--spec decode_ipv4_list_from_json([binary()]) -> [inet:ip4_address()] | no_return().
-decode_ipv4_list_from_json(ValueList) ->
-    decode_ipv4_list_from_json(ValueList, []).
-
--spec decode_ipv4_list_from_json([binary()], [inet:ip4_address()]) ->
-    [inet:ip4_address()] | no_return().
-decode_ipv4_list_from_json([], Acc) ->
-    lists:reverse(Acc);
-decode_ipv4_list_from_json([V | Rest], Acc) ->
-    case parse_ipv4(json, V) of
-        {ok, IP} ->
-            decode_ipv4_list_from_json(Rest, [IP | Acc]);
-        {error, Reason} ->
-            error({invalid_ipv4_in_json, V, Reason})
+-spec parse_ipv4_for_json(binary() | string()) -> inet:ip4_address() | no_return().
+parse_ipv4_for_json(IP) when is_binary(IP) ->
+    parse_ipv4_for_json(binary_to_list(IP));
+parse_ipv4_for_json(IP) when is_list(IP) ->
+    case inet:parse_address(IP) of
+        {ok, {A, B, C, D}} -> {A, B, C, D};
+        {error, Reason} -> error({invalid_ipv4_in_json, list_to_binary(IP), Reason});
+        _ -> error({invalid_ipv4_in_json, list_to_binary(IP), invalid_format})
     end.
 
-%% Decode IPv6 list from JSON format - throws on invalid IP
--spec decode_ipv6_list_from_json([binary()]) -> [inet:ip6_address()] | no_return().
-decode_ipv6_list_from_json(ValueList) ->
-    decode_ipv6_list_from_json(ValueList, []).
-
--spec decode_ipv6_list_from_json([binary()], [inet:ip6_address()]) ->
-    [inet:ip6_address()] | no_return().
-decode_ipv6_list_from_json([], Acc) ->
-    lists:reverse(Acc);
-decode_ipv6_list_from_json([V | Rest], Acc) ->
-    case parse_ipv6(json, V) of
-        {ok, IP} ->
-            decode_ipv6_list_from_json(Rest, [IP | Acc]);
-        {error, Reason} ->
-            error({invalid_ipv6_in_json, V, Reason})
+-spec parse_ipv6_for_json(binary() | string()) -> inet:ip6_address() | no_return().
+parse_ipv6_for_json(IP) when is_binary(IP) ->
+    parse_ipv6_for_json(binary_to_list(IP));
+parse_ipv6_for_json(IP) when is_list(IP) ->
+    case inet:parse_address(IP) of
+        {ok, {A, B, C, D, E, F, G, H}} -> {A, B, C, D, E, F, G, H};
+        {error, Reason} -> error({invalid_ipv6_in_json, list_to_binary(IP), Reason});
+        _ -> error({invalid_ipv6_in_json, list_to_binary(IP), invalid_format})
     end.
 
 %% Encode unknown key for wire format
 -spec encode_unknown_key
     (wire, dns:uint16(), term(), escape_callback()) -> binary();
-    (zone, dns:uint16(), term(), escape_callback()) -> iodata();
-    (json, dns:uint16(), term(), escape_callback()) -> term().
+    (zone, dns:uint16(), term(), escape_callback()) -> iodata().
 encode_unknown_key(wire, _KeyNum, Value, _Escape) when is_binary(Value) ->
     Value;
 encode_unknown_key(zone, KeyNum, none, _Escape) ->
@@ -404,44 +402,18 @@ encode_unknown_key(zone, KeyNum, none, _Escape) ->
 encode_unknown_key(zone, KeyNum, Value, EscapeFun) when is_binary(Value) ->
     KeyNumBin = integer_to_binary(KeyNum),
     EscapedValue = EscapeFun(Value),
-    [[~"key", KeyNumBin, "=", EscapedValue]];
-encode_unknown_key(json, _KeyNum, Value, _Escape) when is_binary(Value) ->
-    base64:encode(Value);
-encode_unknown_key(json, _KeyNum, Value, _Escape) ->
-    Value.
+    [[~"key", KeyNumBin, "=", EscapedValue]].
 
-%% Decode unknown key from JSON format
--spec decode_unknown_key(json, dns:uint16(), term()) -> binary() | term().
-decode_unknown_key(json, _KeyNum, Value) when is_binary(Value) ->
-    try
-        base64:decode(Value)
-    catch
-        _:_ -> Value
-    end;
-decode_unknown_key(json, _KeyNum, Value) ->
-    Value.
-
--spec parse_ipv4(format(), binary() | string()) -> {ok, inet:ip4_address()} | {error, term()}.
+-spec parse_ipv4(zone, string()) -> {ok, inet:ip4_address()} | {error, term()}.
 parse_ipv4(zone, IPStr) when is_list(IPStr) ->
     case inet:parse_ipv4strict_address(IPStr) of
         {ok, IP} -> {ok, IP};
         Error -> Error
-    end;
-parse_ipv4(json, IPBin) when is_binary(IPBin) ->
-    case inet:parse_ipv4strict_address(binary_to_list(IPBin)) of
-        {ok, IP} -> {ok, IP};
-        Error -> Error
     end.
 
-%% Parse IPv6 address from different formats
--spec parse_ipv6(format(), binary() | string()) -> {ok, inet:ip6_address()} | {error, term()}.
+-spec parse_ipv6(zone, string()) -> {ok, inet:ip6_address()} | {error, term()}.
 parse_ipv6(zone, IPStr) when is_list(IPStr) ->
     case inet:parse_ipv6strict_address(IPStr) of
-        {ok, IP} -> {ok, IP};
-        Error -> Error
-    end;
-parse_ipv6(json, IPBin) when is_binary(IPBin) ->
-    case inet:parse_ipv6strict_address(binary_to_list(IPBin)) of
         {ok, IP} -> {ok, IP};
         Error -> Error
     end.
@@ -484,25 +456,19 @@ parse_ipv6_list_for_zone([IP | Rest], MakeError, Acc) ->
 
 -spec encode_alpn_list
     (wire, [binary()]) -> binary();
-    (zone, [binary()]) -> iodata();
-    (json, [binary()]) -> [binary()].
+    (zone, [binary()]) -> iodata().
 encode_alpn_list(wire, Protocols) ->
     <<<<(byte_size(P)):8, P/binary>> || P <- Protocols>>;
 encode_alpn_list(zone, Protocols) ->
-    join_with_separator(~",", Protocols);
-encode_alpn_list(json, Protocols) ->
-    [base64:encode(P) || P <- Protocols].
+    join_with_separator(~",", Protocols).
 
 -spec decode_alpn_list
     (wire, binary()) -> [binary()];
-    (zone, string()) -> [binary()];
-    (json, [binary()]) -> [binary()].
+    (zone, string()) -> [binary()].
 decode_alpn_list(wire, Bin) when is_binary(Bin) ->
     decode_alpn_wire(Bin);
 decode_alpn_list(zone, AlpnStr) when is_list(AlpnStr) ->
-    [list_to_binary(string:trim(P)) || P <- string:split(AlpnStr, ",", all), P =/= ""];
-decode_alpn_list(json, ValueList) when is_list(ValueList) ->
-    [base64:decode(V) || V <- ValueList].
+    [list_to_binary(string:trim(P)) || P <- string:split(AlpnStr, ",", all), P =/= ""].
 
 -spec decode_alpn_wire(binary()) -> [binary()].
 decode_alpn_wire(<<Len:8, Str:Len/binary, Rest/binary>>) ->

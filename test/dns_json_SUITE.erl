@@ -757,33 +757,7 @@ test_svcb_params_json_edge_cases(_Config) ->
             ~"svc_params" => #{~"ipv6hint" => [~"2001:db8::1", ~"invalid-ipv6"]}
         }
     },
-    ?assertError({invalid_ipv6_in_json, _, _}, dns_json:from_map(InvalidIpv6JsonMap)),
-
-    %% Test invalid base64 in ECH
-    InvalidEchJsonMap = #{
-        ~"name" => ~"example.com",
-        ~"type" => ~"SVCB",
-        ~"ttl" => 3600,
-        ~"data" => #{
-            ~"svc_priority" => 1,
-            ~"target_name" => ~"target.example.com",
-            ~"svc_params" => #{~"ech" => ~"invalid-base64!!!"}
-        }
-    },
-    ?assertError(_, dns_json:from_map(InvalidEchJsonMap)),
-
-    %% Test invalid ALPN (invalid base64 in list)
-    InvalidAlpnJsonMap = #{
-        ~"name" => ~"example.com",
-        ~"type" => ~"SVCB",
-        ~"ttl" => 3600,
-        ~"data" => #{
-            ~"svc_priority" => 1,
-            ~"target_name" => ~"target.example.com",
-            ~"svc_params" => #{~"alpn" => [~"invalid-base64!!!"]}
-        }
-    },
-    ?assertError(_, dns_json:from_map(InvalidAlpnJsonMap)).
+    ?assertError({invalid_ipv6_in_json, _, _}, dns_json:from_map(InvalidIpv6JsonMap)).
 
 test_dnskey_formats(_Config) ->
     %% RRDATA records must be wrapped in dns_rr
