@@ -351,36 +351,30 @@ to_map_value(Tag, svc_params, Value) when
     (Tag =:= dns_rrdata_svcb orelse Tag =:= dns_rrdata_https) andalso is_map(Value)
 ->
     dns_svcb_params:to_json(Value);
-to_map_value(Tag, Field, Value) when is_binary(Value) ->
-    encode_field(Tag, Field, Value);
+to_map_value(dns_rrdata_cert, cert, Value) when is_binary(Value) -> base64:encode(Value);
+to_map_value(dns_rrdata_dhcid, data, Value) when is_binary(Value) -> base64:encode(Value);
+to_map_value(dns_rrdata_openpgpkey, data, Value) when is_binary(Value) -> base64:encode(Value);
+to_map_value(dns_rrdata_dnskey, public_key, Value) when is_binary(Value) -> base64:encode(Value);
+to_map_value(dns_rrdata_cdnskey, public_key, Value) when is_binary(Value) -> base64:encode(Value);
+to_map_value(dns_rrdata_ipseckey, public_key, Value) when is_binary(Value) -> base64:encode(Value);
+to_map_value(dns_rrdata_rrsig, signature, Value) when is_binary(Value) -> base64:encode(Value);
+to_map_value(dns_rrdata_smimea, certificate, Value) when is_binary(Value) -> base64:encode(Value);
+to_map_value(dns_rrdata_tsig, mac, Value) when is_binary(Value) -> base64:encode(Value);
+to_map_value(dns_rrdata_wallet, data, Value) when is_binary(Value) -> base64:encode(Value);
+to_map_value(dns_rrdata_ds, digest, Value) when is_binary(Value) -> binary:encode_hex(Value);
+to_map_value(dns_rrdata_cds, digest, Value) when is_binary(Value) -> binary:encode_hex(Value);
+to_map_value(dns_rrdata_dlv, digest, Value) when is_binary(Value) -> binary:encode_hex(Value);
+to_map_value(dns_rrdata_zonemd, hash, Value) when is_binary(Value) -> binary:encode_hex(Value);
+to_map_value(dns_rrdata_sshfp, fp, Value) when is_binary(Value) -> binary:encode_hex(Value);
+to_map_value(dns_rrdata_eui48, address, Value) when is_binary(Value) -> binary:encode_hex(Value);
+to_map_value(dns_rrdata_eui64, address, Value) when is_binary(Value) -> binary:encode_hex(Value);
+to_map_value(dns_rrdata_tsig, other, Value) when is_binary(Value) -> binary:encode_hex(Value);
+to_map_value(dns_opt_nsid, data, Value) when is_binary(Value) -> binary:encode_hex(Value);
+to_map_value(dns_opt_owner, _Field, Value) when is_binary(Value) -> binary:encode_hex(Value);
+to_map_value(dns_opt_ecs, _Field, Value) when is_binary(Value) -> binary:encode_hex(Value);
+to_map_value(dns_opt_unknown, bin, Value) when is_binary(Value) -> binary:encode_hex(Value);
 to_map_value(_Tag, _Field, Value) ->
     Value.
-
-%% Encode binary fields based on tag and field name
--spec encode_field(atom(), atom(), binary()) -> binary().
-encode_field(dns_rrdata_cert, cert, Value) -> base64:encode(Value);
-encode_field(dns_rrdata_dhcid, data, Value) -> base64:encode(Value);
-encode_field(dns_rrdata_openpgpkey, data, Value) -> base64:encode(Value);
-encode_field(dns_rrdata_dnskey, public_key, Value) -> base64:encode(Value);
-encode_field(dns_rrdata_cdnskey, public_key, Value) -> base64:encode(Value);
-encode_field(dns_rrdata_ipseckey, public_key, Value) -> base64:encode(Value);
-encode_field(dns_rrdata_rrsig, signature, Value) -> base64:encode(Value);
-encode_field(dns_rrdata_smimea, certificate, Value) -> base64:encode(Value);
-encode_field(dns_rrdata_tsig, mac, Value) -> base64:encode(Value);
-encode_field(dns_rrdata_wallet, data, Value) -> base64:encode(Value);
-encode_field(dns_rrdata_ds, digest, Value) -> binary:encode_hex(Value);
-encode_field(dns_rrdata_cds, digest, Value) -> binary:encode_hex(Value);
-encode_field(dns_rrdata_dlv, digest, Value) -> binary:encode_hex(Value);
-encode_field(dns_rrdata_zonemd, hash, Value) -> binary:encode_hex(Value);
-encode_field(dns_rrdata_sshfp, fp, Value) -> binary:encode_hex(Value);
-encode_field(dns_rrdata_eui48, address, Value) -> binary:encode_hex(Value);
-encode_field(dns_rrdata_eui64, address, Value) -> binary:encode_hex(Value);
-encode_field(dns_rrdata_tsig, other, Value) -> binary:encode_hex(Value);
-encode_field(dns_opt_nsid, data, Value) -> binary:encode_hex(Value);
-encode_field(dns_opt_owner, _Field, Value) -> binary:encode_hex(Value);
-encode_field(dns_opt_ecs, _Field, Value) -> binary:encode_hex(Value);
-encode_field(dns_opt_unknown, bin, Value) -> binary:encode_hex(Value);
-encode_field(_Tag, _Field, Value) -> Value.
 
 %% Convert JSON-friendly values back to record field values
 from_map_field(dns_message, questions, Value) when is_list(Value) ->
