@@ -19,7 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-Migrate domain name operations to new `dns_domain` module
+- Require OTP 27 or later (minimum_otp_vsn set to "27")
+- Migrate domain name operations to new `dns_domain` module
 
 All domain name processing functions have been moved to a new optimized
 `dns_domain` module. The old implementations in `dns`, `dns_encode`, and
@@ -52,10 +53,6 @@ dns_encode:encode_dname(CM, Pos, N)  -> dns_domain:to_wire(CM, Pos, N)
 - decoding invalid wire packets previously used `throw/1` for errors (`decode_loop`, `bad_pointer`),
   it uses `error/1` now
 - Update error handling: `try dns:decode_message(...) catch error:Reason -> ... end`
-
-### Changed
-
-- Require OTP 27 or later (minimum_otp_vsn set to "27")
 
 ### Removed
 
