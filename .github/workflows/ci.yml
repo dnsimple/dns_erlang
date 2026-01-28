@@ -13,21 +13,21 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  yamllint:
+  yaml-lint:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
         uses: actions/checkout@v6
       - name: Run YAML Lint
-        uses: actionshub/yamllint@main
+        uses: actionshub/yamllint@v1.8.3
 
-  markdownlint-cli:
+  markdown-lint:
     runs-on: ubuntu-latest
     steps:
       - name: Checkout Code
         uses: actions/checkout@v6
       - name: Run markdownlint-cli
-        uses: nosborn/github-action-markdown-cli@v3
+        uses: nosborn/github-action-markdown-cli@v3.5.0
         with:
           files: .
           config_file: ".markdownlint.yaml"

@@ -16,12 +16,11 @@
 -define(CLASS_IS_IN(T), (T =:= ?DNS_CLASS_IN orelse T =:= ?DNS_CLASS_NONE)).
 
 -export([encode/1, encode/2]).
--export([encode_dname/1, encode_rrdata/2]).
+-export([encode_rrdata/2]).
 
 -ifdef(TEST).
 -export([
     encode_dname/3,
-    encode_append_dname/4,
     encode_rrdata/4,
     encode_optrrdata/1,
     encode_svcb_svc_params/1
@@ -79,9 +78,9 @@ encode(#dns_message{id = MsgId, additional = Additional} = Msg, Opts) ->
                 Bin -> {false, Bin}
             end;
         #{alg := Alg, name := Name} = TSIGOpts ->
-            LowerAlg = dns:dname_to_lower(Alg),
-            LowerName = dns:dname_to_lower(Name),
-            EncodedName = encode_dname(LowerName),
+            LowerAlg = dns_domain:to_lower(Alg),
+            LowerName = dns_domain:to_lower(Name),
+            EncodedName = dns_domain:to_wire(LowerName),
             OrigMsgId = maps:get(msgid, TSIGOpts, MsgId),
             Other = maps:get(other, TSIGOpts, <<>>),
             TSIGSize = dns_tsig:encode_message_tsig_size(EncodedName, LowerAlg, Other),
@@ -462,7 +461,8 @@ encode_message_rec(
 -spec encode_message_rec_unbounded(binary(), compmap(), dns:query() | dns:optrr() | dns:rr()) ->
     {binary(), compmap()}.
 encode_message_rec_unbounded(Acc, CompMap, #dns_query{name = N, type = T, class = C}) ->
-    {Acc1, CompMap0} = encode_append_dname(Acc, CompMap, byte_size(Acc), N),
+    {Wire, CompMap0} = encode_dname(CompMap, byte_size(Acc), N),
+    Acc1 = <<Acc/binary, Wire/binary>>,
     {<<Acc1/binary, T:16, C:16>>, CompMap0};
 encode_message_rec_unbounded(Acc, CompMap, #dns_optrr{} = OptRR) ->
     Acc1 = encode_optrr(Acc, OptRR),
@@ -478,7 +478,8 @@ encode_message_rec_unbounded(
         data = D
     }
 ) ->
-    {Acc1, CompMap0} = encode_append_dname(Acc, CompMap, byte_size(Acc), N),
+    {Wire, CompMap0} = encode_dname(CompMap, byte_size(Acc), N),
+    Acc1 = <<Acc/binary, Wire/binary>>,
     Acc2 = <<Acc1/binary, T:16, C:16, TTL:32>>,
     {DBin, CompMap1} = encode_rrdata(byte_size(Acc2) + 2, C, D, CompMap0),
     Acc3 = <<Acc2/binary, (byte_size(DBin)):16, DBin/binary>>,
@@ -563,7 +564,7 @@ encode_rrdata(
     },
     CompMap
 ) ->
-    HostnameBin = encode_dname(Hostname),
+    HostnameBin = dns_domain:to_wire(Hostname),
     {<<Subtype:16, HostnameBin/binary>>, CompMap};
 encode_rrdata(_Pos, _Class, #dns_rrdata_caa{flags = Flags, tag = Tag, value = Value}, CompMap) ->
     Len = byte_size(Tag),
@@ -830,7 +831,7 @@ encode_rrdata(
     },
     CompMap
 ) ->
-    DNameBin = encode_dname(DName),
+    DNameBin = dns_domain:to_wire(DName),
     {<<Precedence:8, 3:8, Algorithm:8, DNameBin/binary, PublicKey/binary>>, CompMap};
 encode_rrdata(
     _Pos,
@@ -856,7 +857,8 @@ encode_rrdata(
     #dns_rrdata_kx{preference = Pref, exchange = Name},
     CompMap
 ) ->
-    encode_append_dname(<<Pref:16>>, CompMap, Pos + 2, Name);
+    {Wire, NewCompMap} = dns_domain:to_wire(CompMap, Pos + 2, Name),
+    {<<Pref:16, Wire/binary>>, NewCompMap};
 encode_rrdata(
     _Pos,
     _Class,
@@ -902,7 +904,8 @@ encode_rrdata(
     #dns_rrdata_mx{preference = Pref, exchange = Name},
     CompMap
 ) ->
-    encode_append_dname(<<Pref:16>>, CompMap, Pos + 2, Name);
+    {Wire, NewCompMap} = encode_dname(CompMap, Pos + 2, Name),
+    {<<Pref:16, Wire/binary>>, NewCompMap};
 encode_rrdata(
     _Pos,
     _Class,
@@ -920,7 +923,7 @@ encode_rrdata(
     Bin1 = encode_string(Bin0, Svcs),
     Regexp0 = unicode:characters_to_binary(Regexp, unicode, utf8),
     Bin2 = encode_string(Bin1, Regexp0),
-    ReplacementBin = encode_dname(Replacement),
+    ReplacementBin = dns_domain:to_wire(Replacement),
     {<<Bin2/binary, ReplacementBin/binary>>, CompMap};
 encode_rrdata(Pos, _Class, #dns_rrdata_ns{dname = Name}, CompMap) ->
     encode_dname(CompMap, Pos, Name);
@@ -933,7 +936,7 @@ encode_rrdata(
     },
     CompMap
 ) ->
-    NextDNameBin = encode_dname(NextDName),
+    NextDNameBin = dns_domain:to_wire(NextDName),
     TypesBin = encode_nsec_types(Types),
     {<<NextDNameBin/binary, TypesBin/binary>>, CompMap};
 encode_rrdata(
@@ -960,7 +963,7 @@ encode_rrdata(
     CompMap
 ) ->
     %% DSYNC target must be uncompressed per RFC 9859
-    TargetBin = encode_dname(Target),
+    TargetBin = dns_domain:to_wire(Target),
     {<<RRType:16, Scheme:8, Port:16, TargetBin/binary>>, CompMap};
 encode_rrdata(
     _Pos,
@@ -1034,8 +1037,8 @@ encode_rrdata(
 encode_rrdata(Pos, _Class, #dns_rrdata_ptr{dname = Name}, CompMap) ->
     encode_dname(CompMap, Pos, Name);
 encode_rrdata(_Pos, _Class, #dns_rrdata_rp{mbox = Mbox, txt = Txt}, CompMap) ->
-    MboxBin = encode_dname(Mbox),
-    TxtBin = encode_dname(Txt),
+    MboxBin = dns_domain:to_wire(Mbox),
+    TxtBin = dns_domain:to_wire(Txt),
     {<<MboxBin/binary, TxtBin/binary>>, CompMap};
 encode_rrdata(
     _Pos,
@@ -1053,7 +1056,7 @@ encode_rrdata(
     },
     CompMap
 ) ->
-    SignersNameBin = encode_dname(SignersName),
+    SignersNameBin = dns_domain:to_wire(SignersName),
     {
         <<TypeCovered:16, Alg:8, Labels:8, OriginalTTL:32, SigExpire:32, SigIncept:32, KeyTag:16,
             SignersNameBin/binary, Sig/binary>>,
@@ -1065,7 +1068,8 @@ encode_rrdata(
     #dns_rrdata_rt{preference = Pref, host = Name},
     CompMap
 ) ->
-    encode_append_dname(<<Pref:16>>, CompMap, Pos + 2, Name);
+    {Wire, NewCompMap} = encode_dname(CompMap, Pos + 2, Name),
+    {<<Pref:16, Wire/binary>>, NewCompMap};
 encode_rrdata(
     Pos,
     _Class,
@@ -1082,7 +1086,8 @@ encode_rrdata(
 ) ->
     {MNBin, MNCMap} = encode_dname(CompMap, Pos, MName),
     NewPos = Pos + byte_size(MNBin),
-    {RNBin, RNCMap} = encode_append_dname(MNBin, MNCMap, NewPos, RName),
+    {RWire, RNCMap} = encode_dname(MNCMap, NewPos, RName),
+    RNBin = <<MNBin/binary, RWire/binary>>,
     {<<RNBin/binary, Serial:32, Refresh:32, Retry:32, Expire:32, Minimum:32>>, RNCMap};
 encode_rrdata(_Pos, _Class, #dns_rrdata_spf{spf = Strings}, CompMap) ->
     {encode_text(Strings), CompMap};
@@ -1097,7 +1102,7 @@ encode_rrdata(
     },
     CompMap
 ) ->
-    TargetBin = encode_dname(Target),
+    TargetBin = dns_domain:to_wire(Target),
     {<<Pri:16, Wght:16, Port:16, TargetBin/binary>>, CompMap};
 encode_rrdata(
     _Pos,
@@ -1120,7 +1125,7 @@ encode_rrdata(
     },
     CompMap
 ) ->
-    TargetNameBin = encode_dname(TargetName),
+    TargetNameBin = dns_domain:to_wire(TargetName),
     SvcParamsBin = encode_svcb_svc_params(SvcParams),
     {<<SvcPriority:16, TargetNameBin/binary, SvcParamsBin/binary>>, CompMap};
 encode_rrdata(
@@ -1133,7 +1138,7 @@ encode_rrdata(
     },
     CompMap
 ) ->
-    TargetNameBin = encode_dname(TargetName),
+    TargetNameBin = dns_domain:to_wire(TargetName),
     SvcParamsBin = encode_svcb_svc_params(SvcParams),
     {<<SvcPriority:16, TargetNameBin/binary, SvcParamsBin/binary>>, CompMap};
 encode_rrdata(
@@ -1150,7 +1155,7 @@ encode_rrdata(
     },
     CompMap
 ) ->
-    AlgBin = encode_dname(Alg),
+    AlgBin = dns_domain:to_wire(Alg),
     MACSize = byte_size(MAC),
     OtherLen = byte_size(Other),
     {
@@ -1314,55 +1319,12 @@ do_encode_optrrdata(#dns_opt_unknown{id = Id, bin = Data}) when
 ->
     {Id, Data}.
 
--spec encode_dname(dns:dname()) -> nonempty_binary().
-encode_dname(Name) when is_binary(Name) ->
-    Labels = <<<<(byte_size(L)), L/binary>> || L <- dns:dname_to_labels(Name)>>,
-    <<Labels/binary, 0>>.
-
--spec encode_dname(binary(), dns:dname()) -> nonempty_binary().
-encode_dname(Acc, Name) when is_binary(Name) ->
-    encode_append_dname(Acc, dns:dname_to_labels(Name)).
-
--spec encode_append_dname(binary(), dns:labels()) -> dns:dname().
-encode_append_dname(Acc, []) ->
-    <<Acc/binary, 0>>;
-encode_append_dname(Acc, [Label | Labels]) ->
-    encode_append_dname(<<Acc/binary, (byte_size(Label)), Label/binary>>, Labels).
-
--spec encode_dname(compmap(), non_neg_integer(), dns:dname()) ->
+-spec encode_dname(undefined | compmap(), non_neg_integer(), dns:dname()) ->
     {dns:dname(), undefined | compmap()}.
+encode_dname(undefined, _Pos, Name) ->
+    {dns_domain:to_wire(Name), undefined};
 encode_dname(CompMap, Pos, Name) ->
-    encode_append_dname(<<>>, CompMap, Pos, Name).
-
--spec encode_append_dname(dns:dname(), undefined | compmap(), non_neg_integer(), dns:dname()) ->
-    {dns:dname(), undefined | compmap()}.
-encode_append_dname(Bin, undefined, _Pos, Name) ->
-    DNameBin = encode_dname(Bin, Name),
-    {DNameBin, undefined};
-encode_append_dname(Bin, CompMap, Pos, Name) ->
-    Labels = dns:dname_to_labels(Name),
-    LwrLabels = dns:dname_to_lower_labels(Name),
-    encode_dname_labels(Bin, CompMap, Pos, Labels, LwrLabels).
-
--spec encode_dname_labels(dns:dname(), compmap(), non_neg_integer(), dns:labels(), dns:labels()) ->
-    {nonempty_binary(), compmap()}.
-encode_dname_labels(Acc, CompMap, _Pos, [], []) ->
-    {<<Acc/binary, 0>>, CompMap};
-encode_dname_labels(Acc, CompMap, Pos, [L | Ls], [_ | LwrLs] = LwrLabels) ->
-    case maps:get(LwrLabels, CompMap, undefined) of
-        undefined ->
-            NewCompMap =
-                case Pos < (1 bsl 14) of
-                    true -> CompMap#{LwrLabels => Pos};
-                    false -> CompMap
-                end,
-            Size = byte_size(L),
-            NewPos = Pos + 1 + Size,
-            NewAcc = <<Acc/binary, Size, L/binary>>,
-            encode_dname_labels(NewAcc, NewCompMap, NewPos, Ls, LwrLs);
-        Ptr ->
-            {<<Acc/binary, 3:2, Ptr:14>>, CompMap}
-    end.
+    dns_domain:to_wire(CompMap, Pos, Name).
 
 -spec encode_bool(boolean()) -> 0 | 1.
 encode_bool(false) -> 0;

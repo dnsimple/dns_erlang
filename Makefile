@@ -34,6 +34,10 @@ test: all check-no-change-action
 format: build
 	rebar3 fmt
 
+.PHONY: lint
+lint: build
+	rebar3 lint
+
 # Will capture any reference to "(?i)RFC[\\s-]?(\\d+)" in src and include files.
 # It runs on CI. When adding support for new RFCs, you should add any reference to it it code
 # and regenerate the RFC list with `make rfc-list`.

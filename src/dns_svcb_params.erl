@@ -83,7 +83,7 @@ from_wire(
             ?DNS_SVCB_PARAM_NO_DEFAULT_ALPN when Len =:= 0 ->
                 SvcParams#{?DNS_SVCB_PARAM_NO_DEFAULT_ALPN => none};
             ?DNS_SVCB_PARAM_NO_DEFAULT_ALPN ->
-                throw({svcb_bad_no_default_alpn, Len});
+                error({svcb_bad_no_default_alpn, Len});
             ?DNS_SVCB_PARAM_MANDATORY ->
                 Value = [K || <<K:16>> <= ValueBin],
                 SvcParams#{?DNS_SVCB_PARAM_MANDATORY => Value};
@@ -111,7 +111,7 @@ from_wire(
 from_wire(<<Key:16, Len:16, _:Len/binary, _/binary>>, _, PrevKey) when
     Key =< PrevKey
 ->
-    throw({svcb_key_ordering_error, {prev_key, PrevKey}, {current_key, Key}}).
+    error({svcb_key_ordering_error, {prev_key, PrevKey}, {current_key, Key}}).
 
 -spec to_json(dns:svcb_svc_params()) -> map().
 to_json(SvcParams) ->
@@ -394,7 +394,7 @@ validate_mandatory_params(#{?DNS_SVCB_PARAM_MANDATORY := MandatoryKeys} = SvcPar
     case lists:member(?DNS_SVCB_PARAM_MANDATORY, MandatoryKeys) of
         true ->
             Reason = {mandatory_self_reference, ?DNS_SVCB_PARAM_MANDATORY},
-            throw({svcb_mandatory_validation_error, Reason});
+            error({svcb_mandatory_validation_error, Reason});
         false ->
             %% Check that all mandatory keys exist in SvcParams
             MissingKeys = [K || K <- MandatoryKeys, not maps:is_key(K, SvcParams)],
@@ -403,7 +403,7 @@ validate_mandatory_params(#{?DNS_SVCB_PARAM_MANDATORY := MandatoryKeys} = SvcPar
                     SvcParams;
                 _ ->
                     Reason = {missing_mandatory_keys, MissingKeys},
-                    throw({svcb_mandatory_validation_error, Reason})
+                    error({svcb_mandatory_validation_error, Reason})
             end
     end;
 validate_mandatory_params(SvcParams) ->

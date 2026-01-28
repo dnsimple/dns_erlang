@@ -10,6 +10,48 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Add new `dns_json` module for bidirectional Record <-> JSON/Map transcoding
+- Add DNS zone file encoding functionality — convert DNS resource records to RFC 1035 zone file format
+- `dns_domain:to_lower/1` and `dns_domain:to_upper/1` for case conversion
+- `dns_domain:are_equal/2` and `dns_domain:are_equal_labels/2` for case-insensitive comparison
+- `dns_domain:escape_label/1` and `dns_domain:unescape_label/1` for label escaping
+- Improved performance with chunked binary pattern matching
+- Better RFC1035 and RFC9267 compliance with accurate wire format size tracking
+
+### Changed
+
+Migrate domain name operations to new `dns_domain` module
+
+All domain name processing functions have been moved to a new optimized
+`dns_domain` module. The old implementations in `dns`, `dns_encode`, and
+`dns_decode` have been removed and replaced with calls to the new module.
+
+#### Migration guide
+
+All domain name functions have been moved to `dns_domain`. Update your code as follows:
+
+```erl
+% Old → New
+dns:dname_to_lower(Name)             -> dns_domain:to_lower(Name)
+dns:dname_to_upper(Name)             -> dns_domain:to_upper(Name)
+dns:dname_to_labels(Name)            -> dns_domain:split(Name)
+dns:labels_to_dname(Labels)          -> dns_domain:join(Labels)
+dns:dname_to_lower_labels(Name)      -> dns_domain:split(dns_domain:to_lower(Name))
+dns:compare_dname(NameA, NameB)      -> dns_domain:are_equal(NameA, NameB)
+dns:compare_labels(LabelsA, LabelsB) -> dns_domain:are_equal_labels(LabelsA, LabelsB)
+dns:escape_label(Label)              -> dns_domain:escape_label(Label)
+dns_encode:encode_dname(Name)        -> dns_domain:to_wire(Name)
+dns_encode:encode_dname(CM, Pos, N)  -> dns_domain:to_wire(CM, Pos, N)
+```
+
+**Note:** The wrapper functions in `dns` module (`dname_to_labels/1`, `labels_to_dname/1`,
+`dname_to_lower_labels/1`, `dname_to_upper/1`, `dname_to_lower/1`, `compare_dname/2`,
+`compare_labels/2`, `escape_label/1`) have been removed. Use `dns_domain` functions directly now.
+
+**Error Handling Changes:**
+
+- decoding invalid wire packets previously used `throw/1` for errors (`decode_loop`, `bad_pointer`),
+  it uses `error/1` now
+- Update error handling: `try dns:decode_message(...) catch error:Reason -> ... end`
 
 ### Changed
 

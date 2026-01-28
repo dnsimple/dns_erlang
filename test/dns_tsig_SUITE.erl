@@ -36,7 +36,7 @@ tsig_no_tsig(_) ->
     MsgBin = dns:encode_message(#dns_message{}),
     Name = <<"name">>,
     Value = <<"value">>,
-    ?assertException(throw, no_tsig, dns:verify_tsig(MsgBin, Name, Value)).
+    ?assertException(error, no_tsig, dns:verify_tsig(MsgBin, Name, Value)).
 
 tsig_bad_key(_) ->
     MsgId = dns:random_id(),
