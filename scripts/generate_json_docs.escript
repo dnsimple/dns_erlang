@@ -456,13 +456,14 @@ generate_documentation(Records, EncodingRules, KeyMappings) ->
         """,
 
     OrderedRecords = lists:sort(fun record_order/2, Records),
-    lists:foldl(
+    RecordsAcc = lists:foldl(
         fun(Record, Acc) ->
             generate_record_doc(Record, Acc, EncodingRules, KeyMappings)
         end,
         InitAcc,
         OrderedRecords
-    ).
+    ),
+    <<RecordsAcc/binary, (generate_svcb_params_section())/binary>>.
 
 %% Sort records with custom order: message, query, RRs (alphabetically), OPTs (alphabetically)
 -spec record_order(record_info(), record_info()) -> boolean().
@@ -523,7 +524,7 @@ generate_record_doc({RecordName, Fields, RFC}, Acc0, EncodingRules, KeyMappings)
                 "**Format:** RRDATA fields (used within `dns_rr.data`)\n\n"
             >>,
             Acc2 = generate_fields_doc(RecordName, Fields, EncodingRules, Acc1),
-            generate_example_rrdata_format(RecordName, Fields, Acc2);
+            generate_example_rrdata_format(RecordName, Fields, Acc2, EncodingRules);
         false ->
             %% Non-RRDATA records: use old nested format
             Key = maps:get(RecordName, KeyMappings, ~"UNKNOWN"),
@@ -541,7 +542,7 @@ generate_record_doc({RecordName, Fields, RFC}, Acc0, EncodingRules, KeyMappings)
                 "`\n\n"
             >>,
             Acc2 = generate_fields_doc(RecordName, Fields, EncodingRules, Acc1),
-            generate_example(RecordName, Fields, Key, Acc2)
+            generate_example(RecordName, Fields, Key, Acc2, EncodingRules)
     end.
 
 -spec display_name(binary()) -> binary().
@@ -657,10 +658,15 @@ encoding_description(direct, FieldName, TypeStr) ->
     TypeStrLower = string:lowercase(TypeStr),
     HasDname = nomatch =/= string:find(TypeStrLower, "dname"),
     HasBinary = nomatch =/= string:find(TypeStrLower, "binary"),
+    HasSvcbParams = nomatch =/= string:find(TypeStrLower, "svcb_svc_params"),
     case FieldName of
-        ip -> ~"IP address as string";
+        ip ->
+            ~"IP address as string";
+        svc_params when HasSvcbParams ->
+            ~"Map of SVCB service parameters (see [SVCB Service Parameters below](#module-svcb-service-parameters))";
         _ when HasDname orelse HasBinary -> ~"Binary data (dname format)";
-        _ -> ~"Direct value"
+        _ ->
+            ~"Direct value"
     end;
 encoding_description(Other, _FieldName, _TypeStr) ->
     <<"Encoding: ", (atom_to_binary(Other))/binary>>.
@@ -682,9 +688,11 @@ encoding_suffix(base16, other) -> ~" data";
 encoding_suffix(base16, data) -> ~" data";
 encoding_suffix(base16, _) -> ~" binary".
 
--spec generate_example(record_name(), [field()], binary(), binary()) -> binary().
-generate_example(_RecordName, Fields, KeyBin, Acc) ->
-    ExampleFieldsStr = format_example_fields(Fields, fun atom_to_binary/1),
+-spec generate_example(record_name(), [field()], binary(), binary(), encoding_rules()) -> binary().
+generate_example(RecordName, Fields, KeyBin, Acc, EncodingRules) ->
+    ExampleFieldsStr = format_example_fields(
+        Fields, fun atom_to_binary/1, RecordName, EncodingRules
+    ),
     <<
         Acc/binary,
         "**Example:**\n\n",
@@ -727,12 +735,13 @@ generate_example_rr_format(_Fields, Acc) ->
         "See individual RRDATA record types below for complete field documentation.\n\n"
     >>.
 
--spec generate_example_rrdata_format(record_name(), [field()], binary()) -> binary().
-generate_example_rrdata_format(RecordName, Fields, Acc) ->
+-spec generate_example_rrdata_format(record_name(), [field()], binary(), encoding_rules()) ->
+    binary().
+generate_example_rrdata_format(RecordName, Fields, Acc, EncodingRules) ->
     %% Generate example for RRDATA records: just the fields directly (no type key wrapper)
     %% This matches the format used in dns_rr.data
     FieldNameFun = fun(FieldName) -> field_name_for_doc(RecordName, FieldName) end,
-    ExampleFieldsStr = format_example_fields(Fields, FieldNameFun),
+    ExampleFieldsStr = format_example_fields(Fields, FieldNameFun, RecordName, EncodingRules),
     <<
         Acc/binary,
         "**Example:**\n\n",
@@ -745,15 +754,18 @@ generate_example_rrdata_format(RecordName, Fields, Acc) ->
         "**Note:** This format is used within the `data` field of `dns_rr` records.\n\n"
     >>.
 
--spec format_example_fields([field()], fun((field_name()) -> binary())) -> binary().
-format_example_fields(Fields, FieldNameFun) ->
+-spec format_example_fields(
+    [field()], fun((field_name()) -> binary()), record_name(), encoding_rules()
+) -> binary().
+format_example_fields(Fields, FieldNameFun, RecordName, EncodingRules) ->
     ExampleFields = [
         begin
             FieldBin = FieldNameFun(FieldName),
-            ExampleValue = example_value(FieldName),
+            Encoding = determine_encoding(RecordName, FieldName, TypeStr, EncodingRules),
+            ExampleValue = example_value(FieldName, Encoding),
             [~"    \"", FieldBin, ~"\": ", ExampleValue]
         end
-     || {FieldName, _TypeStr} <- Fields
+     || {FieldName, TypeStr} <- Fields
     ],
     iolist_to_binary(lists:join(~",\n", ExampleFields)).
 
@@ -762,12 +774,22 @@ field_name_for_doc(dns_rrdata_txt, txt) -> <<"txts">>;
 field_name_for_doc(dns_rrdata_sshfp, fp_type) -> <<"fptype">>;
 field_name_for_doc(_RecordName, Field) -> atom_to_binary(Field, utf8).
 
--spec example_value(field_name()) -> unicode:unicode_binary().
-example_value(Field) ->
+-spec example_value(field_name(), encoding()) -> unicode:unicode_binary().
+example_value(Field, Encoding) ->
     case example_value_map() of
         #{Field := Value} -> Value;
-        _ -> example_value_by_category(Field)
+        _ -> example_value_by_encoding(Field, Encoding)
     end.
+
+-spec example_value_by_encoding(field_name(), encoding()) -> unicode:unicode_binary().
+example_value_by_encoding(_Field, base16) ->
+    ~"\"base16-encoded-data\"";
+example_value_by_encoding(_Field, base32) ->
+    ~"\"base32-encoded-data\"";
+example_value_by_encoding(_Field, base64) ->
+    ~"\"base64-encoded-data\"";
+example_value_by_encoding(Field, _Encoding) ->
+    example_value_by_category(Field).
 
 -spec example_value_by_category(field_name()) -> unicode:unicode_binary().
 example_value_by_category(Field) ->
@@ -800,7 +822,8 @@ example_value_map() ->
         target => ~"\"target.example.com\"",
         mname => ~"\"ns1.example.com\"",
         rname => ~"\"admin.example.com\"",
-        ttl => ~"3600"
+        ttl => ~"3600",
+        svc_params => ~"{\"alpn\": [\"h2\", \"h3\"], \"port\": 443}"
     }.
 
 -spec boolean_fields() -> [field_name()].
@@ -861,6 +884,46 @@ encoded_fields() ->
         other,
         value,
         tag,
-        certificate,
-        svc_params
+        certificate
     ].
+
+-spec generate_svcb_params_section() -> binary().
+generate_svcb_params_section() ->
+    ~"""
+    ### SVCB Service Parameters
+
+    The `svc_params` field in SVCB and HTTPS records is a map containing service binding parameters
+    as defined in [RFC 9460](https://datatracker.ietf.org/doc/html/rfc9460).
+
+    **Parameters:**
+
+    - `mandatory` (`[string()]`): List of parameter names that must be present (e.g., `["alpn", "port"]`)
+    - `alpn` (`[binary()]`): List of ALPN protocol identifiers as decoded binaries (e.g., `["h2", "h3"]`)
+    - `no-default-alpn` (`"none"` | `none`): Indicates that no default ALPN should be used
+    - `port` (`integer()`): Port number (0-65535)
+    - `ipv4hint` (`[string()]`): List of IPv4 addresses as strings (e.g., `["192.168.1.1", "192.168.1.2"]`)
+    - `ipv6hint` (`[string()]`): List of IPv6 addresses as strings (e.g., `["2001:db8::1"]`)
+    - `ech` (`binary()`): Encrypted ClientHello (ECH) configuration as decoded binary
+    - `keyNNNNN` (`binary()` | `integer()` | `"none"`): Unknown parameters where `NNNNN` is the parameter key number (0-65535)
+
+    **Example:**
+
+    ```json
+    {
+        "svc_priority": 1,
+        "target_name": "target.example.com",
+        "svc_params": {
+            "mandatory": ["alpn", "port"],
+            "alpn": ["h2", "h3"],
+            "port": 443,
+            "ipv4hint": ["192.168.1.1", "192.168.1.2"],
+            "ipv6hint": ["2001:db8::1"],
+            "ech": "ech-config-data"
+        }
+    }
+    ```
+
+    **Note:** All parameter values are in their decoded/native format (not base64-encoded).
+    Binary values like ALPN identifiers and ECH config are provided as raw binaries, not base64 strings.
+
+    """.
