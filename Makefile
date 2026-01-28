@@ -8,6 +8,10 @@ build:
 docs:
 	rebar3 ex_doc
 
+.PHONY: json-docs
+json-docs:
+	escript scripts/generate_json_docs.escript --output src/JSON_FORMAT.md
+
 .PHONY: clean
 clean:
 	rebar3 clean
@@ -19,6 +23,7 @@ fresh: clean
 
 .PHONY: test
 test: all check-no-change-action
+	rebar3 fmt --check
 	rebar3 lint
 	rebar3 xref
 	rebar3 dialyzer

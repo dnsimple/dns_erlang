@@ -8,6 +8,9 @@ asngen
 src/dns_zone_lexer.erl
 src/dns_zone_parser.erl
 
+# Generated documentation
+src/JSON_FORMAT.md
+
 # local setup
 .tool-versions
 

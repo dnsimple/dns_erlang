@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- Add new `dns_json` module for bidirectional Record <-> JSON/Map transcoding
 - Add DNS zone file encoding functionality — convert DNS resource records to RFC 1035 zone file format
 - `dns_domain:to_lower/1` and `dns_domain:to_upper/1` for case conversion
 - `dns_domain:are_equal/2` and `dns_domain:are_equal_labels/2` for case-insensitive comparison
@@ -18,7 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-Migrate domain name operations to new `dns_domain` module
+- Require OTP 27 or later (minimum_otp_vsn set to "27")
+- Migrate domain name operations to new `dns_domain` module
 
 All domain name processing functions have been moved to a new optimized
 `dns_domain` module. The old implementations in `dns`, `dns_encode`, and
@@ -51,6 +53,10 @@ dns_encode:encode_dname(CM, Pos, N)  -> dns_domain:to_wire(CM, Pos, N)
 - decoding invalid wire packets previously used `throw/1` for errors (`decode_loop`, `bad_pointer`),
   it uses `error/1` now
 - Update error handling: `try dns:decode_message(...) catch error:Reason -> ... end`
+
+### Removed
+
+- Removed old `dns_record` and `dns_record_info` modules
 
 ## 4.9.1
 

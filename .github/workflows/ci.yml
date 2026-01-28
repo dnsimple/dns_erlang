@@ -36,8 +36,8 @@ jobs:
     name: OTP ${{matrix.otp}}
     strategy:
       matrix:
-        otp: ['28', '27', '26']
-        rebar3: ['3.25']
+        otp: ['28', '27']
+        rebar3: ['3.26']
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v6
@@ -52,8 +52,6 @@ jobs:
             _build
           key: ${{ runner.os }}-erlang-${{ matrix.otp }}-rebar3-${{ matrix.rebar3 }}-hash-${{hashFiles('rebar.lock')}}
       - run: make build
-      - run: rebar3 fmt --check
-        if: ${{ matrix.otp >= '27' }}
       - run: make test
       - name: Coveralls
         uses: coverallsapp/github-action@v2
