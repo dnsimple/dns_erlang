@@ -393,10 +393,13 @@ from_map_field(dns_message, additional, Value) when is_list(Value) ->
     [from_map(V) || V <- Value];
 from_map_field(dns_optrr, data, Value) when is_list(Value) ->
     [from_map(V) || V <- Value];
-from_map_field(Tag, ip, Value) when
-    (Tag =:= dns_rrdata_a orelse Tag =:= dns_rrdata_aaaa) andalso is_binary(Value)
-->
-    case inet:parse_address(binary_to_list(Value)) of
+from_map_field(dns_rrdata_a, ip, Value) when is_binary(Value) ->
+    case inet:parse_ipv4strict_address(binary_to_list(Value)) of
+        {ok, Tuple} -> Tuple;
+        {error, _} -> erlang:error({invalid_ip, Value})
+    end;
+from_map_field(dns_rrdata_aaaa, ip, Value) when is_binary(Value) ->
+    case inet:parse_ipv6strict_address(binary_to_list(Value)) of
         {ok, Tuple} -> Tuple;
         {error, _} -> erlang:error({invalid_ip, Value})
     end;

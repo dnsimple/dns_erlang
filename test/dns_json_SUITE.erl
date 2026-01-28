@@ -21,6 +21,7 @@ groups() ->
             test_optrr_records,
             test_special_encodings,
             test_svcb_params,
+            test_svcb_params_json_edge_cases,
             test_dnskey_formats,
             test_nsec3_salt,
             test_ipseckey_gateway,
@@ -674,6 +675,115 @@ test_svcb_params(_Config) ->
         }
     ],
     [assert_transcode(Record) || Record <- Cases].
+
+test_svcb_params_json_edge_cases(_Config) ->
+    %% Test SVCB params through JSON with edge cases
+    %% Empty params
+    EmptySvcb = #dns_rr{
+        name = ~"example.com",
+        type = ?DNS_TYPE_SVCB,
+        ttl = 3600,
+        data = #dns_rrdata_svcb{
+            svc_priority = 1,
+            target_name = ~"target.example.com",
+            svc_params = #{}
+        }
+    },
+    assert_transcode(EmptySvcb),
+
+    %% Unknown key in JSON format
+    UnknownKeySvcb = #dns_rr{
+        name = ~"example.com",
+        type = ?DNS_TYPE_SVCB,
+        ttl = 3600,
+        data = #dns_rrdata_svcb{
+            svc_priority = 1,
+            target_name = ~"target.example.com",
+            svc_params = #{65001 => <<"test-data">>}
+        }
+    },
+    assert_transcode(UnknownKeySvcb),
+
+    %% ALPN with empty list
+    EmptyAlpnSvcb = #dns_rr{
+        name = ~"example.com",
+        type = ?DNS_TYPE_SVCB,
+        ttl = 3600,
+        data = #dns_rrdata_svcb{
+            svc_priority = 1,
+            target_name = ~"target.example.com",
+            svc_params = #{?DNS_SVCB_PARAM_ALPN => []}
+        }
+    },
+    assert_transcode(EmptyAlpnSvcb),
+
+    %% IP hints with empty lists
+    EmptyHintsSvcb = #dns_rr{
+        name = ~"example.com",
+        type = ?DNS_TYPE_SVCB,
+        ttl = 3600,
+        data = #dns_rrdata_svcb{
+            svc_priority = 1,
+            target_name = ~"target.example.com",
+            svc_params = #{
+                ?DNS_SVCB_PARAM_IPV4HINT => [],
+                ?DNS_SVCB_PARAM_IPV6HINT => []
+            }
+        }
+    },
+    assert_transcode(EmptyHintsSvcb),
+
+    %% Test invalid IPv4 in JSON (through dns_json:from_map)
+    InvalidIpv4JsonMap = #{
+        ~"name" => ~"example.com",
+        ~"type" => ~"SVCB",
+        ~"ttl" => 3600,
+        ~"data" => #{
+            ~"svc_priority" => 1,
+            ~"target_name" => ~"target.example.com",
+            ~"svc_params" => #{~"ipv4hint" => [~"192.168.1.1", ~"invalid-ip"]}
+        }
+    },
+    ?assertError({invalid_ipv4_in_json, _, _}, dns_json:from_map(InvalidIpv4JsonMap)),
+
+    %% Test invalid IPv6 in JSON
+    InvalidIpv6JsonMap = #{
+        ~"name" => ~"example.com",
+        ~"type" => ~"SVCB",
+        ~"ttl" => 3600,
+        ~"data" => #{
+            ~"svc_priority" => 1,
+            ~"target_name" => ~"target.example.com",
+            ~"svc_params" => #{~"ipv6hint" => [~"2001:db8::1", ~"invalid-ipv6"]}
+        }
+    },
+    ?assertError({invalid_ipv6_in_json, _, _}, dns_json:from_map(InvalidIpv6JsonMap)),
+
+    %% Test invalid base64 in ECH
+    InvalidEchJsonMap = #{
+        ~"name" => ~"example.com",
+        ~"type" => ~"SVCB",
+        ~"ttl" => 3600,
+        ~"data" => #{
+            ~"svc_priority" => 1,
+            ~"target_name" => ~"target.example.com",
+            ~"svc_params" => #{~"ech" => ~"invalid-base64!!!"}
+        }
+    },
+    ?assertError(_, dns_json:from_map(InvalidEchJsonMap)),
+
+    %% Test invalid ALPN (invalid base64 in list)
+    InvalidAlpnJsonMap = #{
+        ~"name" => ~"example.com",
+        ~"type" => ~"SVCB",
+        ~"ttl" => 3600,
+        ~"data" => #{
+            ~"svc_priority" => 1,
+            ~"target_name" => ~"target.example.com",
+            ~"svc_params" => #{~"alpn" => [~"invalid-base64!!!"]}
+        }
+    },
+    ?assertError(_, dns_json:from_map(InvalidAlpnJsonMap)).
 
 test_dnskey_formats(_Config) ->
     %% RRDATA records must be wrapped in dns_rr

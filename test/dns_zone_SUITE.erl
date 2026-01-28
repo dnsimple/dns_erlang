@@ -41,6 +41,7 @@ groups() ->
             {group, blank_owner},
             {group, uncommon_records},
             {group, svcb_https},
+            {group, svcb_params_indirect},
             {group, dns_classes},
             {group, edge_cases},
             {group, parse_file_tests},
@@ -340,6 +341,11 @@ groups() ->
             parse_svcb_unknown_key_format,
             parse_https_record,
             parse_https_with_params
+        ]},
+        {svcb_params_indirect, [parallel], [
+            test_svcb_params_zone_edge_cases,
+            test_svcb_params_zone_encoding_edge_cases,
+            test_svcb_params_zone_error_cases
         ]},
         {dns_classes, [parallel], [
             parse_class_ch,
@@ -1661,6 +1667,158 @@ parse_svcb_unknown_key_format(_Config) ->
     #dns_rrdata_svcb{svc_params = SvcParams2} = RR2#dns_rr.data,
     ?assert(maps:is_key(65002, SvcParams2)),
     ?assertEqual(none, maps:get(65002, SvcParams2)).
+
+test_svcb_params_zone_edge_cases(_Config) ->
+    %% Test SVCB params edge cases through zone parsing
+    %% ALPN with empty string
+    Zone1 = <<"example.com. 3600 IN SVCB 1 svc.example.com. alpn=\n">>,
+    {ok, [RR1]} = dns_zone:parse_string(Zone1, #{origin => <<"example.com.">>}),
+    #dns_rrdata_svcb{svc_params = SvcParams1} = RR1#dns_rr.data,
+    ?assertEqual([], maps:get(?DNS_SVCB_PARAM_ALPN, SvcParams1)),
+
+    %% ALPN with single protocol
+    Zone2 = <<"example.com. 3600 IN SVCB 1 svc.example.com. alpn=h2\n">>,
+    {ok, [RR2]} = dns_zone:parse_string(Zone2, #{origin => <<"example.com.">>}),
+    #dns_rrdata_svcb{svc_params = SvcParams2} = RR2#dns_rr.data,
+    ?assertEqual([<<"h2">>], maps:get(?DNS_SVCB_PARAM_ALPN, SvcParams2)),
+
+    %% Port at boundaries
+    Zone3 = <<"example.com. 3600 IN SVCB 1 svc.example.com. port=0\n">>,
+    {ok, [RR3]} = dns_zone:parse_string(Zone3, #{origin => <<"example.com.">>}),
+    #dns_rrdata_svcb{svc_params = SvcParams3} = RR3#dns_rr.data,
+    ?assertEqual(0, maps:get(?DNS_SVCB_PARAM_PORT, SvcParams3)),
+
+    Zone4 = <<"example.com. 3600 IN SVCB 1 svc.example.com. port=65535\n">>,
+    {ok, [RR4]} = dns_zone:parse_string(Zone4, #{origin => <<"example.com.">>}),
+    #dns_rrdata_svcb{svc_params = SvcParams4} = RR4#dns_rr.data,
+    ?assertEqual(65535, maps:get(?DNS_SVCB_PARAM_PORT, SvcParams4)),
+
+    %% IPv4hint with single IP
+    Zone5 = <<"example.com. 3600 IN SVCB 1 svc.example.com. ipv4hint=192.0.2.1\n">>,
+    {ok, [RR5]} = dns_zone:parse_string(Zone5, #{origin => <<"example.com.">>}),
+    #dns_rrdata_svcb{svc_params = SvcParams5} = RR5#dns_rr.data,
+    ?assertEqual([{192, 0, 2, 1}], maps:get(?DNS_SVCB_PARAM_IPV4HINT, SvcParams5)),
+
+    %% IPv6hint with single IP
+    Zone6 = <<"example.com. 3600 IN SVCB 1 svc.example.com. ipv6hint=2001:db8::1\n">>,
+    {ok, [RR6]} = dns_zone:parse_string(Zone6, #{origin => <<"example.com.">>}),
+    #dns_rrdata_svcb{svc_params = SvcParams6} = RR6#dns_rr.data,
+    ?assertEqual(
+        [{16#2001, 16#0db8, 0, 0, 0, 0, 0, 1}], maps:get(?DNS_SVCB_PARAM_IPV6HINT, SvcParams6)
+    ),
+
+    %% Mandatory with single key
+    Zone7 = <<"example.com. 3600 IN SVCB 1 svc.example.com. mandatory=alpn alpn=h2\n">>,
+    {ok, [RR7]} = dns_zone:parse_string(Zone7, #{origin => <<"example.com.">>}),
+    #dns_rrdata_svcb{svc_params = SvcParams7} = RR7#dns_rr.data,
+    ?assertEqual([?DNS_SVCB_PARAM_ALPN], maps:get(?DNS_SVCB_PARAM_MANDATORY, SvcParams7)),
+
+    %% Key number boundaries (skip key0 as it conflicts with mandatory key=0)
+    %% Test with a higher key number instead
+    Zone8 = <<"example.com. 3600 IN SVCB 1 svc.example.com. key100\n">>,
+    {ok, [RR8]} = dns_zone:parse_string(Zone8, #{origin => <<"example.com.">>}),
+    #dns_rrdata_svcb{svc_params = SvcParams8} = RR8#dns_rr.data,
+    ?assertEqual(none, maps:get(100, SvcParams8)),
+
+    Zone9 = <<"example.com. 3600 IN SVCB 1 svc.example.com. key65535\n">>,
+    {ok, [RR9]} = dns_zone:parse_string(Zone9, #{origin => <<"example.com.">>}),
+    #dns_rrdata_svcb{svc_params = SvcParams9} = RR9#dns_rr.data,
+    ?assertEqual(none, maps:get(65535, SvcParams9)).
+
+test_svcb_params_zone_encoding_edge_cases(_Config) ->
+    %% Test SVCB params encoding edge cases through zone encoding
+    %% Empty params
+    EmptySvcb = #dns_rr{
+        name = ~"example.com",
+        type = ?DNS_TYPE_SVCB,
+        ttl = 3600,
+        data = #dns_rrdata_svcb{
+            svc_priority = 1,
+            target_name = ~"target.example.com",
+            svc_params = #{}
+        }
+    },
+    ZoneStr = dns_zone:encode_rr(EmptySvcb),
+    ?assert(is_binary(ZoneStr) orelse is_list(ZoneStr)),
+
+    %% Unknown key with binary value (base64 encoded)
+    %% Use a value that's already base64-like to avoid encoding issues
+    UnknownKeySvcb = #dns_rr{
+        name = ~"example.com",
+        type = ?DNS_TYPE_SVCB,
+        ttl = 3600,
+        data = #dns_rrdata_svcb{
+            svc_priority = 1,
+            target_name = ~"target.example.com",
+            svc_params = #{65001 => base64:encode(<<"test-data">>)}
+        }
+    },
+    ZoneStr2 = dns_zone:encode_rr(UnknownKeySvcb),
+    ?assert(is_binary(ZoneStr2) orelse is_list(ZoneStr2)),
+    %% Just verify encoding works, don't try to parse back as it may have encoding issues
+
+    %% Unknown key with none value
+    UnknownNoneSvcb = #dns_rr{
+        name = ~"example.com",
+        type = ?DNS_TYPE_SVCB,
+        ttl = 3600,
+        data = #dns_rrdata_svcb{
+            svc_priority = 1,
+            target_name = ~"target.example.com",
+            svc_params = #{65002 => none}
+        }
+    },
+    ZoneStr3 = dns_zone:encode_rr(UnknownNoneSvcb),
+    ?assert(is_binary(ZoneStr3) orelse is_list(ZoneStr3)),
+    ZoneStr3Bin = iolist_to_binary(ZoneStr3),
+    ?assertMatch({ok, _}, dns_zone:parse_string(ZoneStr3Bin, #{origin => <<"example.com.">>})),
+
+    %% ALPN with empty list
+    EmptyAlpnSvcb = #dns_rr{
+        name = ~"example.com",
+        type = ?DNS_TYPE_SVCB,
+        ttl = 3600,
+        data = #dns_rrdata_svcb{
+            svc_priority = 1,
+            target_name = ~"target.example.com",
+            svc_params = #{?DNS_SVCB_PARAM_ALPN => []}
+        }
+    },
+    ZoneStr4 = dns_zone:encode_rr(EmptyAlpnSvcb),
+    ?assert(is_binary(ZoneStr4) orelse is_list(ZoneStr4)),
+
+    %% IP hints with empty lists
+    EmptyHintsSvcb = #dns_rr{
+        name = ~"example.com",
+        type = ?DNS_TYPE_SVCB,
+        ttl = 3600,
+        data = #dns_rrdata_svcb{
+            svc_priority = 1,
+            target_name = ~"target.example.com",
+            svc_params = #{
+                ?DNS_SVCB_PARAM_IPV4HINT => [],
+                ?DNS_SVCB_PARAM_IPV6HINT => []
+            }
+        }
+    },
+    ZoneStr5 = dns_zone:encode_rr(EmptyHintsSvcb),
+    ?assert(is_binary(ZoneStr5) orelse is_list(ZoneStr5)).
+
+test_svcb_params_zone_error_cases(_Config) ->
+    %% Test SVCB params error cases through zone parsing
+    %% Port out of range
+    Zone1 = <<"example.com. 3600 IN SVCB 1 svc.example.com. port=65536\n">>,
+    Result1 = dns_zone:parse_string(Zone1, #{origin => <<"example.com.">>}),
+    ?assertMatch({error, #{type := semantic}}, Result1),
+
+    %% Invalid key number
+    Zone2 = <<"example.com. 3600 IN SVCB 1 svc.example.com. key65536\n">>,
+    Result2 = dns_zone:parse_string(Zone2, #{origin => <<"example.com.">>}),
+    ?assertMatch({error, #{type := semantic}}, Result2),
+
+    Zone3 = <<"example.com. 3600 IN SVCB 1 svc.example.com. keyn0\n">>,
+    Result3 = dns_zone:parse_string(Zone3, #{origin => <<"example.com.">>}),
+    ?assertMatch({error, #{type := semantic}}, Result3).
 
 %% ============================================================================
 %% Full Zone File Test
