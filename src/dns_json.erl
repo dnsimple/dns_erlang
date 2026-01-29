@@ -358,7 +358,9 @@ to_map_value(dns_rrdata_dnskey, public_key, Value) when is_binary(Value) -> base
 to_map_value(dns_rrdata_cdnskey, public_key, Value) when is_binary(Value) -> base64:encode(Value);
 to_map_value(dns_rrdata_ipseckey, public_key, Value) when is_binary(Value) -> base64:encode(Value);
 to_map_value(dns_rrdata_rrsig, signature, Value) when is_binary(Value) -> base64:encode(Value);
-to_map_value(dns_rrdata_smimea, certificate, Value) when is_binary(Value) -> base64:encode(Value);
+to_map_value(dns_rrdata_tlsa, certificate, Value) when is_binary(Value) -> binary:encode_hex(Value);
+to_map_value(dns_rrdata_smimea, certificate, Value) when is_binary(Value) ->
+    binary:encode_hex(Value);
 to_map_value(dns_rrdata_tsig, mac, Value) when is_binary(Value) -> base64:encode(Value);
 to_map_value(dns_rrdata_wallet, data, Value) when is_binary(Value) -> base64:encode(Value);
 to_map_value(dns_rrdata_ds, digest, Value) when is_binary(Value) -> binary:encode_hex(Value);
@@ -435,8 +437,10 @@ decode_field(dns_rrdata_ipseckey, public_key, Value) ->
     base64:decode(Value);
 decode_field(dns_rrdata_rrsig, signature, Value) ->
     base64:decode(Value);
+decode_field(dns_rrdata_tlsa, certificate, Value) ->
+    binary:decode_hex(Value);
 decode_field(dns_rrdata_smimea, certificate, Value) ->
-    base64:decode(Value);
+    binary:decode_hex(Value);
 decode_field(dns_rrdata_tsig, mac, Value) ->
     base64:decode(Value);
 decode_field(dns_rrdata_wallet, data, Value) ->
