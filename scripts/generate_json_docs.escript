@@ -48,8 +48,7 @@ main(Args) ->
         undefined ->
             io:format("~s", [Markdown]);
         File ->
-            ok = file:write_file(File, Markdown, [raw]),
-            io:format(standard_io, "Generated JSON documentation: ~s~n", [File])
+            ok = file:write_file(File, Markdown, [raw])
     end.
 
 -spec parse_args([string()], [{atom(), string()}]) -> [{atom(), string()}].
