@@ -391,10 +391,10 @@ encode_message(Msg) ->
 -doc #{group => "Functions: parsing"}.
 -doc "Encode a dns_message record - will truncate the message as needed.".
 -spec encode_message(message(), encode_message_opts()) ->
-    {false, message_bin()}
-    | {false, message_bin(), tsig_mac()}
-    | {true, message_bin(), message()}
-    | {true, message_bin(), tsig_mac(), message()}.
+    message_bin()
+    | {message_bin(), tsig_mac()}
+    | {truncated, message_bin(), message()}
+    | {truncated, message_bin(), tsig_mac(), message()}.
 encode_message(Msg, Opts) ->
     dns_encode:encode(Msg, Opts).
 

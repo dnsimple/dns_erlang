@@ -59,18 +59,18 @@ encode_append_section(Acc, CompMap, [Rec | Rest]) ->
 
 %% Encode a dns_message record - will truncate the message as needed.
 -spec encode(dns:message(), dns:encode_message_opts()) ->
-    {false, dns:message_bin()}
-    | {false, dns:message_bin(), dns:tsig_mac()}
-    | {true, dns:message_bin(), dns:message()}
-    | {true, dns:message_bin(), dns:tsig_mac(), dns:message()}.
+    dns:message_bin()
+    | {dns:message_bin(), dns:tsig_mac()}
+    | {truncated, dns:message_bin(), dns:message()}
+    | {truncated, dns:message_bin(), dns:tsig_mac(), dns:message()}.
 encode(#dns_message{id = MsgId, additional = Additional} = Msg, Opts) ->
     EncodeFun = get_tc_mode_fun(Opts),
     MaxSize = get_max_size(Opts, Additional),
     case maps:get(tsig, Opts, undefined) of
         undefined ->
             case EncodeFun(Msg, MaxSize) of
-                {Bin, Leftover} -> {true, Bin, Leftover};
-                Bin -> {false, Bin}
+                {Bin, Leftover} -> {truncated, Bin, Leftover};
+                Bin -> Bin
             end;
         #{alg := Alg, name := Name} = TSIGOpts ->
             LowerAlg = dns_domain:to_lower(Alg),
@@ -90,10 +90,10 @@ encode(#dns_message{id = MsgId, additional = Additional} = Msg, Opts) ->
             ),
             case MaybeMsgLeftover of
                 undefined ->
-                    {false, MsgBin0, NewMAC};
+                    {MsgBin0, NewMAC};
                 _ ->
                     MsgLeftover0 = MaybeMsgLeftover#dns_message{id = MsgId},
-                    {true, MsgBin0, NewMAC, MsgLeftover0}
+                    {truncated, MsgBin0, NewMAC, MsgLeftover0}
             end
     end.
 

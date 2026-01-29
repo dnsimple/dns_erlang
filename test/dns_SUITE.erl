@@ -154,16 +154,16 @@ encode_message_max_size(_) ->
     Msg3 = Msg#dns_message{adc = 1, additional = [#dns_optrr{udp_payload_size = 512}]},
     [
         ?assert(begin
-            {false, Bin} = dns:encode_message(Msg3, #{}),
-            Msg3 =:= dns:decode_message(Bin)
+            Bin = dns:encode_message(Msg3, #{}),
+            is_binary(Bin) andalso Msg3 =:= dns:decode_message(Bin)
         end),
         ?assert(begin
-            {false, Bin} = dns:encode_message(Msg, #{max_size => 512}),
-            Msg =:= dns:decode_message(Bin)
+            Bin = dns:encode_message(Msg, #{max_size => 512}),
+            is_binary(Bin) andalso Msg =:= dns:decode_message(Bin)
         end),
         ?assert(begin
-            {false, Bin} = dns:encode_message(Msg, #{}),
-            Msg =:= dns:decode_message(Bin)
+            Bin = dns:encode_message(Msg, #{}),
+            is_binary(Bin) andalso Msg =:= dns:decode_message(Bin)
         end)
     ].
 
@@ -203,7 +203,7 @@ truncated_query_enforces_opt_record(_) ->
             NSID = #dns_opt_nsid{data = binary:encode_hex(crypto:strong_rand_bytes(8))},
             Ads = [OptRR#dns_optrr{data = [NSID]}],
             Msg = Msg0#dns_message{additional = Ads},
-            {false, Encoded} = dns:encode_message(Msg, #{max_size => 512}),
+            Encoded = dns:encode_message(Msg, #{max_size => 512}),
             Decoded = dns:decode_message(Encoded),
             byte_size(Encoded) =< 512 andalso Decoded#dns_message.tc andalso
                 ok =:= ?assertMatch([], Decoded#dns_message.answers) andalso
@@ -217,7 +217,7 @@ truncated_query_enforces_opt_record(_) ->
             Msg = Msg0#dns_message{
                 anc = 2, answers = [TxtRecordSmall, TxtRecord], additional = Ads
             },
-            {false, Encoded} = dns:encode_message(Msg, #{max_size => 512}),
+            Encoded = dns:encode_message(Msg, #{max_size => 512}),
             Decoded = dns:decode_message(Encoded),
             byte_size(Encoded) =< 512 andalso Decoded#dns_message.tc andalso
                 ok =:= ?assertMatch([], Decoded#dns_message.answers) andalso
@@ -228,7 +228,7 @@ truncated_query_enforces_opt_record(_) ->
         ?assert(begin
             NSID = #dns_opt_nsid{data = binary:encode_hex(crypto:strong_rand_bytes(234))},
             Msg = Msg0#dns_message{additional = [OptRR#dns_optrr{data = [NSID]}]},
-            {false, Encoded} = dns:encode_message(Msg, #{max_size => 512}),
+            Encoded = dns:encode_message(Msg, #{max_size => 512}),
             Decoded = dns:decode_message(Encoded),
             byte_size(Encoded) =< 512 andalso Decoded#dns_message.tc andalso
                 ok =:= ?assertMatch([], Decoded#dns_message.answers) andalso
@@ -284,7 +284,7 @@ encode_default_message_question_offset_correct(_) ->
     },
     %% Use encode_message with max_size to trigger encode_message_default
     %% which uses encode_append_section with the buggy <<>> accumulator
-    {false, Encoded} = dns:encode_message(Msg, #{max_size => 512}),
+    Encoded = dns:encode_message(Msg, #{max_size => 512}),
     %% BEFORE THE FIX: Decoding would fail with bad_pointer or decode_loop
     %% because compression pointers point to positions 0-11 (header bytes)
     %% which don't contain valid DNS name encoding
@@ -573,9 +573,7 @@ optrr_too_large(_Config, Anc) ->
             ?assert(byte_size(Encoded) > 512, Anc)
     end,
     Result = dns:encode_message(Msg, #{max_size => 512}),
-    ?assertMatch({false, _}, Result),
-    {false, EncodedWithLimit} = Result,
-    ?assert(is_binary(EncodedWithLimit) andalso byte_size(EncodedWithLimit) > 0).
+    ?assert(is_binary(Result) andalso byte_size(Result) > 0).
 
 %%%===================================================================
 %%% Record data functions

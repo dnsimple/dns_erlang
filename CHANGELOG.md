@@ -19,7 +19,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Changed
 
-- Require OTP 27 or later (minimum_otp_vsn set to "27")
+- Require OTP 27 or later (`minimum_otp_vsn` set to "27")
+- `dns:encode_message/2` changed how truncation is returned to a clearer type
 - Migrate domain name operations to new `dns_domain` module
 
 All domain name processing functions have been moved to a new optimized
