@@ -1,10 +1,5 @@
 -module(dns_zone_decode).
--if(?OTP_RELEASE >= 27).
--define(MODULEDOC(Str), -moduledoc(Str)).
--else.
--define(MODULEDOC(Str), -compile([])).
--endif.
-?MODULEDOC(false).
+-moduledoc false.
 
 % 4KB, a good default
 -define(CHUNK_SIZE, 4096).
@@ -320,111 +315,132 @@ make_rdata_error(TypeName, RData, Ctx) ->
 
 %% Generate helpful error messages for RDATA errors
 -spec rdata_error_message(binary(), list()) -> {binary(), binary() | undefined}.
-rdata_error_message(<<"SSHFP">>, RData) when length(RData) < 3 ->
+rdata_error_message(~"SSHFP", RData) when length(RData) < 3 ->
     {
         <<"Invalid SSHFP record: expected 3 fields ", "(algorithm, fptype, fingerprint), got ",
             (integer_to_binary(length(RData)))/binary>>,
-        <<"SSHFP requires: algorithm fptype \"hexfingerprint\"\n",
-            "  Example: example.com. 3600 IN SSHFP 2 1 \"123ABC...\"">>
+        ~"""
+        SSHFP requires: algorithm fptype "hexfingerprint"
+            Example: example.com. 3600 IN SSHFP 2 1 "123ABC..."
+        """
     };
-rdata_error_message(<<"SSHFP">>, _RData) ->
+rdata_error_message(~"SSHFP", _RData) ->
     {
-        <<"Invalid SSHFP record: fingerprint must be even-length hex string">>,
-        <<"Hex strings must have an even number of characters ", "(each byte = 2 hex digits)">>
+        ~"Invalid SSHFP record: fingerprint must be even-length hex string",
+        ~"Hex strings must have an even number of characters (each byte = 2 hex digits)"
     };
-rdata_error_message(<<"TLSA">>, RData) when length(RData) < 4 ->
+rdata_error_message(~"TLSA", RData) when length(RData) < 4 ->
     {
         <<"Invalid TLSA record: expected 4 fields ",
             "(usage, selector, matching-type, cert-data), got ",
             (integer_to_binary(length(RData)))/binary>>,
-        <<"TLSA requires: usage selector matching-type \"hexcertdata\"\n",
-            "Example: _443._tcp.example.com. IN TLSA 3 1 1 \"ABC123...\"">>
+        ~"""
+        TLSA requires: usage selector matching-type "hexcertdata",
+            Example: _443._tcp.example.com. IN TLSA 3 1 1 "ABC123..."
+        """
     };
-rdata_error_message(<<"TLSA">>, _RData) ->
+rdata_error_message(~"TLSA", _RData) ->
     {
-        <<"Invalid TLSA record: certificate data must be even-length hex string">>,
-        <<"Hex strings must have an even number of characters">>
+        ~"Invalid TLSA record: certificate data must be even-length hex string",
+        ~"Hex strings must have an even number of characters"
     };
-rdata_error_message(<<"NAPTR">>, RData) when length(RData) < 6 ->
+rdata_error_message(~"NAPTR", RData) when length(RData) < 6 ->
     {
         <<"Invalid NAPTR record: expected 6 fields ",
             "(order, preference, flags, services, regexp, replacement), got ",
             (integer_to_binary(length(RData)))/binary>>,
-        <<"NAPTR requires: order preference \"flags\" \"services\" ", "\"regexp\" replacement\n",
-            "Example: example.com. IN NAPTR 100 10 \"S\" \"SIP+D2T\" \"\" ",
-            "_sip._tcp.example.com.">>
+        ~"""
+        NAPTR requires: order preference "flags" "services" "regexp" replacement
+            Example: example.com. IN NAPTR 100 10 "S" "SIP+D2T" _sip._tcp.example.com.
+        """
     };
-rdata_error_message(<<"CERT">>, RData) when length(RData) < 4 ->
+rdata_error_message(~"CERT", RData) when length(RData) < 4 ->
     {
         <<"Invalid CERT record: expected 4 fields ", "(type, keytag, algorithm, cert-data), got ",
             (integer_to_binary(length(RData)))/binary>>,
-        <<"CERT requires: type keytag algorithm \"certdata\"\n",
-            "Example: example.com. IN CERT 1 12345 8 \"MIICXAIBAAKBgQC8\"">>
+        ~"""
+        CERT requires: type keytag algorithm "certdata"
+            Example: example.com. IN CERT 1 12345 8 "MIICXAIBAAKBgQC8"
+        """
     };
-rdata_error_message(<<"DHCID">>, _RData) ->
+rdata_error_message(~"DHCID", _RData) ->
     {
-        <<"Invalid DHCID record: requires base64-encoded data">>,
-        <<"DHCID requires: \"base64data\"\n", "Example: example.com. IN DHCID ",
-            "\"AAIBY2/AuCccgoJbsaxcQc9TUapptP69lOjxfNuVAA2kjEA=\"">>
+        ~"Invalid DHCID record: requires base64-encoded data",
+        ~"""
+        DHCID requires: "base64data"
+            Example: example.com. IN DHCID "AAIBY2/AuCccgoJbsaxcQc9TUapptP69lOjxfNuVAA2kjEA="
+        """
     };
-rdata_error_message(<<"DS">>, RData) when length(RData) < 4 ->
+rdata_error_message(~"DS", RData) when length(RData) < 4 ->
     {
         <<"Invalid DS record: expected 4 fields ", "(keytag, algorithm, digest-type, digest), got ",
             (integer_to_binary(length(RData)))/binary>>,
-        <<"DS requires: keytag algorithm digest-type \"hexdigest\"\n",
-            "Example: example.com. IN DS 12345 8 2 \"49FD46E6C4B45C55D4AC\"">>
+        ~"""
+        DS requires: keytag algorithm digest-type "hexdigest"
+            Example: example.com. IN DS 12345 8 2 "49FD46E6C4B45C55D4AC"
+        """
     };
-rdata_error_message(<<"DS">>, _RData) ->
+rdata_error_message(~"DS", _RData) ->
     {
-        <<"Invalid DS record: digest must be even-length hex string">>,
-        <<"Hex strings must have an even number of characters">>
+        ~"Invalid DS record: digest must be even-length hex string",
+        ~"Hex strings must have an even number of characters"
     };
-rdata_error_message(<<"DNSKEY">>, RData) when length(RData) < 4 ->
+rdata_error_message(~"DNSKEY", RData) when length(RData) < 4 ->
     {
         <<"Invalid DNSKEY record: expected 4 fields ",
             "(flags, protocol, algorithm, public-key), got ",
             (integer_to_binary(length(RData)))/binary>>,
-        <<"DNSKEY requires: flags protocol algorithm \"base64publickey\"\n",
-            "Example: example.com. IN DNSKEY 256 3 8 \"AwEAAa...\"">>
+        ~"""
+        DNSKEY requires: flags protocol algorithm "base64publickey"
+            Example: example.com. IN DNSKEY 256 3 8 "AwEAAa..."
+        """
     };
-rdata_error_message(<<"DNSKEY">>, _RData) ->
+rdata_error_message(~"DNSKEY", _RData) ->
     {
-        <<"Invalid DNSKEY record: public key must be valid base64">>,
-        <<"Public key should be base64-encoded key material">>
+        ~"Invalid DNSKEY record: public key must be valid base64",
+        ~"Public key should be base64-encoded key material"
     };
-rdata_error_message(<<"ZONEMD">>, RData) when length(RData) < 4 ->
+rdata_error_message(~"ZONEMD", RData) when length(RData) < 4 ->
     {
         <<"Invalid ZONEMD record: expected 4 fields ", "(serial, scheme, algorithm, hash), got ",
             (integer_to_binary(length(RData)))/binary>>,
-        <<"ZONEMD requires: serial scheme algorithm \"hexhash\"\n",
-            "Example: example.com. IN ZONEMD 2025121100 1 1 \"F8857A5A89EF49FF...\"">>
+        ~"""
+        ZONEMD requires: serial scheme algorithm "hexhash"
+            Example: example.com. IN ZONEMD 2025121100 1 1 F8857A5A89EF49FF..."
+        """
     };
-rdata_error_message(<<"ZONEMD">>, _RData) ->
+rdata_error_message(~"ZONEMD", _RData) ->
     {
-        <<"Invalid ZONEMD record: hash must be even-length hex string">>,
-        <<"Hex strings must have an even number of characters">>
+        ~"Invalid ZONEMD record: hash must be even-length hex string",
+        ~"Hex strings must have an even number of characters"
     };
-rdata_error_message(<<"SVCB">>, RData) when length(RData) < 2 ->
+rdata_error_message(~"SVCB", RData) when length(RData) < 2 ->
     {
         <<"Invalid SVCB record: expected at least 2 fields ", "(priority, target), got ",
             (integer_to_binary(length(RData)))/binary>>,
-        <<"SVCB requires: priority target\n", "Example: example.com. IN SVCB 1 svc.example.com.">>
+        ~"""
+        SVCB requires: priority target
+            Example: example.com. IN SVCB 1 svc.example.com.
+        """
     };
-rdata_error_message(<<"SVCB">>, _RData) ->
+rdata_error_message(~"SVCB", _RData) ->
     {
-        <<"Invalid SVCB record: malformed priority or target">>,
-        <<"Priority must be an integer, target must be a domain name">>
+        ~"Invalid SVCB record: malformed priority or target",
+        ~"Priority must be an integer, target must be a domain name"
     };
-rdata_error_message(<<"HTTPS">>, RData) when length(RData) < 2 ->
+rdata_error_message(~"HTTPS", RData) when length(RData) < 2 ->
     {
         <<"Invalid HTTPS record: expected at least 2 fields ", "(priority, target), got ",
             (integer_to_binary(length(RData)))/binary>>,
-        <<"HTTPS requires: priority target\n", "Example: example.com. IN HTTPS 1 .">>
+        ~"""
+        HTTPS requires: priority target
+            Example: example.com. IN HTTPS 1 .
+        """
     };
-rdata_error_message(<<"HTTPS">>, _RData) ->
+rdata_error_message(~"HTTPS", _RData) ->
     {
-        <<"Invalid HTTPS record: malformed priority or target">>,
-        <<"Priority must be an integer, target must be a domain name">>
+        ~"Invalid HTTPS record: malformed priority or target",
+        ~"Priority must be an integer, target must be a domain name"
     };
 rdata_error_message(TypeName, _RData) ->
     {<<"Invalid ", TypeName/binary, " record: malformed RDATA">>, undefined}.
@@ -851,7 +867,7 @@ build_rdata("NAPTR", RData, Ctx) ->
                 replacement = resolve_name(Replacement, Ctx#parse_ctx.origin)
             }};
         _ ->
-            {error, make_rdata_error(<<"NAPTR">>, RData, Ctx)}
+            {error, make_rdata_error(~"NAPTR", RData, Ctx)}
     end;
 build_rdata("SSHFP", RData, Ctx) ->
     %% SSHFP format: algorithm fptype fingerprint(hex string)
@@ -863,10 +879,10 @@ build_rdata("SSHFP", RData, Ctx) ->
                 {ok, Fp} ->
                     {ok, #dns_rrdata_sshfp{alg = Alg, fp_type = FpType, fp = Fp}};
                 {error, _Reason} ->
-                    {error, make_rdata_error(<<"SSHFP">>, RData, Ctx)}
+                    {error, make_rdata_error(~"SSHFP", RData, Ctx)}
             end;
         _ ->
-            {error, make_rdata_error(<<"SSHFP">>, RData, Ctx)}
+            {error, make_rdata_error(~"SSHFP", RData, Ctx)}
     end;
 build_rdata("TLSA", RData, Ctx) ->
     %% TLSA format: usage selector matching-type cert-data(hex string)
@@ -883,10 +899,10 @@ build_rdata("TLSA", RData, Ctx) ->
                         certificate = Cert
                     }};
                 {error, _Reason} ->
-                    {error, make_rdata_error(<<"TLSA">>, RData, Ctx)}
+                    {error, make_rdata_error(~"TLSA", RData, Ctx)}
             end;
         _ ->
-            {error, make_rdata_error(<<"TLSA">>, RData, Ctx)}
+            {error, make_rdata_error(~"TLSA", RData, Ctx)}
     end;
 build_rdata("CERT", RData, Ctx) ->
     %% CERT format: type keytag algorithm cert-data(base64 or hex string)
@@ -910,7 +926,7 @@ build_rdata("CERT", RData, Ctx) ->
                 end,
             {ok, #dns_rrdata_cert{type = Type, keytag = KeyTag, alg = Alg, cert = Cert}};
         _ ->
-            {error, make_rdata_error(<<"CERT">>, RData, Ctx)}
+            {error, make_rdata_error(~"CERT", RData, Ctx)}
     end;
 build_rdata("DHCID", RData, Ctx) ->
     %% DHCID format: base64-encoded data (single string)
@@ -921,10 +937,10 @@ build_rdata("DHCID", RData, Ctx) ->
                 {ok, #dns_rrdata_dhcid{data = Data}}
             catch
                 _:_ ->
-                    {error, make_rdata_error(<<"DHCID">>, RData, Ctx)}
+                    {error, make_rdata_error(~"DHCID", RData, Ctx)}
             end;
         _ ->
-            {error, make_rdata_error(<<"DHCID">>, RData, Ctx)}
+            {error, make_rdata_error(~"DHCID", RData, Ctx)}
     end;
 build_rdata("OPENPGPKEY", RData, Ctx) ->
     %% OPENPGPKEY format: base64-encoded data (single string)
@@ -936,10 +952,10 @@ build_rdata("OPENPGPKEY", RData, Ctx) ->
                 {ok, #dns_rrdata_openpgpkey{data = Data}}
             catch
                 _:_ ->
-                    {error, make_rdata_error(<<"OPENPGPKEY">>, RData, Ctx)}
+                    {error, make_rdata_error(~"OPENPGPKEY", RData, Ctx)}
             end;
         _ ->
-            {error, make_rdata_error(<<"OPENPGPKEY">>, RData, Ctx)}
+            {error, make_rdata_error(~"OPENPGPKEY", RData, Ctx)}
     end;
 build_rdata("URI", RData, Ctx) ->
     %% URI format: priority weight target
@@ -951,7 +967,7 @@ build_rdata("URI", RData, Ctx) ->
             BinTarget = unicode:characters_to_binary(Target),
             case uri_string:normalize(BinTarget) of
                 {error, _, _} ->
-                    {error, make_rdata_error(<<"URI">>, RData, Ctx)};
+                    {error, make_rdata_error(~"URI", RData, Ctx)};
                 NormalizedTarget ->
                     {ok, #dns_rrdata_uri{
                         priority = Priority,
@@ -960,7 +976,7 @@ build_rdata("URI", RData, Ctx) ->
                     }}
             end;
         _ ->
-            {error, make_rdata_error(<<"URI">>, RData, Ctx)}
+            {error, make_rdata_error(~"URI", RData, Ctx)}
     end;
 build_rdata("RESINFO", RData, Ctx) ->
     %% RESINFO format: text strings (same as TXT)
@@ -978,10 +994,10 @@ build_rdata("WALLET", RData, Ctx) ->
                 {ok, #dns_rrdata_wallet{data = Data}}
             catch
                 _:_ ->
-                    {error, make_rdata_error(<<"WALLET">>, RData, Ctx)}
+                    {error, make_rdata_error(~"WALLET", RData, Ctx)}
             end;
         _ ->
-            {error, make_rdata_error(<<"WALLET">>, RData, Ctx)}
+            {error, make_rdata_error(~"WALLET", RData, Ctx)}
     end;
 build_rdata("SMIMEA", RData, Ctx) ->
     %% SMIMEA format: usage selector matching-type cert-data(hex string)
@@ -999,10 +1015,10 @@ build_rdata("SMIMEA", RData, Ctx) ->
                         certificate = Cert
                     }};
                 {error, _Reason} ->
-                    {error, make_rdata_error(<<"SMIMEA">>, RData, Ctx)}
+                    {error, make_rdata_error(~"SMIMEA", RData, Ctx)}
             end;
         _ ->
-            {error, make_rdata_error(<<"SMIMEA">>, RData, Ctx)}
+            {error, make_rdata_error(~"SMIMEA", RData, Ctx)}
     end;
 build_rdata("EUI48", RData, Ctx) ->
     %% EUI48 format: 48-bit MAC address (hex string, 12 hex digits)
@@ -1013,7 +1029,7 @@ build_rdata("EUI48", RData, Ctx) ->
                 {ok, Addr} when byte_size(Addr) =:= 6 ->
                     {ok, #dns_rrdata_eui48{address = Addr}};
                 _ ->
-                    {error, make_rdata_error(<<"EUI48">>, RData, Ctx)}
+                    {error, make_rdata_error(~"EUI48", RData, Ctx)}
             end;
         [{domain, HexAddr}] when is_list(HexAddr) ->
             %% Hex strings may be parsed as domain names
@@ -1021,10 +1037,10 @@ build_rdata("EUI48", RData, Ctx) ->
                 {ok, Addr} when byte_size(Addr) =:= 6 ->
                     {ok, #dns_rrdata_eui48{address = Addr}};
                 _ ->
-                    {error, make_rdata_error(<<"EUI48">>, RData, Ctx)}
+                    {error, make_rdata_error(~"EUI48", RData, Ctx)}
             end;
         _ ->
-            {error, make_rdata_error(<<"EUI48">>, RData, Ctx)}
+            {error, make_rdata_error(~"EUI48", RData, Ctx)}
     end;
 build_rdata("EUI64", RData, Ctx) ->
     %% EUI64 format: 64-bit MAC address (hex string, 16 hex digits)
@@ -1035,7 +1051,7 @@ build_rdata("EUI64", RData, Ctx) ->
                 {ok, Addr} when byte_size(Addr) =:= 8 ->
                     {ok, #dns_rrdata_eui64{address = Addr}};
                 _ ->
-                    {error, make_rdata_error(<<"EUI64">>, RData, Ctx)}
+                    {error, make_rdata_error(~"EUI64", RData, Ctx)}
             end;
         [{domain, HexAddr}] when is_list(HexAddr) ->
             %% Hex strings may be parsed as domain names
@@ -1043,10 +1059,10 @@ build_rdata("EUI64", RData, Ctx) ->
                 {ok, Addr} when byte_size(Addr) =:= 8 ->
                     {ok, #dns_rrdata_eui64{address = Addr}};
                 _ ->
-                    {error, make_rdata_error(<<"EUI64">>, RData, Ctx)}
+                    {error, make_rdata_error(~"EUI64", RData, Ctx)}
             end;
         _ ->
-            {error, make_rdata_error(<<"EUI64">>, RData, Ctx)}
+            {error, make_rdata_error(~"EUI64", RData, Ctx)}
     end;
 build_rdata("DS", RData, Ctx) ->
     %% DS format: keytag algorithm digest-type digest(hex string)
@@ -1065,7 +1081,7 @@ build_rdata("DS", RData, Ctx) ->
                         digest = Digest
                     }};
                 {error, _Reason} ->
-                    {error, make_rdata_error(<<"DS">>, RData, Ctx)}
+                    {error, make_rdata_error(~"DS", RData, Ctx)}
             end;
         [{int, KeyTag}, {int, Alg}, {int, DigestType}, {domain, DigestHex}] when
             is_integer(KeyTag), is_integer(Alg), is_integer(DigestType), is_list(DigestHex)
@@ -1080,10 +1096,10 @@ build_rdata("DS", RData, Ctx) ->
                         digest = Digest
                     }};
                 {error, _Reason} ->
-                    {error, make_rdata_error(<<"DS">>, RData, Ctx)}
+                    {error, make_rdata_error(~"DS", RData, Ctx)}
             end;
         _ ->
-            {error, make_rdata_error(<<"DS">>, RData, Ctx)}
+            {error, make_rdata_error(~"DS", RData, Ctx)}
     end;
 build_rdata("CDS", RData, Ctx) ->
     %% CDS format: keytag algorithm digest-type digest(hex string)
@@ -1102,7 +1118,7 @@ build_rdata("CDS", RData, Ctx) ->
                         digest = Digest
                     }};
                 {error, _Reason} ->
-                    {error, make_rdata_error(<<"CDS">>, RData, Ctx)}
+                    {error, make_rdata_error(~"CDS", RData, Ctx)}
             end;
         [{int, KeyTag}, {int, Alg}, {int, DigestType}, {domain, DigestHex}] when
             is_integer(KeyTag), is_integer(Alg), is_integer(DigestType), is_list(DigestHex)
@@ -1117,10 +1133,10 @@ build_rdata("CDS", RData, Ctx) ->
                         digest = Digest
                     }};
                 {error, _Reason} ->
-                    {error, make_rdata_error(<<"CDS">>, RData, Ctx)}
+                    {error, make_rdata_error(~"CDS", RData, Ctx)}
             end;
         _ ->
-            {error, make_rdata_error(<<"CDS">>, RData, Ctx)}
+            {error, make_rdata_error(~"CDS", RData, Ctx)}
     end;
 build_rdata("DLV", RData, Ctx) ->
     %% DLV format: keytag algorithm digest-type digest(hex string)
@@ -1139,7 +1155,7 @@ build_rdata("DLV", RData, Ctx) ->
                         digest = Digest
                     }};
                 {error, _Reason} ->
-                    {error, make_rdata_error(<<"DLV">>, RData, Ctx)}
+                    {error, make_rdata_error(~"DLV", RData, Ctx)}
             end;
         [{int, KeyTag}, {int, Alg}, {int, DigestType}, {domain, DigestHex}] when
             is_integer(KeyTag), is_integer(Alg), is_integer(DigestType), is_list(DigestHex)
@@ -1154,10 +1170,10 @@ build_rdata("DLV", RData, Ctx) ->
                         digest = Digest
                     }};
                 {error, _Reason} ->
-                    {error, make_rdata_error(<<"DLV">>, RData, Ctx)}
+                    {error, make_rdata_error(~"DLV", RData, Ctx)}
             end;
         _ ->
-            {error, make_rdata_error(<<"DLV">>, RData, Ctx)}
+            {error, make_rdata_error(~"DLV", RData, Ctx)}
     end;
 build_rdata("DNSKEY", RData, Ctx) ->
     %% DNSKEY format: flags protocol algorithm public-key(base64 string)
@@ -1180,7 +1196,7 @@ build_rdata("DNSKEY", RData, Ctx) ->
                 }}
             catch
                 _:_ ->
-                    {error, make_rdata_error(<<"DNSKEY">>, RData, Ctx)}
+                    {error, make_rdata_error(~"DNSKEY", RData, Ctx)}
             end;
         [{int, Flags}, {int, Protocol}, {int, Alg}, {domain, PublicKeyB64}] when
             is_integer(Flags), is_integer(Protocol), is_integer(Alg), is_list(PublicKeyB64)
@@ -1200,10 +1216,10 @@ build_rdata("DNSKEY", RData, Ctx) ->
                 }}
             catch
                 _:_ ->
-                    {error, make_rdata_error(<<"DNSKEY">>, RData, Ctx)}
+                    {error, make_rdata_error(~"DNSKEY", RData, Ctx)}
             end;
         _ ->
-            {error, make_rdata_error(<<"DNSKEY">>, RData, Ctx)}
+            {error, make_rdata_error(~"DNSKEY", RData, Ctx)}
     end;
 build_rdata("CDNSKEY", RData, Ctx) ->
     %% CDNSKEY format: flags protocol algorithm public-key(base64 string)
@@ -1226,7 +1242,7 @@ build_rdata("CDNSKEY", RData, Ctx) ->
                 }}
             catch
                 _:_ ->
-                    {error, make_rdata_error(<<"CDNSKEY">>, RData, Ctx)}
+                    {error, make_rdata_error(~"CDNSKEY", RData, Ctx)}
             end;
         [{int, Flags}, {int, Protocol}, {int, Alg}, {domain, PublicKeyB64}] when
             is_integer(Flags), is_integer(Protocol), is_integer(Alg), is_list(PublicKeyB64)
@@ -1245,10 +1261,10 @@ build_rdata("CDNSKEY", RData, Ctx) ->
                 }}
             catch
                 _:_ ->
-                    {error, make_rdata_error(<<"CDNSKEY">>, RData, Ctx)}
+                    {error, make_rdata_error(~"CDNSKEY", RData, Ctx)}
             end;
         _ ->
-            {error, make_rdata_error(<<"CDNSKEY">>, RData, Ctx)}
+            {error, make_rdata_error(~"CDNSKEY", RData, Ctx)}
     end;
 build_rdata("KEY", RData, Ctx) ->
     %% KEY format: flags protocol algorithm public-key(base64 string)
@@ -1278,7 +1294,7 @@ build_rdata("KEY", RData, Ctx) ->
                 }}
             catch
                 _:_ ->
-                    {error, make_rdata_error(<<"KEY">>, RData, Ctx)}
+                    {error, make_rdata_error(~"KEY", RData, Ctx)}
             end;
         [{int, Flags}, {int, Protocol}, {int, Alg}, {domain, PublicKeyB64}] when
             is_integer(Flags), is_integer(Protocol), is_integer(Alg), is_list(PublicKeyB64)
@@ -1303,10 +1319,10 @@ build_rdata("KEY", RData, Ctx) ->
                 }}
             catch
                 _:_ ->
-                    {error, make_rdata_error(<<"KEY">>, RData, Ctx)}
+                    {error, make_rdata_error(~"KEY", RData, Ctx)}
             end;
         _ ->
-            {error, make_rdata_error(<<"KEY">>, RData, Ctx)}
+            {error, make_rdata_error(~"KEY", RData, Ctx)}
     end;
 build_rdata("SVCB", RData, Ctx) ->
     %% RFC 9460 - Service Binding
@@ -1337,7 +1353,7 @@ build_rdata("SVCB", RData, Ctx) ->
                     {error, Reason}
             end;
         _ ->
-            {error, make_rdata_error(<<"SVCB">>, RData, Ctx)}
+            {error, make_rdata_error(~"SVCB", RData, Ctx)}
     end;
 build_rdata("HTTPS", RData, Ctx) ->
     %% RFC 9460 - HTTPS-specific Service Binding: same as SVCB but different type number
@@ -1365,7 +1381,7 @@ build_rdata("HTTPS", RData, Ctx) ->
                     {error, Reason}
             end;
         _ ->
-            {error, make_rdata_error(<<"HTTPS">>, RData, Ctx)}
+            {error, make_rdata_error(~"HTTPS", RData, Ctx)}
     end;
 build_rdata("RRSIG", RData, Ctx) ->
     %% RRSIG format:
@@ -1417,10 +1433,10 @@ build_rdata("RRSIG", RData, Ctx) ->
                 }}
             catch
                 _:_ ->
-                    {error, make_rdata_error(<<"RRSIG">>, RData, Ctx)}
+                    {error, make_rdata_error(~"RRSIG", RData, Ctx)}
             end;
         _ ->
-            {error, make_rdata_error(<<"RRSIG">>, RData, Ctx)}
+            {error, make_rdata_error(~"RRSIG", RData, Ctx)}
     end;
 build_rdata("NSEC", RData, Ctx) ->
     %% NSEC format: next_dname type1 type2 type3 ...
@@ -1449,7 +1465,7 @@ build_rdata("NSEC", RData, Ctx) ->
                 types = ValidTypes
             }};
         _ ->
-            {error, make_rdata_error(<<"NSEC">>, RData, Ctx)}
+            {error, make_rdata_error(~"NSEC", RData, Ctx)}
     end;
 build_rdata("NXT", RData, Ctx) ->
     %% NXT format: next_dname type1 type2 type3 ...
@@ -1478,7 +1494,7 @@ build_rdata("NXT", RData, Ctx) ->
                 types = ValidTypes
             }};
         _ ->
-            {error, make_rdata_error(<<"NXT">>, RData, Ctx)}
+            {error, make_rdata_error(~"NXT", RData, Ctx)}
     end;
 build_rdata("NSEC3", RData, Ctx) ->
     %% NSEC3 format: hash_alg flags iterations salt hash type1 type2 type3 ...
@@ -1553,7 +1569,7 @@ build_rdata("NSEC3", RData, Ctx) ->
                 types = ValidTypes
             }};
         _ ->
-            {error, make_rdata_error(<<"NSEC3">>, RData, Ctx)}
+            {error, make_rdata_error(~"NSEC3", RData, Ctx)}
     end;
 build_rdata("NSEC3PARAM", RData, Ctx) ->
     %% NSEC3PARAM format: hash_alg flags iterations salt
@@ -1590,7 +1606,7 @@ build_rdata("NSEC3PARAM", RData, Ctx) ->
                 salt = Salt
             }};
         _ ->
-            {error, make_rdata_error(<<"NSEC3PARAM">>, RData, Ctx)}
+            {error, make_rdata_error(~"NSEC3PARAM", RData, Ctx)}
     end;
 build_rdata("CSYNC", RData, Ctx) ->
     %% CSYNC format: soa_serial flags type1 type2 type3 ...
@@ -1620,7 +1636,7 @@ build_rdata("CSYNC", RData, Ctx) ->
                 types = ValidTypes
             }};
         _ ->
-            {error, make_rdata_error(<<"CSYNC">>, RData, Ctx)}
+            {error, make_rdata_error(~"CSYNC", RData, Ctx)}
     end;
 build_rdata("DSYNC", RData, Ctx) ->
     %% DSYNC format: rrtype scheme port target
@@ -1637,7 +1653,7 @@ build_rdata("DSYNC", RData, Ctx) ->
             RRType = type_to_number(RRTypeName),
             case RRType of
                 0 ->
-                    {error, make_rdata_error(<<"DSYNC">>, RData, Ctx)};
+                    {error, make_rdata_error(~"DSYNC", RData, Ctx)};
                 _ ->
                     {ok, #dns_rrdata_dsync{
                         rrtype = RRType,
@@ -1647,7 +1663,7 @@ build_rdata("DSYNC", RData, Ctx) ->
                     }}
             end;
         _ ->
-            {error, make_rdata_error(<<"DSYNC">>, RData, Ctx)}
+            {error, make_rdata_error(~"DSYNC", RData, Ctx)}
     end;
 build_rdata("ZONEMD", RData, Ctx) ->
     %% ZONEMD format: serial scheme algorithm hash(hex string)
@@ -1666,7 +1682,7 @@ build_rdata("ZONEMD", RData, Ctx) ->
                         hash = Hash
                     }};
                 {error, _Reason} ->
-                    {error, make_rdata_error(<<"ZONEMD">>, RData, Ctx)}
+                    {error, make_rdata_error(~"ZONEMD", RData, Ctx)}
             end;
         [{int, Serial}, {int, Scheme}, {int, Algorithm}, {string, HashHex}] when
             is_integer(Serial), is_integer(Scheme), is_integer(Algorithm), is_list(HashHex)
@@ -1681,10 +1697,10 @@ build_rdata("ZONEMD", RData, Ctx) ->
                         hash = Hash
                     }};
                 {error, _Reason} ->
-                    {error, make_rdata_error(<<"ZONEMD">>, RData, Ctx)}
+                    {error, make_rdata_error(~"ZONEMD", RData, Ctx)}
             end;
         _ ->
-            {error, make_rdata_error(<<"ZONEMD">>, RData, Ctx)}
+            {error, make_rdata_error(~"ZONEMD", RData, Ctx)}
     end;
 build_rdata("LOC", RData, Ctx) ->
     %% LOC format: lat lon alt size horiz_prec vert_prec
@@ -1716,7 +1732,7 @@ build_rdata("LOC", RData, Ctx) ->
                 alt = Alt
             }};
         _ ->
-            {error, make_rdata_error(<<"LOC">>, RData, Ctx)}
+            {error, make_rdata_error(~"LOC", RData, Ctx)}
     end;
 build_rdata("IPSECKEY", RData, Ctx) ->
     %% IPSECKEY format: precedence algorithm gateway public_key(hex)
@@ -1736,7 +1752,7 @@ build_rdata("IPSECKEY", RData, Ctx) ->
                         public_key = PublicKey
                     }};
                 {error, _Reason} ->
-                    {error, make_rdata_error(<<"IPSECKEY">>, RData, Ctx)}
+                    {error, make_rdata_error(~"IPSECKEY", RData, Ctx)}
             end;
         [{int, Precedence}, {int, Alg}, GatewayToken, {domain, PublicKeyHex}] when
             is_integer(Precedence), is_integer(Alg), is_list(PublicKeyHex)
@@ -1752,10 +1768,10 @@ build_rdata("IPSECKEY", RData, Ctx) ->
                         public_key = PublicKey
                     }};
                 {error, _Reason} ->
-                    {error, make_rdata_error(<<"IPSECKEY">>, RData, Ctx)}
+                    {error, make_rdata_error(~"IPSECKEY", RData, Ctx)}
             end;
         _ ->
-            {error, make_rdata_error(<<"IPSECKEY">>, RData, Ctx)}
+            {error, make_rdata_error(~"IPSECKEY", RData, Ctx)}
     end;
 build_rdata(Type, _RData, Ctx) ->
     %% Unsupported or complex record types
@@ -2087,7 +2103,7 @@ parse_rfc3597_rdata(Length, <<>>) when Length =:= 0 ->
     {ok, <<>>};
 parse_rfc3597_rdata(Length, HexData) ->
     %% Remove any whitespace from hex data
-    CleanHex = binary:replace(HexData, <<" ">>, <<>>, [global]),
+    CleanHex = binary:replace(HexData, ~" ", <<>>, [global]),
     %% Convert hex string to binary
     case hex_to_binary(CleanHex) of
         {ok, BinaryData} ->

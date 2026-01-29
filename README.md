@@ -28,7 +28,7 @@ This file defines various terms, defined as Erlang macros, that are used in DNS 
 
 ```erlang
 -define(DNS_TYPE_A_NUMBER, 1).
--define(DNS_TYPE_A_BSTR, <<"A">>).
+-define(DNS_TYPE_A_BSTR, ~"A").
 -define(DNS_TYPE_NS, ?DNS_TYPE_NS_NUMBER).
 ```
 

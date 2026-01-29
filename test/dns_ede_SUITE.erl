@@ -36,7 +36,7 @@ basic_ede(_) ->
     InfoCode = 18,
     Ede = #dns_opt_ede{info_code = InfoCode},
     OptRR = #dns_optrr{data = [Ede]},
-    Query = #dns_query{name = <<"example.com">>, type = ?DNS_TYPE_A},
+    Query = #dns_query{name = ~"example.com", type = ?DNS_TYPE_A},
     Msg = #dns_message{
         qc = 1,
         adc = 1,
@@ -58,10 +58,10 @@ basic_ede(_) ->
 ede_with_text(_) ->
     InfoCode = 18,
     % DNSSEC Bogus
-    ExtraText = <<"signature too short">>,
+    ExtraText = ~"signature too short",
     Ede = #dns_opt_ede{info_code = InfoCode, extra_text = ExtraText},
     OptRR = #dns_optrr{data = [Ede]},
-    Query = #dns_query{name = <<"example.com">>, type = ?DNS_TYPE_A},
+    Query = #dns_query{name = ~"example.com", type = ?DNS_TYPE_A},
     Msg = #dns_message{
         qc = 1,
         adc = 1,
@@ -80,22 +80,22 @@ ede_with_text(_) ->
 
 %% Test various EDE info codes from RFC 8914
 other_error(Config) ->
-    info_code_test(Config, 0, <<"Other Error">>).
+    info_code_test(Config, 0, ~"Other Error").
 unsupported_dnskey_algorithm(Config) ->
-    info_code_test(Config, 1, <<"Unsupported DNSKEY Algorithm">>).
+    info_code_test(Config, 1, ~"Unsupported DNSKEY Algorithm").
 dnssec_bogus(Config) ->
-    info_code_test(Config, 6, <<"DNSSEC Bogus">>).
+    info_code_test(Config, 6, ~"DNSSEC Bogus").
 dnskey_missing(Config) ->
-    info_code_test(Config, 9, <<"DNSKEY Missing">>).
+    info_code_test(Config, 9, ~"DNSKEY Missing").
 prohibited(Config) ->
-    info_code_test(Config, 18, <<"Prohibited">>).
+    info_code_test(Config, 18, ~"Prohibited").
 not_ready(Config) ->
-    info_code_test(Config, 22, <<"Not Ready">>).
+    info_code_test(Config, 22, ~"Not Ready").
 
 info_code_test(_Config, InfoCode, ExtraText) ->
     Ede = #dns_opt_ede{info_code = InfoCode, extra_text = ExtraText},
     OptRR = #dns_optrr{data = [Ede]},
-    Query = #dns_query{name = <<"example.com">>, type = ?DNS_TYPE_A},
+    Query = #dns_query{name = ~"example.com", type = ?DNS_TYPE_A},
     Msg = #dns_message{
         qc = 1,
         adc = 1,
@@ -122,7 +122,7 @@ info_code_only(_) ->
 
 info_code_and_extra_text(_) ->
     InfoCode = 18,
-    ExtraText = <<"not authorized">>,
+    ExtraText = ~"not authorized",
     Ede = #dns_opt_ede{info_code = InfoCode, extra_text = ExtraText},
     Encoded = dns_encode:encode_optrrdata([Ede]),
     [Decoded] = dns_decode:decode_optrrdata(Encoded),
@@ -194,10 +194,10 @@ empty_ede(_) ->
 
 %% Test multiple EDE options in the same message
 multiple_ede(_) ->
-    Ede1 = #dns_opt_ede{info_code = 6, extra_text = <<"DNSSEC Bogus">>},
-    Ede2 = #dns_opt_ede{info_code = 9, extra_text = <<"Key missing">>},
+    Ede1 = #dns_opt_ede{info_code = 6, extra_text = ~"DNSSEC Bogus"},
+    Ede2 = #dns_opt_ede{info_code = 9, extra_text = ~"Key missing"},
     OptRR = #dns_optrr{data = [Ede1, Ede2]},
-    Query = #dns_query{name = <<"example.com">>, type = ?DNS_TYPE_A},
+    Query = #dns_query{name = ~"example.com", type = ?DNS_TYPE_A},
     Msg = #dns_message{
         qc = 1,
         adc = 1,
@@ -209,17 +209,17 @@ multiple_ede(_) ->
     [DecodedOptRR] = Decoded#dns_message.additional,
     [DecodedEde1, DecodedEde2] = DecodedOptRR#dns_optrr.data,
     ?assertEqual(6, DecodedEde1#dns_opt_ede.info_code),
-    ?assertEqual(<<"DNSSEC Bogus">>, DecodedEde1#dns_opt_ede.extra_text),
+    ?assertEqual(~"DNSSEC Bogus", DecodedEde1#dns_opt_ede.extra_text),
     ?assertEqual(9, DecodedEde2#dns_opt_ede.info_code),
-    ?assertEqual(<<"Key missing">>, DecodedEde2#dns_opt_ede.extra_text).
+    ?assertEqual(~"Key missing", DecodedEde2#dns_opt_ede.extra_text).
 
 %% Test EDE with UTF-8 extra text
 utf8_extra_text(_) ->
     InfoCode = 0,
-    ExtraText = <<"Error: Validación falló"/utf8>>,
+    ExtraText = ~"Error: Validación falló",
     Ede = #dns_opt_ede{info_code = InfoCode, extra_text = ExtraText},
     OptRR = #dns_optrr{data = [Ede]},
-    Query = #dns_query{name = <<"example.com">>, type = ?DNS_TYPE_A},
+    Query = #dns_query{name = ~"example.com", type = ?DNS_TYPE_A},
     Msg = #dns_message{
         qc = 1,
         adc = 1,

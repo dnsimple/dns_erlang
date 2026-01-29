@@ -1,10 +1,5 @@
 -module(dns_zone_encode).
--if(?OTP_RELEASE >= 27).
--define(MODULEDOC(Str), -moduledoc(Str)).
--else.
--define(MODULEDOC(Str), -compile([])).
--endif.
-?MODULEDOC(false).
+-moduledoc false.
 
 -include_lib("dns_erlang/include/dns.hrl").
 
@@ -17,7 +12,7 @@
 -define(DEFAULT_RELATIVE_NAMES, true).
 -define(DEFAULT_TTL_FORMAT, seconds).
 -define(DEFAULT_OMIT_CLASS, false).
--define(DEFAULT_SEPARATOR, <<" ">>).
+-define(DEFAULT_SEPARATOR, ~" ").
 
 -spec encode_file([dns:rr()], file:filename(), dns_zone:encode_options()) ->
     ok | {error, term()}.
@@ -88,7 +83,7 @@ encode_dname(Name, Origin, true) ->
         true ->
             %% Name is under origin, make it relative
             case make_relative(Name, Origin) of
-                relative -> <<"@">>;
+                relative -> ~"@";
                 RelativeName -> RelativeName
             end;
         false ->
@@ -159,7 +154,7 @@ format_ttl_units(Seconds) ->
     ],
     FilteredParts = [P || P <- Parts, P =/= <<>>],
     case FilteredParts of
-        [] -> <<"0">>;
+        [] -> ~"0";
         _ -> iolist_to_binary(FilteredParts)
     end.
 
@@ -292,7 +287,7 @@ build_zone_lines(Records, Origin, Opts) ->
     OriginLine = origin_line(Origin),
     TTLLine = ttl_line(Opts),
     %% Encode all records and append newlines
-    RecordLines = [[encode_rr(RR, Opts) | <<"\n">>] || RR <- Records],
+    RecordLines = [[encode_rr(RR, Opts) | ~"\n"] || RR <- Records],
     [OriginLine, TTLLine | RecordLines].
 
 %% Add $ORIGIN directive if origin is set
@@ -301,8 +296,8 @@ origin_line(<<>>) ->
     [];
 origin_line(Origin) ->
     case binary:last(Origin) of
-        $. -> [<<"$ORIGIN ">>, Origin | <<"\n">>];
-        _ -> [<<"$ORIGIN ">>, Origin, <<".">> | <<"\n">>]
+        $. -> [~"$ORIGIN ", Origin | ~"\n"];
+        _ -> [~"$ORIGIN ", Origin, ~"." | ~"\n"]
     end.
 
 %% Add $TTL directive if default_ttl is set
@@ -314,7 +309,7 @@ ttl_line(Opts) ->
             [];
         TTL when is_integer(TTL) ->
             TTLFormat = maps:get(ttl_format, Opts, ?DEFAULT_TTL_FORMAT),
-            [<<"$TTL ">>, encode_ttl(TTL, TTLFormat) | <<"\n">>]
+            [~"$TTL ", encode_ttl(TTL, TTLFormat) | ~"\n"]
     end.
 
 %% ============================================================================
@@ -324,7 +319,7 @@ ttl_line(Opts) ->
 %% Helper: Encode salt field (empty -> "-", otherwise hex)
 -spec encode_salt_hex(binary()) -> binary().
 encode_salt_hex(<<>>) ->
-    <<"-">>;
+    ~"-";
 encode_salt_hex(Salt) ->
     binary:encode_hex(Salt).
 
@@ -1068,4 +1063,4 @@ encode_rdata(_Type, Data, _Origin, _RelativeNames, Separator) when is_binary(Dat
     Length = byte_size(Data),
     Hex = binary:encode_hex(Data),
     LengthBin = integer_to_binary(Length),
-    [<<"\\#">>, Separator, LengthBin, Separator, Hex].
+    [~"\\#", Separator, LengthBin, Separator, Hex].

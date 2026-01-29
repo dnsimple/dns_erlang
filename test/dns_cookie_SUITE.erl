@@ -66,27 +66,27 @@ end_per_suite(_) ->
     ok.
 
 encode_decode_client_msg(_) ->
-    Query = #dns_query{name = <<"example.com">>, type = ?DNS_TYPE_A},
+    Query = #dns_query{name = ~"example.com", type = ?DNS_TYPE_A},
     Msg = #dns_message{qc = 1, adc = 1, questions = [Query]},
     ClientMsg = Msg#dns_message{
-        additional = [#dns_optrr{data = [#dns_opt_cookie{client = <<"abcdefgh">>}]}]
+        additional = [#dns_optrr{data = [#dns_opt_cookie{client = ~"abcdefgh"}]}]
     },
     ?assertEqual(ClientMsg, dns:decode_message(dns:encode_message(ClientMsg))).
 
 encode_decode_server_msg(_) ->
-    Query = #dns_query{name = <<"example.com">>, type = ?DNS_TYPE_A},
+    Query = #dns_query{name = ~"example.com", type = ?DNS_TYPE_A},
     Msg = #dns_message{qc = 1, adc = 1, questions = [Query]},
     ServerMsg = Msg#dns_message{
         additional = [
             #dns_optrr{
-                data = [#dns_opt_cookie{client = <<"abcdefgh">>, server = <<"ijklmnopqrs">>}]
+                data = [#dns_opt_cookie{client = ~"abcdefgh", server = ~"ijklmnopqrs"}]
             }
         ]
     },
     ?assertEqual(ServerMsg, dns:decode_message(dns:encode_message(ServerMsg))).
 
 error_encode_too_small(_) ->
-    %% Msg as above but client cookie set to <<"small">>
+    %% Msg as above but client cookie set to ~"small"
     TooSmallCookie =
         <<66, 248, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 7, 101, 120, 97, 109, 112, 108, 101, 3, 99, 111,
             109, 0, 0, 1, 0, 1, 0, 0, 41, 16, 0, 0, 0, 0, 0, 0, 9, 0, 10, 0, 5, 115, 109, 97, 108,
@@ -94,17 +94,17 @@ error_encode_too_small(_) ->
     ?assertError(bad_cookie, dns:decode_message(TooSmallCookie)).
 
 error_encode_bad_msg(_) ->
-    Query = #dns_query{name = <<"example.com">>, type = ?DNS_TYPE_A},
+    Query = #dns_query{name = ~"example.com", type = ?DNS_TYPE_A},
     Msg = #dns_message{qc = 1, adc = 1, questions = [Query]},
     BadMsg = Msg#dns_message{
-        additional = [#dns_optrr{data = [#dns_opt_cookie{server = <<"ijklmnopqrs">>}]}]
+        additional = [#dns_optrr{data = [#dns_opt_cookie{server = ~"ijklmnopqrs"}]}]
     },
     ?assertError(bad_cookie, dns:decode_message(dns:encode_message(BadMsg))).
 
 %% Test direct decode/encode functions
 direct_decode_encode_client_only(_) ->
     % Test client-only cookie
-    ClientCookie = <<"abcdefgh">>,
+    ClientCookie = ~"abcdefgh",
     Encoded = dns_encode:encode_optrrdata([#dns_opt_cookie{client = ClientCookie}]),
     [Decoded] = dns_decode:decode_optrrdata(Encoded),
     ?assertEqual(ClientCookie, Decoded#dns_opt_cookie.client),
@@ -112,8 +112,8 @@ direct_decode_encode_client_only(_) ->
 
 direct_decode_encode_client_server(_) ->
     % Test client+server cookie
-    ClientCookie = <<"12345678">>,
-    ServerCookie = <<"serverdata123">>,
+    ClientCookie = ~"12345678",
+    ServerCookie = ~"serverdata123",
     Cookie = #dns_opt_cookie{client = ClientCookie, server = ServerCookie},
     Encoded = dns_encode:encode_optrrdata([Cookie]),
     [Decoded] = dns_decode:decode_optrrdata(Encoded),
@@ -122,13 +122,13 @@ direct_decode_encode_client_server(_) ->
 
 %% Test multiple cookies in the same message (should work)
 multiple_cookies(_) ->
-    Cookie1 = #dns_opt_cookie{client = <<"client01">>},
+    Cookie1 = #dns_opt_cookie{client = ~"client01"},
     Cookie2 = #dns_opt_cookie{
-        client = <<"client02">>,
-        server = <<"server02data">>
+        client = ~"client02",
+        server = ~"server02data"
     },
     OptRR = #dns_optrr{data = [Cookie1, Cookie2]},
-    Query = #dns_query{name = <<"example.com">>, type = ?DNS_TYPE_A},
+    Query = #dns_query{name = ~"example.com", type = ?DNS_TYPE_A},
     Msg = #dns_message{
         qc = 1,
         adc = 1,
@@ -139,17 +139,17 @@ multiple_cookies(_) ->
     Decoded = dns:decode_message(Encoded),
     [DecodedOptRR] = Decoded#dns_message.additional,
     [DecodedCookie1, DecodedCookie2] = DecodedOptRR#dns_optrr.data,
-    ?assertEqual(<<"client01">>, DecodedCookie1#dns_opt_cookie.client),
+    ?assertEqual(~"client01", DecodedCookie1#dns_opt_cookie.client),
     ?assertEqual(undefined, DecodedCookie1#dns_opt_cookie.server),
-    ?assertEqual(<<"client02">>, DecodedCookie2#dns_opt_cookie.client),
-    ?assertEqual(<<"server02data">>, DecodedCookie2#dns_opt_cookie.server).
+    ?assertEqual(~"client02", DecodedCookie2#dns_opt_cookie.client),
+    ?assertEqual(~"server02data", DecodedCookie2#dns_opt_cookie.server).
 
 %% Test valid client-only cookie (8 bytes)
 client_only_cookie(_) ->
-    ClientCookie = <<"12345678">>,
+    ClientCookie = ~"12345678",
     Cookie = #dns_opt_cookie{client = ClientCookie},
     OptRR = #dns_optrr{data = [Cookie]},
-    Query = #dns_query{name = <<"example.com">>, type = ?DNS_TYPE_A},
+    Query = #dns_query{name = ~"example.com", type = ?DNS_TYPE_A},
     Msg = #dns_message{
         qc = 1,
         adc = 1,
@@ -170,26 +170,26 @@ client_only_cookie(_) ->
 
 %% Test valid client + server cookie (8 + 8-32 bytes)
 client_server_cookie_8b(_) ->
-    ServerCookie = <<"12345678">>,
+    ServerCookie = ~"12345678",
     client_server_cookie(?FUNCTION_NAME, ServerCookie).
 client_server_cookie_9b(_) ->
-    ServerCookie = <<"123456789">>,
+    ServerCookie = ~"123456789",
     client_server_cookie(?FUNCTION_NAME, ServerCookie).
 client_server_cookie_16b(_) ->
-    ServerCookie = <<"1234567890123456">>,
+    ServerCookie = ~"1234567890123456",
     client_server_cookie(?FUNCTION_NAME, ServerCookie).
 client_server_cookie_24b(_) ->
-    ServerCookie = <<"123456789012345678901234">>,
+    ServerCookie = ~"123456789012345678901234",
     client_server_cookie(?FUNCTION_NAME, ServerCookie).
 client_server_cookie_32b(_) ->
-    ServerCookie = <<"12345678901234567890123456789012">>,
+    ServerCookie = ~"12345678901234567890123456789012",
     client_server_cookie(?FUNCTION_NAME, ServerCookie).
 
 client_server_cookie(TestCase, ServerCookie) ->
-    ClientCookie = <<"abcdefgh">>,
+    ClientCookie = ~"abcdefgh",
     Cookie = #dns_opt_cookie{client = ClientCookie, server = ServerCookie},
     OptRR = #dns_optrr{data = [Cookie]},
-    Query = #dns_query{name = <<"example.com">>, type = ?DNS_TYPE_A},
+    Query = #dns_query{name = ~"example.com", type = ?DNS_TYPE_A},
     Msg = #dns_message{
         qc = 1,
         adc = 1,
@@ -215,9 +215,9 @@ client_server_cookie(TestCase, ServerCookie) ->
 
 client_too_small(_) ->
     % Client cookie too small (< 8 bytes)
-    Cookie = #dns_opt_cookie{client = <<"small">>},
+    Cookie = #dns_opt_cookie{client = ~"small"},
     OptRR = #dns_optrr{data = [Cookie]},
-    Query = #dns_query{name = <<"example.com">>, type = ?DNS_TYPE_A},
+    Query = #dns_query{name = ~"example.com", type = ?DNS_TYPE_A},
     Msg = #dns_message{
         qc = 1,
         adc = 1,
@@ -228,9 +228,9 @@ client_too_small(_) ->
 
 client_too_large(_) ->
     % Client cookie too large (> 8 bytes)
-    Cookie = #dns_opt_cookie{client = <<"toolarge123">>},
+    Cookie = #dns_opt_cookie{client = ~"toolarge123"},
     OptRR = #dns_optrr{data = [Cookie]},
-    Query = #dns_query{name = <<"example.com">>, type = ?DNS_TYPE_A},
+    Query = #dns_query{name = ~"example.com", type = ?DNS_TYPE_A},
     Msg = #dns_message{
         qc = 1,
         adc = 1,
@@ -242,11 +242,11 @@ client_too_large(_) ->
 server_too_small(_) ->
     % Server cookie too small (< 8 bytes)
     Cookie = #dns_opt_cookie{
-        client = <<"12345678">>,
-        server = <<"small">>
+        client = ~"12345678",
+        server = ~"small"
     },
     OptRR = #dns_optrr{data = [Cookie]},
-    Query = #dns_query{name = <<"example.com">>, type = ?DNS_TYPE_A},
+    Query = #dns_query{name = ~"example.com", type = ?DNS_TYPE_A},
     Msg = #dns_message{
         qc = 1,
         adc = 1,
@@ -258,12 +258,12 @@ server_too_small(_) ->
 server_too_large(_) ->
     % Server cookie too large (> 32 bytes)
     Cookie = #dns_opt_cookie{
-        client = <<"12345678">>,
+        client = ~"12345678",
         % 33 bytes
-        server = <<"123456789012345678901234567890123">>
+        server = ~"123456789012345678901234567890123"
     },
     OptRR = #dns_optrr{data = [Cookie]},
-    Query = #dns_query{name = <<"example.com">>, type = ?DNS_TYPE_A},
+    Query = #dns_query{name = ~"example.com", type = ?DNS_TYPE_A},
     Msg = #dns_message{
         qc = 1,
         adc = 1,
@@ -274,9 +274,9 @@ server_too_large(_) ->
 
 no_client_field(_) ->
     % Cookie with no client field
-    Cookie = #dns_opt_cookie{server = <<"12345678">>},
+    Cookie = #dns_opt_cookie{server = ~"12345678"},
     OptRR = #dns_optrr{data = [Cookie]},
-    Query = #dns_query{name = <<"example.com">>, type = ?DNS_TYPE_A},
+    Query = #dns_query{name = ~"example.com", type = ?DNS_TYPE_A},
     Msg = #dns_message{
         qc = 1,
         adc = 1,
@@ -405,20 +405,20 @@ malformed_wire_cookie_insufficient_data(_) ->
     ?assertError(bad_cookie, dns:decode_message(BadBin)).
 
 boundary_server_cookie_minimum(_) ->
-    boundary_server_cookie_test_valid(?FUNCTION_NAME, <<"12345678">>).
+    boundary_server_cookie_test_valid(?FUNCTION_NAME, ~"12345678").
 
 boundary_server_cookie_maximum(_) ->
-    boundary_server_cookie_test_valid(?FUNCTION_NAME, <<"12345678901234567890123456789012">>).
+    boundary_server_cookie_test_valid(?FUNCTION_NAME, ~"12345678901234567890123456789012").
 
 boundary_server_cookie_invalid_too_small(_) ->
-    boundary_server_cookie_test_invalid(?FUNCTION_NAME, <<"1234567">>).
+    boundary_server_cookie_test_invalid(?FUNCTION_NAME, ~"1234567").
 
 boundary_server_cookie_invalid_too_large(_) ->
-    boundary_server_cookie_test_invalid(?FUNCTION_NAME, <<"123456789012345678901234567890123">>).
+    boundary_server_cookie_test_invalid(?FUNCTION_NAME, ~"123456789012345678901234567890123").
 
 %% Test boundary conditions for server cookie length
 boundary_server_cookie_test_valid(TestCase, ServerCookie) ->
-    ClientCookie = <<"12345678">>,
+    ClientCookie = ~"12345678",
     Cookie = #dns_opt_cookie{client = ClientCookie, server = ServerCookie},
     % Should encode successfully
     Encoded = dns_encode:encode_optrrdata([Cookie]),
@@ -427,7 +427,7 @@ boundary_server_cookie_test_valid(TestCase, ServerCookie) ->
     ?assertEqual(ServerCookie, Decoded#dns_opt_cookie.server, TestCase).
 
 boundary_server_cookie_test_invalid(TestCase, ServerCookie) ->
-    ClientCookie = <<"12345678">>,
+    ClientCookie = ~"12345678",
     Cookie = #dns_opt_cookie{client = ClientCookie, server = ServerCookie},
     ?assertError(bad_cookie, dns_encode:encode_optrrdata([Cookie]), TestCase).
 
@@ -456,7 +456,7 @@ random_cookie(_) ->
     ServerCookie = crypto:strong_rand_bytes(16),
     Cookie = #dns_opt_cookie{client = ClientCookie, server = ServerCookie},
     OptRR = #dns_optrr{data = [Cookie]},
-    Query = #dns_query{name = <<"test.example.com">>, type = ?DNS_TYPE_A},
+    Query = #dns_query{name = ~"test.example.com", type = ?DNS_TYPE_A},
     Msg = #dns_message{
         qc = 1,
         adc = 1,

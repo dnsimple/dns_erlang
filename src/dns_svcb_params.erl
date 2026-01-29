@@ -1,10 +1,5 @@
 -module(dns_svcb_params).
--if(?OTP_RELEASE >= 27).
--define(MODULEDOC(Str), -moduledoc(Str)).
--else.
--define(MODULEDOC(Str), -compile([])).
--endif.
-?MODULEDOC(false).
+-moduledoc false.
 
 -include_lib("dns_erlang/include/dns.hrl").
 
@@ -16,7 +11,7 @@
     | {domain, string()}
     | {rfc3597, string()}.
 
--type error_callback() :: fun((term()) -> term()).
+-type error_callback() :: fun((dynamic()) -> dynamic()).
 
 -type escape_callback() :: fun((binary()) -> binary()).
 
@@ -147,7 +142,7 @@ parse_svcb_params_from_json([{Key, Value} | Rest], Acc) ->
 %% Parse SVCB/HTTPS service parameters from zone parser's rdata format
 %% Handles both parsed key=value pairs and labels containing = (from lexer)
 -spec from_zone([zone_rdata()], error_callback()) ->
-    {ok, dns:svcb_svc_params()} | {error, term()}.
+    {ok, dns:svcb_svc_params()} | {error, dynamic()}.
 from_zone(SvcParams, MakeError) ->
     from_zone(SvcParams, MakeError, #{}).
 

@@ -18,14 +18,7 @@
 %%
 %% -------------------------------------------------------------------
 -module(dnssec).
--if(?OTP_RELEASE >= 27).
--define(MODULEDOC(Str), -moduledoc(Str)).
--define(DOC(Str), -doc(Str)).
--else.
--define(MODULEDOC(Str), -compile([])).
--define(DOC(Str), -compile([])).
--endif.
-?MODULEDOC("""
+-moduledoc """
 The `dnssec` module exports functions used for generating NSEC responses,
 signing and verifying RRSIGs, and adding keytags to DNSKEY records.
 
@@ -33,7 +26,7 @@ For example, the `sign_rr/6` function can be given a collection of resource reco
 the signer name, keytag, signing algorithm, private key, and a collection of options
 and it will return a list of RRSIG records. Currently only DSA and RSA algorithms are
 supported for signing RRSETs.
-""").
+""".
 
 %% API
 -export([gen_nsec/1, gen_nsec/3, gen_nsec/4]).
@@ -105,11 +98,11 @@ supported for signing RRSETs.
 
 -define(SECS_IN_YEAR, (365 * 24 * 60 * 60)).
 
-?DOC("""
+-doc """
 Generate NSEC records from a list of `t:dns:rr/0`.
 
 The list must contain a SOA `t:dns:rr/0` which is used to determine zone name and TTL.
-""").
+""".
 -spec gen_nsec([dns:rr()]) -> [dns:rr()].
 gen_nsec(RR) ->
     case lists:keyfind(?DNS_TYPE_SOA, #dns_rr.type, RR) of
@@ -120,12 +113,12 @@ gen_nsec(RR) ->
             gen_nsec(ZoneName, RR, TTL)
     end.
 
-?DOC(#{equiv => gen_nsec(ZoneName, RR, TTL, #{})}).
+-doc #{equiv => gen_nsec(ZoneName, RR, TTL, #{})}.
 -spec gen_nsec(dns:dname(), [dns:rr()], dns:ttl()) -> [dns:rr()].
 gen_nsec(ZoneName, RR, TTL) ->
     gen_nsec(ZoneName, RR, TTL, #{}).
 
-?DOC("Generate NSEC records.").
+-doc "Generate NSEC records.".
 -spec gen_nsec(dns:dname(), [dns:rr()], dns:ttl(), gen_nsec_opts()) -> [dns:rr()].
 gen_nsec(ZoneNameM, RR, TTL, Opts) ->
     ZoneName = normalise_dname(ZoneNameM),
@@ -153,18 +146,18 @@ add_next_dname(Added, [#dns_rr{type = ?DNS_TYPE_NSEC, data = Data} = RR], ZoneNa
     NewRR = RR#dns_rr{data = Data#dns_rrdata_nsec{next_dname = ZoneName}},
     lists:reverse([NewRR | Added]).
 
-?DOC(#{equiv => gen_nsec3(RRs, #{})}).
+-doc #{equiv => gen_nsec3(RRs, #{})}.
 -spec gen_nsec3([dns:rr()]) -> [dns:rr()].
 gen_nsec3(RRs) ->
     gen_nsec3(RRs, #{}).
 
-?DOC("""
+-doc """
 Generate NSEC3 records from a list of `t:dns:rr/0`.
 
 The list must contain a SOA `t:dns:rr/0` to source the zone name and
 TTL from as well as as an NSEC3Param `t:dns:rr/0` to source the
 hash algorithm, iterations and salt from.
-""").
+""".
 -spec gen_nsec3([dns:rr()], gen_nsec3_opts()) -> [dns:rr()].
 gen_nsec3(RRs, Opts) ->
     case lists:keyfind(?DNS_TYPE_SOA, #dns_rr.type, RRs) of
@@ -187,7 +180,7 @@ gen_nsec3(RRs, Opts) ->
             end
     end.
 
-?DOC("Generate NSEC3 records.").
+-doc "Generate NSEC3 records.".
 -spec gen_nsec3(
     [dns:rr()],
     dns:dname(),
@@ -237,7 +230,7 @@ gen_nsec3(RRs, ZoneName, Alg, Salt, Iterations, TTL, Class, Opts) ->
 minimum_soa_ttl(#dns_rr{type = ?DNS_TYPE_SOA, ttl = Rec, data = #dns_rrdata_soa{minimum = Min}}) ->
     erlang:min(Min, Rec).
 
-?DOC("NSEC3 iterative hash function").
+-doc "NSEC3 iterative hash function.".
 -spec ih(nsec3_hashalg() | nsec3_hashalg_fun(), nsec3_salt(), binary(), nsec3_iterations()) ->
     binary().
 ih(?DNSSEC_NSEC3_ALG_SHA1, Salt, X, I) when is_binary(Salt), is_binary(X), is_integer(I), 0 =< I ->
@@ -375,12 +368,12 @@ rrs_to_rrsets(TTLMap, {{Name, Class, Type} = Key, Datas}) ->
      || Data <- Datas
     ].
 
-?DOC(#{equiv => sign_rr(RR, SignerName, KeyTag, Alg, Key, [])}).
+-doc #{equiv => sign_rr(RR, SignerName, KeyTag, Alg, Key, [])}.
 -spec sign_rr([dns:rr()], dns:dname(), keytag(), sigalg(), key()) -> [dns:rr()].
 sign_rr(RR, SignerName, KeyTag, Alg, Key) ->
     sign_rr(RR, SignerName, KeyTag, Alg, Key, #{}).
 
-?DOC("Signs a list of `t:dns:rr/0`.").
+-doc "Signs a list of `t:dns:rr/0`.".
 -spec sign_rr([dns:rr()], dns:dname(), keytag(), sigalg(), key(), sign_rr_opts()) -> [dns:rr()].
 sign_rr(RR, SignerName, KeyTag, Alg, Key, Opts) when is_map(Opts) ->
     RRSets = rrs_to_rrsets(RR),
@@ -389,13 +382,13 @@ sign_rr(RR, SignerName, KeyTag, Alg, Key, Opts) when is_map(Opts) ->
      || RRSet <- RRSets
     ].
 
-?DOC(#{equiv => sign_rrset(RRSet, SignerName, KeyTag, Alg, Key, [])}).
+-doc #{equiv => sign_rrset(RRSet, SignerName, KeyTag, Alg, Key, [])}.
 -spec sign_rrset([dns:rr(), ...], dns:dname(), keytag(), sigalg(), key()) ->
     dns:rr().
 sign_rrset(RRSet, SignerName, KeyTag, Alg, Key) ->
     sign_rrset(RRSet, SignerName, KeyTag, Alg, Key, #{}).
 
-?DOC("Signs a list of `t:dns:rr/0` of the same class and type.").
+-doc "Signs a list of `t:dns:rr/0` of the same class and type.".
 -spec sign_rrset([dns:rr(), ...], dns:dname(), keytag(), sigalg(), key(), sign_rr_opts()) ->
     dns:rr().
 sign_rrset(
@@ -457,7 +450,7 @@ sign(?DNS_ALG_ED25519, BaseSigInput, Key) ->
 sign(?DNS_ALG_ED448, BaseSigInput, Key) ->
     crypto:sign(eddsa, none, BaseSigInput, [Key, ed448]).
 
-?DOC("Provides primitive verification of an RR set.").
+-doc "Provides primitive verification of an RR set.".
 -spec verify_rrsig(dns:rr(), [dns:rr()], [dns:rr()], verify_rrsig_opts()) -> boolean().
 verify_rrsig(#dns_rr{type = ?DNS_TYPE_RRSIG, data = Data}, RRs, RRDNSKey, Opts) ->
     Now = maps:get(now, Opts, erlang:system_time(second)),
@@ -631,7 +624,7 @@ choose_sha_prefix_and_type(?DNS_ALG_RSASHA256) ->
 choose_sha_prefix_and_type(?DNS_ALG_RSASHA512) ->
     {?RSASHA512_PREFIX, sha512}.
 
-?DOC("Generates and appends a DNS Key records key tag.").
+-doc "Generates and appends a DNS Key records key tag.".
 -spec add_keytag_to_dnskey(dns:rr()) -> dns:rr().
 add_keytag_to_dnskey(
     #dns_rr{
@@ -662,7 +655,7 @@ rrsig_to_digestable(#dns_rrdata_rrsig{} = Data) ->
 canonical_rrdata_bin(#dns_rr{class = Class, data = Data0}) ->
     dns_encode:encode_rrdata(Class, canonical_rrdata_form(Data0)).
 
-?DOC("Converts a resource record data record to DNSSEC canonical form.").
+-doc "Converts a resource record data record to DNSSEC canonical form.".
 -spec canonical_rrdata_form(dns:rrdata()) -> dns:rrdata().
 canonical_rrdata_form(#dns_rrdata_afsdb{hostname = Hostname} = Data) ->
     Data#dns_rrdata_afsdb{hostname = dns_domain:to_lower(Hostname)};
@@ -780,7 +773,7 @@ count_labels(Name) ->
     do_count_labels(Labels).
 
 -spec do_count_labels([binary()]) -> non_neg_integer().
-do_count_labels([<<"*">> | Labels]) ->
+do_count_labels([~"*" | Labels]) ->
     length(Labels);
 do_count_labels(List) when is_list(List) ->
     length(List).

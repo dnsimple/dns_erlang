@@ -34,13 +34,13 @@ end_per_suite(Config) ->
 
 tsig_no_tsig(_) ->
     MsgBin = dns:encode_message(#dns_message{}),
-    Name = <<"name">>,
-    Value = <<"value">>,
+    Name = ~"name",
+    Value = ~"value",
     ?assertException(error, no_tsig, dns:verify_tsig(MsgBin, Name, Value)).
 
 tsig_bad_key(_) ->
     MsgId = dns:random_id(),
-    B64 = <<"abcdefgh">>,
+    B64 = ~"abcdefgh",
     TSIGData = #dns_rrdata_tsig{
         alg = ?DNS_TSIG_ALG_MD5,
         time = dns:unix_time(),
@@ -51,24 +51,24 @@ tsig_bad_key(_) ->
         other = <<>>
     },
     TSIG = #dns_rr{
-        name = <<"name_a">>,
+        name = ~"name_a",
         type = ?DNS_TYPE_TSIG,
         ttl = 0,
         data = TSIGData
     },
     Msg = #dns_message{id = MsgId, adc = 1, additional = [TSIG]},
     MsgBin = dns:encode_message(Msg),
-    Result = dns:verify_tsig(MsgBin, <<"name_b">>, B64),
+    Result = dns:verify_tsig(MsgBin, ~"name_b", B64),
     ?assertEqual({error, ?DNS_TSIGERR_BADKEY}, Result).
 
 tsig_bad_alg(_) ->
     Id = dns:random_id(),
-    Name = <<"keyname">>,
+    Name = ~"keyname",
     Data = #dns_rrdata_tsig{
-        alg = <<"null">>,
+        alg = ~"null",
         time = dns:unix_time(),
         fudge = 0,
-        mac = <<"MAC">>,
+        mac = ~"MAC",
         msgid = Id,
         err = 0,
         other = <<>>
@@ -76,11 +76,11 @@ tsig_bad_alg(_) ->
     RR = #dns_rr{name = Name, type = ?DNS_TYPE_TSIG, ttl = 0, data = Data},
     Msg = #dns_message{id = Id, adc = 1, additional = [RR]},
     MsgBin = dns:encode_message(Msg),
-    Result = dns:verify_tsig(MsgBin, Name, <<"secret">>),
+    Result = dns:verify_tsig(MsgBin, Name, ~"secret"),
     ?assertEqual({error, ?DNS_TSIGERR_BADKEY}, Result).
 
 tsig_bad_sig(_) ->
-    Name = <<"keyname">>,
+    Name = ~"keyname",
     Value = crypto:strong_rand_bytes(20),
     Msg = #dns_message{},
     SignedMsg = dns:add_tsig(Msg, ?DNS_TSIG_ALG_MD5, Name, Value, 0),
@@ -92,7 +92,7 @@ tsig_bad_sig(_) ->
     ?assertEqual({error, ?DNS_TSIGERR_BADSIG}, Result).
 
 tsig_badtime(_) ->
-    Name = <<"keyname">>,
+    Name = ~"keyname",
     Secret = crypto:strong_rand_bytes(20),
     Msg = #dns_message{},
     Fudge = 30,

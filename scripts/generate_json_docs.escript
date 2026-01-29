@@ -83,7 +83,7 @@ parse_records(File, RootDir) ->
 extract_rfc_map_from_file(Content) ->
     %% Match comment lines with RFC numbers before record definitions
     %% Pattern: %% ... See RFC NNNN ... \n -record(record_name, ...
-    Pattern = ~"%%[^\\n]*RFC\\s+(\\d+)[^\\n]*\\n-record\\(([a-z_0-9]+),",
+    Pattern = ~B"%%[^\n]*RFC\s+(\d+)[^\n]*\n-record\(([a-z_0-9]+),",
     case re:run(Content, Pattern, [global, {capture, [1, 2], list}, multiline]) of
         {match, Matches} ->
             #{
@@ -171,7 +171,7 @@ extract_record_field_type_string(TypeData) ->
 
 -spec filter_undefined_type(string()) -> {true, string()} | false.
 filter_undefined_type(TypeStr0) ->
-    TypeStr1 = re:replace(TypeStr0, ~"\\s+", ~" ", [global, {return, list}]),
+    TypeStr1 = re:replace(TypeStr0, ~B"\s+", ~" ", [global, {return, list}]),
     Trimmed = string:trim(TypeStr1),
     case Trimmed of
         "undefined" -> false;
@@ -181,7 +181,7 @@ filter_undefined_type(TypeStr0) ->
 
 -spec normalize_type_string(string()) -> string().
 normalize_type_string(TypeStr) ->
-    TypeStr1 = re:replace(TypeStr, ~"\\s+", ~" ", [global, {return, list}]),
+    TypeStr1 = re:replace(TypeStr, ~B"\s+", ~" ", [global, {return, list}]),
     string:trim(TypeStr1).
 
 -spec type_description(string() | binary()) -> ex_doc_type_string().
@@ -207,7 +207,7 @@ format_type_with_exdoc_link(TypeStr) ->
     %%   "[type()]" -> "[`t:type/0`]"
     %%   "undefined" -> "undefined" (no link)
     %%   "<<_:64>>" -> "<<_:64>>" (binary pattern, no link)
-    case re:run(TypeStr, ~"^\\[([^\\]]+)\\]$", [{capture, [1], list}]) of
+    case re:run(TypeStr, ~B"^\[([^\]]+)\]$", [{capture, [1], list}]) of
         {match, [InnerType]} ->
             %% List type: [type()] - recursively format inner type
             InnerFormatted = format_type_with_exdoc_link(InnerType),
@@ -219,13 +219,13 @@ format_type_with_exdoc_link(TypeStr) ->
 -spec format_single_type(string() | binary()) -> ex_doc_type_string().
 format_single_type(TypeStr) ->
     %% Try remote type first: module:type()
-    Regex = ~"^([a-z_][a-z_0-9]*):([a-z_][a-z_0-9]*)\\(\\)$",
+    Regex = ~B"^([a-z_][a-z_0-9]*):([a-z_][a-z_0-9]*)\(\)$",
     case re:run(TypeStr, Regex, [{capture, [1, 2], binary}]) of
         {match, [Module, Type]} ->
             <<"`t:", Module/binary, ":", Type/binary, "/0`">>;
         nomatch ->
             %% Try local type: type()
-            case re:run(TypeStr, "^([a-z_][a-z_0-9]*)\\(\\)$", [{capture, [1], binary}]) of
+            case re:run(TypeStr, ~B"^([a-z_][a-z_0-9]*)\(\)$", [{capture, [1], binary}]) of
                 {match, [Type]} ->
                     <<"`t:", Type/binary, "/0`">>;
                 nomatch ->
@@ -367,7 +367,7 @@ extract_key_mappings_regex(Content, Acc) ->
     %% Match: record_key_name(dns_xxx) -> ~"key"; or record_key_name(dns_xxx) -> ?DNS_TYPE_XXX_BSTR;
     %% Pattern matches both binary literals and macros
     %% Note: record names can contain digits (e.g., dns_rrdata_eui48)
-    Pattern = ~"record_key_name\\s*\\(\\s*([a-z_0-9]+)\\s*\\)\\s*->\\s*([^;]+);",
+    Pattern = ~B"record_key_name\s*\(\s*([a-z_0-9]+)\s*\)\s*->\s*([^;]+);",
     case re:run(Content, Pattern, [global, {capture, [1, 2], list}, multiline]) of
         {match, Matches} ->
             lists:foldl(

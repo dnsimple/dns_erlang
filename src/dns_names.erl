@@ -1,14 +1,7 @@
 -module(dns_names).
--if(?OTP_RELEASE >= 27).
--define(MODULEDOC(Str), -moduledoc(Str)).
--define(DOC(Str), -doc(Str)).
--else.
--define(MODULEDOC(Str), -compile([])).
--define(DOC(Str), -compile([])).
--endif.
-?MODULEDOC("""
+-moduledoc """
 Helpers to convert between DNS codes and their names.
-""").
+""".
 
 -include_lib("dns_erlang/include/dns.hrl").
 
@@ -43,7 +36,7 @@ Helpers to convert between DNS codes and their names.
 %%% DNS terms
 %%%===================================================================
 
-?DOC("Returns the name of the class as a binary string.").
+-doc "Returns the name of the class as a binary string.".
 -spec class_name(dns:class()) -> unicode:latin1_binary() | undefined.
 class_name(Int) when is_integer(Int) ->
     case Int of
@@ -56,7 +49,7 @@ class_name(Int) when is_integer(Int) ->
         _ -> undefined
     end.
 
-?DOC("Returns the class type from a binary string.").
+-doc "Returns the class type from a binary string.".
 -spec name_class(unicode:latin1_binary()) -> dns:class() | undefined.
 name_class(Bin) when is_binary(Bin) ->
     case Bin of
@@ -69,7 +62,7 @@ name_class(Bin) when is_binary(Bin) ->
         _ -> undefined
     end.
 
-?DOC("Returns the name of the type as a binary string.").
+-doc "Returns the name of the type as a binary string.".
 -spec type_name(dns:type()) -> unicode:latin1_binary() | undefined.
 type_name(Int) when is_integer(Int) ->
     case Int of
@@ -159,7 +152,7 @@ type_name(Int) when is_integer(Int) ->
         _ -> undefined
     end.
 
-?DOC("Converts from the string representation into the standard `t:dns:type/0` representation").
+-doc "Converts from the string representation into the standard `t:dns:type/0` representation.".
 -spec name_type(unicode:latin1_binary()) -> dns:type() | undefined.
 name_type(Bin) when is_binary(Bin) ->
     case Bin of
@@ -249,7 +242,7 @@ name_type(Bin) when is_binary(Bin) ->
         _ -> undefined
     end.
 
-?DOC("Returns the name of an rcode as a binary string.").
+-doc "Returns the name of an rcode as a binary string.".
 -spec rcode_name(dns:rcode()) -> unicode:latin1_binary() | undefined.
 rcode_name(Int) when is_integer(Int) ->
     case Int of
@@ -267,7 +260,7 @@ rcode_name(Int) when is_integer(Int) ->
         _ -> undefined
     end.
 
-?DOC("Returns the name of an rcode as a binary string.").
+-doc "Returns the name of an rcode as a binary string.".
 -spec name_rcode(unicode:latin1_binary()) -> dns:rcode() | undefined.
 name_rcode(Bin) when is_binary(Bin) ->
     case Bin of
@@ -285,7 +278,7 @@ name_rcode(Bin) when is_binary(Bin) ->
         _ -> undefined
     end.
 
-?DOC("Returns the name of an opcode as a binary string.").
+-doc "Returns the name of an opcode as a binary string.".
 -spec opcode_name(dns:opcode()) -> unicode:latin1_binary() | undefined.
 opcode_name(Int) when is_integer(Int) ->
     case Int of
@@ -298,7 +291,7 @@ opcode_name(Int) when is_integer(Int) ->
         _ -> undefined
     end.
 
-?DOC("Returns the opcode from a binary string.").
+-doc "Returns the opcode from a binary string.".
 -spec name_opcode(unicode:latin1_binary()) -> dns:opcode() | undefined.
 name_opcode(Bin) when is_binary(Bin) ->
     case Bin of
@@ -311,7 +304,7 @@ name_opcode(Bin) when is_binary(Bin) ->
         _ -> undefined
     end.
 
-?DOC("Returns the name of a DNS algorithm as a binary string.").
+-doc "Returns the name of a DNS algorithm as a binary string.".
 -spec alg_name(dns:alg()) -> unicode:latin1_binary() | undefined.
 alg_name(Int) when is_integer(Int) ->
     case Int of
@@ -328,7 +321,7 @@ alg_name(Int) when is_integer(Int) ->
         _ -> undefined
     end.
 
-?DOC("Returns the DNS algorithm from a binary string.").
+-doc "Returns the DNS algorithm from a binary string.".
 -spec name_alg(unicode:latin1_binary()) -> dns:alg() | undefined.
 name_alg(Bin) when is_binary(Bin) ->
     case Bin of
@@ -345,7 +338,7 @@ name_alg(Bin) when is_binary(Bin) ->
         _ -> undefined
     end.
 
-?DOC("Returns the name of an EDE code as a binary string.").
+-doc "Returns the name of an EDE code as a binary string.".
 -spec ede_code_text(dns:uint16()) -> unicode:latin1_binary() | undefined.
 ede_code_text(Int) when is_integer(Int) ->
     case Int of
@@ -377,7 +370,7 @@ ede_code_text(Int) when is_integer(Int) ->
         _ -> undefined
     end.
 
-?DOC("Returns the EDE code from a binary string.").
+-doc "Returns the EDE code from a binary string.".
 -spec ede_text_code(unicode:latin1_binary()) -> dns:uint16() | undefined.
 ede_text_code(Bin) when is_binary(Bin) ->
     case Bin of
@@ -409,7 +402,7 @@ ede_text_code(Bin) when is_binary(Bin) ->
         _ -> undefined
     end.
 
-?DOC("Returns the name of a TSIG error as a binary string.").
+-doc "Returns the name of a TSIG error as a binary string.".
 -spec tsigerr_name(dns:tsig_error()) -> unicode:latin1_binary() | undefined.
 tsigerr_name(Int) when is_integer(Int) ->
     case Int of
@@ -420,7 +413,7 @@ tsigerr_name(Int) when is_integer(Int) ->
         _ -> undefined
     end.
 
-?DOC("Returns the TSIG error from a binary string.").
+-doc "Returns the TSIG error from a binary string.".
 -spec name_tsigerr(unicode:latin1_binary()) -> dns:tsig_error() | undefined.
 name_tsigerr(Bin) when is_binary(Bin) ->
     case Bin of
@@ -431,7 +424,7 @@ name_tsigerr(Bin) when is_binary(Bin) ->
         _ -> undefined
     end.
 
-?DOC("Returns the name of an extended rcode as a binary string.").
+-doc "Returns the name of an extended rcode as a binary string.".
 -spec ercode_name(dns:ercode()) -> unicode:latin1_binary() | undefined.
 ercode_name(Int) when is_integer(Int) ->
     case Int of
@@ -441,7 +434,7 @@ ercode_name(Int) when is_integer(Int) ->
         _ -> undefined
     end.
 
-?DOC("Returns the extended rcode from a binary string.").
+-doc "Returns the extended rcode from a binary string.".
 -spec name_ercode(unicode:latin1_binary()) -> dns:ercode() | undefined.
 name_ercode(Bin) when is_binary(Bin) ->
     case Bin of
@@ -451,7 +444,7 @@ name_ercode(Bin) when is_binary(Bin) ->
         _ -> undefined
     end.
 
-?DOC("Returns the name of an extended option as a binary string.").
+-doc "Returns the name of an extended option as a binary string.".
 -spec eoptcode_name(dns:eoptcode()) -> unicode:latin1_binary() | undefined.
 eoptcode_name(Int) when is_integer(Int) ->
     case Int of
@@ -462,7 +455,7 @@ eoptcode_name(Int) when is_integer(Int) ->
         _ -> undefined
     end.
 
-?DOC("Returns the extended option from a binary string.").
+-doc "Returns the extended option from a binary string.".
 -spec name_eoptcode(unicode:latin1_binary()) -> dns:eoptcode() | undefined.
 name_eoptcode(Bin) when is_binary(Bin) ->
     case Bin of
@@ -473,7 +466,7 @@ name_eoptcode(Bin) when is_binary(Bin) ->
         _ -> undefined
     end.
 
-?DOC("Returns the name of an LLQ opcode as a binary string.").
+-doc "Returns the name of an LLQ opcode as a binary string.".
 -spec llqopcode_name(dns:llqopcode()) -> unicode:latin1_binary() | undefined.
 llqopcode_name(Int) when is_integer(Int) ->
     case Int of
@@ -483,7 +476,7 @@ llqopcode_name(Int) when is_integer(Int) ->
         _ -> undefined
     end.
 
-?DOC("Returns LLQ opcode from a binary string.").
+-doc "Returns LLQ opcode from a binary string.".
 -spec name_llqopcode(unicode:latin1_binary()) -> dns:llqopcode() | undefined.
 name_llqopcode(Bin) when is_binary(Bin) ->
     case Bin of
@@ -493,7 +486,7 @@ name_llqopcode(Bin) when is_binary(Bin) ->
         _ -> undefined
     end.
 
-?DOC("Returns the name of an LLQ error code as a binary string.").
+-doc "Returns the name of an LLQ error code as a binary string.".
 -spec llqerrcode_name(dns:llqerrcode()) -> unicode:latin1_binary() | undefined.
 llqerrcode_name(Int) when is_integer(Int) ->
     case Int of
@@ -507,7 +500,7 @@ llqerrcode_name(Int) when is_integer(Int) ->
         _ -> undefined
     end.
 
-?DOC("Returns the LLQ error code from a binary string.").
+-doc "Returns the LLQ error code from a binary string.".
 -spec name_llqerrcode(unicode:latin1_binary()) -> dns:llqerrcode() | undefined.
 name_llqerrcode(Bin) when is_binary(Bin) ->
     case Bin of
@@ -521,7 +514,7 @@ name_llqerrcode(Bin) when is_binary(Bin) ->
         _ -> undefined
     end.
 
-?DOC("Returns the name of an SVCB parameter as a binary string.").
+-doc "Returns the name of an SVCB parameter as a binary string.".
 -spec svcb_param_name(dns:uint16()) -> unicode:latin1_binary() | undefined.
 svcb_param_name(Int) when is_integer(Int) ->
     case Int of
@@ -535,7 +528,7 @@ svcb_param_name(Int) when is_integer(Int) ->
         _ -> <<"key", (integer_to_binary(Int))/binary>>
     end.
 
-?DOC("Returns the SVCB parameter from a binary string.").
+-doc "Returns the SVCB parameter from a binary string.".
 -spec name_svcb_param(unicode:latin1_binary()) -> dns:uint16() | undefined.
 name_svcb_param(Bin) when is_binary(Bin) ->
     case Bin of

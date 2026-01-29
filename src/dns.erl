@@ -18,14 +18,7 @@
 %%
 %% -------------------------------------------------------------------
 -module(dns).
--if(?OTP_RELEASE >= 27).
--define(MODULEDOC(Str), -moduledoc(Str)).
--define(DOC(Str), -doc(Str)).
--else.
--define(MODULEDOC(Str), -compile([])).
--define(DOC(Str), -compile([])).
--endif.
-?MODULEDOC("""
+-moduledoc """
 The `dns` module is the primary entry point for the functionality in this library.
 The module exports various types used in type specs, such as `t:message/0`, which indicates
 a `#dns_message{}` record, `t:query/0` which represents a single `#dns_query{}` record,
@@ -34,7 +27,7 @@ a `#dns_message{}` record, `t:query/0` which represents a single `#dns_query{}` 
 It also exports functions for encoding and decoding messages,
 TSIG supporting functions, and various utility functions for comparing domain names, converting
 domain names into different cases, converting to and from label lists, etc.
-""").
+""".
 
 -export([decode_message/1, decode_query/1, encode_message/1, encode_message/2]).
 -export([verify_tsig/3, verify_tsig/4, add_tsig/5, add_tsig/6]).
@@ -46,38 +39,40 @@ domain names into different cases, converting to and from label lists, etc.
 %% 2^31 - 1, the largest signed 32-bit integer value
 -define(MAX_INT32, ((1 bsl 31) - 1)).
 
-?DOC(#{group => <<"Types: integer codes">>}).
-?DOC("Unsigned 2-bits integer").
+-doc #{group => "Types: integer codes"}.
+-doc "Unsigned 2-bits integer".
 -type uint2() :: 0..1.
-?DOC(#{group => <<"Types: integer codes">>}).
-?DOC("Unsigned 4-bits integer").
+-doc #{group => "Types: integer codes"}.
+-doc "Unsigned 4-bits integer".
 -type uint4() :: 0..15.
-?DOC(#{group => <<"Types: integer codes">>}).
-?DOC("Unsigned 8-bits integer").
+-doc #{group => "Types: integer codes"}.
+-doc "Unsigned 8-bits integer".
 -type uint8() :: 0..((1 bsl 8) - 1).
-?DOC(#{group => <<"Types: integer codes">>}).
-?DOC("Unsigned 16-bits integer").
+-doc #{group => "Types: integer codes"}.
+-doc "Unsigned 16-bits integer".
 -type uint16() :: 0..((1 bsl 16) - 1).
-?DOC(#{group => <<"Types: integer codes">>}).
-?DOC("Unsigned 32-bits integer").
+-doc #{group => "Types: integer codes"}.
+-doc "Unsigned 32-bits integer".
 -type uint32() :: 0..((1 bsl 32) - 1).
-?DOC(#{group => <<"Types: integer codes">>}).
-?DOC("Unsigned 48-bits integer").
+-doc #{group => "Types: integer codes"}.
+-doc "Unsigned 48-bits integer".
 -type uint48() :: 0..((1 bsl 48) - 1).
-?DOC(#{group => <<"Types: integer codes">>}).
-?DOC("Unsigned 64-bits integer").
+-doc #{group => "Types: integer codes"}.
+-doc "Unsigned 64-bits integer".
 -type uint64() :: 0..((1 bsl 64) - 1).
-?DOC(#{group => <<"Types: integer codes">>}).
+-doc #{group => "Types: integer codes"}.
+-doc "DNS opcode. See RFC 1035: §4.1.1.".
 -type opcode() :: uint4().
-?DOC(#{group => <<"Types: integer codes">>}).
+-doc #{group => "Types: integer codes"}.
+-doc "DNS Return code. See RFC 1035: §4.1.1.".
 -type rcode() :: uint4().
-?DOC(#{group => <<"Types: integer codes">>}).
+-doc #{group => "Types: integer codes"}.
 -type eoptcode() :: uint16().
-?DOC(#{group => <<"Types: integer codes">>}).
+-doc #{group => "Types: integer codes"}.
 -type ercode() :: 0 | 16.
-?DOC(#{group => <<"Types: integer codes">>}).
+-doc #{group => "Types: integer codes"}.
 -type llqerrcode() :: 0..6.
-?DOC(#{group => <<"Types: integer codes">>}).
+-doc #{group => "Types: integer codes"}.
 -type llqopcode() :: 1..3.
 -export_type([
     uint2/0,
@@ -95,18 +90,21 @@ domain names into different cases, converting to and from label lists, etc.
     llqerrcode/0
 ]).
 
-?DOC("""
+-doc #{group => "Types: strings"}.
+-doc """
 DNS wire message format.
 
 The general form is a 96bits header, followed by a variable number of questions,
 answers, authorities, and additional records.
-""").
+""".
 -type message_bin() :: <<_:96, _:_*8>>.
 
-?DOC("DNS Message ID. See RFC 1035: §4.1.1.").
+-doc #{group => "Types: integer codes"}.
+-doc "DNS Message ID. See RFC 1035: §4.1.1.".
 -type message_id() :: uint16().
 
-?DOC("""
+-doc #{group => "Types: integer codes"}.
+-doc """
 Decoding errors.
 
 Can be one of the following:
@@ -116,30 +114,37 @@ Can be one of the following:
     but there was trailing garbage at the end of the message.
 - `notimp`: the opcode is not implemented (e.g., IQUERY, STATUS, DSO).
     The message struct contains minimal fields needed to construct a NOTIMP response.
-""").
+""".
 -type decode_error() :: formerr | truncated | notimp | trailing_garbage.
 
-?DOC("Domain name, expressed as a sequence of `t:label/0`, as defined in RFC 1035: §3.1.").
+-doc #{group => "Types: strings"}.
+-doc "Domain name, expressed as a sequence of `t:label/0`, as defined in RFC 1035: §3.1.".
 -type dname() :: binary().
 
-?DOC("""
+-doc #{group => "Types: strings"}.
+-doc """
 DNS labels. See RFC 1035: §2.3.1.
 
 The labels must follow the rules for ARPANET host names. They must
 start with a letter, end with a letter or digit, and have as interior
 characters only letters, digits, and hyphen. There are also some
 restrictions on the length. Labels must be 63 characters or less.
-""").
+""".
 -type label() :: binary().
-?DOC("A list of `t:dns:label/0`").
+-doc #{group => "Types: strings"}.
+-doc "A list of `t:dns:label/0`".
 -type labels() :: [label()].
-?DOC("DNS Message class. See RFC 1035: §4.1.2.").
+-doc #{group => "Types: integer codes"}.
+-doc "DNS Message class. See RFC 1035: §4.1.2.".
 -type class() :: uint16().
-?DOC("DNS Message class. See RFC 1035: §4.1.2.").
+-doc #{group => "Types: integer codes"}.
+-doc "DNS Message class. See RFC 1035: §4.1.2.".
 -type type() :: uint16().
-?DOC("DNS Message class. See RFC 1035: §4.1.3.").
+-doc #{group => "Types: integer codes"}.
+-doc "DNS Message class. See RFC 1035: §4.1.3.".
 -type ttl() :: 0..?MAX_INT32.
-?DOC("Unix timestamp in seconds.").
+-doc #{group => "Types: integer codes"}.
+-doc "Unix timestamp in seconds.".
 -type unix_time() :: 0..4294967295.
 -export_type([
     message_bin/0,
@@ -154,34 +159,34 @@ restrictions on the length. Labels must be 63 characters or less.
     unix_time/0
 ]).
 
-?DOC(#{group => <<"Types: records">>}).
-?DOC("Main DNS message structure.").
+-doc #{group => "Types: records"}.
+-doc "Main DNS message structure.".
 -type message() :: #dns_message{}.
-?DOC(#{group => <<"Types: records">>}).
+-doc #{group => "Types: records"}.
 -type query() :: #dns_query{}.
-?DOC(#{group => <<"Types: records">>}).
+-doc #{group => "Types: records"}.
 -type rr() :: #dns_rr{}.
-?DOC(#{group => <<"Types: records">>}).
+-doc #{group => "Types: records"}.
 -type optrr() :: #dns_optrr{}.
-?DOC(#{group => <<"Types: records">>}).
+-doc #{group => "Types: records"}.
 -type opt_nsid() :: #dns_opt_nsid{}.
-?DOC(#{group => <<"Types: records">>}).
+-doc #{group => "Types: records"}.
 -type opt_ul() :: #dns_opt_ul{}.
-?DOC(#{group => <<"Types: records">>}).
+-doc #{group => "Types: records"}.
 -type opt_ecs() :: #dns_opt_ecs{}.
-?DOC(#{group => <<"Types: records">>}).
+-doc #{group => "Types: records"}.
 -type opt_llq() :: #dns_opt_llq{}.
-?DOC(#{group => <<"Types: records">>}).
+-doc #{group => "Types: records"}.
 -type opt_owner() :: #dns_opt_owner{}.
-?DOC(#{group => <<"Types: records">>}).
+-doc #{group => "Types: records"}.
 -type opt_cookie() :: #dns_opt_cookie{}.
-?DOC(#{group => <<"Types: records">>}).
+-doc #{group => "Types: records"}.
 -type opt_ede() :: #dns_opt_ede{}.
-?DOC(#{group => <<"Types: records">>}).
+-doc #{group => "Types: records"}.
 -type opt_unknown() :: #dns_opt_unknown{}.
-?DOC(#{group => <<"Types: records">>}).
+-doc #{group => "Types: records"}.
 -type rrdata_rrsig() :: #dns_rrdata_rrsig{}.
-?DOC(#{group => <<"Types: records">>}).
+-doc #{group => "Types: records"}.
 -type rrdata() ::
     binary()
     | #dns_rrdata_a{}
@@ -236,9 +241,9 @@ restrictions on the length. Labels must be 63 characters or less.
     | #dns_rrdata_resinfo{}
     | #dns_rrdata_wallet{}
     | #dns_rrdata_zonemd{}.
-?DOC(#{group => <<"Types: records">>}).
+-doc #{group => "Types: records"}.
 -type records() :: additional() | answers() | authority() | questions().
-?DOC(#{group => <<"Types: records">>}).
+-doc #{group => "Types: records"}.
 -type optrr_elem() ::
     opt_nsid()
     | opt_ul()
@@ -248,13 +253,13 @@ restrictions on the length. Labels must be 63 characters or less.
     | opt_owner()
     | opt_cookie()
     | opt_ede().
-?DOC(#{group => <<"Types: records">>}).
+-doc #{group => "Types: records"}.
 -type questions() :: [query()].
-?DOC(#{group => <<"Types: records">>}).
+-doc #{group => "Types: records"}.
 -type answers() :: [rr()].
-?DOC(#{group => <<"Types: records">>}).
+-doc #{group => "Types: records"}.
 -type authority() :: [rr()].
-?DOC(#{group => <<"Types: records">>}).
+-doc #{group => "Types: records"}.
 -type additional() :: [optrr() | rr()].
 -export_type([
     message/0,
@@ -277,13 +282,13 @@ restrictions on the length. Labels must be 63 characters or less.
     rrdata_rrsig/0
 ]).
 
-?DOC(#{group => <<"Types: TSIG">>}).
+-doc #{group => "Types: TSIG"}.
 -type tsig_mac() :: binary().
-?DOC(#{group => <<"Types: TSIG">>}).
+-doc #{group => "Types: TSIG"}.
 -type tsig_error() :: 0 | 16..18.
-?DOC(#{group => <<"Types: TSIG">>}).
+-doc #{group => "Types: TSIG"}.
 -type tsig_alg() :: binary().
-?DOC(#{group => <<"Types: TSIG">>}).
+-doc #{group => "Types: TSIG"}.
 -type alg() ::
     ?DNS_ALG_DSA
     | ?DNS_ALG_NSEC3DSA
@@ -302,7 +307,7 @@ restrictions on the length. Labels must be 63 characters or less.
     tsig_alg/0
 ]).
 
-?DOC(#{group => <<"Types: options">>}).
+-doc #{group => "Types: options"}.
 -type svcb_svc_params() :: #{
     ?DNS_SVCB_PARAM_MANDATORY => [dns:uint16()],
     ?DNS_SVCB_PARAM_ALPN => [binary()],
@@ -313,13 +318,13 @@ restrictions on the length. Labels must be 63 characters or less.
     ?DNS_SVCB_PARAM_IPV6HINT => [inet:ip6_address()],
     uint16() => none | binary()
 }.
-?DOC(#{group => <<"Types: options">>}).
+-doc #{group => "Types: options"}.
 -type encode_message_opts() :: #{
     max_size => 512..65535,
     tc_mode => default | axfr | llq_event,
     tsig => encode_tsig_opts()
 }.
-?DOC(#{group => <<"Types: options">>}).
+-doc #{group => "Types: options"}.
 -type encode_tsig_opts() :: #{
     name := dname(),
     alg := tsig_alg(),
@@ -332,7 +337,7 @@ restrictions on the length. Labels must be 63 characters or less.
     mac => tsig_mac(),
     tail => boolean()
 }.
-?DOC(#{group => <<"Types: options">>}).
+-doc #{group => "Types: options"}.
 -type tsig_opts() :: #{
     time => unix_time(),
     fudge => non_neg_integer(),
@@ -351,15 +356,15 @@ restrictions on the length. Labels must be 63 characters or less.
 %%% Message body functions
 %%%===================================================================
 
-?DOC(#{group => <<"Functions: parsing">>}).
-?DOC("Decode a binary DNS message.").
+-doc #{group => "Functions: parsing"}.
+-doc "Decode a binary DNS message.".
 -spec decode_message(message_bin()) ->
     {decode_error(), message() | undefined, binary()} | message().
 decode_message(MsgBin) ->
     dns_decode:decode(MsgBin).
 
-?DOC(#{group => <<"Functions: parsing">>}).
-?DOC("""
+-doc #{group => "Functions: parsing"}.
+-doc """
 Decode a binary DNS query message with strict header validation.
 
 Performs header guard checks before decoding the message body to prevent DoS attacks.
@@ -370,21 +375,21 @@ For standard queries (opcode 0), validates that:
 
 For NOTIFY (opcode 4) and UPDATE (opcode 5), allows decoding to proceed.
 For other opcodes, falls back to standard decoding.
-""").
+""".
 -spec decode_query(message_bin()) ->
     {decode_error(), message() | undefined, binary()}
     | message().
 decode_query(MsgBin) ->
     dns_decode:decode_query(MsgBin).
 
-?DOC(#{group => <<"Functions: parsing">>}).
-?DOC("Encode a `t:message/0` record.").
+-doc #{group => "Functions: parsing"}.
+-doc "Encode a `t:message/0` record.".
 -spec encode_message(message()) -> message_bin().
 encode_message(Msg) ->
     dns_encode:encode(Msg).
 
-?DOC(#{group => <<"Functions: parsing">>}).
-?DOC("Encode a dns_message record - will truncate the message as needed.").
+-doc #{group => "Functions: parsing"}.
+-doc "Encode a dns_message record - will truncate the message as needed.".
 -spec encode_message(message(), encode_message_opts()) ->
     {false, message_bin()}
     | {false, message_bin(), tsig_mac()}
@@ -397,33 +402,33 @@ encode_message(Msg, Opts) ->
 %%% TSIG functions
 %%%===================================================================
 
-?DOC(#{group => <<"Functions: TSIG">>}).
-?DOC(#{equiv => verify_tsig(MsgBin, Name, Secret, #{})}).
+-doc #{group => "Functions: TSIG"}.
+-doc #{equiv => verify_tsig(MsgBin, Name, Secret, #{})}.
 -spec verify_tsig(message_bin(), dname(), binary()) ->
     {ok, tsig_mac()} | {error, tsig_error()}.
 verify_tsig(MsgBin, Name, Secret) ->
     dns_tsig:verify_tsig(MsgBin, Name, Secret).
 
-?DOC(#{group => <<"Functions: TSIG">>}).
-?DOC("Verifies a TSIG message signature.").
+-doc #{group => "Functions: TSIG"}.
+-doc "Verifies a TSIG message signature.".
 -spec verify_tsig(message_bin(), dname(), binary(), tsig_opts()) ->
     {ok, tsig_mac()} | {error, tsig_error()}.
 verify_tsig(MsgBin, Name, Secret, Options) ->
     dns_tsig:verify_tsig(MsgBin, Name, Secret, Options).
 
-?DOC(#{group => <<"Functions: TSIG">>}).
-?DOC(#{equiv => add_tsig(Msg, Alg, Name, Secret, ErrCode, #{name => Name, alg => Alg})}).
+-doc #{group => "Functions: TSIG"}.
+-doc #{equiv => add_tsig(Msg, Alg, Name, Secret, ErrCode, #{name => Name, alg => Alg})}.
 -spec add_tsig(message(), tsig_alg(), dname(), binary(), tsig_error()) ->
     message().
 add_tsig(Msg, Alg, Name, Secret, ErrCode) ->
     dns_tsig:add_tsig(Msg, Alg, Name, Secret, ErrCode, #{name => Name, alg => Alg}).
 
-?DOC(#{group => <<"Functions: TSIG">>}).
-?DOC("""
+-doc #{group => "Functions: TSIG"}.
+-doc """
 Generates and then appends a TSIG RR to a message.
 
 Supports MD5, SHA1, SHA224, SHA256, SHA384 and SHA512 algorithms.
-""").
+""".
 -spec add_tsig(message(), tsig_alg(), dname(), binary(), tsig_error(), encode_tsig_opts()) ->
     message().
 add_tsig(Msg, Alg, Name, Secret, ErrCode, Options) ->
@@ -435,20 +440,20 @@ add_tsig(Msg, Alg, Name, Secret, ErrCode, Options) ->
 %%% Miscellaneous functions
 %%%===================================================================
 
-?DOC(#{group => <<"Functions: utilities">>}).
-?DOC("Returns a random integer suitable for use as DNS message identifier.").
+-doc #{group => "Functions: utilities"}.
+-doc "Returns a random integer suitable for use as DNS message identifier.".
 -spec random_id() -> message_id().
 random_id() ->
     rand:uniform(65535).
 
-?DOC(#{group => <<"Functions: utilities">>}).
-?DOC("Return current unix time in seconds.").
+-doc #{group => "Functions: utilities"}.
+-doc "Return current unix time in seconds.".
 -spec unix_time() -> unix_time().
 unix_time() ->
     erlang:system_time(second).
 
-?DOC(#{group => <<"Functions: utilities">>}).
-?DOC("Return the unix time in seconds from a timestamp or universal time.").
+-doc #{group => "Functions: utilities"}.
+-doc "Return the unix time in seconds from a timestamp or universal time.".
 -spec unix_time(erlang:timestamp() | calendar:datetime1970()) -> unix_time().
 unix_time({_MegaSecs, _Secs, _MicroSecs} = NowTime) ->
     UniversalTime = calendar:now_to_universal_time(NowTime),

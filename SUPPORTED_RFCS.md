@@ -1,6 +1,8 @@
 # Supported RFCs
 
-This library implements encoding and decoding of DNS packets according to the following RFCs. Note that this library focuses on packet encoding/decoding only and does not implement DNS server functionality such as socket handling or query resolution.
+This library implements encoding and decoding of DNS packets according to the following RFCs.
+Note that this library focuses on packet encoding/decoding only and does not implement DNS server
+functionality such as socket handling or query resolution.
 
 - **[RFC 1034](https://tools.ietf.org/html/rfc1034)**: Domain Names - Concepts and Facilites
 - **[RFC 1035](https://tools.ietf.org/html/rfc1035)**: Domain Names - Implementation and Specification

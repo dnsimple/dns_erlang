@@ -1,18 +1,11 @@
 -module(dns_domain).
--if(?OTP_RELEASE >= 27).
--define(MODULEDOC(Str), -moduledoc(Str)).
--define(DOC(Str), -doc(Str)).
--else.
--define(MODULEDOC(Str), -compile([])).
--define(DOC(Str), -compile([])).
--endif.
-?MODULEDOC("""
+-moduledoc """
 Domain name processing module providing operations for converting between
 text representation, label lists, and DNS wire format.
 
 This module provides strictly reversible domain name operations for use in DNS
 message encoding and decoding.
-""").
+""".
 
 -export([split/1, join/1, join/2]).
 -export([from_wire/1, from_wire/2]).
@@ -21,29 +14,29 @@ message encoding and decoding.
 -export([are_equal/2, are_equal_labels/2]).
 -export([escape_label/1, unescape_label/1]).
 
-?DOC("Text representation of domain name: \"www.example.com\"").
+-doc ~'Text representation of domain name: "www.example.com".'.
 -type dname() :: binary().
 
-?DOC("Single label: \"www\"").
+-doc ~'Single label: "www".'.
 -type label() :: binary().
 
-?DOC("List of labels").
+-doc "List of labels.".
 -type labels() :: [label()].
 
-?DOC("Wire format binary").
+-doc "Wire format binary.".
 -type wire() :: binary().
 
-?DOC("Compression map: maps label sequences to positions").
+-doc "Compression map: maps label sequences to positions.".
 -type compmap() :: #{labels() => non_neg_integer()}.
 
 -export_type([compmap/0]).
 
-?DOC("Encode error types").
+-doc "Encode error types.".
 -type encode_error() ::
     {error, label_too_long, label()}
     | {error, name_too_long, dname()}.
 
-?DOC("Decode error types").
+-doc "Decode error types.".
 -type decode_error() ::
     {error, truncated}
     | {error, invalid_label_length, non_neg_integer()}
@@ -51,7 +44,7 @@ message encoding and decoding.
 
 -export_type([dname/0, label/0, labels/0, wire/0, encode_error/0, decode_error/0]).
 
-?DOC("""
+-doc """
 Split domain name into labels.
 
 Converts a domain name string into a list of labels. Handles escaped dots
@@ -64,18 +57,18 @@ Raises `{invalid_dname, empty_label}` if the name contains contiguous dots.
 ## Examples:
 
 ```erlang
-1> dns_domain:split(<<"www.example.com">>).
-[<<"www">>, <<"example">>, <<"com">>]
-2> dns_domain:split(<<"example.com.">>).
-[<<"example">>, <<"com">>]
-3> dns_domain:split(<<"test\\.label.com">>).
-[<<"test.label">>, <<"com">>]
+1> dns_domain:split(~"www.example.com").
+[~"www", ~"example", ~"com"]
+2> dns_domain:split(~"example.com.").
+[~"example", ~"com"]
+3> dns_domain:split(~"test\.label.com").
+[~"test.label", ~"com"]
 4> dns_domain:split(<<>>).
 []
-5> dns_domain:split(<<"example..com">>).
+5> dns_domain:split(~"example..com").
 ** exception error: {invalid_dname, empty_label}
 ```
-""").
+""".
 -spec split(dname()) -> labels().
 split(Name) when is_binary(Name) ->
     do_split(Name, <<>>).
@@ -145,12 +138,12 @@ do_split(<<$\\, $\\, Cs/binary>>, Label) ->
 do_split(<<C, Cs/binary>>, Label) ->
     do_split(Cs, <<Label/binary, C>>).
 
-?DOC(#{equiv => join(Labels, subdomain)}).
+-doc #{equiv => join(Labels, subdomain)}.
 -spec join(Labels :: labels()) -> dname().
 join(Labels) ->
     join(Labels, subdomain).
 
-?DOC("""
+-doc """
 Join labels into domain name.
 
 Converts a list of labels into a domain name string. Automatically escapes
@@ -163,20 +156,20 @@ Note that it does not automatically append a trailing dot at the end of the doma
 ## Examples:
 
 ```erlang
-1> dns_domain:join([<<"www">>, <<"example">>, <<"com">>], subdomain).
-<<"www.example.com">>
-2> dns_domain:join([<<"test.label">>, <<"com">>], subdomain).
-<<"test\\.label.com">>
-3> dns_domain:join([<<"test\\label">>, <<"com">>], subdomain).
-<<"test\\\\label.com">>
+1> dns_domain:join([~"www", ~"example", ~"com"], subdomain).
+~"www.example.com"
+2> dns_domain:join([~"test.label", ~"com"], subdomain).
+~"test\\.label.com"
+3> dns_domain:join([~"test\\label", ~"com"], subdomain).
+~"test\\\\label.com"
 4> dns_domain:join([], subdomain).
 <<>>
 5> dns_domain:join([], fqdn).
-<<".">>
-5> dns_domain:join([<<"example">>], fqdn).
-<<"example.">>
+~"."
+5> dns_domain:join([~"example"], fqdn).
+~"example."
 ```
-""").
+""".
 -spec join(Labels :: labels(), subdomain | fqdn) -> dname().
 join([], subdomain) ->
     <<>>;
@@ -203,7 +196,7 @@ escape_direct(<<$\\, Rest/binary>>, Acc) ->
 escape_direct(<<C, Rest/binary>>, Acc) ->
     escape_direct(Rest, <<Acc/binary, C>>).
 
-?DOC("""
+-doc """
 Escape special characters in a label.
 
 Escapes dots (`.`) and backslashes (`\`) in a label by prefixing them with
@@ -215,16 +208,16 @@ that will be joined with other labels.
 ## Examples:
 
 ```erlang
-1> dns_domain:escape_label(<<"test">>).
-<<"test">>
-2> dns_domain:escape_label(<<"test.label">>).
-<<"test\\.label">>
-3> dns_domain:escape_label(<<"test\\label">>).
-<<"test\\\\label">>
-4> dns_domain:escape_label(<<"test\\.label">>).
-<<"test\\\\.label">>
+1> dns_domain:escape_label(~"test").
+~"test"
+2> dns_domain:escape_label(~"test.label").
+~"test\\.label"
+3> dns_domain:escape_label(~"test\\label").
+~"test\\\\label"
+4> dns_domain:escape_label(~"test\\.label").
+~"test\\\\.label"
 ```
-""").
+""".
 -spec escape_label(label()) -> label().
 escape_label(Label) ->
     case needs_escape(Label) of
@@ -254,7 +247,7 @@ do_escape(<<$\\, Rest/binary>>, Acc) ->
 do_escape(<<C, Rest/binary>>, Acc) ->
     do_escape(Rest, <<Acc/binary, C>>).
 
-?DOC("""
+-doc """
 Unescape a label by removing escape sequences.
 
 Reverses the escaping performed by `escape_label/1`. Converts `\\.` back to `.`
@@ -266,16 +259,16 @@ Use this when parsing labels that may contain escaped characters.
 ## Examples:
 
 ```erlang
-1> dns_domain:unescape_label(<<"test">>).
-<<"test">>
-2> dns_domain:unescape_label(<<"test\\.label">>).
-<<"test.label">>
-3> dns_domain:unescape_label(<<"test\\\\label">>).
-<<"test\\label">>
-4> dns_domain:unescape_label(<<"test\\\\.label">>).
-<<"test\\.label">>
+1> dns_domain:unescape_label(~"test").
+~"test"
+2> dns_domain:unescape_label(~"test\\.label").
+~"test.label"
+3> dns_domain:unescape_label(~"test\\\\label").
+~"test\\label"
+4> dns_domain:unescape_label(~"test\\\\.label").
+~"test\\.label"
 ```
-""").
+""".
 -spec unescape_label(label()) -> label().
 unescape_label(Label) ->
     case needs_unescape(Label) of
@@ -309,7 +302,7 @@ do_unescape(<<$\\, C, Rest/binary>>, Acc) ->
 do_unescape(<<C, Rest/binary>>, Acc) ->
     do_unescape(Rest, <<Acc/binary, C>>).
 
-?DOC("""
+-doc """
 Convert domain name to wire format.
 
 Converts a domain name string to DNS wire format binary. The wire format
@@ -325,16 +318,16 @@ Returns `<<0>>` for empty names or root.
 ## Examples:
 
 ```erlang
-1> dns_domain:to_wire(<<"www.example.com">>).
+1> dns_domain:to_wire(~"www.example.com").
 <<3,119,119,119,7,101,120,97,109,112,108,101,3,99,111,109,0>>
-2> dns_domain:to_wire(<<"example.com">>).
+2> dns_domain:to_wire(~"example.com").
 <<7,101,120,97,109,112,108,101,3,99,111,109,0>>
 3> dns_domain:to_wire(<<>>).
 <<0>>
-4> dns_domain:to_wire(<<"example..com">>).
+4> dns_domain:to_wire(~"example..com").
 ** exception error: {invalid_dname, empty_label}
 ```
-""").
+""".
 -spec to_wire(dname()) -> wire().
 to_wire(Name) ->
     Labels = do_split(Name, <<>>),
@@ -342,7 +335,7 @@ to_wire(Name) ->
     254 < byte_size(LabelsBin) andalso error(name_too_long),
     <<LabelsBin/binary, 0>>.
 
-?DOC("""
+-doc """
 Convert domain name to wire format with compression.
 
 Converts a domain name to wire format, using DNS name compression to reduce
@@ -361,17 +354,17 @@ Use this when encoding DNS messages where multiple names may share suffixes
 
 ```erlang
 1> CompMap = #{}, Pos = 0.
-2> {Wire1, CompMap1} = dns_domain:to_wire(CompMap, Pos, <<"example.com">>).
+2> {Wire1, CompMap1} = dns_domain:to_wire(CompMap, Pos, ~"example.com").
 {<<7,101,120,97,109,112,108,101,3,99,111,109,0>>, #{...}}
 3> Pos2 = byte_size(Wire1).
-4> {Wire2, _} = dns_domain:to_wire(CompMap1, Pos2, <<"www.example.com">>).
+4> {Wire2, _} = dns_domain:to_wire(CompMap1, Pos2, ~"www.example.com").
 {<<3,119,119,119,192,0>>, #{...}}
 %% Wire2 uses compression pointer (192,0) pointing to position 0
-5> {Wire3, _} = dns_domain:to_wire(CompMap1, Pos2, <<"example.com">>).
+5> {Wire3, _} = dns_domain:to_wire(CompMap1, Pos2, ~"example.com").
 {<<192,0>>, #{...}}
 %% Wire3 is just a compression pointer since the name was seen before
 ```
-""").
+""".
 -spec to_wire(compmap(), non_neg_integer(), dname()) -> {wire(), compmap()}.
 to_wire(CompMap, Pos, Name) when is_binary(Name) ->
     Labels = do_split(Name, <<>>),
@@ -401,7 +394,7 @@ to_wire_labels_compressed(CompMap, Pos, [L | Ls], [_ | LwrLs] = LwrLabels, Acc) 
             to_wire_labels_compressed(NewCompMap, NewPos, Ls, LwrLs, NewAcc)
     end.
 
-?DOC("""
+-doc """
 Convert wire format to domain name.
 
 Decodes a DNS wire format binary into a domain name string. Handles escaped
@@ -420,15 +413,15 @@ Raises `{too_many_labels, Count}` if the name contains more than 127 labels.
 ```erlang
 1> Wire = <<3,119,119,119,7,101,120,97,109,112,108,101,3,99,111,109,0>>.
 2> {Dname, Rest} = dns_domain:from_wire(Wire).
-{<<"www.example.com">>, <<>>}
+{~"www.example.com", <<>>}
 3> Wire2 = <<7,101,120,97,109,112,108,101,3,99,111,109,0,1,2,3>>.
 4> {Dname2, Rest2} = dns_domain:from_wire(Wire2).
-{<<"example.com">>, <<1,2,3>>}
+{~"example.com", <<1,2,3>>}
 5> Wire3 = <<0>>.
 6> {Dname3, Rest3} = dns_domain:from_wire(Wire3).
 {<<>>, <<>>}
 ```
-""").
+""".
 -spec from_wire(wire()) -> {dname(), wire()}.
 from_wire(Bin) when is_binary(Bin) ->
     from_wire_first(Bin).
@@ -514,7 +507,7 @@ escape_label_inline(<<$\\, Rest/binary>>, Acc) ->
 escape_label_inline(<<C, Rest/binary>>, Acc) ->
     escape_label_inline(Rest, <<Acc/binary, C>>).
 
-?DOC("""
+-doc """
 Convert wire format to domain name with compression support.
 
 Decodes a DNS wire format binary that may contain compression pointers.
@@ -537,12 +530,12 @@ compression pointer is invalid or points outside the message.
 %% First name at position 0: "example.com"
 %% Second name at position 13: "www.example.com" (uses compression pointer)
 2> {Dname1, Rest1} = dns_domain:from_wire(MsgBin, MsgBin).
-{<<"example.com">>, <<3,119,119,119,192,0>>}
+{~"example.com", <<3,119,119,119,192,0>>}
 3> {Dname2, Rest2} = dns_domain:from_wire(MsgBin, Rest1).
-{<<"www.example.com">>, <<>>}
+{~"www.example.com", <<>>}
 %% Resolved compression pointer to decode "www.example.com"
 ```
-""").
+""".
 -spec from_wire(MsgBin :: wire(), DataBin :: wire()) -> {dname(), wire()}.
 from_wire(MsgBin, DataBin) when is_binary(MsgBin), is_binary(DataBin) ->
     from_wire_first_compressed(MsgBin, DataBin, 0, 0).
@@ -624,9 +617,9 @@ from_wire_rest_compressed(
     from_wire_rest_compressed(MsgBin, Rest, AccEscaped, Count, 1 + LabelCount, 1 + Len + TotalSize).
 
 -define(UP(X), (upper_byte(X)):8).
-?DOC("""
+-doc """
 Returns provided name with case-insensitive characters in uppercase.
-""").
+""".
 -spec to_upper(dname()) -> dname().
 to_upper(Data) when is_binary(Data) ->
     to_upper_chunk(Data).
@@ -656,9 +649,9 @@ to_upper_chunk(Data) ->
     <<<<?UP(N)>> || <<N>> <= Data>>.
 
 -define(LOW(X), (lower_byte(X)):8).
-?DOC("""
+-doc """
 Returns provided name with case-insensitive characters in lowercase.
-""").
+""".
 -spec to_lower(dname()) -> dname().
 to_lower(Data) when is_binary(Data) ->
     to_lower_chunk(Data).
@@ -729,22 +722,22 @@ upper_byte(X) ->
 %% Comparison Functions
 %% ============================================================================
 
-?DOC("""
+-doc """
 Compare two domain names case-insensitively.
 
 Returns `true` if the names are equal, `false` otherwise.
-""").
+""".
 -spec are_equal(dname(), dname()) -> boolean().
 are_equal(Name, Name) ->
     true;
 are_equal(NameA, NameB) ->
     to_lower(NameA) =:= to_lower(NameB).
 
-?DOC("""
+-doc """
 Compare two label lists case-insensitively.
 
 Returns `true` if the label lists are equal, `false` otherwise.
-""").
+""".
 -spec are_equal_labels(labels(), labels()) -> boolean().
 are_equal_labels(LabelsA, LabelsB) when is_list(LabelsA), is_list(LabelsB) ->
     do_are_equal_labels(LabelsA, LabelsB).

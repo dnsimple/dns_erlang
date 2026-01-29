@@ -69,7 +69,7 @@ prop_encode_rr_idempotent() ->
         RR,
         simple_valid_rr(),
         begin
-            Opts = #{origin => <<"example.com.">>, relative_names => false},
+            Opts = #{origin => ~"example.com.", relative_names => false},
             try
                 Encoded1 = dns_zone:encode_rr(RR, Opts),
                 Encoded2 = dns_zone:encode_rr(RR, Opts),
@@ -493,7 +493,7 @@ valid_zone_string() ->
         begin
             case Records of
                 [] ->
-                    <<"$ORIGIN example.com.\n$TTL 3600\n">>;
+                    ~"$ORIGIN example.com.\n$TTL 3600\n";
                 _ ->
                     %% Generate a simple zone string representation
                     Lines = lists:map(
@@ -595,7 +595,7 @@ extract_origin(ZoneString) ->
                 _ -> list_to_binary(OriginStr ++ ".")
             end;
         _ ->
-            <<"example.com.">>
+            ~"example.com."
     end.
 
 %% Normalize RR for comparison (handles domain name case differences)

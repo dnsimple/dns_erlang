@@ -1,10 +1,5 @@
 -module(dns_encode).
--if(?OTP_RELEASE >= 27).
--define(MODULEDOC(Str), -moduledoc(Str)).
--else.
--define(MODULEDOC(Str), -compile([])).
--endif.
-?MODULEDOC(false).
+-moduledoc false.
 
 -include_lib("dns_erlang/include/dns.hrl").
 
