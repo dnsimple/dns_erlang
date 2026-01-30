@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## main
 
+## v5.0.0
+
 ### Added
 
 - Add new `dns_json` module for bidirectional Record <-> JSON/Map transcoding
@@ -24,8 +26,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Migrate domain name operations to new `dns_domain` module
 
 All domain name processing functions have been moved to a new optimized
-`dns_domain` module. The old implementations in `dns`, `dns_encode`, and
-`dns_decode` have been removed and replaced with calls to the new module.
+`dns_domain` module. The old implementations in `dns` and related helper
+modules have been removed and replaced with calls to the new module.
 
 #### Migration guide
 
@@ -61,7 +63,7 @@ dns_encode:encode_dname(CM, Pos, N)  -> dns_domain:to_wire(CM, Pos, N)
 
 ## 4.9.1
 
-- Fix a bug that would incorrectly calculate pointers, introduced in 4.9.1
+- Fix a bug that would incorrectly calculate pointers, introduced in 4.9.0
 
 ## 4.9.0
 
