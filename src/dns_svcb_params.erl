@@ -122,7 +122,7 @@ parse_svcb_params_from_json([{Key, Value} | Rest], Acc) ->
                 Acc#{ParamKey => KeyNums};
             ?DNS_SVCB_PARAM_ALPN when is_list(Value) ->
                 Acc#{ParamKey => Value};
-            ?DNS_SVCB_PARAM_NO_DEFAULT_ALPN when Value =:= ~"none" orelse Value =:= none ->
+            ?DNS_SVCB_PARAM_NO_DEFAULT_ALPN when Value =:= null ->
                 Acc#{ParamKey => none};
             ?DNS_SVCB_PARAM_PORT when is_integer(Value) ->
                 Acc#{ParamKey => Value};
@@ -350,7 +350,7 @@ encode_value_to_json(?DNS_SVCB_PARAM_MANDATORY, Value) when is_list(Value) ->
 encode_value_to_json(?DNS_SVCB_PARAM_ALPN, Value) when is_list(Value) ->
     Value;
 encode_value_to_json(?DNS_SVCB_PARAM_NO_DEFAULT_ALPN, none) ->
-    ~"none";
+    null;
 encode_value_to_json(?DNS_SVCB_PARAM_PORT, Value) when is_integer(Value) ->
     Value;
 encode_value_to_json(?DNS_SVCB_PARAM_IPV4HINT, Value) when is_list(Value) ->
@@ -359,6 +359,8 @@ encode_value_to_json(?DNS_SVCB_PARAM_ECH, Value) when is_binary(Value) ->
     Value;
 encode_value_to_json(?DNS_SVCB_PARAM_IPV6HINT, Value) when is_list(Value) ->
     [list_to_binary(inet:ntoa(V)) || V <- Value];
+encode_value_to_json(Key, none) when is_integer(Key) ->
+    null;
 encode_value_to_json(Key, Value) when is_integer(Key) ->
     Value.
 
