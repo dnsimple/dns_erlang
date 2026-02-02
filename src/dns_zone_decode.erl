@@ -1870,7 +1870,7 @@ ensure_list(_) -> [].
 %% Parse IPv4 address
 -spec parse_ipv4(string()) -> {ok, inet:ip4_address()} | {error, term()}.
 parse_ipv4(String) ->
-    case inet:parse_ipv4_address(String) of
+    case inet:parse_ipv4strict_address(String) of
         {ok, Addr} -> {ok, Addr};
         {error, Reason} -> {error, {invalid_ipv4, Reason}}
     end.
@@ -1878,7 +1878,7 @@ parse_ipv4(String) ->
 %% Parse IPv6 address
 -spec parse_ipv6(string()) -> {ok, inet:ip6_address()} | {error, term()}.
 parse_ipv6(String) ->
-    case inet:parse_ipv6_address(String) of
+    case inet:parse_ipv6strict_address(String) of
         {ok, Addr} -> {ok, Addr};
         {error, Reason} -> {error, {invalid_ipv6, Reason}}
     end.
