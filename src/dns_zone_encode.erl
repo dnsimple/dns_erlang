@@ -71,13 +71,14 @@ encode_rdata(Type, RData, Opts) ->
 %% Helper Functions
 %% ============================================================================
 
-%% Encode domain name, optionally making it relative to origin
+%% Encode domain name, optionally making it relative to origin.
+%% When returning an absolute name (no origin or not under origin), ensure FQDN (trailing dot).
 %% Assumes always receive input in lowercase
 -spec encode_dname(dns:dname(), dns:dname(), boolean()) -> dns:dname().
 encode_dname(Name, _Origin, false) ->
     Name;
 encode_dname(Name, <<>>, true) ->
-    Name;
+    ensure_fqdn(Name);
 encode_dname(Name, Origin, true) ->
     case is_subdomain(Name, Origin) of
         true ->
@@ -87,8 +88,16 @@ encode_dname(Name, Origin, true) ->
                 RelativeName -> RelativeName
             end;
         false ->
-            %% Name is not under origin or no origin, use absolute
-            Name
+            %% Name is not under origin or no origin, use absolute FQDN
+            ensure_fqdn(Name)
+    end.
+
+%% Ensure domain name is fully qualified (trailing dot) for absolute form
+-spec ensure_fqdn(dns:dname()) -> dns:dname().
+ensure_fqdn(Name) when is_binary(Name) ->
+    case 0 < byte_size(Name) andalso $. =:= binary:last(Name) of
+        true -> Name;
+        false -> <<Name/binary, ".">>
     end.
 
 %% Check if Name is a subdomain of Origin (or equals it)

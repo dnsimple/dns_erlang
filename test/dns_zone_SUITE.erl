@@ -165,6 +165,7 @@ groups() ->
             encode_is_subdomain_edge_cases,
             encode_make_relative_edge_cases,
             encode_ensure_fqdn_edge_cases,
+            encode_ensure_fqdn_outputs_trailing_dot,
             encode_dnskey_rsa_public_key_list,
             encode_cdnskey_rsa_public_key_list,
             encode_dnskey_dsa_public_key_list,
@@ -5366,6 +5367,27 @@ encode_ensure_fqdn_edge_cases(_Config) ->
     },
     Line = dns_zone:encode_rr(RR),
     ?assert(is_list(Line) orelse is_binary(Line)).
+
+encode_ensure_fqdn_outputs_trailing_dot(_Config) ->
+    %% When encoding with no origin (encode_rdata/2), absolute names must be FQDN (trailing dot)
+    %% CNAME dname without trailing dot
+    CNAMEData = #dns_rrdata_cname{dname = ~"example.com"},
+    EncodedCNAME = dns_zone:encode_rdata(?DNS_TYPE_CNAME, CNAMEData),
+    CNAMEStr = iolist_to_binary(EncodedCNAME),
+    ?assert(
+        0 < byte_size(CNAMEStr) andalso $. =:= binary:last(CNAMEStr),
+        "CNAME content must end with trailing dot when no origin"
+    ),
+    ?assertEqual(~"example.com.", CNAMEStr),
+    %% NS dname without trailing dot
+    NSData = #dns_rrdata_ns{dname = ~"ns.example.com"},
+    EncodedNS = dns_zone:encode_rdata(?DNS_TYPE_NS, NSData),
+    NSStr = iolist_to_binary(EncodedNS),
+    ?assertEqual(~"ns.example.com.", NSStr),
+    %% Name that already has trailing dot is unchanged
+    CNAMEDataWithDot = #dns_rrdata_cname{dname = ~"example.net."},
+    EncodedWithDot = dns_zone:encode_rdata(?DNS_TYPE_CNAME, CNAMEDataWithDot),
+    ?assertEqual(~"example.net.", iolist_to_binary(EncodedWithDot)).
 
 encode_dnskey_rsa_public_key_list(_Config) ->
     %% DNSKEY with public_key as [E, M] (RSA list from wire decode after add_keytag_to_dnskey)
