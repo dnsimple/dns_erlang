@@ -5441,7 +5441,8 @@ encode_dnskey_dsa_public_key_list(_Config) ->
     Encoded = dns_zone:encode_rdata(?DNS_TYPE_DNSKEY, Data),
     LineStr = iolist_to_binary(Encoded),
     ?assertNotEqual(nomatch, string:find(LineStr, "256")),
-    ?assertNotEqual(nomatch, string:find(LineStr, "3")),  %% protocol and alg DSA = 3
+    %% protocol and alg DSA = 3
+    ?assertNotEqual(nomatch, string:find(LineStr, "3")),
     ?assert(byte_size(LineStr) > 10).
 
 encode_cdnskey_dsa_public_key_list(_Config) ->
@@ -5460,7 +5461,8 @@ encode_cdnskey_dsa_public_key_list(_Config) ->
     LineStr = iolist_to_binary(Encoded),
     ?assertNotEqual(nomatch, string:find(LineStr, "0")),
     ?assertNotEqual(nomatch, string:find(LineStr, "3")),
-    ?assertNotEqual(nomatch, string:find(LineStr, "6")),  %% alg NSEC3DSA = 6
+    %% alg NSEC3DSA = 6
+    ?assertNotEqual(nomatch, string:find(LineStr, "6")),
     ?assert(byte_size(LineStr) > 10).
 
 encode_quoted_strings_single(_Config) ->

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## main
 
+## v5.0.3
+
+- Fix FQDNs an (C)DNSKEY payloads in zonefile encoding
+
 ## v5.0.2
 
 - Use nulls instead of none in SVCB params JSON payloads [#107](https://github.com/dnsimple/dns_erlang/pull/107)
