@@ -372,20 +372,18 @@ encode_value_to_json(Key, Value) when is_integer(Key) ->
 parse_ipv4_for_json(IP) when is_binary(IP) ->
     parse_ipv4_for_json(binary_to_list(IP));
 parse_ipv4_for_json(IP) when is_list(IP) ->
-    case inet:parse_address(IP) of
-        {ok, {A, B, C, D}} -> {A, B, C, D};
-        {error, Reason} -> error({invalid_ipv4_in_json, list_to_binary(IP), Reason});
-        _ -> error({invalid_ipv4_in_json, list_to_binary(IP), invalid_format})
+    case inet:parse_ipv4strict_address(IP) of
+        {ok, ParsedIP} -> ParsedIP;
+        {error, Reason} -> error({invalid_ipv4_in_json, list_to_binary(IP), Reason})
     end.
 
 -spec parse_ipv6_for_json(binary() | string()) -> inet:ip6_address() | no_return().
 parse_ipv6_for_json(IP) when is_binary(IP) ->
     parse_ipv6_for_json(binary_to_list(IP));
 parse_ipv6_for_json(IP) when is_list(IP) ->
-    case inet:parse_address(IP) of
-        {ok, {A, B, C, D, E, F, G, H}} -> {A, B, C, D, E, F, G, H};
-        {error, Reason} -> error({invalid_ipv6_in_json, list_to_binary(IP), Reason});
-        _ -> error({invalid_ipv6_in_json, list_to_binary(IP), invalid_format})
+    case inet:parse_ipv6strict_address(IP) of
+        {ok, ParsedIP} -> ParsedIP;
+        {error, Reason} -> error({invalid_ipv6_in_json, list_to_binary(IP), Reason})
     end.
 
 %% Encode unknown key for wire format
