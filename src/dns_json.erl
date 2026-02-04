@@ -232,9 +232,7 @@ from_map_rrdata(Type, DataMap) ->
             %% Known type - convert to record
             Fields = record_fields(Tag),
             Values = [
-                from_map_field(
-                    Tag, Field, maps:get(field_name(Tag, Field), DataMap, undefined)
-                )
+                from_map_field(Tag, Field, maps:get(field_name(Tag, Field), DataMap, undefined))
              || Field <- Fields
             ],
             list_to_tuple([Tag | Values])
@@ -414,6 +412,12 @@ from_map_field(dns_rrdata_ipseckey, gateway, Value) when is_binary(Value) ->
         {ok, Tuple} -> Tuple;
         {error, _} -> Value
     end;
+%% Missing or null svc_params: default to empty map (alias form, no service params).
+from_map_field(Tag, svc_params, Value) when
+    (Tag =:= dns_rrdata_svcb orelse Tag =:= dns_rrdata_https) andalso
+        (Value =:= undefined orelse Value =:= null)
+->
+    #{};
 from_map_field(Tag, svc_params, Value) when
     (Tag =:= dns_rrdata_svcb orelse Tag =:= dns_rrdata_https) andalso is_map(Value)
 ->

@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## main
 
+## v5.0.4
+
+- Fix parsing SVCB json records when `svc_params` are missing
+
 ## v5.0.3
 
 - Fix FQDNs an (C)DNSKEY payloads in zonefile encoding

@@ -1237,9 +1237,34 @@ test_edge_cases(_Config) ->
     },
     assert_transcode(SvcbNonBinary),
 
-    ok.
+    %% Simulate API/JSON that omits svc_params for alias-form SVCB/HTTPS
+    SVCBJson = #{
+        ~"name" => ~"svcb-alias.example.com.",
+        ~"type" => ~"SVCB",
+        ~"ttl" => 3600,
+        ~"data" => #{
+            ~"svc_priority" => 0,
+            ~"target_name" => ~"pool.example.com."
+        }
+    },
+    HTTPSJson = #{
+        ~"name" => ~"https-alias.example.com.",
+        ~"type" => ~"HTTPS",
+        ~"ttl" => 3600,
+        ~"data" => #{
+            ~"svc_priority" => 0,
+            ~"target_name" => ~"pool.example.com."
+        }
+    },
+    SVCBRR = dns_json:from_map(SVCBJson),
+    HTTPSRR = dns_json:from_map(HTTPSJson),
+    ?assertEqual(#{}, (SVCBRR#dns_rr.data)#dns_rrdata_svcb.svc_params),
+    ?assertEqual(#{}, (HTTPSRR#dns_rr.data)#dns_rrdata_https.svc_params),
+    %% Record roundtrip: to_map -> from_map yields same record
+    ?assertEqual(SVCBRR, dns_json:from_map(dns_json:to_map(SVCBRR))),
+    ?assertEqual(HTTPSRR, dns_json:from_map(dns_json:to_map(HTTPSRR))).
 
-assert_transcode(Record) ->
+assert_transcode(Record) when is_tuple(Record) ->
     Map = dns_json:to_map(Record),
     ?assertEqual(Record, dns_json:from_map(Map)),
     Map.
