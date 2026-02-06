@@ -894,16 +894,20 @@ generate_svcb_params_section() ->
     The `svc_params` field in SVCB and HTTPS records is a map containing service binding parameters
     as defined in [RFC 9460](https://datatracker.ietf.org/doc/html/rfc9460).
 
+    > #### NOTE {: .note}
+    >
+    > The keys `keyN` when `N` ranges from `0` to `6` are equivalent to their named counterparts and will be validated accordingly.
+
     **Parameters:**
 
-    - `mandatory` (`[string()]`): List of parameter names that must be present (e.g., `["alpn", "port"]`)
+    - `mandatory` (`[string()]`): List of parameter names that must be present (e.g., `["alpn", "port"]`).
     - `alpn` (`[binary()]`): List of ALPN protocol identifiers as decoded binaries (e.g., `["h2", "h3"]`)
-    - `no-default-alpn` (`"none"` | `none`): Indicates that no default ALPN should be used
+    - `no-default-alpn` (`null`): Indicates that no default ALPN should be used.
     - `port` (`integer()`): Port number (0-65535)
     - `ipv4hint` (`[string()]`): List of IPv4 addresses as strings (e.g., `["192.168.1.1", "192.168.1.2"]`)
     - `ipv6hint` (`[string()]`): List of IPv6 addresses as strings (e.g., `["2001:db8::1"]`)
     - `ech` (`binary()`): Encrypted ClientHello (ECH) configuration as decoded binary
-    - `keyNNNNN` (`binary()` | `integer()` | `"none"`): Unknown parameters where `NNNNN` is the parameter key number (0-65535)
+    - `keyNNNN` (`binary()` | `null`): Unknown parameters where `NNNN` is the parameter key number (0-65535). In JSON the key is the string `"key"` followed by the decimal number (e.g. `"key65001"`). The value is either a binary (as string) or `null` for no-value parameters.
 
     **Example:**
 
@@ -917,7 +921,9 @@ generate_svcb_params_section() ->
             "port": 443,
             "ipv4hint": ["192.168.1.1", "192.168.1.2"],
             "ipv6hint": ["2001:db8::1"],
-            "ech": "ech-config-data"
+            "ech": "ech-config-data",
+            "key65001": "custom-param-value",
+            "key65002": null
         }
     }
     ```

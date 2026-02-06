@@ -22,6 +22,8 @@ groups() ->
             test_special_encodings,
             test_svcb_params,
             test_svcb_params_json_edge_cases,
+            test_svcb_params_numeric_keys_0_to_6_equivalent_to_named,
+            test_svcb_params_numeric_key_invalid_value_rejected,
             test_dnskey_formats,
             test_nsec3_salt,
             test_ipseckey_gateway,
@@ -758,6 +760,51 @@ test_svcb_params_json_edge_cases(_Config) ->
         }
     },
     ?assertError({invalid_ipv6_in_json, _, _}, dns_json:from_map(InvalidIpv6JsonMap)).
+
+%% key0-key6 in JSON are equivalent to named params; validate the same
+test_svcb_params_numeric_keys_0_to_6_equivalent_to_named(_Config) ->
+    %% JSON with numeric keys "0","1","2","3","4","5","6" round-trips like named
+    JsonParams = #{
+        ~"key0" => [~"alpn", ~"port"],
+        ~"key1" => [~"h2", ~"h3"],
+        ~"key2" => null,
+        ~"key3" => 443,
+        ~"key4" => [~"192.0.2.1"],
+        ~"key5" => ~"ech-data",
+        ~"key6" => [~"2001:db8::1"]
+    },
+    Params = dns_svcb_params:from_json(JsonParams),
+    ?assertEqual(
+        [?DNS_SVCB_PARAM_ALPN, ?DNS_SVCB_PARAM_PORT],
+        maps:get(?DNS_SVCB_PARAM_MANDATORY, Params)
+    ),
+    ?assertEqual([~"h2", ~"h3"], maps:get(?DNS_SVCB_PARAM_ALPN, Params)),
+    ?assertEqual(none, maps:get(?DNS_SVCB_PARAM_NO_DEFAULT_ALPN, Params)),
+    ?assertEqual(443, maps:get(?DNS_SVCB_PARAM_PORT, Params)),
+    ?assertEqual([{192, 0, 2, 1}], maps:get(?DNS_SVCB_PARAM_IPV4HINT, Params)),
+    ?assertEqual(~"ech-data", maps:get(?DNS_SVCB_PARAM_ECH, Params)),
+    ?assertEqual(
+        [{16#2001, 16#0db8, 0, 0, 0, 0, 0, 1}],
+        maps:get(?DNS_SVCB_PARAM_IPV6HINT, Params)
+    ),
+    %% Round-trip: to_json then from_json yields same param map (keys normalized to names)
+    JsonOut = dns_svcb_params:to_json(Params),
+    Params2 = dns_svcb_params:from_json(JsonOut),
+    ?assertEqual(
+        maps:get(?DNS_SVCB_PARAM_MANDATORY, Params), maps:get(?DNS_SVCB_PARAM_MANDATORY, Params2)
+    ),
+    ?assertEqual(maps:get(?DNS_SVCB_PARAM_PORT, Params), maps:get(?DNS_SVCB_PARAM_PORT, Params2)).
+
+%% key0-key6 with invalid value type are rejected (same as named)
+test_svcb_params_numeric_key_invalid_value_rejected(_Config) ->
+    ?assertError(
+        {svcb_param_invalid_value, ?DNS_SVCB_PARAM_MANDATORY, _},
+        dns_svcb_params:from_json(#{~"key0" => 123})
+    ),
+    ?assertError(
+        {svcb_param_invalid_value, ?DNS_SVCB_PARAM_PORT, _},
+        dns_svcb_params:from_json(#{~"key3" => ~"not-an-integer"})
+    ).
 
 test_dnskey_formats(_Config) ->
     %% RRDATA records must be wrapped in dns_rr

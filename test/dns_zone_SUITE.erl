@@ -344,6 +344,9 @@ groups() ->
             parse_svcb_mandatory_self_reference,
             parse_svcb_mandatory_missing_keys,
             parse_svcb_unknown_key_format,
+            parse_svcb_key0_to_key6_equivalent_to_named,
+            parse_svcb_key2_no_value_allowed,
+            parse_svcb_key3_invalid_port_rejected,
             parse_https_record,
             parse_https_with_params
         ]},
@@ -1672,6 +1675,74 @@ parse_svcb_unknown_key_format(_Config) ->
     #dns_rrdata_svcb{svc_params = SvcParams2} = RR2#dns_rr.data,
     ?assert(maps:is_key(65002, SvcParams2)),
     ?assertEqual(none, maps:get(65002, SvcParams2)).
+
+%% key0-key6 are equivalent to named params; zone parsing validates them the same
+parse_svcb_key0_to_key6_equivalent_to_named(_Config) ->
+    %% key0 (mandatory) = mandatory=alpn,port
+    Zone0 =
+        ~"example.com. 3600 IN SVCB 1 svc.example.com. key0=\"alpn,port\" key1=\"h2\" key3=\"443\"\n",
+    {ok, [RR0]} = dns_zone:parse_string(Zone0, #{origin => ~"example.com."}),
+    #dns_rrdata_svcb{svc_params = P0} = RR0#dns_rr.data,
+    ?assertEqual(
+        [?DNS_SVCB_PARAM_ALPN, ?DNS_SVCB_PARAM_PORT],
+        maps:get(?DNS_SVCB_PARAM_MANDATORY, P0)
+    ),
+    ?assertEqual([~"h2"], maps:get(?DNS_SVCB_PARAM_ALPN, P0)),
+    ?assertEqual(443, maps:get(?DNS_SVCB_PARAM_PORT, P0)),
+
+    %% key1 (alpn)
+    Zone1 = ~"example.com. 3600 IN SVCB 1 svc.example.com. key1=\"h2,h3\"\n",
+    {ok, [RR1]} = dns_zone:parse_string(Zone1, #{origin => ~"example.com."}),
+    #dns_rrdata_svcb{svc_params = SvcParams1} = RR1#dns_rr.data,
+    ?assertEqual([~"h2", ~"h3"], maps:get(?DNS_SVCB_PARAM_ALPN, SvcParams1)),
+
+    %% key2 (no-default-alpn) - no value
+    Zone2 = ~"example.com. 3600 IN SVCB 1 svc.example.com. key2\n",
+    {ok, [RR2]} = dns_zone:parse_string(Zone2, #{origin => ~"example.com."}),
+    #dns_rrdata_svcb{svc_params = SvcParams2} = RR2#dns_rr.data,
+    ?assertEqual(none, maps:get(?DNS_SVCB_PARAM_NO_DEFAULT_ALPN, SvcParams2)),
+
+    %% key3 (port)
+    Zone3 = ~"example.com. 3600 IN SVCB 1 svc.example.com. key3=\"443\"\n",
+    {ok, [RR3]} = dns_zone:parse_string(Zone3, #{origin => ~"example.com."}),
+    #dns_rrdata_svcb{svc_params = SvcParams3} = RR3#dns_rr.data,
+    ?assertEqual(443, maps:get(?DNS_SVCB_PARAM_PORT, SvcParams3)),
+
+    %% key4 (ipv4hint)
+    Zone4 = ~"example.com. 3600 IN SVCB 1 svc.example.com. key4=\"192.0.2.1,192.0.2.2\"\n",
+    {ok, [RR4]} = dns_zone:parse_string(Zone4, #{origin => ~"example.com."}),
+    #dns_rrdata_svcb{svc_params = SvcParams4} = RR4#dns_rr.data,
+    ?assertEqual(
+        [{192, 0, 2, 1}, {192, 0, 2, 2}],
+        maps:get(?DNS_SVCB_PARAM_IPV4HINT, SvcParams4)
+    ),
+
+    %% key5 (ech) - base64 value
+    Zone5 = ~"example.com. 3600 IN SVCB 1 svc.example.com. key5=\"YWJjZGVm\"\n",
+    {ok, [RR5]} = dns_zone:parse_string(Zone5, #{origin => ~"example.com."}),
+    #dns_rrdata_svcb{svc_params = SvcParams5} = RR5#dns_rr.data,
+    ?assertEqual(~"abcdef", maps:get(?DNS_SVCB_PARAM_ECH, SvcParams5)),
+
+    %% key6 (ipv6hint)
+    Zone6 = ~"example.com. 3600 IN SVCB 1 svc.example.com. key6=\"2001:db8::1\"\n",
+    {ok, [RR6]} = dns_zone:parse_string(Zone6, #{origin => ~"example.com."}),
+    #dns_rrdata_svcb{svc_params = SvcParams6} = RR6#dns_rr.data,
+    ?assertEqual(
+        [{16#2001, 16#0db8, 0, 0, 0, 0, 0, 1}],
+        maps:get(?DNS_SVCB_PARAM_IPV6HINT, SvcParams6)
+    ).
+
+%% key2 (no-default-alpn) does not allow a value
+parse_svcb_key2_no_value_allowed(_Config) ->
+    Zone = ~"example.com. 3600 IN SVCB 1 svc.example.com. key2=\"x\"\n",
+    Result = dns_zone:parse_string(Zone, #{origin => ~"example.com."}),
+    ?assertMatch({error, _}, Result).
+
+%% key3 (port) with invalid value is rejected like port=invalid
+parse_svcb_key3_invalid_port_rejected(_Config) ->
+    Zone = ~"example.com. 3600 IN SVCB 1 svc.example.com. key3=\"not-a-port\"\n",
+    Result = dns_zone:parse_string(Zone, #{origin => ~"example.com."}),
+    ?assertMatch({error, _}, Result).
 
 test_svcb_params_zone_edge_cases(_Config) ->
     %% Test SVCB params edge cases through zone parsing

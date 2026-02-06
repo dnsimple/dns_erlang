@@ -115,8 +115,6 @@ parse_svcb_params_from_json([{Key, Value} | Rest], Acc) ->
     ParamKey = dns_names:name_svcb_param(Key),
     NewAcc =
         case ParamKey of
-            undefined ->
-                Acc;
             ?DNS_SVCB_PARAM_MANDATORY when is_list(Value) ->
                 KeyNums = [dns_names:name_svcb_param(K) || K <- Value],
                 Acc#{ParamKey => KeyNums};
@@ -134,8 +132,13 @@ parse_svcb_params_from_json([{Key, Value} | Rest], Acc) ->
             ?DNS_SVCB_PARAM_IPV6HINT when is_list(Value) ->
                 IPs = [parse_ipv6_for_json(IP) || IP <- Value],
                 Acc#{ParamKey => IPs};
-            NNNN when is_integer(NNNN) ->
-                Acc#{NNNN => Value}
+            %% Unknown keys (key >= 7) stored as-is; key0-key6 with wrong value type are invalid
+            NNNN when is_integer(NNNN), 7 =< NNNN ->
+                Acc#{NNNN => Value};
+            undefined ->
+                Acc;
+            _ ->
+                error({svcb_param_invalid_value, ParamKey, Value})
         end,
     parse_svcb_params_from_json(Rest, NewAcc).
 
@@ -205,19 +208,26 @@ from_zone([{domain, "ech="}, {string, Value} | Rest], MakeError, Acc) ->
             {error, MakeError({invalid_svcparam_format, Reason})}
     end;
 from_zone([{domain, "key" ++ RestStr}, {string, Value} | Rest], MakeError, Acc) ->
-    %% Check for unknown key with quoted value: keyNNNNN="value"
+    %% keyNNNNN="value"; key0-key6 are equivalent to named params and validated the same
     [KeyNumStr, ""] = string:split(RestStr, "=", leading),
     case string:to_integer(KeyNumStr) of
         {KeyNum, ""} when KeyNum >= 0, KeyNum =< 65535 ->
-            ValueBin = base64:decode(Value),
-            NewAcc = Acc#{KeyNum => ValueBin},
-            from_zone(Rest, MakeError, NewAcc);
+            case parse_known_key_value_for_zone(KeyNum, Value, MakeError) of
+                {ok, Decoded} ->
+                    NewAcc = Acc#{KeyNum => Decoded},
+                    from_zone(Rest, MakeError, NewAcc);
+                {error, _} = Err ->
+                    Err
+            end;
         _ ->
             {error, MakeError({invalid_key_number, KeyNumStr})}
     end;
 from_zone([{domain, "key" ++ KeyNumStr} | Rest], MakeError, Acc) ->
-    %% keyNNNNN (no value, like no-default-alpn)
+    %% keyNNNNN (no value); only key2 (no-default-alpn) allows no value among 0-6
     case string:to_integer(KeyNumStr) of
+        {?DNS_SVCB_PARAM_NO_DEFAULT_ALPN, ""} ->
+            NewAcc = Acc#{?DNS_SVCB_PARAM_NO_DEFAULT_ALPN => none},
+            from_zone(Rest, MakeError, NewAcc);
         {KeyNum, ""} when KeyNum >= 0, KeyNum =< 65535 ->
             NewAcc = Acc#{KeyNum => none},
             from_zone(Rest, MakeError, NewAcc);
@@ -367,6 +377,53 @@ encode_value_to_json(Key, Value) when is_integer(Key) ->
 %% ============================================================================
 %% Helpers
 %% ============================================================================
+
+%% Parse value for key0-key6 in zone format; same validation as named params.
+%% For key >= 7, value is base64-encoded opaque binary.
+-spec parse_known_key_value_for_zone(
+    dns:uint16(),
+    string(),
+    error_callback()
+) -> {ok, term()} | {error, term()}.
+parse_known_key_value_for_zone(?DNS_SVCB_PARAM_MANDATORY, Value, MakeError) ->
+    Keys = [string:trim(K) || K <- string:split(Value, ",", all), K =/= ""],
+    case parse_mandatory_keys_for_zone(Keys, MakeError) of
+        {ok, KeyNums} -> {ok, KeyNums};
+        {error, _} = Err -> Err
+    end;
+parse_known_key_value_for_zone(?DNS_SVCB_PARAM_ALPN, Value, _MakeError) ->
+    Protocols = decode_alpn_list(zone, Value),
+    {ok, Protocols};
+parse_known_key_value_for_zone(?DNS_SVCB_PARAM_NO_DEFAULT_ALPN, _Value, MakeError) ->
+    %% no-default-alpn has no value; key2=something is invalid
+    {error, MakeError({svcb_param_no_value_allowed, no_default_alpn})};
+parse_known_key_value_for_zone(?DNS_SVCB_PARAM_PORT, Value, MakeError) ->
+    case string:to_integer(Value) of
+        {Port, ""} when Port >= 0, Port =< 65535 ->
+            {ok, Port};
+        _ ->
+            {error, MakeError({invalid_port, Value})}
+    end;
+parse_known_key_value_for_zone(?DNS_SVCB_PARAM_IPV4HINT, Value, MakeError) ->
+    IPs = [string:trim(IP) || IP <- string:split(Value, ",", all), IP =/= ""],
+    parse_ipv4_list_for_zone(IPs, MakeError);
+parse_known_key_value_for_zone(?DNS_SVCB_PARAM_ECH, Value, MakeError) ->
+    try
+        {ok, base64:decode(Value)}
+    catch
+        _:Reason ->
+            {error, MakeError({invalid_svcparam_format, Reason})}
+    end;
+parse_known_key_value_for_zone(?DNS_SVCB_PARAM_IPV6HINT, Value, MakeError) ->
+    IPs = [string:trim(IP) || IP <- string:split(Value, ",", all), IP =/= ""],
+    parse_ipv6_list_for_zone(IPs, MakeError);
+parse_known_key_value_for_zone(KeyNum, Value, MakeError) when KeyNum >= 7 ->
+    try
+        {ok, base64:decode(Value)}
+    catch
+        _:Reason ->
+            {error, MakeError({invalid_svcparam_format, Reason})}
+    end.
 
 -spec parse_ipv4_for_json(binary() | string()) -> inet:ip4_address() | no_return().
 parse_ipv4_for_json(IP) when is_binary(IP) ->
