@@ -271,14 +271,19 @@ svcb_param_name(_) ->
         ?DNS_SVCB_PARAM_ECH,
         ?DNS_SVCB_PARAM_IPV6HINT
     ],
+    KeyNNNN = [~"key0", ~"key1", ~"key2", ~"key3", ~"key4", ~"key5", ~"key6"],
+    [?assertEqual(C, dns_names:name_svcb_param(K)) || {C, K} <- lists:zip(Cases, KeyNNNN)],
     [?assert(is_binary(dns_names:svcb_param_name(N))) || N <- Cases],
     [?assertEqual(N, dns_names:name_svcb_param(dns_names:svcb_param_name(N))) || N <- Cases],
+    [?assert(is_integer(dns_names:name_svcb_param(Str))) || Str <- KeyNNNN],
     %% Test unknown key format (keyNNNNN)
     UnknownKey = 65001,
     UnknownKeyName = dns_names:svcb_param_name(UnknownKey),
     ?assertEqual(~"key65001", UnknownKeyName),
     ?assertEqual(UnknownKey, dns_names:name_svcb_param(UnknownKeyName)),
     %% Test that invalid key format returns undefined
+    ?assertEqual(undefined, dns_names:svcb_param_name(99999999)),
+    ?assertEqual(undefined, dns_names:name_svcb_param(~"key999999")),
     ?assertEqual(undefined, dns_names:name_svcb_param(~"notkey123")),
     ?assertEqual(undefined, dns_names:name_svcb_param(~"key")),
     ?assertEqual(undefined, dns_names:name_svcb_param(~"keyabc")).
