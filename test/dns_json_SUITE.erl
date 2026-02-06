@@ -701,7 +701,7 @@ test_svcb_params_json_edge_cases(_Config) ->
         data = #dns_rrdata_svcb{
             svc_priority = 1,
             target_name = ~"target.example.com",
-            svc_params = #{65001 => <<"test-data">>}
+            svc_params = #{65001 => ~"test-data"}
         }
     },
     assert_transcode(UnknownKeySvcb),

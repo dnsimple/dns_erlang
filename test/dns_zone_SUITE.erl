@@ -522,12 +522,6 @@ groups() ->
         ]}
     ].
 
-init_per_suite(Config) ->
-    Config.
-
-end_per_suite(_Config) ->
-    ok.
-
 %% ============================================================================
 %% Basic Parsing Tests
 %% ============================================================================
@@ -858,7 +852,7 @@ parse_escape_backslash(_Config) ->
     Zone = ~"example.com. 3600 IN TXT \"backslash: \\\\\"\n",
     {ok, [RR]} = dns_zone:parse_string(Zone, #{origin => ~"example.com."}),
     ?assertEqual(?DNS_TYPE_TXT, RR#dns_rr.type),
-    ?assertMatch(#dns_rrdata_txt{txt = [~"backslash: \\"]}, RR#dns_rr.data).
+    ?assertMatch(#dns_rrdata_txt{txt = [<<"backslash: \\">>]}, RR#dns_rr.data).
 
 parse_escape_quote(_Config) ->
     %% RFC 1035 §5.1: \" means literal quote
@@ -1598,7 +1592,6 @@ parse_svcb_with_echconfig(_Config) ->
     ?assert(maps:is_key(?DNS_SVCB_PARAM_ECH, SvcParams)).
 
 parse_svcb_with_echconfig_bad(_Config) ->
-    %% SVCB with ipv4hint service parameter
     Zone = ~"example.com. 3600 IN SVCB 1 svc.example.com. ech=\"zzzzzzm\"\n",
     Result = dns_zone:parse_string(Zone, #{origin => ~"example.com."}),
     ?assertMatch({error, #{type := semantic}}, Result).
