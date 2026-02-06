@@ -247,11 +247,11 @@ from_zone([Other | _], MakeError, _) ->
 apply_key_with_value(KeyNumStr, Value, Rest, MakeError, Acc) ->
     case {string:to_integer(KeyNumStr), Value} of
         {{KeyNum, ""}, _} when 0 =< KeyNum, KeyNum =< 6 ->
-            case key_num_to_named_tokens(KeyNum, Value) of
-                {ok, Tokens} ->
-                    from_zone(Tokens ++ Rest, MakeError, Acc);
+            case key_num_to_named_tokens(KeyNum, Value, Rest) of
                 {error, Reason} ->
-                    {error, MakeError(Reason)}
+                    {error, MakeError(Reason)};
+                Tokens when is_list(Tokens) ->
+                    from_zone(Tokens, MakeError, Acc)
             end;
         {{KeyNum, ""}, ""} when 7 =< KeyNum, KeyNum =< 65535 ->
             NewAcc = Acc#{KeyNum => none},
@@ -266,22 +266,22 @@ apply_key_with_value(KeyNumStr, Value, Rest, MakeError, Acc) ->
     end.
 
 %% Map key0-key6 + value to the equivalent named-param token list so from_zone reuses validation.
--spec key_num_to_named_tokens(dns:uint16(), string() | binary()) ->
-    {ok, [zone_rdata()]} | {error, term()}.
-key_num_to_named_tokens(?DNS_SVCB_PARAM_MANDATORY, Value) ->
-    {ok, [{domain, "mandatory=" ++ ensure_list(Value)}]};
-key_num_to_named_tokens(?DNS_SVCB_PARAM_ALPN, Value) ->
-    {ok, [{domain, "alpn=" ++ ensure_list(Value)}]};
-key_num_to_named_tokens(?DNS_SVCB_PARAM_NO_DEFAULT_ALPN, _Value) ->
+-spec key_num_to_named_tokens(dns:uint16(), string() | binary(), [zone_rdata()]) ->
+    [zone_rdata()] | {error, term()}.
+key_num_to_named_tokens(?DNS_SVCB_PARAM_MANDATORY, Value, Rest) ->
+    [{domain, "mandatory=" ++ ensure_list(Value)} | Rest];
+key_num_to_named_tokens(?DNS_SVCB_PARAM_ALPN, Value, Rest) ->
+    [{domain, "alpn=" ++ ensure_list(Value)} | Rest];
+key_num_to_named_tokens(?DNS_SVCB_PARAM_NO_DEFAULT_ALPN, _Value, _) ->
     {error, {svcb_param_no_value_allowed, no_default_alpn}};
-key_num_to_named_tokens(?DNS_SVCB_PARAM_PORT, Value) ->
-    {ok, [{domain, "port=" ++ ensure_list(Value)}]};
-key_num_to_named_tokens(?DNS_SVCB_PARAM_IPV4HINT, Value) ->
-    {ok, [{domain, "ipv4hint=" ++ ensure_list(Value)}]};
-key_num_to_named_tokens(?DNS_SVCB_PARAM_ECH, Value) ->
-    {ok, [{domain, "ech="}, {string, ensure_list(Value)}]};
-key_num_to_named_tokens(?DNS_SVCB_PARAM_IPV6HINT, Value) ->
-    {ok, [{domain, "ipv6hint=" ++ ensure_list(Value)}]}.
+key_num_to_named_tokens(?DNS_SVCB_PARAM_PORT, Value, Rest) ->
+    [{domain, "port=" ++ ensure_list(Value)} | Rest];
+key_num_to_named_tokens(?DNS_SVCB_PARAM_IPV4HINT, Value, Rest) ->
+    [{domain, "ipv4hint=" ++ ensure_list(Value)} | Rest];
+key_num_to_named_tokens(?DNS_SVCB_PARAM_ECH, Value, Rest) ->
+    [{domain, "ech="}, {string, ensure_list(Value)} | Rest];
+key_num_to_named_tokens(?DNS_SVCB_PARAM_IPV6HINT, Value, Rest) ->
+    [{domain, "ipv6hint=" ++ ensure_list(Value)} | Rest].
 
 ensure_list(Bin) when is_binary(Bin) -> binary_to_list(Bin);
 ensure_list(L) when is_list(L) -> L.
