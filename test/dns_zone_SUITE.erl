@@ -347,6 +347,10 @@ groups() ->
             parse_svcb_key0_to_key6_equivalent_to_named,
             parse_svcb_key2_no_value_allowed,
             parse_svcb_key3_invalid_port_rejected,
+            parse_svcb_key_custom_with_empty_value,
+            parse_svcb_key_custom_with_nothing_after_equal_signs,
+            parse_svcb_key_custom_with_multiple_equal_signs,
+            parse_svcb_key_custom_with_multiple_equal_signs_quoted,
             parse_https_record,
             parse_https_with_params
         ]},
@@ -1592,7 +1596,7 @@ parse_svcb_with_echconfig(_Config) ->
     ?assert(maps:is_key(?DNS_SVCB_PARAM_ECH, SvcParams)).
 
 parse_svcb_with_echconfig_bad(_Config) ->
-    Zone = ~"example.com. 3600 IN SVCB 1 svc.example.com. ech=\"zzzzzzm\"\n",
+    Zone = ~"example.com. 3600 IN SVCB 1 svc.example.com. ech=\"zzzzz\"\n",
     Result = dns_zone:parse_string(Zone, #{origin => ~"example.com."}),
     ?assertMatch({error, #{type := semantic}}, Result).
 
@@ -1655,7 +1659,7 @@ parse_svcb_mandatory_missing_keys(_Config) ->
 
 parse_svcb_unknown_key_format(_Config) ->
     %% SVCB with unknown key in keyNNNNN format
-    Zone = ~"example.com. 3600 IN SVCB 1 svc.example.com. key65001=\"dGVzdA==\"\n",
+    Zone = ~"example.com. 3600 IN SVCB 1 svc.example.com. key65001=\"test\"\n",
     {ok, [RR]} = dns_zone:parse_string(Zone, #{origin => ~"example.com."}),
     #dns_rrdata_svcb{svc_params = SvcParams} = RR#dns_rr.data,
     %% Unknown key 65001 should be present
@@ -1736,6 +1740,30 @@ parse_svcb_key3_invalid_port_rejected(_Config) ->
     Zone = ~"example.com. 3600 IN SVCB 1 svc.example.com. key3=\"not-a-port\"\n",
     Result = dns_zone:parse_string(Zone, #{origin => ~"example.com."}),
     ?assertMatch({error, _}, Result).
+
+%% implicitly empty value
+parse_svcb_key_custom_with_empty_value(_Config) ->
+    Zone = ~"example.com. 3600 IN SVCB 1 svc.example.com. key333\n",
+    {ok, [RR1]} = dns_zone:parse_string(Zone, #{origin => ~"example.com."}),
+    ?assertMatch(#dns_rr{data = #dns_rrdata_svcb{svc_params = #{333 := none}}}, RR1).
+
+%% implicitly empty value too
+parse_svcb_key_custom_with_nothing_after_equal_signs(_Config) ->
+    Zone = ~"example.com. 3600 IN SVCB 1 svc.example.com. key333=\n",
+    {ok, [RR1]} = dns_zone:parse_string(Zone, #{origin => ~"example.com."}),
+    ?assertMatch(#dns_rr{data = #dns_rrdata_svcb{svc_params = #{333 := none}}}, RR1).
+
+%% the value should be "foo=bar", ideally it should have been quoted but is not needed
+parse_svcb_key_custom_with_multiple_equal_signs(_Config) ->
+    Zone = ~"example.com. 3600 IN SVCB 1 svc.example.com. key333=foo=bar\n",
+    {ok, [RR1]} = dns_zone:parse_string(Zone, #{origin => ~"example.com."}),
+    ?assertMatch(#dns_rr{data = #dns_rrdata_svcb{svc_params = #{333 := ~"foo=bar"}}}, RR1).
+
+%% the value should be "foo=bar" just the same
+parse_svcb_key_custom_with_multiple_equal_signs_quoted(_Config) ->
+    Zone = ~"example.com. 3600 IN SVCB 1 svc.example.com. key333=\"foo=bar\"\n",
+    {ok, [RR1]} = dns_zone:parse_string(Zone, #{origin => ~"example.com."}),
+    ?assertMatch(#dns_rr{data = #dns_rrdata_svcb{svc_params = #{333 := ~"foo=bar"}}}, RR1).
 
 test_svcb_params_zone_edge_cases(_Config) ->
     %% Test SVCB params edge cases through zone parsing

@@ -735,6 +735,34 @@ test_svcb_params_json_edge_cases(_Config) ->
     },
     assert_transcode(EmptyHintsSvcb),
 
+    %% IP hints with empty lists
+    KeyNNNNwithoutValue = #dns_rr{
+        name = ~"example.com",
+        type = ?DNS_TYPE_SVCB,
+        ttl = 3600,
+        data = #dns_rrdata_svcb{
+            svc_priority = 1,
+            target_name = ~"target.example.com",
+            svc_params = #{
+                123 => none
+            }
+        }
+    },
+    assert_transcode(KeyNNNNwithoutValue),
+
+    %% Test custom keys accept only null or a string
+    InvalidCustomKey = #{
+        ~"name" => ~"example.com",
+        ~"type" => ~"SVCB",
+        ~"ttl" => 3600,
+        ~"data" => #{
+            ~"svc_priority" => 1,
+            ~"target_name" => ~"target.example.com",
+            ~"svc_params" => #{~"key123" => [~"bad", ~"value"]}
+        }
+    },
+    ?assertError({svcb_param_invalid_value, 123, _}, dns_json:from_map(InvalidCustomKey)),
+
     %% Test invalid IPv4 in JSON (through dns_json:from_map)
     InvalidIpv4JsonMap = #{
         ~"name" => ~"example.com",
@@ -1270,19 +1298,6 @@ test_edge_cases(_Config) ->
     DnskeyData2 = element(6, DnskeyRecord2),
     ?assertEqual(dns_rrdata_dnskey, element(1, DnskeyData2)),
     ?assertEqual([TestInt], element(5, DnskeyData2)),
-
-    %% Test SVCB params with non-binary, non-list value (fallback case)
-    SvcbNonBinary = #dns_rr{
-        name = ~"example.com",
-        type = ?DNS_TYPE_SVCB,
-        ttl = 3600,
-        data = #dns_rrdata_svcb{
-            svc_priority = 1,
-            target_name = ~"target.example.com",
-            svc_params = #{999 => 12345}
-        }
-    },
-    assert_transcode(SvcbNonBinary),
 
     %% Simulate API/JSON that omits svc_params for alias-form SVCB/HTTPS
     SVCBJson = #{
