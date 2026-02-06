@@ -516,7 +516,7 @@ name_llqerrcode(Bin) when is_binary(Bin) ->
 
 -doc "Returns the name of an SVCB parameter as a binary string.".
 -spec svcb_param_name(dns:uint16()) -> unicode:latin1_binary() | undefined.
-svcb_param_name(Int) when is_integer(Int) ->
+svcb_param_name(Int) when is_integer(Int), 0 =< Int, Int =< 65535 ->
     case Int of
         ?DNS_SVCB_PARAM_MANDATORY_NUMBER -> ?DNS_SVCB_PARAM_MANDATORY_BSTR;
         ?DNS_SVCB_PARAM_ALPN_NUMBER -> ?DNS_SVCB_PARAM_ALPN_BSTR;
@@ -526,7 +526,9 @@ svcb_param_name(Int) when is_integer(Int) ->
         ?DNS_SVCB_PARAM_ECH_NUMBER -> ?DNS_SVCB_PARAM_ECH_BSTR;
         ?DNS_SVCB_PARAM_IPV6HINT_NUMBER -> ?DNS_SVCB_PARAM_IPV6HINT_BSTR;
         _ -> <<"key", (integer_to_binary(Int))/binary>>
-    end.
+    end;
+svcb_param_name(Int) when is_integer(Int) ->
+    undefined.
 
 -doc "Returns the SVCB parameter from a binary string.".
 -spec name_svcb_param(unicode:latin1_binary()) -> dns:uint16() | undefined.
@@ -546,9 +548,23 @@ name_svcb_param(Bin) when is_binary(Bin) ->
             ?DNS_SVCB_PARAM_ECH_NUMBER;
         ?DNS_SVCB_PARAM_IPV6HINT_BSTR ->
             ?DNS_SVCB_PARAM_IPV6HINT_NUMBER;
+        ~"key0" ->
+            ?DNS_SVCB_PARAM_MANDATORY_NUMBER;
+        ~"key1" ->
+            ?DNS_SVCB_PARAM_ALPN_NUMBER;
+        ~"key2" ->
+            ?DNS_SVCB_PARAM_NO_DEFAULT_ALPN_NUMBER;
+        ~"key3" ->
+            ?DNS_SVCB_PARAM_PORT_NUMBER;
+        ~"key4" ->
+            ?DNS_SVCB_PARAM_IPV4HINT_NUMBER;
+        ~"key5" ->
+            ?DNS_SVCB_PARAM_ECH_NUMBER;
+        ~"key6" ->
+            ?DNS_SVCB_PARAM_IPV6HINT_NUMBER;
         <<"key", KeyNum/binary>> ->
             try binary_to_integer(KeyNum) of
-                KeyInt when KeyInt >= 0, KeyInt =< 65535 -> KeyInt;
+                KeyInt when KeyInt >= 7, KeyInt =< 65535 -> KeyInt;
                 _ -> undefined
             catch
                 _:_ -> undefined
