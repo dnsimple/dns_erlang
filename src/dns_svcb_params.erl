@@ -50,7 +50,7 @@ to_wire([{Key, Value} | Rest], Acc) ->
                  || {A, B, C, D, E, F, G, H} <- Value
                 >>;
             Key when is_integer(Key) ->
-                encode_unknown_key(wire, Key, Value, fun(V) -> V end)
+                encode_unknown_key(wire, Key, Value, undefined)
         end,
     Acc1 = <<Acc/binary, Key:16/integer, (byte_size(ValueBin)):16/integer, ValueBin/binary>>,
     to_wire(Rest, Acc1).
@@ -88,6 +88,8 @@ from_wire(<<Key:16, Len:16, ValueBin:Len/binary, Rest/binary>>, SvcParams, K0) w
                  || <<A:16, B:16, C:16, D:16, E:16, F:16, G:16, H:16>> <= ValueBin
                 ],
                 SvcParams#{?DNS_SVCB_PARAM_IPV6HINT => Value};
+            _ when Len =:= 0 ->
+                SvcParams#{Key => none};
             _ ->
                 SvcParams#{Key => ValueBin}
         end,
@@ -95,14 +97,16 @@ from_wire(<<Key:16, Len:16, ValueBin:Len/binary, Rest/binary>>, SvcParams, K0) w
 from_wire(<<Key:16, Len:16, _:Len/binary, _/binary>>, _, K0) when Key =< K0 ->
     error({svcb_key_ordering_error, {prev_key, K0}, {current_key, Key}}).
 
--spec to_json(dns:svcb_svc_params()) -> map().
+-spec to_json(dns:svcb_svc_params()) -> json:encode_value().
 to_json(SvcParams) ->
-    #{
-        dns_names:svcb_param_name(K) => encode_value_to_json(K, V)
-     || K := V <- SvcParams
-    }.
+    maps:from_list([to_json_pair(K, V) || K := V <- SvcParams]).
 
--spec from_json(map()) -> dns:svcb_svc_params().
+-spec to_json_pair(dynamic(), dynamic()) -> {binary(), dynamic()}.
+to_json_pair(K, V) ->
+    Name = svcb_param_name(K),
+    {Name, encode_value_to_json(K, V)}.
+
+-spec from_json(#{binary() => json:decode_value()}) -> dns:svcb_svc_params().
 from_json(JsonMap) ->
     SvcParams = parse_svcb_params_from_json(maps:to_list(JsonMap), #{}),
     validate_mandatory_params(json, SvcParams).
@@ -115,8 +119,6 @@ parse_svcb_params_from_json([{Key, Value} | Rest], Acc) ->
     ParamKey = dns_names:name_svcb_param(Key),
     NewAcc =
         case ParamKey of
-            undefined ->
-                Acc;
             ?DNS_SVCB_PARAM_MANDATORY when is_list(Value) ->
                 KeyNums = [dns_names:name_svcb_param(K) || K <- Value],
                 Acc#{ParamKey => KeyNums};
@@ -134,8 +136,15 @@ parse_svcb_params_from_json([{Key, Value} | Rest], Acc) ->
             ?DNS_SVCB_PARAM_IPV6HINT when is_list(Value) ->
                 IPs = [parse_ipv6_for_json(IP) || IP <- Value],
                 Acc#{ParamKey => IPs};
-            NNNN when is_integer(NNNN) ->
-                Acc#{NNNN => Value}
+            %% Unknown keys (key >= 7) stored as-is; key0-key6 with wrong value type are invalid
+            NNNN when is_integer(NNNN), 7 =< NNNN, null =:= Value ->
+                Acc#{NNNN => none};
+            NNNN when is_integer(NNNN), 7 =< NNNN, is_binary(Value) ->
+                Acc#{NNNN => Value};
+            undefined ->
+                Acc;
+            _ ->
+                error({svcb_param_invalid_value, ParamKey, Value})
         end,
     parse_svcb_params_from_json(Rest, NewAcc).
 
@@ -196,36 +205,90 @@ from_zone([{domain, "mandatory=" ++ Mandatory} | Rest], MakeError, Acc) ->
             Error
     end;
 from_zone([{domain, "ech="}, {string, Value} | Rest], MakeError, Acc) ->
-    try
-        ECHConfig = base64:decode(Value),
-        NewAcc = Acc#{?DNS_SVCB_PARAM_ECH => ECHConfig},
-        from_zone(Rest, MakeError, NewAcc)
-    catch
-        _:Reason ->
-            {error, MakeError({invalid_svcparam_format, Reason})}
+    case safe_base64_decode(Value) of
+        error ->
+            {error, MakeError({invalid_svcparam_format, Value})};
+        ECHConfig when is_binary(ECHConfig) ->
+            NewAcc = Acc#{?DNS_SVCB_PARAM_ECH => ECHConfig},
+            from_zone(Rest, MakeError, NewAcc)
     end;
 from_zone([{domain, "key" ++ RestStr}, {string, Value} | Rest], MakeError, Acc) ->
-    %% Check for unknown key with quoted value: keyNNNNN="value"
-    [KeyNumStr, ""] = string:split(RestStr, "=", leading),
-    case string:to_integer(KeyNumStr) of
-        {KeyNum, ""} when KeyNum >= 0, KeyNum =< 65535 ->
-            ValueBin = base64:decode(Value),
-            NewAcc = Acc#{KeyNum => ValueBin},
-            from_zone(Rest, MakeError, NewAcc);
-        _ ->
-            {error, MakeError({invalid_key_number, KeyNumStr})}
+    %% keyNNNNN="value"; key0-key6 redirect to named-param tokens
+    case string:split(RestStr, "=", leading) of
+        [KeyNumStr] ->
+            apply_key_with_value(KeyNumStr, Value, Rest, MakeError, Acc);
+        [KeyNumStr, ""] ->
+            apply_key_with_value(KeyNumStr, Value, Rest, MakeError, Acc);
+        [_NumStr, _AfterEq] ->
+            {error, MakeError({invalid_svcparam_format, RestStr})}
     end;
 from_zone([{domain, "key" ++ KeyNumStr} | Rest], MakeError, Acc) ->
-    %% keyNNNNN (no value, like no-default-alpn)
-    case string:to_integer(KeyNumStr) of
-        {KeyNum, ""} when KeyNum >= 0, KeyNum =< 65535 ->
-            NewAcc = Acc#{KeyNum => none},
-            from_zone(Rest, MakeError, NewAcc);
-        _ ->
-            {error, MakeError({invalid_svcparam_format, KeyNumStr})}
+    %% keyNNNNN (no value) or keyNNNN=value (value may be empty or contain =)
+    case string:split(KeyNumStr, "=", leading) of
+        [NumStr] ->
+            %% No = in key part; keyNNNN (no value)
+            case string:to_integer(NumStr) of
+                {?DNS_SVCB_PARAM_NO_DEFAULT_ALPN, ""} ->
+                    NewAcc = Acc#{?DNS_SVCB_PARAM_NO_DEFAULT_ALPN => none},
+                    from_zone(Rest, MakeError, NewAcc);
+                {KeyNum, ""} when 7 =< KeyNum, KeyNum =< 65535 ->
+                    NewAcc = Acc#{KeyNum => none},
+                    from_zone(Rest, MakeError, NewAcc);
+                _ ->
+                    {error, MakeError({invalid_svcparam_format, KeyNumStr})}
+            end;
+        [NumStr, ValueStr] ->
+            %% keyNNNN=value (value may be empty or contain =)
+            apply_key_with_value(NumStr, ValueStr, Rest, MakeError, Acc)
     end;
 from_zone([Other | _], MakeError, _) ->
     {error, MakeError({invalid_svcparam_format, Other})}.
+
+%% keyNNNN="value" path: key 0-6 -> named tokens + recurse
+-spec apply_key_with_value(
+    unicode:chardata(), term(), [zone_rdata()], error_callback(), dns:svcb_svc_params()
+) -> {ok, dns:svcb_svc_params()} | {error, term()}.
+apply_key_with_value(KeyNumStr, Value, Rest, MakeError, Acc) ->
+    case {string:to_integer(KeyNumStr), Value} of
+        {{KeyNum, ""}, _} when 0 =< KeyNum, KeyNum =< 6 ->
+            case key_num_to_named_tokens(KeyNum, Value, Rest) of
+                {error, Reason} ->
+                    {error, MakeError(Reason)};
+                Tokens when is_list(Tokens) ->
+                    from_zone(Tokens, MakeError, Acc)
+            end;
+        {{KeyNum, ""}, ""} when 7 =< KeyNum, KeyNum =< 65535 ->
+            NewAcc = Acc#{KeyNum => none},
+            from_zone(Rest, MakeError, NewAcc);
+        {{KeyNum, ""}, _} when 7 =< KeyNum, KeyNum =< 65535 ->
+            %% Quoted value for key>=7: store as literal binary (same as unquoted)
+            Bin = unicode:characters_to_binary(Value),
+            NewAcc = Acc#{KeyNum => Bin},
+            from_zone(Rest, MakeError, NewAcc);
+        _ ->
+            {error, MakeError({invalid_key_number, KeyNumStr})}
+    end.
+
+%% Map key0-key6 + value to the equivalent named-param token list so from_zone reuses validation.
+-spec key_num_to_named_tokens(dns:uint16(), string() | binary(), [zone_rdata()]) ->
+    [zone_rdata()] | {error, term()}.
+key_num_to_named_tokens(?DNS_SVCB_PARAM_MANDATORY, Value, Rest) ->
+    [{domain, "mandatory=" ++ ensure_list(Value)} | Rest];
+key_num_to_named_tokens(?DNS_SVCB_PARAM_ALPN, Value, Rest) ->
+    [{domain, "alpn=" ++ ensure_list(Value)} | Rest];
+key_num_to_named_tokens(?DNS_SVCB_PARAM_NO_DEFAULT_ALPN, _Value, _) ->
+    {error, {svcb_param_no_value_allowed, no_default_alpn}};
+key_num_to_named_tokens(?DNS_SVCB_PARAM_PORT, Value, Rest) ->
+    [{domain, "port=" ++ ensure_list(Value)} | Rest];
+key_num_to_named_tokens(?DNS_SVCB_PARAM_IPV4HINT, Value, Rest) ->
+    [{domain, "ipv4hint=" ++ ensure_list(Value)} | Rest];
+key_num_to_named_tokens(?DNS_SVCB_PARAM_ECH, Value, Rest) ->
+    [{domain, "ech="}, {string, ensure_list(Value)} | Rest];
+key_num_to_named_tokens(?DNS_SVCB_PARAM_IPV6HINT, Value, Rest) ->
+    [{domain, "ipv6hint=" ++ ensure_list(Value)} | Rest].
+
+ensure_list(Bin) when is_binary(Bin) -> binary_to_list(Bin);
+ensure_list(L) when is_list(L) -> L.
 
 %% Encode SVCB/HTTPS service parameters to zone file format
 %% Takes params, separator, and an escape function for unknown key values
@@ -242,7 +305,7 @@ to_zone_list(SvcParams, Acc, EscapeFun) ->
     lists:foldr(
         fun
             ({?DNS_SVCB_PARAM_MANDATORY, Keys}, Acc0) ->
-                KeyNames = [dns_names:svcb_param_name(K) || K <- Keys],
+                KeyNames = [svcb_param_name(K) || K <- Keys],
                 [[~"mandatory=\"", join_with_separator(~",", KeyNames), ~"\""] | Acc0];
             ({?DNS_SVCB_PARAM_ALPN, Protocols}, Acc0) ->
                 AlpnStr = encode_alpn_list(zone, Protocols),
@@ -346,7 +409,7 @@ validate_mandatory_params_core(SvcParams) ->
 
 -spec encode_value_to_json(dns:uint16(), dynamic()) -> term().
 encode_value_to_json(?DNS_SVCB_PARAM_MANDATORY, Value) when is_list(Value) ->
-    [dns_names:svcb_param_name(K) || K <- Value];
+    [svcb_param_name(K) || K <- Value];
 encode_value_to_json(?DNS_SVCB_PARAM_ALPN, Value) when is_list(Value) ->
     Value;
 encode_value_to_json(?DNS_SVCB_PARAM_NO_DEFAULT_ALPN, none) ->
@@ -361,12 +424,23 @@ encode_value_to_json(?DNS_SVCB_PARAM_IPV6HINT, Value) when is_list(Value) ->
     [list_to_binary(inet:ntoa(V)) || V <- Value];
 encode_value_to_json(Key, none) when is_integer(Key) ->
     null;
-encode_value_to_json(Key, Value) when is_integer(Key) ->
-    Value.
+encode_value_to_json(Key, Value) when is_integer(Key), is_binary(Value) ->
+    Value;
+encode_value_to_json(Key, Value) ->
+    error({svcb_param_invalid_value, Key, Value}).
 
 %% ============================================================================
 %% Helpers
 %% ============================================================================
+
+-spec safe_base64_decode(string() | binary()) -> binary() | error.
+safe_base64_decode(Value) ->
+    try
+        base64:decode(Value)
+    catch
+        _:_ ->
+            error
+    end.
 
 -spec parse_ipv4_for_json(binary() | string()) -> inet:ip4_address() | no_return().
 parse_ipv4_for_json(IP) when is_binary(IP) ->
@@ -390,16 +464,20 @@ parse_ipv6_for_json(IP) when is_list(IP) ->
 
 %% Encode unknown key for wire format
 -spec encode_unknown_key
-    (wire, dns:uint16(), term(), escape_callback()) -> binary();
+    (wire, dns:uint16(), term(), undefined) -> binary();
     (zone, dns:uint16(), term(), escape_callback()) -> iodata().
-encode_unknown_key(wire, _KeyNum, Value, _Escape) when is_binary(Value) ->
+encode_unknown_key(wire, _KeyNum, none, _) ->
+    ~"";
+encode_unknown_key(wire, _KeyNum, Value, _) when is_binary(Value) ->
     Value;
 encode_unknown_key(zone, KeyNum, none, _Escape) ->
     [[~"key", integer_to_binary(KeyNum)]];
 encode_unknown_key(zone, KeyNum, Value, EscapeFun) when is_binary(Value) ->
     KeyNumBin = integer_to_binary(KeyNum),
     EscapedValue = EscapeFun(Value),
-    [[~"key", KeyNumBin, "=", EscapedValue]].
+    [[~"key", KeyNumBin, "=", EscapedValue]];
+encode_unknown_key(_, _KeyNum, Value, _) ->
+    error({invalid_svcparam_format, Value}).
 
 -spec parse_ipv4(zone, string()) -> {ok, inet:ip4_address()} | {error, term()}.
 parse_ipv4(zone, IPStr) when is_list(IPStr) ->
@@ -476,3 +554,12 @@ decode_alpn_wire(<<>>) ->
 -spec join_with_separator(binary(), [iodata()]) -> iodata().
 join_with_separator(Separator, Strings) ->
     lists:join(Separator, Strings).
+
+-spec svcb_param_name(dns:uint16()) -> unicode:latin1_binary().
+svcb_param_name(K) ->
+    case dns_names:svcb_param_name(K) of
+        undefined ->
+            error({svcb_param_invalid_key, K});
+        Name ->
+            Name
+    end.
