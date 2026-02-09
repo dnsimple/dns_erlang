@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - SVCB params JSON docs: document key0–key6 equivalence to named params, no-default-alpn as null, and keyNNNN format (value binary or null) in generated JSON documentation
 - SVCB params wire: decode unknown keys with zero-length value as `none` (not `<<>>`) so round-trip and `to_json` stay consistent (null vs empty binary)
 - SVCB params JSON: reject invalid param keys in `to_json/1` (e.g. key > 65535) with `{svcb_param_invalid_key, K}` instead of emitting a map with `undefined` as key
+- Ensure strict parsing of IPv4 and IPv6 in zonefiles respectively ([#108](https://github.com/dnsimple/dns_erlang/issues/108))
 
 ## v5.0.4
 
