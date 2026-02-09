@@ -9,19 +9,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## v5.0.4
 
+### Fixed
+
 - Fix parsing SVCB json records when `svc_params` are missing
 
 ## v5.0.3
+
+### Fixed
 
 - Fix FQDNs an (C)DNSKEY payloads in zonefile encoding
 
 ## v5.0.2
 
+### Changed
+
 - Use nulls instead of none in SVCB params JSON payloads [#107](https://github.com/dnsimple/dns_erlang/pull/107)
 
 ## v5.0.1
 
-- Fixed an issue with the hex package not including all needed files
+### Fixed
+
+- Fix an issue with the hex package not including all needed files
 
 ## v5.0.0
 
@@ -79,9 +87,13 @@ dns_encode:encode_dname(CM, Pos, N)  -> dns_domain:to_wire(CM, Pos, N)
 
 ## 4.9.1
 
+### Fixed
+
 - Fix a bug that would incorrectly calculate pointers, introduced in 4.9.0
 
 ## 4.9.0
+
+### Added
 
 - Add extended support for SVCB and HTTPS Resource Records — [RFC9460](https://datatracker.ietf.org/doc/rfc9460/)
 - Add support for OPENPGPKEY (Type 61) — [RFC 7929](https://datatracker.ietf.org/doc/rfc7929/)
@@ -92,40 +104,62 @@ dns_encode:encode_dname(CM, Pos, N)  -> dns_domain:to_wire(CM, Pos, N)
 - Add support for CSYNC (Type 62) — [RFC 7477](https://datatracker.ietf.org/doc/rfc7477/)
 - Add support for DSYNC (Type 66) — [RFC 9859](https://datatracker.ietf.org/doc/rfc9859/)
 - Add `dns:decode_query/1` function for strict query validation to prevent DoS attacks
+
+### Changed
+
 - Performance improvements in message encoding (~5-15% faster for encode/1, ~0-20% faster for encode/2)
 
 ## 4.8.1
+
+### Fixed
 
 - Fix bad size for reserved OptRR record during encoding
 
 ## 4.8.0
 
-- Fix Base64 lexing of zone files
+### Added
+
 - Add support for [RFC8976](https://datatracker.ietf.org/doc/rfc8914/): Message Digest for DNS Zones
 
+### Fixed
+
+- Fix Base64 lexing of zone files
+
 ## 4.7.0
+
+### Added
 
 - Extend support for [RFC8914](https://datatracker.ietf.org/doc/rfc8914/): Extended DNS Errors.
 
 ## 4.6.0
 
+### Added
+
 - Add support for DNS zone file parsing
 
 ## 4.5.0
+
+### Added
 
 - Add support for [RFC8080](https://datatracker.ietf.org/doc/rfc8080/): Ed22519/Ed448 for DNSSEC.
 - Add support for [RFC8914](https://datatracker.ietf.org/doc/rfc8914/): Extended DNS Errors.
 
 ## 4.4.0
 
+### Added
+
 - Add support for [RFC6605](https://datatracker.ietf.org/doc/rfc6605/): ECDSA for DNSSEC.
 - Add support for [RFC9077](https://datatracker.ietf.org/doc/rfc9077/): NSEC/NSEC3 TTLs.
 
 ## 4.3.0
 
+### Added
+
 - Add support for TLSA records.
 
 ## 4.2.0
+
+### Added
 
 - Add shortcuts for normalizing and converting domains into labels.
 - Add a helper for comparing label lists.
@@ -133,13 +167,19 @@ dns_encode:encode_dname(CM, Pos, N)  -> dns_domain:to_wire(CM, Pos, N)
 
 ## 4.1.0
 
+### Added
+
 - Add support for RFC7873 EDNS cookies encoding and decoding
 
 ## 4.0.1
 
+### Fixed
+
 - Fix additional count when truncating a message
 
 ## 4.0.0
+
+### Changed
 
 - Use `erlang:system_time/1` for timestamps.
 - Use maps instead of proplists for options to be passed to
@@ -152,44 +192,64 @@ dns_encode:encode_dname(CM, Pos, N)  -> dns_domain:to_wire(CM, Pos, N)
 
 ## 3.1.3
 
+### Fixed
+
 - Fix: now using the reserved space for the OPT RR records during the encoding of the message (#74)
 
 ## 3.1.2
+
+### Added
 
 - Add NXNAME type to terms types.
 
 ## 3.1.1
 
+### Fixed
+
 - Fix EDNS0 compliance for truncated records and unsupported versions
 
 ## 3.1.0
+
+### Fixed
 
 - Fix EDNS0 compliance for truncated records and unsupported versions
 
 ## 3.0.5
 
+### Fixed
+
 - Fix `max_size` in encode_message opts
 
 ## 3.0.4
+
+### Changed
 
 - Upgrade dependencies
 - Apply linter specs
 
 ## 3.0.3
 
+### Changed
+
 - Performance improvements in string manipulations
 
 ## 3.0.2
+
+### Fixed
 
 - Fix type definitions
 
 ## 3.0.1
 
+### Fixed
+
 - Ensure ASN1 compilation before building package
 
 ## 3.0.0
 
-- Added xref, dialyzer, and ex_doc
+### Added
+
+- Add xref, dialyzer, and ex_doc
 - Add strict typing and RFC references to all records
 - Add support for TXT splitting of strings over the maximum permitted size
 
@@ -197,8 +257,8 @@ dns_encode:encode_dname(CM, Pos, N)  -> dns_domain:to_wire(CM, Pos, N)
 
 ### Changed
 
-- Bumps to OTP/27
-- Replaced "jsx" with "json"
+- Bump to OTP/27
+- Replace "jsx" with "json"
 
 ### Added
 
