@@ -475,6 +475,8 @@ groups() ->
         {error_cases, [parallel], [
             parse_invalid_ipv4,
             parse_invalid_ipv6,
+            parse_strict_ipv4_rejects_leading_zeros,
+            parse_strict_ipv4_svcb_hint_rejects_leading_zeros,
             parse_empty_zone,
             parse_only_comments,
             parse_file_not_found,
@@ -2027,6 +2029,19 @@ parse_invalid_ipv4(_Config) ->
 
 parse_invalid_ipv6(_Config) ->
     Zone = ~"example.com. 3600 IN AAAA zzz::1\n",
+    {error, #{type := semantic}} = dns_zone:parse_string(Zone, #{origin => ~"example.com."}).
+
+parse_strict_ipv4_rejects_leading_zeros(_Config) ->
+    %% Strict IPv4 parsing rejects leading zeros in octets (e.g. 0177 = octal 127)
+    %% 192.000.002.001 and 0177.0.0.1 must be rejected
+    Zone1 = ~"example.com. 3600 IN A 192.000.002.001\n",
+    {error, #{type := semantic}} = dns_zone:parse_string(Zone1, #{origin => ~"example.com."}),
+    Zone2 = ~"example.com. 3600 IN A 0177.0.0.1\n",
+    {error, #{type := semantic}} = dns_zone:parse_string(Zone2, #{origin => ~"example.com."}).
+
+parse_strict_ipv4_svcb_hint_rejects_leading_zeros(_Config) ->
+    %% SVCB ipv4hint must use strict IPv4 parsing (reject leading zeros)
+    Zone = ~"example.com. 3600 IN SVCB 1 svc.example.com. ipv4hint=192.000.002.001,192.0.2.2\n",
     {error, #{type := semantic}} = dns_zone:parse_string(Zone, #{origin => ~"example.com."}).
 
 parse_empty_zone(_Config) ->

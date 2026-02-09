@@ -1028,6 +1028,35 @@ test_error_cases(_Config) ->
     },
     ?assertError({invalid_ip, _}, dns_json:from_map(InvalidIpMap)),
 
+    %% Strict IPv4: leading zeros in octets must be rejected (A record)
+    StrictIpv4LeadingZerosMap = #{
+        ~"name" => ~"example.com",
+        ~"type" => ~"A",
+        ~"ttl" => 3600,
+        ~"data" => #{~"ip" => ~"192.000.002.001"}
+    },
+    ?assertError({invalid_ip, _}, dns_json:from_map(StrictIpv4LeadingZerosMap)),
+    StrictIpv4OctalMap = #{
+        ~"name" => ~"example.com",
+        ~"type" => ~"A",
+        ~"ttl" => 3600,
+        ~"data" => #{~"ip" => ~"0177.0.0.1"}
+    },
+    ?assertError({invalid_ip, _}, dns_json:from_map(StrictIpv4OctalMap)),
+
+    %% Strict IPv4: SVCB ipv4hint rejects leading zeros
+    StrictIpv4HintMap = #{
+        ~"name" => ~"example.com",
+        ~"type" => ~"SVCB",
+        ~"ttl" => 3600,
+        ~"data" => #{
+            ~"svc_priority" => 1,
+            ~"target_name" => ~"target.example.com",
+            ~"svc_params" => #{~"ipv4hint" => [~"192.000.002.001"]}
+        }
+    },
+    ?assertError({invalid_ipv4_in_json, _, _}, dns_json:from_map(StrictIpv4HintMap)),
+
     %% Test unknown record key
     ?assertError(
         {unknown_record_key, ~"UNKNOWN", _}, dns_json:from_map(#{~"UNKNOWN" => #{}})
