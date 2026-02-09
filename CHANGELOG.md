@@ -9,6 +9,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## v5.0.5
 
+### Fixed
+
 - SVCB/HTTPS params: treat numeric keys key0–key6 as reserved and equivalent to named params (mandatory, alpn, no-default-alpn, port, ipv4hint, ech, ipv6hint). Validate them the same at ingestion in zone parsing, JSON parsing, and wire decoding; key0–key6 are no longer accepted as generic unknown keys ([#110](https://github.com/dnsimple/dns_erlang/issues/110), [#111](https://github.com/dnsimple/dns_erlang/issues/111))
 - SVCB params JSON docs: document key0–key6 equivalence to named params, no-default-alpn as null, and keyNNNN format (value binary or null) in generated JSON documentation
 - SVCB params wire: decode unknown keys with zero-length value as `none` (not `<<>>`) so round-trip and `to_json` stay consistent (null vs empty binary)
