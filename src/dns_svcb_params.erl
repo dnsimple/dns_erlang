@@ -95,14 +95,16 @@ from_wire(<<Key:16, Len:16, ValueBin:Len/binary, Rest/binary>>, SvcParams, K0) w
 from_wire(<<Key:16, Len:16, _:Len/binary, _/binary>>, _, K0) when Key =< K0 ->
     error({svcb_key_ordering_error, {prev_key, K0}, {current_key, Key}}).
 
--spec to_json(dns:svcb_svc_params()) -> map().
+-spec to_json(dns:svcb_svc_params()) -> json:encode_value().
 to_json(SvcParams) ->
-    #{
-        dns_names:svcb_param_name(K) => encode_value_to_json(K, V)
-     || K := V <- SvcParams
-    }.
+    maps:from_list([to_json_pair(K, V) || K := V <- SvcParams]).
 
--spec from_json(map()) -> dns:svcb_svc_params().
+-spec to_json_pair(dynamic(), dynamic()) -> {binary(), dynamic()}.
+to_json_pair(K, V) ->
+    Name = svcb_param_name(K),
+    {Name, encode_value_to_json(K, V)}.
+
+-spec from_json(#{binary() => json:decode_value()}) -> dns:svcb_svc_params().
 from_json(JsonMap) ->
     SvcParams = parse_svcb_params_from_json(maps:to_list(JsonMap), #{}),
     validate_mandatory_params(json, SvcParams).
@@ -301,7 +303,7 @@ to_zone_list(SvcParams, Acc, EscapeFun) ->
     lists:foldr(
         fun
             ({?DNS_SVCB_PARAM_MANDATORY, Keys}, Acc0) ->
-                KeyNames = [dns_names:svcb_param_name(K) || K <- Keys],
+                KeyNames = [svcb_param_name(K) || K <- Keys],
                 [[~"mandatory=\"", join_with_separator(~",", KeyNames), ~"\""] | Acc0];
             ({?DNS_SVCB_PARAM_ALPN, Protocols}, Acc0) ->
                 AlpnStr = encode_alpn_list(zone, Protocols),
@@ -405,7 +407,7 @@ validate_mandatory_params_core(SvcParams) ->
 
 -spec encode_value_to_json(dns:uint16(), dynamic()) -> term().
 encode_value_to_json(?DNS_SVCB_PARAM_MANDATORY, Value) when is_list(Value) ->
-    [dns_names:svcb_param_name(K) || K <- Value];
+    [svcb_param_name(K) || K <- Value];
 encode_value_to_json(?DNS_SVCB_PARAM_ALPN, Value) when is_list(Value) ->
     Value;
 encode_value_to_json(?DNS_SVCB_PARAM_NO_DEFAULT_ALPN, none) ->
@@ -550,3 +552,12 @@ decode_alpn_wire(<<>>) ->
 -spec join_with_separator(binary(), [iodata()]) -> iodata().
 join_with_separator(Separator, Strings) ->
     lists:join(Separator, Strings).
+
+-spec svcb_param_name(dns:uint16()) -> unicode:latin1_binary().
+svcb_param_name(K) ->
+    case dns_names:svcb_param_name(K) of
+        undefined ->
+            error({svcb_param_invalid_key, K});
+        Name ->
+            Name
+    end.

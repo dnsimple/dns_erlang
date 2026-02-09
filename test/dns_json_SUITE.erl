@@ -24,6 +24,7 @@ groups() ->
             test_svcb_params_json_edge_cases,
             test_svcb_params_numeric_keys_0_to_6_equivalent_to_named,
             test_svcb_params_numeric_key_invalid_value_rejected,
+            test_svcb_params_to_json_invalid_key_rejected,
             test_dnskey_formats,
             test_nsec3_salt,
             test_ipseckey_gateway,
@@ -833,6 +834,11 @@ test_svcb_params_numeric_key_invalid_value_rejected(_Config) ->
         {svcb_param_invalid_value, ?DNS_SVCB_PARAM_PORT, _},
         dns_svcb_params:from_json(#{~"key3" => ~"not-an-integer"})
     ).
+
+%% Regression: to_json must not use undefined as map key; invalid key (> 65535) is rejected
+test_svcb_params_to_json_invalid_key_rejected(_Config) ->
+    BadParams = #{70000 => ~"x"},
+    ?assertError({svcb_param_invalid_key, 70000}, dns_svcb_params:to_json(BadParams)).
 
 test_dnskey_formats(_Config) ->
     %% RRDATA records must be wrapped in dns_rr
