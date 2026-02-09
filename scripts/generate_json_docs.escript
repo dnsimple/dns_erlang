@@ -420,7 +420,7 @@ generate_documentation(Records, EncodingRules, KeyMappings) ->
 
         ```json
         {
-          "name": "example.com",
+          "name": "example.com.",
           "type": "A",
           "class": "in",
           "ttl": 3600,
@@ -727,7 +727,7 @@ generate_example_rr_format(_Fields, Acc) ->
         "**Example:**\n\n",
         "```json\n",
         "{\n",
-        "  \"name\": \"example.com\",\n",
+        "  \"name\": \"example.com.\",\n",
         "  \"type\": \"A\",\n",
         "  \"class\": \"IN\",\n",
         "  \"ttl\": 3600,\n",
@@ -824,13 +824,14 @@ example_category_map() ->
 example_value_map() ->
     #{
         ip => ~"\"192.168.1.1\"",
-        name => ~"\"example.com\"",
-        dname => ~"\"example.com\"",
-        hostname => ~"\"example.com\"",
-        exchange => ~"\"mail.example.com\"",
-        target => ~"\"target.example.com\"",
-        mname => ~"\"ns1.example.com\"",
-        rname => ~"\"admin.example.com\"",
+        name => ~"\"example.com.\"",
+        dname => ~"\"example.com.\"",
+        hostname => ~"\"example.com.\"",
+        exchange => ~"\"mail.example.com.\"",
+        target => ~"\"target.example.com.\"",
+        target_name => ~"\"target.example.com.\"",
+        mname => ~"\"ns1.example.com.\"",
+        rname => ~"\"admin.example.com.\"",
         ttl => ~"3600",
         svc_params => ~"{\"alpn\": [\"h2\", \"h3\"], \"port\": 443}"
     }.
@@ -924,7 +925,7 @@ generate_svcb_params_section() ->
     ```json
     {
         "svc_priority": 1,
-        "target_name": "target.example.com",
+        "target_name": "target.example.com.",
         "svc_params": {
             "mandatory": ["alpn", "port"],
             "alpn": ["h2", "h3"],

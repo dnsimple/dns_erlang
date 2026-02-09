@@ -10,7 +10,7 @@ Resource records (`dns_rr`) are encoded as follows:
 
 ```json
 {
-  "name": "example.com",
+  "name": "example.com.",
   "type": "A",
   "class": "in",
   "ttl": 3600,
@@ -113,7 +113,7 @@ Non-RR records (message, query, OPT records) use a two-level nested map format:
 ```json
 {
   "query": {
-    "name": "example.com",
+    "name": "example.com.",
     "class": 0,
     "type": 0
   }
@@ -172,7 +172,7 @@ Non-RR records (message, query, OPT records) use a two-level nested map format:
 ```json
 {
     "subtype": 0,
-    "hostname": "example.com"
+    "hostname": "example.com."
 }
 ```
 
@@ -291,7 +291,7 @@ Non-RR records (message, query, OPT records) use a two-level nested map format:
 
 ```json
 {
-    "dname": "example.com"
+    "dname": "example.com."
 }
 ```
 
@@ -377,7 +377,7 @@ Non-RR records (message, query, OPT records) use a two-level nested map format:
 
 ```json
 {
-    "dname": "example.com"
+    "dname": "example.com."
 }
 ```
 
@@ -454,7 +454,7 @@ Non-RR records (message, query, OPT records) use a two-level nested map format:
     "rrtype": "value",
     "scheme": 0,
     "port": 0,
-    "target": "target.example.com"
+    "target": "target.example.com."
 }
 ```
 
@@ -535,7 +535,7 @@ Non-RR records (message, query, OPT records) use a two-level nested map format:
 ```json
 {
     "svc_priority": 0,
-    "target_name": "value",
+    "target_name": "target.example.com.",
     "svc_params": {"alpn": ["h2", "h3"], "port": 443}
 }
 ```
@@ -613,7 +613,7 @@ Non-RR records (message, query, OPT records) use a two-level nested map format:
 ```json
 {
     "preference": 0,
-    "exchange": "mail.example.com"
+    "exchange": "mail.example.com."
 }
 ```
 
@@ -741,7 +741,7 @@ Non-RR records (message, query, OPT records) use a two-level nested map format:
 ```json
 {
     "preference": 0,
-    "exchange": "mail.example.com"
+    "exchange": "mail.example.com."
 }
 ```
 
@@ -789,7 +789,7 @@ Non-RR records (message, query, OPT records) use a two-level nested map format:
 
 ```json
 {
-    "dname": "example.com"
+    "dname": "example.com."
 }
 ```
 
@@ -884,7 +884,7 @@ Non-RR records (message, query, OPT records) use a two-level nested map format:
 
 ```json
 {
-    "dname": "example.com",
+    "dname": "example.com.",
     "types": []
 }
 ```
@@ -923,7 +923,7 @@ Non-RR records (message, query, OPT records) use a two-level nested map format:
 
 ```json
 {
-    "dname": "example.com"
+    "dname": "example.com."
 }
 ```
 
@@ -1069,8 +1069,8 @@ Non-RR records (message, query, OPT records) use a two-level nested map format:
 
 ```json
 {
-    "mname": "ns1.example.com",
-    "rname": "admin.example.com",
+    "mname": "ns1.example.com.",
+    "rname": "admin.example.com.",
     "serial": 0,
     "refresh": 0,
     "retry": 0,
@@ -1119,7 +1119,7 @@ Non-RR records (message, query, OPT records) use a two-level nested map format:
     "priority": 0,
     "weight": 0,
     "port": 0,
-    "target": "target.example.com"
+    "target": "target.example.com."
 }
 ```
 
@@ -1164,7 +1164,7 @@ Non-RR records (message, query, OPT records) use a two-level nested map format:
 ```json
 {
     "svc_priority": 0,
-    "target_name": "value",
+    "target_name": "target.example.com.",
     "svc_params": {"alpn": ["h2", "h3"], "port": 443}
 }
 ```
@@ -1263,7 +1263,7 @@ Non-RR records (message, query, OPT records) use a two-level nested map format:
 {
     "priority": 0,
     "weight": 0,
-    "target": "target.example.com"
+    "target": "target.example.com."
 }
 ```
 
@@ -1522,7 +1522,7 @@ Non-RR records (message, query, OPT records) use a two-level nested map format:
 
 ```json
 {
-  "name": "example.com",
+  "name": "example.com.",
   "type": "A",
   "class": "IN",
   "ttl": 3600,
@@ -1560,7 +1560,7 @@ as defined in [RFC 9460](https://datatracker.ietf.org/doc/html/rfc9460).
 ```json
 {
     "svc_priority": 1,
-    "target_name": "target.example.com",
+    "target_name": "target.example.com.",
     "svc_params": {
         "mandatory": ["alpn", "port"],
         "alpn": ["h2", "h3"],
