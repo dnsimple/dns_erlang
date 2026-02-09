@@ -12,6 +12,7 @@
 
 -export([encode/1, encode/2]).
 -export([encode_rrdata/2]).
+-export([encode_rsa_key/2, encode_dsa_key/1]).
 
 -ifdef(TEST).
 -export([

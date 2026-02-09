@@ -64,7 +64,11 @@ groups() ->
             svcb_key_ordering_validation,
             svcb_mandatory_self_reference,
             svcb_mandatory_missing_keys,
-            svcb_no_default_alpn_length_validation
+            svcb_no_default_alpn_length_validation,
+            svcb_encode_wire_key_no_value,
+            svcb_encode_wire_key_binary_value,
+            svcb_encode_wire_key_invalid_value,
+            svcb_wire_roundtrip_unknown_key_none_preserved
         ]},
         {dname_utilities, [parallel], [
             dname_preserve_dot,
@@ -963,6 +967,48 @@ svcb_no_default_alpn_length_validation(_) ->
         {svcb_bad_no_default_alpn, 1},
         dns_decode:decode_svcb_svc_params(InvalidBin)
     ).
+
+svcb_encode_wire_key_no_value(_) ->
+    RR = #dns_rrdata_svcb{
+        svc_priority = 12,
+        target_name = ~"svc.example.com",
+        svc_params = #{123 => none}
+    },
+    ?assertMatch(
+        <<0, 12, 3, "svc", 7, "example", 3, "com", 0, 0, 123, 0, 0>>,
+        dns_encode:encode_rrdata(0, RR)
+    ).
+
+svcb_encode_wire_key_binary_value(_) ->
+    RR = #dns_rrdata_svcb{
+        svc_priority = 15,
+        target_name = ~"svc.example.com",
+        svc_params = #{65534 => ~"hello=world"}
+    },
+    ?assertMatch(
+        <<0, 15, 3, "svc", 7, "example", 3, "com", 0, 255, 254, 0, 11, "hello=world">>,
+        dns_encode:encode_rrdata(0, RR)
+    ).
+
+svcb_encode_wire_key_invalid_value(_) ->
+    RR = #dns_rrdata_svcb{
+        svc_priority = 15,
+        target_name = ~"svc.example.com",
+        svc_params = #{123 => [invalid, values]}
+    },
+    ?assertError(
+        {invalid_svcparam_format, [invalid, values]},
+        dns_encode:encode_rrdata(0, RR)
+    ).
+
+%% Regression: wire decode must store unknown key with len=0 as none (not <<>>)
+%% so round-trip and to_json stay consistent (null, not <<>>).
+svcb_wire_roundtrip_unknown_key_none_preserved(_) ->
+    Params0 = #{123 => none},
+    Wire = dns_svcb_params:to_wire(Params0),
+    Params1 = dns_svcb_params:from_wire(Wire),
+    ?assertEqual(none, maps:get(123, Params1)),
+    ?assertEqual(Params0, Params1).
 
 %%%===================================================================
 %%% dname_utilities Tests

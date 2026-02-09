@@ -22,6 +22,9 @@ groups() ->
             test_special_encodings,
             test_svcb_params,
             test_svcb_params_json_edge_cases,
+            test_svcb_params_numeric_keys_0_to_6_equivalent_to_named,
+            test_svcb_params_numeric_key_invalid_value_rejected,
+            test_svcb_params_to_json_invalid_key_rejected,
             test_dnskey_formats,
             test_nsec3_salt,
             test_ipseckey_gateway,
@@ -699,7 +702,7 @@ test_svcb_params_json_edge_cases(_Config) ->
         data = #dns_rrdata_svcb{
             svc_priority = 1,
             target_name = ~"target.example.com",
-            svc_params = #{65001 => <<"test-data">>}
+            svc_params = #{65001 => ~"test-data"}
         }
     },
     assert_transcode(UnknownKeySvcb),
@@ -733,6 +736,34 @@ test_svcb_params_json_edge_cases(_Config) ->
     },
     assert_transcode(EmptyHintsSvcb),
 
+    %% IP hints with empty lists
+    KeyNNNNwithoutValue = #dns_rr{
+        name = ~"example.com",
+        type = ?DNS_TYPE_SVCB,
+        ttl = 3600,
+        data = #dns_rrdata_svcb{
+            svc_priority = 1,
+            target_name = ~"target.example.com",
+            svc_params = #{
+                123 => none
+            }
+        }
+    },
+    assert_transcode(KeyNNNNwithoutValue),
+
+    %% Test custom keys accept only null or a string
+    InvalidCustomKey = #{
+        ~"name" => ~"example.com",
+        ~"type" => ~"SVCB",
+        ~"ttl" => 3600,
+        ~"data" => #{
+            ~"svc_priority" => 1,
+            ~"target_name" => ~"target.example.com",
+            ~"svc_params" => #{~"key123" => [~"bad", ~"value"]}
+        }
+    },
+    ?assertError({svcb_param_invalid_value, 123, _}, dns_json:from_map(InvalidCustomKey)),
+
     %% Test invalid IPv4 in JSON (through dns_json:from_map)
     InvalidIpv4JsonMap = #{
         ~"name" => ~"example.com",
@@ -758,6 +789,56 @@ test_svcb_params_json_edge_cases(_Config) ->
         }
     },
     ?assertError({invalid_ipv6_in_json, _, _}, dns_json:from_map(InvalidIpv6JsonMap)).
+
+%% key0-key6 in JSON are equivalent to named params; validate the same
+test_svcb_params_numeric_keys_0_to_6_equivalent_to_named(_Config) ->
+    %% JSON with numeric keys "0","1","2","3","4","5","6" round-trips like named
+    JsonParams = #{
+        ~"key0" => [~"alpn", ~"port"],
+        ~"key1" => [~"h2", ~"h3"],
+        ~"key2" => null,
+        ~"key3" => 443,
+        ~"key4" => [~"192.0.2.1"],
+        ~"key5" => ~"ech-data",
+        ~"key6" => [~"2001:db8::1"]
+    },
+    Params = dns_svcb_params:from_json(JsonParams),
+    ?assertEqual(
+        [?DNS_SVCB_PARAM_ALPN, ?DNS_SVCB_PARAM_PORT],
+        maps:get(?DNS_SVCB_PARAM_MANDATORY, Params)
+    ),
+    ?assertEqual([~"h2", ~"h3"], maps:get(?DNS_SVCB_PARAM_ALPN, Params)),
+    ?assertEqual(none, maps:get(?DNS_SVCB_PARAM_NO_DEFAULT_ALPN, Params)),
+    ?assertEqual(443, maps:get(?DNS_SVCB_PARAM_PORT, Params)),
+    ?assertEqual([{192, 0, 2, 1}], maps:get(?DNS_SVCB_PARAM_IPV4HINT, Params)),
+    ?assertEqual(~"ech-data", maps:get(?DNS_SVCB_PARAM_ECH, Params)),
+    ?assertEqual(
+        [{16#2001, 16#0db8, 0, 0, 0, 0, 0, 1}],
+        maps:get(?DNS_SVCB_PARAM_IPV6HINT, Params)
+    ),
+    %% Round-trip: to_json then from_json yields same param map (keys normalized to names)
+    JsonOut = dns_svcb_params:to_json(Params),
+    Params2 = dns_svcb_params:from_json(JsonOut),
+    ?assertEqual(
+        maps:get(?DNS_SVCB_PARAM_MANDATORY, Params), maps:get(?DNS_SVCB_PARAM_MANDATORY, Params2)
+    ),
+    ?assertEqual(maps:get(?DNS_SVCB_PARAM_PORT, Params), maps:get(?DNS_SVCB_PARAM_PORT, Params2)).
+
+%% key0-key6 with invalid value type are rejected (same as named)
+test_svcb_params_numeric_key_invalid_value_rejected(_Config) ->
+    ?assertError(
+        {svcb_param_invalid_value, ?DNS_SVCB_PARAM_MANDATORY, _},
+        dns_svcb_params:from_json(#{~"key0" => 123})
+    ),
+    ?assertError(
+        {svcb_param_invalid_value, ?DNS_SVCB_PARAM_PORT, _},
+        dns_svcb_params:from_json(#{~"key3" => ~"not-an-integer"})
+    ).
+
+%% Regression: to_json must not use undefined as map key; invalid key (> 65535) is rejected
+test_svcb_params_to_json_invalid_key_rejected(_Config) ->
+    BadParams = #{70000 => ~"x"},
+    ?assertError({svcb_param_invalid_key, 70000}, dns_svcb_params:to_json(BadParams)).
 
 test_dnskey_formats(_Config) ->
     %% RRDATA records must be wrapped in dns_rr
@@ -1253,22 +1334,34 @@ test_edge_cases(_Config) ->
     ?assertEqual(dns_rrdata_dnskey, element(1, DnskeyData2)),
     ?assertEqual([TestInt], element(5, DnskeyData2)),
 
-    %% Test SVCB params with non-binary, non-list value (fallback case)
-    SvcbNonBinary = #dns_rr{
-        name = ~"example.com",
-        type = ?DNS_TYPE_SVCB,
-        ttl = 3600,
-        data = #dns_rrdata_svcb{
-            svc_priority = 1,
-            target_name = ~"target.example.com",
-            svc_params = #{999 => 12345}
+    %% Simulate API/JSON that omits svc_params for alias-form SVCB/HTTPS
+    SVCBJson = #{
+        ~"name" => ~"svcb-alias.example.com.",
+        ~"type" => ~"SVCB",
+        ~"ttl" => 3600,
+        ~"data" => #{
+            ~"svc_priority" => 0,
+            ~"target_name" => ~"pool.example.com."
         }
     },
-    assert_transcode(SvcbNonBinary),
+    HTTPSJson = #{
+        ~"name" => ~"https-alias.example.com.",
+        ~"type" => ~"HTTPS",
+        ~"ttl" => 3600,
+        ~"data" => #{
+            ~"svc_priority" => 0,
+            ~"target_name" => ~"pool.example.com."
+        }
+    },
+    SVCBRR = dns_json:from_map(SVCBJson),
+    HTTPSRR = dns_json:from_map(HTTPSJson),
+    ?assertEqual(#{}, (SVCBRR#dns_rr.data)#dns_rrdata_svcb.svc_params),
+    ?assertEqual(#{}, (HTTPSRR#dns_rr.data)#dns_rrdata_https.svc_params),
+    %% Record roundtrip: to_map -> from_map yields same record
+    ?assertEqual(SVCBRR, dns_json:from_map(dns_json:to_map(SVCBRR))),
+    ?assertEqual(HTTPSRR, dns_json:from_map(dns_json:to_map(HTTPSRR))).
 
-    ok.
-
-assert_transcode(Record) ->
+assert_transcode(Record) when is_tuple(Record) ->
     Map = dns_json:to_map(Record),
     ?assertEqual(Record, dns_json:from_map(Map)),
     Map.

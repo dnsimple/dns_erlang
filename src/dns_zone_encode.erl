@@ -71,13 +71,14 @@ encode_rdata(Type, RData, Opts) ->
 %% Helper Functions
 %% ============================================================================
 
-%% Encode domain name, optionally making it relative to origin
+%% Encode domain name, optionally making it relative to origin.
+%% When returning an absolute name (no origin or not under origin), ensure FQDN (trailing dot).
 %% Assumes always receive input in lowercase
 -spec encode_dname(dns:dname(), dns:dname(), boolean()) -> dns:dname().
 encode_dname(Name, _Origin, false) ->
     Name;
 encode_dname(Name, <<>>, true) ->
-    Name;
+    ensure_fqdn(Name);
 encode_dname(Name, Origin, true) ->
     case is_subdomain(Name, Origin) of
         true ->
@@ -87,8 +88,16 @@ encode_dname(Name, Origin, true) ->
                 RelativeName -> RelativeName
             end;
         false ->
-            %% Name is not under origin or no origin, use absolute
-            Name
+            %% Name is not under origin or no origin, use absolute FQDN
+            ensure_fqdn(Name)
+    end.
+
+%% Ensure domain name is fully qualified (trailing dot) for absolute form
+-spec ensure_fqdn(dns:dname()) -> dns:dname().
+ensure_fqdn(Name) when is_binary(Name) ->
+    case 0 < byte_size(Name) andalso $. =:= binary:last(Name) of
+        true -> Name;
+        false -> <<Name/binary, ".">>
     end.
 
 %% Check if Name is a subdomain of Origin (or equals it)
@@ -348,19 +357,36 @@ encode_svcb_record(Priority, Target, Params, Origin, RelativeNames, Separator) -
 join_rdata_fields(Fields, Separator) ->
     lists:join(Separator, Fields).
 
+%% Helper: Convert DNSKEY/CDNSKEY public_key (algorithm-specific form) to wire-format binary.
+%% Mirrors dns_encode logic: RSA uses [E, M], DSA uses list [P,Q,G,Y], others use binary.
+-spec public_key_to_wire_binary(dns:uint8(), iodata() | [integer()]) -> binary().
+public_key_to_wire_binary(Alg, [E, M]) when
+    (Alg =:= ?DNS_ALG_RSASHA1 orelse Alg =:= ?DNS_ALG_NSEC3RSASHA1 orelse
+        Alg =:= ?DNS_ALG_RSASHA256 orelse Alg =:= ?DNS_ALG_RSASHA512),
+    is_integer(E),
+    is_integer(M)
+->
+    dns_encode:encode_rsa_key(E, M);
+public_key_to_wire_binary(Alg, PKM) when
+    (Alg =:= ?DNS_ALG_DSA orelse Alg =:= ?DNS_ALG_NSEC3DSA),
+    is_list(PKM)
+->
+    dns_encode:encode_dsa_key(PKM);
+public_key_to_wire_binary(_Alg, PK) when is_binary(PK) ->
+    PK.
+
 %% Helper: Encode DS/CDS/DLV/DNSKEY/CDNSKEY record
 %% Encodes 3 integer fields and a data field (hex or base64 encoded)
 -spec encode_key_record(dns:uint16(), dns:uint8(), dns:uint8(), iodata(), hex | base64, binary()) ->
     iodata().
-encode_key_record(Field1, Field2, Field3, Data, Encoding, Separator) ->
-    Field1Bin = integer_to_binary(Field1),
-    Field2Bin = integer_to_binary(Field2),
-    Field3Bin = integer_to_binary(Field3),
-    DataBin = iolist_to_binary(Data),
+encode_key_record(Flags, Protocol, Alg, Data, Encoding, Separator) when is_binary(Data) ->
+    Field1Bin = integer_to_binary(Flags),
+    Field2Bin = integer_to_binary(Protocol),
+    Field3Bin = integer_to_binary(Alg),
     EncodedData =
         case Encoding of
-            hex -> binary:encode_hex(DataBin);
-            base64 -> base64:encode(DataBin)
+            hex -> binary:encode_hex(Data);
+            base64 -> base64:encode(Data)
         end,
     join_rdata_fields([Field1Bin, Field2Bin, Field3Bin, EncodedData], Separator).
 
@@ -622,7 +648,8 @@ encode_rdata(
     _RelativeNames,
     Separator
 ) ->
-    encode_key_record(Flags, Protocol, Alg, PublicKey, base64, Separator);
+    PublicKeyBin = public_key_to_wire_binary(Alg, PublicKey),
+    encode_key_record(Flags, Protocol, Alg, PublicKeyBin, base64, Separator);
 encode_rdata(
     ?DNS_TYPE_CDNSKEY,
     #dns_rrdata_cdnskey{
@@ -635,7 +662,8 @@ encode_rdata(
     _RelativeNames,
     Separator
 ) ->
-    encode_key_record(Flags, Protocol, Alg, PublicKey, base64, Separator);
+    PublicKeyBin = public_key_to_wire_binary(Alg, PublicKey),
+    encode_key_record(Flags, Protocol, Alg, PublicKeyBin, base64, Separator);
 encode_rdata(
     ?DNS_TYPE_RRSIG,
     #dns_rrdata_rrsig{

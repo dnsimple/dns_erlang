@@ -165,6 +165,11 @@ groups() ->
             encode_is_subdomain_edge_cases,
             encode_make_relative_edge_cases,
             encode_ensure_fqdn_edge_cases,
+            encode_ensure_fqdn_outputs_trailing_dot,
+            encode_dnskey_rsa_public_key_list,
+            encode_cdnskey_rsa_public_key_list,
+            encode_dnskey_dsa_public_key_list,
+            encode_cdnskey_dsa_public_key_list,
             encode_quoted_strings_single,
             encode_quoted_strings_multiple,
             encode_do_escape_string_edge_cases,
@@ -339,6 +344,13 @@ groups() ->
             parse_svcb_mandatory_self_reference,
             parse_svcb_mandatory_missing_keys,
             parse_svcb_unknown_key_format,
+            parse_svcb_key0_to_key6_equivalent_to_named,
+            parse_svcb_key2_no_value_allowed,
+            parse_svcb_key3_invalid_port_rejected,
+            parse_svcb_key_custom_with_empty_value,
+            parse_svcb_key_custom_with_nothing_after_equal_signs,
+            parse_svcb_key_custom_with_multiple_equal_signs,
+            parse_svcb_key_custom_with_multiple_equal_signs_quoted,
             parse_https_record,
             parse_https_with_params
         ]},
@@ -515,12 +527,6 @@ groups() ->
             test_format_error_with_suggestion
         ]}
     ].
-
-init_per_suite(Config) ->
-    Config.
-
-end_per_suite(_Config) ->
-    ok.
 
 %% ============================================================================
 %% Basic Parsing Tests
@@ -852,7 +858,7 @@ parse_escape_backslash(_Config) ->
     Zone = ~"example.com. 3600 IN TXT \"backslash: \\\\\"\n",
     {ok, [RR]} = dns_zone:parse_string(Zone, #{origin => ~"example.com."}),
     ?assertEqual(?DNS_TYPE_TXT, RR#dns_rr.type),
-    ?assertMatch(#dns_rrdata_txt{txt = [~"backslash: \\"]}, RR#dns_rr.data).
+    ?assertMatch(#dns_rrdata_txt{txt = [<<"backslash: \\">>]}, RR#dns_rr.data).
 
 parse_escape_quote(_Config) ->
     %% RFC 1035 §5.1: \" means literal quote
@@ -1592,8 +1598,7 @@ parse_svcb_with_echconfig(_Config) ->
     ?assert(maps:is_key(?DNS_SVCB_PARAM_ECH, SvcParams)).
 
 parse_svcb_with_echconfig_bad(_Config) ->
-    %% SVCB with ipv4hint service parameter
-    Zone = ~"example.com. 3600 IN SVCB 1 svc.example.com. ech=\"zzzzzzm\"\n",
+    Zone = ~"example.com. 3600 IN SVCB 1 svc.example.com. ech=\"zzzzz\"\n",
     Result = dns_zone:parse_string(Zone, #{origin => ~"example.com."}),
     ?assertMatch({error, #{type := semantic}}, Result).
 
@@ -1656,7 +1661,7 @@ parse_svcb_mandatory_missing_keys(_Config) ->
 
 parse_svcb_unknown_key_format(_Config) ->
     %% SVCB with unknown key in keyNNNNN format
-    Zone = ~"example.com. 3600 IN SVCB 1 svc.example.com. key65001=\"dGVzdA==\"\n",
+    Zone = ~"example.com. 3600 IN SVCB 1 svc.example.com. key65001=\"test\"\n",
     {ok, [RR]} = dns_zone:parse_string(Zone, #{origin => ~"example.com."}),
     #dns_rrdata_svcb{svc_params = SvcParams} = RR#dns_rr.data,
     %% Unknown key 65001 should be present
@@ -1669,6 +1674,98 @@ parse_svcb_unknown_key_format(_Config) ->
     #dns_rrdata_svcb{svc_params = SvcParams2} = RR2#dns_rr.data,
     ?assert(maps:is_key(65002, SvcParams2)),
     ?assertEqual(none, maps:get(65002, SvcParams2)).
+
+%% key0-key6 are equivalent to named params; zone parsing validates them the same
+parse_svcb_key0_to_key6_equivalent_to_named(_Config) ->
+    %% key0 (mandatory) = mandatory=alpn,port
+    Zone0 =
+        ~"example.com. 3600 IN SVCB 1 svc.example.com. key0=\"alpn,port\" key1=\"h2\" key3=\"443\"\n",
+    {ok, [RR0]} = dns_zone:parse_string(Zone0, #{origin => ~"example.com."}),
+    #dns_rrdata_svcb{svc_params = P0} = RR0#dns_rr.data,
+    ?assertEqual(
+        [?DNS_SVCB_PARAM_ALPN, ?DNS_SVCB_PARAM_PORT],
+        maps:get(?DNS_SVCB_PARAM_MANDATORY, P0)
+    ),
+    ?assertEqual([~"h2"], maps:get(?DNS_SVCB_PARAM_ALPN, P0)),
+    ?assertEqual(443, maps:get(?DNS_SVCB_PARAM_PORT, P0)),
+
+    %% key1 (alpn)
+    Zone1 = ~"example.com. 3600 IN SVCB 1 svc.example.com. key1=\"h2,h3\"\n",
+    {ok, [RR1]} = dns_zone:parse_string(Zone1, #{origin => ~"example.com."}),
+    #dns_rrdata_svcb{svc_params = SvcParams1} = RR1#dns_rr.data,
+    ?assertEqual([~"h2", ~"h3"], maps:get(?DNS_SVCB_PARAM_ALPN, SvcParams1)),
+
+    %% key2 (no-default-alpn) - no value
+    Zone2 = ~"example.com. 3600 IN SVCB 1 svc.example.com. key2\n",
+    {ok, [RR2]} = dns_zone:parse_string(Zone2, #{origin => ~"example.com."}),
+    #dns_rrdata_svcb{svc_params = SvcParams2} = RR2#dns_rr.data,
+    ?assertEqual(none, maps:get(?DNS_SVCB_PARAM_NO_DEFAULT_ALPN, SvcParams2)),
+
+    %% key3 (port)
+    Zone3 = ~"example.com. 3600 IN SVCB 1 svc.example.com. key3=\"443\"\n",
+    {ok, [RR3]} = dns_zone:parse_string(Zone3, #{origin => ~"example.com."}),
+    #dns_rrdata_svcb{svc_params = SvcParams3} = RR3#dns_rr.data,
+    ?assertEqual(443, maps:get(?DNS_SVCB_PARAM_PORT, SvcParams3)),
+
+    %% key4 (ipv4hint)
+    Zone4 = ~"example.com. 3600 IN SVCB 1 svc.example.com. key4=\"192.0.2.1,192.0.2.2\"\n",
+    {ok, [RR4]} = dns_zone:parse_string(Zone4, #{origin => ~"example.com."}),
+    #dns_rrdata_svcb{svc_params = SvcParams4} = RR4#dns_rr.data,
+    ?assertEqual(
+        [{192, 0, 2, 1}, {192, 0, 2, 2}],
+        maps:get(?DNS_SVCB_PARAM_IPV4HINT, SvcParams4)
+    ),
+
+    %% key5 (ech) - base64 value
+    Zone5 = ~"example.com. 3600 IN SVCB 1 svc.example.com. key5=\"YWJjZGVm\"\n",
+    {ok, [RR5]} = dns_zone:parse_string(Zone5, #{origin => ~"example.com."}),
+    #dns_rrdata_svcb{svc_params = SvcParams5} = RR5#dns_rr.data,
+    ?assertEqual(~"abcdef", maps:get(?DNS_SVCB_PARAM_ECH, SvcParams5)),
+
+    %% key6 (ipv6hint)
+    Zone6 = ~"example.com. 3600 IN SVCB 1 svc.example.com. key6=\"2001:db8::1\"\n",
+    {ok, [RR6]} = dns_zone:parse_string(Zone6, #{origin => ~"example.com."}),
+    #dns_rrdata_svcb{svc_params = SvcParams6} = RR6#dns_rr.data,
+    ?assertEqual(
+        [{16#2001, 16#0db8, 0, 0, 0, 0, 0, 1}],
+        maps:get(?DNS_SVCB_PARAM_IPV6HINT, SvcParams6)
+    ).
+
+%% key2 (no-default-alpn) does not allow a value
+parse_svcb_key2_no_value_allowed(_Config) ->
+    Zone = ~"example.com. 3600 IN SVCB 1 svc.example.com. key2=\"x\"\n",
+    Result = dns_zone:parse_string(Zone, #{origin => ~"example.com."}),
+    ?assertMatch({error, _}, Result).
+
+%% key3 (port) with invalid value is rejected like port=invalid
+parse_svcb_key3_invalid_port_rejected(_Config) ->
+    Zone = ~"example.com. 3600 IN SVCB 1 svc.example.com. key3=\"not-a-port\"\n",
+    Result = dns_zone:parse_string(Zone, #{origin => ~"example.com."}),
+    ?assertMatch({error, _}, Result).
+
+%% implicitly empty value
+parse_svcb_key_custom_with_empty_value(_Config) ->
+    Zone = ~"example.com. 3600 IN SVCB 1 svc.example.com. key333\n",
+    {ok, [RR1]} = dns_zone:parse_string(Zone, #{origin => ~"example.com."}),
+    ?assertMatch(#dns_rr{data = #dns_rrdata_svcb{svc_params = #{333 := none}}}, RR1).
+
+%% implicitly empty value too
+parse_svcb_key_custom_with_nothing_after_equal_signs(_Config) ->
+    Zone = ~"example.com. 3600 IN SVCB 1 svc.example.com. key333=\n",
+    {ok, [RR1]} = dns_zone:parse_string(Zone, #{origin => ~"example.com."}),
+    ?assertMatch(#dns_rr{data = #dns_rrdata_svcb{svc_params = #{333 := none}}}, RR1).
+
+%% the value should be "foo=bar", ideally it should have been quoted but is not needed
+parse_svcb_key_custom_with_multiple_equal_signs(_Config) ->
+    Zone = ~"example.com. 3600 IN SVCB 1 svc.example.com. key333=foo=bar\n",
+    {ok, [RR1]} = dns_zone:parse_string(Zone, #{origin => ~"example.com."}),
+    ?assertMatch(#dns_rr{data = #dns_rrdata_svcb{svc_params = #{333 := ~"foo=bar"}}}, RR1).
+
+%% the value should be "foo=bar" just the same
+parse_svcb_key_custom_with_multiple_equal_signs_quoted(_Config) ->
+    Zone = ~"example.com. 3600 IN SVCB 1 svc.example.com. key333=\"foo=bar\"\n",
+    {ok, [RR1]} = dns_zone:parse_string(Zone, #{origin => ~"example.com."}),
+    ?assertMatch(#dns_rr{data = #dns_rrdata_svcb{svc_params = #{333 := ~"foo=bar"}}}, RR1).
 
 test_svcb_params_zone_edge_cases(_Config) ->
     %% Test SVCB params edge cases through zone parsing
@@ -5377,6 +5474,103 @@ encode_ensure_fqdn_edge_cases(_Config) ->
     },
     Line = dns_zone:encode_rr(RR),
     ?assert(is_list(Line) orelse is_binary(Line)).
+
+encode_ensure_fqdn_outputs_trailing_dot(_Config) ->
+    %% When encoding with no origin (encode_rdata/2), absolute names must be FQDN (trailing dot)
+    %% CNAME dname without trailing dot
+    CNAMEData = #dns_rrdata_cname{dname = ~"example.com"},
+    EncodedCNAME = dns_zone:encode_rdata(?DNS_TYPE_CNAME, CNAMEData),
+    CNAMEStr = iolist_to_binary(EncodedCNAME),
+    ?assert(
+        0 < byte_size(CNAMEStr) andalso $. =:= binary:last(CNAMEStr),
+        "CNAME content must end with trailing dot when no origin"
+    ),
+    ?assertEqual(~"example.com.", CNAMEStr),
+    %% NS dname without trailing dot
+    NSData = #dns_rrdata_ns{dname = ~"ns.example.com"},
+    EncodedNS = dns_zone:encode_rdata(?DNS_TYPE_NS, NSData),
+    NSStr = iolist_to_binary(EncodedNS),
+    ?assertEqual(~"ns.example.com.", NSStr),
+    %% Name that already has trailing dot is unchanged
+    CNAMEDataWithDot = #dns_rrdata_cname{dname = ~"example.net."},
+    EncodedWithDot = dns_zone:encode_rdata(?DNS_TYPE_CNAME, CNAMEDataWithDot),
+    ?assertEqual(~"example.net.", iolist_to_binary(EncodedWithDot)).
+
+encode_dnskey_rsa_public_key_list(_Config) ->
+    %% DNSKEY with public_key as [E, M] (RSA list from wire decode after add_keytag_to_dnskey)
+    %% Must encode without crash and produce valid zone format (flags protocol alg base64)
+    E = 65537,
+    M = 12345678901234567890,
+    Data = #dns_rrdata_dnskey{
+        flags = 256,
+        protocol = 3,
+        alg = ?DNS_ALG_RSASHA256,
+        public_key = [E, M]
+    },
+    Encoded = dns_zone:encode_rdata(?DNS_TYPE_DNSKEY, Data),
+    LineStr = iolist_to_binary(Encoded),
+    ?assertNotEqual(nomatch, string:find(LineStr, "256")),
+    ?assertNotEqual(nomatch, string:find(LineStr, "3")),
+    ?assertNotEqual(nomatch, string:find(LineStr, "8")),
+    %% Should contain base64-looking segment (no spaces in the key part)
+    ?assert(byte_size(LineStr) > 10).
+
+encode_cdnskey_rsa_public_key_list(_Config) ->
+    %% CDNSKEY with public_key as [E, M] (RSA list from wire decode)
+    E = 65537,
+    M = 98765432109876543210,
+    Data = #dns_rrdata_cdnskey{
+        flags = 0,
+        protocol = 3,
+        alg = ?DNS_ALG_RSASHA256,
+        public_key = [E, M]
+    },
+    Encoded = dns_zone:encode_rdata(?DNS_TYPE_CDNSKEY, Data),
+    LineStr = iolist_to_binary(Encoded),
+    ?assertNotEqual(nomatch, string:find(LineStr, "0")),
+    ?assertNotEqual(nomatch, string:find(LineStr, "3")),
+    ?assertNotEqual(nomatch, string:find(LineStr, "8")),
+    ?assert(byte_size(LineStr) > 10).
+
+encode_dnskey_dsa_public_key_list(_Config) ->
+    %% DNSKEY with public_key as [P, Q, G, Y] (DSA list from wire decode)
+    %% DSA wire format: T, Q (20 bytes), P, G, Y (each M = 64+T*8 bytes). Use T=0 => M=64.
+    P = 1 bsl 511 + 1,
+    Q = 1 bsl 159 + 1,
+    G = 1 bsl 511 + 2,
+    Y = 1 bsl 511 + 3,
+    Data = #dns_rrdata_dnskey{
+        flags = 256,
+        protocol = 3,
+        alg = ?DNS_ALG_DSA,
+        public_key = [P, Q, G, Y]
+    },
+    Encoded = dns_zone:encode_rdata(?DNS_TYPE_DNSKEY, Data),
+    LineStr = iolist_to_binary(Encoded),
+    ?assertNotEqual(nomatch, string:find(LineStr, "256")),
+    %% protocol and alg DSA = 3
+    ?assertNotEqual(nomatch, string:find(LineStr, "3")),
+    ?assert(byte_size(LineStr) > 10).
+
+encode_cdnskey_dsa_public_key_list(_Config) ->
+    %% CDNSKEY with public_key as [P, Q, G, Y] (DSA list from wire decode)
+    P = 1 bsl 511 + 5,
+    Q = 1 bsl 159 + 7,
+    G = 1 bsl 511 + 11,
+    Y = 1 bsl 511 + 13,
+    Data = #dns_rrdata_cdnskey{
+        flags = 0,
+        protocol = 3,
+        alg = ?DNS_ALG_NSEC3DSA,
+        public_key = [P, Q, G, Y]
+    },
+    Encoded = dns_zone:encode_rdata(?DNS_TYPE_CDNSKEY, Data),
+    LineStr = iolist_to_binary(Encoded),
+    ?assertNotEqual(nomatch, string:find(LineStr, "0")),
+    ?assertNotEqual(nomatch, string:find(LineStr, "3")),
+    %% alg NSEC3DSA = 6
+    ?assertNotEqual(nomatch, string:find(LineStr, "6")),
+    ?assert(byte_size(LineStr) > 10).
 
 encode_quoted_strings_single(_Config) ->
     %% Test encode_quoted_strings with single string
