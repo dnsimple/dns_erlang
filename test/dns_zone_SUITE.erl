@@ -352,7 +352,10 @@ groups() ->
             parse_svcb_key_custom_with_multiple_equal_signs,
             parse_svcb_key_custom_with_multiple_equal_signs_quoted,
             parse_https_record,
-            parse_https_with_params
+            parse_https_with_params,
+            parse_svcb_with_dohpath,
+            parse_svcb_with_ohttp,
+            parse_svcb_with_dohpath_and_ohttp
         ]},
         {svcb_params_indirect, [parallel], [
             test_svcb_params_zone_edge_cases,
@@ -1648,6 +1651,27 @@ parse_https_with_params(_Config) ->
     #dns_rrdata_https{svc_params = SvcParams} = RR#dns_rr.data,
     ?assertEqual([~"h2"], maps:get(?DNS_SVCB_PARAM_ALPN, SvcParams)),
     ?assertEqual(443, maps:get(?DNS_SVCB_PARAM_PORT, SvcParams)).
+
+parse_svcb_with_dohpath(_Config) ->
+    Zone = ~"example.com. 3600 IN SVCB 1 svc.example.com. dohpath=\"/dns-query{?dns}\"\n",
+    {ok, [RR]} = dns_zone:parse_string(Zone, #{origin => ~"example.com."}),
+    #dns_rrdata_svcb{svc_params = SvcParams} = RR#dns_rr.data,
+    ?assertEqual(~"/dns-query{?dns}", maps:get(?DNS_SVCB_PARAM_DOHPATH, SvcParams)).
+
+parse_svcb_with_ohttp(_Config) ->
+    Zone = ~"example.com. 3600 IN SVCB 1 svc.example.com. ohttp\n",
+    {ok, [RR]} = dns_zone:parse_string(Zone, #{origin => ~"example.com."}),
+    #dns_rrdata_svcb{svc_params = SvcParams} = RR#dns_rr.data,
+    ?assertEqual(none, maps:get(?DNS_SVCB_PARAM_OHTTP, SvcParams)).
+
+parse_svcb_with_dohpath_and_ohttp(_Config) ->
+    Zone =
+        ~"example.com. 3600 IN SVCB 1 svc.example.com. alpn=h2 dohpath=\"/dns-query{?dns}\" ohttp\n",
+    {ok, [RR]} = dns_zone:parse_string(Zone, #{origin => ~"example.com."}),
+    #dns_rrdata_svcb{svc_params = SvcParams} = RR#dns_rr.data,
+    ?assertEqual([~"h2"], maps:get(?DNS_SVCB_PARAM_ALPN, SvcParams)),
+    ?assertEqual(~"/dns-query{?dns}", maps:get(?DNS_SVCB_PARAM_DOHPATH, SvcParams)),
+    ?assertEqual(none, maps:get(?DNS_SVCB_PARAM_OHTTP, SvcParams)).
 
 parse_svcb_mandatory_self_reference(_Config) ->
     %% SVCB with mandatory parameter referencing itself (key 0) - should fail
@@ -4769,7 +4793,9 @@ encode_svcb_params_all_types(_Config) ->
                 ?DNS_SVCB_PARAM_ALPN => [~"h2", ~"http/1.1"],
                 ?DNS_SVCB_PARAM_IPV4HINT => [{192, 0, 2, 1}, {192, 0, 2, 2}],
                 ?DNS_SVCB_PARAM_IPV6HINT => [{8193, 3512, 0, 0, 0, 0, 0, 1}],
-                ?DNS_SVCB_PARAM_ECH => ~"echconfig"
+                ?DNS_SVCB_PARAM_ECH => ~"echconfig",
+                ?DNS_SVCB_PARAM_DOHPATH => ~"/dns-query{?dns}",
+                ?DNS_SVCB_PARAM_OHTTP => none
             }
         }
     },
@@ -4778,7 +4804,9 @@ encode_svcb_params_all_types(_Config) ->
     ?assertNotEqual(nomatch, string:find(Line, "port")),
     ?assertNotEqual(nomatch, string:find(Line, "alpn")),
     ?assertNotEqual(nomatch, string:find(Line, "ipv4hint")),
-    ?assertNotEqual(nomatch, string:find(Line, "ipv6hint")).
+    ?assertNotEqual(nomatch, string:find(Line, "ipv6hint")),
+    ?assertNotEqual(nomatch, string:find(Line, "dohpath")),
+    ?assertNotEqual(nomatch, string:find(Line, "ohttp")).
 
 encode_svcb_no_params(_Config) ->
     %% Test SVCB without parameters

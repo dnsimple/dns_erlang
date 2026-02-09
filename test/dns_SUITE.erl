@@ -68,7 +68,10 @@ groups() ->
             svcb_encode_wire_key_no_value,
             svcb_encode_wire_key_binary_value,
             svcb_encode_wire_key_invalid_value,
-            svcb_wire_roundtrip_unknown_key_none_preserved
+            svcb_wire_roundtrip_unknown_key_none_preserved,
+            svcb_wire_roundtrip_dohpath,
+            svcb_wire_roundtrip_ohttp,
+            svcb_ohttp_non_empty_value_rejected
         ]},
         {dname_utilities, [parallel], [
             dname_preserve_dot,
@@ -689,6 +692,25 @@ decode_encode_rrdata(_) ->
                     ]
             }
         }},
+        {?DNS_TYPE_SVCB, #dns_rrdata_svcb{
+            svc_priority = 0,
+            target_name = ~"target.example.com",
+            svc_params = #{?DNS_SVCB_PARAM_DOHPATH => ~"/dns-query{?dns}"}
+        }},
+        {?DNS_TYPE_SVCB, #dns_rrdata_svcb{
+            svc_priority = 0,
+            target_name = ~"target.example.com",
+            svc_params = #{?DNS_SVCB_PARAM_OHTTP => none}
+        }},
+        {?DNS_TYPE_SVCB, #dns_rrdata_svcb{
+            svc_priority = 1,
+            target_name = ~"target.example.com",
+            svc_params = #{
+                ?DNS_SVCB_PARAM_ALPN => [~"h2"],
+                ?DNS_SVCB_PARAM_DOHPATH => ~"/dns-query{?dns}",
+                ?DNS_SVCB_PARAM_OHTTP => none
+            }
+        }},
         {?DNS_TYPE_DNSKEY, #dns_rrdata_dnskey{
             flags = 257,
             protocol = 3,
@@ -1009,6 +1031,26 @@ svcb_wire_roundtrip_unknown_key_none_preserved(_) ->
     Params1 = dns_svcb_params:from_wire(Wire),
     ?assertEqual(none, maps:get(123, Params1)),
     ?assertEqual(Params0, Params1).
+
+svcb_wire_roundtrip_dohpath(_) ->
+    Params0 = #{?DNS_SVCB_PARAM_DOHPATH => ~"/dns-query{?dns}"},
+    Wire = dns_svcb_params:to_wire(Params0),
+    Params1 = dns_svcb_params:from_wire(Wire),
+    ?assertEqual(~"/dns-query{?dns}", maps:get(?DNS_SVCB_PARAM_DOHPATH, Params1)),
+    ?assertEqual(Params0, Params1).
+
+svcb_wire_roundtrip_ohttp(_) ->
+    Params0 = #{?DNS_SVCB_PARAM_OHTTP => none},
+    Wire = dns_svcb_params:to_wire(Params0),
+    Params1 = dns_svcb_params:from_wire(Wire),
+    ?assertEqual(none, maps:get(?DNS_SVCB_PARAM_OHTTP, Params1)),
+    ?assertEqual(Params0, Params1).
+
+svcb_ohttp_non_empty_value_rejected(_) ->
+    %% ohttp must have zero-length value on wire
+    OhttpKey = ?DNS_SVCB_PARAM_OHTTP,
+    InvalidBin = <<OhttpKey:16, 1:16, 0:8>>,
+    ?assertError({svcb_bad_ohttp, 1}, dns_svcb_params:from_wire(InvalidBin)).
 
 %%%===================================================================
 %%% dname_utilities Tests

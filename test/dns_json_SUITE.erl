@@ -675,6 +675,44 @@ test_svcb_params(_Config) ->
                     ?DNS_SVCB_PARAM_ALPN => [~"http/1.1"]
                 }
             }
+        },
+        #dns_rr{
+            name = ~"example.com",
+            type = ?DNS_TYPE_SVCB,
+            ttl = 3600,
+            data = #dns_rrdata_svcb{
+                svc_priority = 1,
+                target_name = ~"target.example.com",
+                svc_params = #{
+                    ?DNS_SVCB_PARAM_DOHPATH => ~"/dns-query{?dns}"
+                }
+            }
+        },
+        #dns_rr{
+            name = ~"example.com",
+            type = ?DNS_TYPE_SVCB,
+            ttl = 3600,
+            data = #dns_rrdata_svcb{
+                svc_priority = 1,
+                target_name = ~"target.example.com",
+                svc_params = #{
+                    ?DNS_SVCB_PARAM_OHTTP => none
+                }
+            }
+        },
+        #dns_rr{
+            name = ~"example.com",
+            type = ?DNS_TYPE_SVCB,
+            ttl = 3600,
+            data = #dns_rrdata_svcb{
+                svc_priority = 1,
+                target_name = ~"target.example.com",
+                svc_params = #{
+                    ?DNS_SVCB_PARAM_ALPN => [~"h2"],
+                    ?DNS_SVCB_PARAM_DOHPATH => ~"/dns-query{?dns}",
+                    ?DNS_SVCB_PARAM_OHTTP => none
+                }
+            }
         }
     ],
     [assert_transcode(Record) || Record <- Cases].

@@ -269,9 +269,11 @@ svcb_param_name(_) ->
         ?DNS_SVCB_PARAM_PORT,
         ?DNS_SVCB_PARAM_IPV4HINT,
         ?DNS_SVCB_PARAM_ECH,
-        ?DNS_SVCB_PARAM_IPV6HINT
+        ?DNS_SVCB_PARAM_IPV6HINT,
+        ?DNS_SVCB_PARAM_DOHPATH,
+        ?DNS_SVCB_PARAM_OHTTP
     ],
-    KeyNNNN = [~"key0", ~"key1", ~"key2", ~"key3", ~"key4", ~"key5", ~"key6"],
+    KeyNNNN = [~"key0", ~"key1", ~"key2", ~"key3", ~"key4", ~"key5", ~"key6", ~"key7", ~"key8"],
     [?assertEqual(C, dns_names:name_svcb_param(K)) || {C, K} <- lists:zip(Cases, KeyNNNN)],
     [?assert(is_binary(dns_names:svcb_param_name(N))) || N <- Cases],
     [?assertEqual(N, dns_names:name_svcb_param(dns_names:svcb_param_name(N))) || N <- Cases],

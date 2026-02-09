@@ -525,6 +525,8 @@ svcb_param_name(Int) when is_integer(Int), 0 =< Int, Int =< 65535 ->
         ?DNS_SVCB_PARAM_IPV4HINT_NUMBER -> ?DNS_SVCB_PARAM_IPV4HINT_BSTR;
         ?DNS_SVCB_PARAM_ECH_NUMBER -> ?DNS_SVCB_PARAM_ECH_BSTR;
         ?DNS_SVCB_PARAM_IPV6HINT_NUMBER -> ?DNS_SVCB_PARAM_IPV6HINT_BSTR;
+        ?DNS_SVCB_PARAM_DOHPATH_NUMBER -> ?DNS_SVCB_PARAM_DOHPATH_BSTR;
+        ?DNS_SVCB_PARAM_OHTTP_NUMBER -> ?DNS_SVCB_PARAM_OHTTP_BSTR;
         _ -> <<"key", (integer_to_binary(Int))/binary>>
     end;
 svcb_param_name(Int) when is_integer(Int) ->
@@ -548,6 +550,10 @@ name_svcb_param(Bin) when is_binary(Bin) ->
             ?DNS_SVCB_PARAM_ECH_NUMBER;
         ?DNS_SVCB_PARAM_IPV6HINT_BSTR ->
             ?DNS_SVCB_PARAM_IPV6HINT_NUMBER;
+        ?DNS_SVCB_PARAM_DOHPATH_BSTR ->
+            ?DNS_SVCB_PARAM_DOHPATH_NUMBER;
+        ?DNS_SVCB_PARAM_OHTTP_BSTR ->
+            ?DNS_SVCB_PARAM_OHTTP_NUMBER;
         ~"key0" ->
             ?DNS_SVCB_PARAM_MANDATORY_NUMBER;
         ~"key1" ->
@@ -562,9 +568,13 @@ name_svcb_param(Bin) when is_binary(Bin) ->
             ?DNS_SVCB_PARAM_ECH_NUMBER;
         ~"key6" ->
             ?DNS_SVCB_PARAM_IPV6HINT_NUMBER;
+        ~"key7" ->
+            ?DNS_SVCB_PARAM_DOHPATH_NUMBER;
+        ~"key8" ->
+            ?DNS_SVCB_PARAM_OHTTP_NUMBER;
         <<"key", KeyNum/binary>> ->
             try binary_to_integer(KeyNum) of
-                KeyInt when KeyInt >= 7, KeyInt =< 65535 -> KeyInt;
+                KeyInt when KeyInt >= 9, KeyInt =< 65535 -> KeyInt;
                 _ -> undefined
             catch
                 _:_ -> undefined
