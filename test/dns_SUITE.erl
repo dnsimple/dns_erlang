@@ -67,7 +67,8 @@ groups() ->
             svcb_no_default_alpn_length_validation,
             svcb_encode_wire_key_no_value,
             svcb_encode_wire_key_binary_value,
-            svcb_encode_wire_key_invalid_value
+            svcb_encode_wire_key_invalid_value,
+            svcb_wire_roundtrip_unknown_key_none_preserved
         ]},
         {dname_utilities, [parallel], [
             dname_preserve_dot,
@@ -999,6 +1000,15 @@ svcb_encode_wire_key_invalid_value(_) ->
         {invalid_svcparam_format, [invalid, values]},
         dns_encode:encode_rrdata(0, RR)
     ).
+
+%% Regression: wire decode must store unknown key with len=0 as none (not <<>>)
+%% so round-trip and to_json stay consistent (null, not <<>>).
+svcb_wire_roundtrip_unknown_key_none_preserved(_) ->
+    Params0 = #{123 => none},
+    Wire = dns_svcb_params:to_wire(Params0),
+    Params1 = dns_svcb_params:from_wire(Wire),
+    ?assertEqual(none, maps:get(123, Params1)),
+    ?assertEqual(Params0, Params1).
 
 %%%===================================================================
 %%% dname_utilities Tests

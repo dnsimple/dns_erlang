@@ -88,6 +88,8 @@ from_wire(<<Key:16, Len:16, ValueBin:Len/binary, Rest/binary>>, SvcParams, K0) w
                  || <<A:16, B:16, C:16, D:16, E:16, F:16, G:16, H:16>> <= ValueBin
                 ],
                 SvcParams#{?DNS_SVCB_PARAM_IPV6HINT => Value};
+            _ when Len =:= 0 ->
+                SvcParams#{Key => none};
             _ ->
                 SvcParams#{Key => ValueBin}
         end,
