@@ -50,5 +50,6 @@ rfc-list-print:
 	./scripts/generate_rfc_list.escript
 
 .PHONY: check-no-change-action
-check-no-change-action: rfc-list
+check-no-change-action: rfc-list json-docs
+	git diff --quiet --exit-code src/JSON_FORMAT.md
 	git diff --quiet --exit-code SUPPORTED_RFCS.md

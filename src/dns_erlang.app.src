@@ -7,15 +7,5 @@
     {applications, [kernel, stdlib, crypto, base32]},
     {env, []},
     {licenses, ["Apache-2.0"]},
-    {links, [{"GitHub", "https://github.com/dnsimple/dns_erlang"}]},
-    {files, [
-        "src",
-        "include",
-        "rebar.config",
-        "rebar.lock",
-        "CHANGELOG*",
-        "README*",
-        "LICENSE*",
-        "scripts"
-    ]}
+    {links, [{"GitHub", "https://github.com/dnsimple/dns_erlang"}]}
 ]}.
