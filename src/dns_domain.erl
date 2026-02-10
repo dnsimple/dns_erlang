@@ -368,7 +368,7 @@ Use this when encoding DNS messages where multiple names may share suffixes
 -spec to_wire(compmap(), non_neg_integer(), dname()) -> {wire(), compmap()}.
 to_wire(CompMap, Pos, Name) when is_binary(Name) ->
     Labels = do_split(Name, <<>>),
-    LowerLabels = do_split(to_lower_chunk(Name), <<>>),
+    LowerLabels = do_split(to_lower_chunk(Name, <<>>), <<>>),
     to_wire_labels_compressed(CompMap, Pos, Labels, LowerLabels, <<>>).
 
 to_wire_labels_compressed(_, _, [], [], Acc) when 255 < byte_size(Acc) ->
@@ -616,88 +616,52 @@ from_wire_rest_compressed(
     AccEscaped = escape_label_inline(Label, AccWithDot),
     from_wire_rest_compressed(MsgBin, Rest, AccEscaped, Count, 1 + LabelCount, 1 + Len + TotalSize).
 
--define(UP(X), (upper_byte(X)):8).
 -doc """
 Returns provided name with case-insensitive characters in uppercase.
 """.
 -spec to_upper(dname()) -> dname().
 to_upper(Data) when is_binary(Data) ->
-    to_upper_chunk(Data).
+    to_upper_chunk(Data, <<>>).
 
--spec to_upper_chunk(dname()) -> dname().
-to_upper_chunk(Data) when byte_size(Data) rem 8 =:= 0 ->
-    <<
-        <<?UP(A), ?UP(B), ?UP(C), ?UP(D), ?UP(E), ?UP(F), ?UP(G), ?UP(H)>>
-     || <<A, B, C, D, E, F, G, H>> <= Data
-    >>;
-to_upper_chunk(Data) when byte_size(Data) rem 7 =:= 0 ->
-    <<
-        <<?UP(A), ?UP(B), ?UP(C), ?UP(D), ?UP(E), ?UP(F), ?UP(G)>>
-     || <<A, B, C, D, E, F, G>> <= Data
-    >>;
-to_upper_chunk(Data) when byte_size(Data) rem 6 =:= 0 ->
-    <<<<?UP(A), ?UP(B), ?UP(C), ?UP(D), ?UP(E), ?UP(F)>> || <<A, B, C, D, E, F>> <= Data>>;
-to_upper_chunk(Data) when byte_size(Data) rem 5 =:= 0 ->
-    <<<<?UP(A), ?UP(B), ?UP(C), ?UP(D), ?UP(E)>> || <<A, B, C, D, E>> <= Data>>;
-to_upper_chunk(Data) when byte_size(Data) rem 4 =:= 0 ->
-    <<<<?UP(A), ?UP(B), ?UP(C), ?UP(D)>> || <<A, B, C, D>> <= Data>>;
-to_upper_chunk(Data) when byte_size(Data) rem 3 =:= 0 ->
-    <<<<?UP(A), ?UP(B), ?UP(C)>> || <<A, B, C>> <= Data>>;
-to_upper_chunk(Data) when byte_size(Data) rem 2 =:= 0 ->
-    <<<<?UP(A), ?UP(B)>> || <<A, B>> <= Data>>;
-to_upper_chunk(Data) ->
-    <<<<?UP(N)>> || <<N>> <= Data>>.
-
--define(LOW(X), (lower_byte(X)):8).
--doc """
-Returns provided name with case-insensitive characters in lowercase.
-""".
--spec to_lower(dname()) -> dname().
-to_lower(Data) when is_binary(Data) ->
-    to_lower_chunk(Data).
-
--spec to_lower_chunk(dname()) -> dname().
-to_lower_chunk(Data) when byte_size(Data) rem 8 =:= 0 ->
-    <<
-        <<?LOW(A), ?LOW(B), ?LOW(C), ?LOW(D), ?LOW(E), ?LOW(F), ?LOW(G), ?LOW(H)>>
-     || <<A, B, C, D, E, F, G, H>> <= Data
-    >>;
-to_lower_chunk(Data) when byte_size(Data) rem 7 =:= 0 ->
-    <<
-        <<?LOW(A), ?LOW(B), ?LOW(C), ?LOW(D), ?LOW(E), ?LOW(F), ?LOW(G)>>
-     || <<A, B, C, D, E, F, G>> <= Data
-    >>;
-to_lower_chunk(Data) when byte_size(Data) rem 6 =:= 0 ->
-    <<<<?LOW(A), ?LOW(B), ?LOW(C), ?LOW(D), ?LOW(E), ?LOW(F)>> || <<A, B, C, D, E, F>> <= Data>>;
-to_lower_chunk(Data) when byte_size(Data) rem 5 =:= 0 ->
-    <<<<?LOW(A), ?LOW(B), ?LOW(C), ?LOW(D), ?LOW(E)>> || <<A, B, C, D, E>> <= Data>>;
-to_lower_chunk(Data) when byte_size(Data) rem 4 =:= 0 ->
-    <<<<?LOW(A), ?LOW(B), ?LOW(C), ?LOW(D)>> || <<A, B, C, D>> <= Data>>;
-to_lower_chunk(Data) when byte_size(Data) rem 3 =:= 0 ->
-    <<<<?LOW(A), ?LOW(B), ?LOW(C)>> || <<A, B, C>> <= Data>>;
-to_lower_chunk(Data) when byte_size(Data) rem 2 =:= 0 ->
-    <<<<?LOW(A), ?LOW(B)>> || <<A, B>> <= Data>>;
-to_lower_chunk(Data) ->
-    <<<<?LOW(N)>> || <<N>> <= Data>>.
-
-lower_byte(X) ->
-    element(
-        X + 1,
-        {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
-            25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46,
-            47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 97, 98, 99, 100,
-            101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117,
-            118, 119, 120, 121, 122, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104,
-            105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121,
-            122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138,
-            139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153, 154, 155,
-            156, 157, 158, 159, 160, 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172,
-            173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189,
-            190, 191, 192, 193, 194, 195, 196, 197, 198, 199, 200, 201, 202, 203, 204, 205, 206,
-            207, 208, 209, 210, 211, 212, 213, 214, 215, 216, 217, 218, 219, 220, 221, 222, 223,
-            224, 225, 226, 227, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240,
-            241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255}
-    ).
+-compile({inline, [upper_byte/1]}).
+-define(UP(X), (upper_byte(X)):8).
+-spec to_upper_chunk(dname(), binary()) -> dname().
+to_upper_chunk(
+    <<B00, B01, B02, B03, B04, B05, B06, B07, B08, B09, B10, B11, B12, B13, B14, B15, B16, B17, B18,
+        B19, B20, B21, B22, B23, B24, B25, B26, B27, B28, B29, B30, B31, Rest/binary>>,
+    Acc
+) ->
+    Acc1 =
+        <<Acc/binary, ?UP(B00), ?UP(B01), ?UP(B02), ?UP(B03), ?UP(B04), ?UP(B05), ?UP(B06),
+            ?UP(B07), ?UP(B08), ?UP(B09), ?UP(B10), ?UP(B11), ?UP(B12), ?UP(B13), ?UP(B14),
+            ?UP(B15), ?UP(B16), ?UP(B17), ?UP(B18), ?UP(B19), ?UP(B20), ?UP(B21), ?UP(B22),
+            ?UP(B23), ?UP(B24), ?UP(B25), ?UP(B26), ?UP(B27), ?UP(B28), ?UP(B29), ?UP(B30),
+            ?UP(B31)>>,
+    to_upper_chunk(Rest, Acc1);
+to_upper_chunk(
+    <<B00, B01, B02, B03, B04, B05, B06, B07, B08, B09, B10, B11, B12, B13, B14, B15, Rest/binary>>,
+    Acc
+) ->
+    Acc1 =
+        <<Acc/binary, ?UP(B00), ?UP(B01), ?UP(B02), ?UP(B03), ?UP(B04), ?UP(B05), ?UP(B06),
+            ?UP(B07), ?UP(B08), ?UP(B09), ?UP(B10), ?UP(B11), ?UP(B12), ?UP(B13), ?UP(B14),
+            ?UP(B15)>>,
+    to_upper_chunk(Rest, Acc1);
+to_upper_chunk(<<B0, B1, B2, B3, B4, B5, B6, B7, Rest/binary>>, Acc) ->
+    Acc1 =
+        <<Acc/binary, ?UP(B0), ?UP(B1), ?UP(B2), ?UP(B3), ?UP(B4), ?UP(B5), ?UP(B6), ?UP(B7)>>,
+    to_upper_chunk(Rest, Acc1);
+to_upper_chunk(<<B0, B1, B2, B3, Rest/binary>>, Acc) ->
+    Acc1 = <<Acc/binary, ?UP(B0), ?UP(B1), ?UP(B2), ?UP(B3)>>,
+    to_upper_chunk(Rest, Acc1);
+to_upper_chunk(<<B0, B1, Rest/binary>>, Acc) ->
+    Acc1 = <<Acc/binary, ?UP(B0), ?UP(B1)>>,
+    to_upper_chunk(Rest, Acc1);
+to_upper_chunk(<<B0, Rest/binary>>, Acc) ->
+    Acc1 = <<Acc/binary, ?UP(B0)>>,
+    to_upper_chunk(Rest, Acc1);
+to_upper_chunk(<<>>, Acc) ->
+    Acc.
 
 upper_byte(X) ->
     element(
@@ -716,6 +680,73 @@ upper_byte(X) ->
             217, 218, 219, 220, 221, 222, 223, 224, 225, 226, 227, 228, 229, 230, 231, 232, 233,
             234, 235, 236, 237, 238, 239, 240, 241, 242, 243, 244, 245, 246, 247, 248, 249, 250,
             251, 252, 253, 254, 255}
+    ).
+
+-doc """
+Returns provided name with case-insensitive characters in lowercase.
+""".
+-spec to_lower(dname()) -> dname().
+to_lower(Data) when is_binary(Data) ->
+    to_lower_chunk(Data, <<>>).
+
+-compile({inline, [lower_byte/1]}).
+-define(LOW(X), (lower_byte(X)):8).
+-spec to_lower_chunk(dname(), binary()) -> dname().
+to_lower_chunk(
+    <<B00, B01, B02, B03, B04, B05, B06, B07, B08, B09, B10, B11, B12, B13, B14, B15, B16, B17, B18,
+        B19, B20, B21, B22, B23, B24, B25, B26, B27, B28, B29, B30, B31, Rest/binary>>,
+    Acc
+) ->
+    Acc1 =
+        <<Acc/binary, ?LOW(B00), ?LOW(B01), ?LOW(B02), ?LOW(B03), ?LOW(B04), ?LOW(B05), ?LOW(B06),
+            ?LOW(B07), ?LOW(B08), ?LOW(B09), ?LOW(B10), ?LOW(B11), ?LOW(B12), ?LOW(B13), ?LOW(B14),
+            ?LOW(B15), ?LOW(B16), ?LOW(B17), ?LOW(B18), ?LOW(B19), ?LOW(B20), ?LOW(B21), ?LOW(B22),
+            ?LOW(B23), ?LOW(B24), ?LOW(B25), ?LOW(B26), ?LOW(B27), ?LOW(B28), ?LOW(B29), ?LOW(B30),
+            ?LOW(B31)>>,
+    to_lower_chunk(Rest, Acc1);
+to_lower_chunk(
+    <<B00, B01, B02, B03, B04, B05, B06, B07, B08, B09, B10, B11, B12, B13, B14, B15, Rest/binary>>,
+    Acc
+) ->
+    Acc1 =
+        <<Acc/binary, ?LOW(B00), ?LOW(B01), ?LOW(B02), ?LOW(B03), ?LOW(B04), ?LOW(B05), ?LOW(B06),
+            ?LOW(B07), ?LOW(B08), ?LOW(B09), ?LOW(B10), ?LOW(B11), ?LOW(B12), ?LOW(B13), ?LOW(B14),
+            ?LOW(B15)>>,
+    to_lower_chunk(Rest, Acc1);
+to_lower_chunk(<<B0, B1, B2, B3, B4, B5, B6, B7, Rest/binary>>, Acc) ->
+    Acc1 =
+        <<Acc/binary, ?LOW(B0), ?LOW(B1), ?LOW(B2), ?LOW(B3), ?LOW(B4), ?LOW(B5), ?LOW(B6),
+            ?LOW(B7)>>,
+    to_lower_chunk(Rest, Acc1);
+to_lower_chunk(<<B0, B1, B2, B3, Rest/binary>>, Acc) ->
+    Acc1 = <<Acc/binary, ?LOW(B0), ?LOW(B1), ?LOW(B2), ?LOW(B3)>>,
+    to_lower_chunk(Rest, Acc1);
+to_lower_chunk(<<B0, B1, Rest/binary>>, Acc) ->
+    Acc1 = <<Acc/binary, ?LOW(B0), ?LOW(B1)>>,
+    to_lower_chunk(Rest, Acc1);
+to_lower_chunk(<<B0, Rest/binary>>, Acc) ->
+    Acc1 = <<Acc/binary, ?LOW(B0)>>,
+    to_lower_chunk(Rest, Acc1);
+to_lower_chunk(<<>>, Acc) ->
+    Acc.
+
+lower_byte(X) ->
+    element(
+        X + 1,
+        {0, 1, 2, 3, 4, 5, 6, 7, 8, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24,
+            25, 26, 27, 28, 29, 30, 31, 32, 33, 34, 35, 36, 37, 38, 39, 40, 41, 42, 43, 44, 45, 46,
+            47, 48, 49, 50, 51, 52, 53, 54, 55, 56, 57, 58, 59, 60, 61, 62, 63, 64, 97, 98, 99, 100,
+            101, 102, 103, 104, 105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117,
+            118, 119, 120, 121, 122, 91, 92, 93, 94, 95, 96, 97, 98, 99, 100, 101, 102, 103, 104,
+            105, 106, 107, 108, 109, 110, 111, 112, 113, 114, 115, 116, 117, 118, 119, 120, 121,
+            122, 123, 124, 125, 126, 127, 128, 129, 130, 131, 132, 133, 134, 135, 136, 137, 138,
+            139, 140, 141, 142, 143, 144, 145, 146, 147, 148, 149, 150, 151, 152, 153, 154, 155,
+            156, 157, 158, 159, 160, 161, 162, 163, 164, 165, 166, 167, 168, 169, 170, 171, 172,
+            173, 174, 175, 176, 177, 178, 179, 180, 181, 182, 183, 184, 185, 186, 187, 188, 189,
+            190, 191, 192, 193, 194, 195, 196, 197, 198, 199, 200, 201, 202, 203, 204, 205, 206,
+            207, 208, 209, 210, 211, 212, 213, 214, 215, 216, 217, 218, 219, 220, 221, 222, 223,
+            224, 225, 226, 227, 228, 229, 230, 231, 232, 233, 234, 235, 236, 237, 238, 239, 240,
+            241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255}
     ).
 
 %% ============================================================================
