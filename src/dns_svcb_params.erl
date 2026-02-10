@@ -53,6 +53,8 @@ to_wire([{Key, Value} | Rest], Acc) ->
                 Value;
             ?DNS_SVCB_PARAM_OHTTP when Value =:= none ->
                 <<>>;
+            ?DNS_SVCB_PARAM_OHTTP ->
+                error({svcb_bad_ohttp, value});
             Key when is_integer(Key) ->
                 encode_unknown_key(wire, Key, Value, undefined)
         end,
@@ -287,7 +289,7 @@ apply_key_with_value(KeyNumStr, Value, Rest, MakeError, Acc) ->
             NewAcc = Acc#{KeyNum => none},
             from_zone(Rest, MakeError, NewAcc);
         {{KeyNum, ""}, _} when 9 =< KeyNum, KeyNum =< 65535 ->
-            %% Quoted value for key>=7: store as literal binary (same as unquoted)
+            %% Quoted value for key>=9: store as literal binary (same as unquoted)
             Bin = unicode:characters_to_binary(Value),
             NewAcc = Acc#{KeyNum => Bin},
             from_zone(Rest, MakeError, NewAcc);
@@ -353,7 +355,7 @@ to_zone_list(SvcParams, Acc, EscapeFun) ->
             ({?DNS_SVCB_PARAM_ECH, ECHConfig}, Acc0) ->
                 [[~"ech=\"", base64:encode(ECHConfig), ~"\""] | Acc0];
             ({?DNS_SVCB_PARAM_DOHPATH, Path}, Acc0) ->
-                [[~"dohpath=\"", Path, ~"\""] | Acc0];
+                [[~"dohpath=", EscapeFun(Path)] | Acc0];
             ({?DNS_SVCB_PARAM_OHTTP, none}, Acc0) ->
                 [~"ohttp" | Acc0];
             ({KeyNum, Value}, Acc0) when is_integer(KeyNum) ->

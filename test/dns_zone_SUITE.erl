@@ -160,6 +160,7 @@ groups() ->
             encode_relative_names_edge_cases,
             encode_salt_hex_edge_cases,
             encode_svcb_params_edge_cases,
+            encode_svcb_dohpath_escaping,
             encode_rfc3597_unknown_type,
             encode_key_record_helper,
             encode_is_subdomain_edge_cases,
@@ -5360,6 +5361,30 @@ encode_svcb_params_edge_cases(_Config) ->
     %% Note: Round-trip may fail due to double-quoting issue, so we just verify encoding works
     %% The encoded format uses quoted string escaping as intended
     ?assert(is_binary(Line3Str) orelse is_list(Line3Str)).
+
+encode_svcb_dohpath_escaping(_Config) ->
+    %% RFC 9461: dohpath is quoted UTF-8; use EscapeFun so " and \ are escaped (RFC 9460)
+    DohpathWithBackslash = ~"/path\\with\\backslash",
+    RR = #dns_rr{
+        name = ~"example.com.",
+        type = ?DNS_TYPE_SVCB,
+        class = ?DNS_CLASS_IN,
+        ttl = 3600,
+        data = #dns_rrdata_svcb{
+            svc_priority = 1,
+            target_name = ~"svc.example.com.",
+            svc_params = #{?DNS_SVCB_PARAM_DOHPATH => DohpathWithBackslash}
+        }
+    },
+    Line = dns_zone:encode_rr(RR),
+    LineBin = iolist_to_binary(Line),
+    %% Encoded dohpath must escape backslashes (valid zone text)
+    ?assertNotEqual(nomatch, string:find(LineBin, "\\\\")),
+    %% Round-trip: parse the encoded line and verify dohpath is preserved
+    Zone = <<LineBin/binary, $\n>>,
+    {ok, [Decoded]} = dns_zone:parse_string(Zone, #{origin => ~"example.com."}),
+    #dns_rr{data = #dns_rrdata_svcb{svc_params = Params}} = Decoded,
+    ?assertEqual(DohpathWithBackslash, maps:get(?DNS_SVCB_PARAM_DOHPATH, Params)).
 
 encode_rfc3597_unknown_type(_Config) ->
     %% Test RFC3597 encoding fallback for unknown types

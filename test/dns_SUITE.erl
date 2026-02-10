@@ -71,7 +71,8 @@ groups() ->
             svcb_wire_roundtrip_unknown_key_none_preserved,
             svcb_wire_roundtrip_dohpath,
             svcb_wire_roundtrip_ohttp,
-            svcb_ohttp_non_empty_value_rejected
+            svcb_ohttp_non_empty_value_rejected,
+            svcb_ohttp_non_empty_value_encode_rejected
         ]},
         {dname_utilities, [parallel], [
             dname_preserve_dot,
@@ -1051,6 +1052,13 @@ svcb_ohttp_non_empty_value_rejected(_) ->
     OhttpKey = ?DNS_SVCB_PARAM_OHTTP,
     InvalidBin = <<OhttpKey:16, 1:16, 0:8>>,
     ?assertError({svcb_bad_ohttp, 1}, dns_svcb_params:from_wire(InvalidBin)).
+
+svcb_ohttp_non_empty_value_encode_rejected(_) ->
+    %% ohttp must have empty value; reject non-none on encode (RFC 9460)
+    ?assertError(
+        {svcb_bad_ohttp, value},
+        dns_svcb_params:to_wire(#{?DNS_SVCB_PARAM_OHTTP => ~"x"})
+    ).
 
 %%%===================================================================
 %%% dname_utilities Tests
