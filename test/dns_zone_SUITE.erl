@@ -160,6 +160,7 @@ groups() ->
             encode_relative_names_edge_cases,
             encode_salt_hex_edge_cases,
             encode_svcb_params_edge_cases,
+            encode_svcb_dohpath_escaping,
             encode_rfc3597_unknown_type,
             encode_key_record_helper,
             encode_is_subdomain_edge_cases,
@@ -352,7 +353,11 @@ groups() ->
             parse_svcb_key_custom_with_multiple_equal_signs,
             parse_svcb_key_custom_with_multiple_equal_signs_quoted,
             parse_https_record,
-            parse_https_with_params
+            parse_https_with_params,
+            parse_svcb_with_dohpath,
+            parse_svcb_with_ohttp,
+            parse_svcb_with_dohpath_and_ohttp,
+            parse_svcb_dohpath_utf8_roundtrip
         ]},
         {svcb_params_indirect, [parallel], [
             test_svcb_params_zone_edge_cases,
@@ -1648,6 +1653,42 @@ parse_https_with_params(_Config) ->
     #dns_rrdata_https{svc_params = SvcParams} = RR#dns_rr.data,
     ?assertEqual([~"h2"], maps:get(?DNS_SVCB_PARAM_ALPN, SvcParams)),
     ?assertEqual(443, maps:get(?DNS_SVCB_PARAM_PORT, SvcParams)).
+
+parse_svcb_with_dohpath(_Config) ->
+    Zone = ~"example.com. 3600 IN SVCB 1 svc.example.com. dohpath=\"/dns-query{?dns}\"\n",
+    {ok, [RR]} = dns_zone:parse_string(Zone, #{origin => ~"example.com."}),
+    #dns_rrdata_svcb{svc_params = SvcParams} = RR#dns_rr.data,
+    ?assertEqual(~"/dns-query{?dns}", maps:get(?DNS_SVCB_PARAM_DOHPATH, SvcParams)).
+
+parse_svcb_with_ohttp(_Config) ->
+    Zone = ~"example.com. 3600 IN SVCB 1 svc.example.com. ohttp\n",
+    {ok, [RR]} = dns_zone:parse_string(Zone, #{origin => ~"example.com."}),
+    #dns_rrdata_svcb{svc_params = SvcParams} = RR#dns_rr.data,
+    ?assertEqual(none, maps:get(?DNS_SVCB_PARAM_OHTTP, SvcParams)).
+
+parse_svcb_with_dohpath_and_ohttp(_Config) ->
+    Zone =
+        ~"example.com. 3600 IN SVCB 1 svc.example.com. alpn=h2 dohpath=\"/dns-query{?dns}\" ohttp\n",
+    {ok, [RR]} = dns_zone:parse_string(Zone, #{origin => ~"example.com."}),
+    #dns_rrdata_svcb{svc_params = SvcParams} = RR#dns_rr.data,
+    ?assertEqual([~"h2"], maps:get(?DNS_SVCB_PARAM_ALPN, SvcParams)),
+    ?assertEqual(~"/dns-query{?dns}", maps:get(?DNS_SVCB_PARAM_DOHPATH, SvcParams)),
+    ?assertEqual(none, maps:get(?DNS_SVCB_PARAM_OHTTP, SvcParams)).
+
+parse_svcb_dohpath_utf8_roundtrip(_Config) ->
+    %% RFC9461: dohpath is quoted UTF8. Build zone with explicit bytes so encoding is unambiguous.
+    %% UTF-8 for "/café" = bytes 47,99,97,102,195,169
+    DohpathUtf8 = ~"/café",
+    Zone = ~"example.com. 3600 IN SVCB 1 svc.example.com. dohpath=\"/café\"\n",
+    {ok, [RR]} = dns_zone:parse_string(Zone, #{origin => ~"example.com."}),
+    #dns_rrdata_svcb{svc_params = Params} = RR#dns_rr.data,
+    Dohpath = maps:get(?DNS_SVCB_PARAM_DOHPATH, Params),
+    ?assertEqual(DohpathUtf8, Dohpath),
+    Line = dns_zone:encode_rr(RR),
+    Zone2 = <<(iolist_to_binary(Line))/binary, $\n>>,
+    {ok, [RR2]} = dns_zone:parse_string(Zone2, #{origin => ~"example.com."}),
+    #dns_rrdata_svcb{svc_params = Params2} = RR2#dns_rr.data,
+    ?assertEqual(DohpathUtf8, maps:get(?DNS_SVCB_PARAM_DOHPATH, Params2)).
 
 parse_svcb_mandatory_self_reference(_Config) ->
     %% SVCB with mandatory parameter referencing itself (key 0) - should fail
@@ -4769,7 +4810,9 @@ encode_svcb_params_all_types(_Config) ->
                 ?DNS_SVCB_PARAM_ALPN => [~"h2", ~"http/1.1"],
                 ?DNS_SVCB_PARAM_IPV4HINT => [{192, 0, 2, 1}, {192, 0, 2, 2}],
                 ?DNS_SVCB_PARAM_IPV6HINT => [{8193, 3512, 0, 0, 0, 0, 0, 1}],
-                ?DNS_SVCB_PARAM_ECH => ~"echconfig"
+                ?DNS_SVCB_PARAM_ECH => ~"echconfig",
+                ?DNS_SVCB_PARAM_DOHPATH => ~"/dns-query{?dns}",
+                ?DNS_SVCB_PARAM_OHTTP => none
             }
         }
     },
@@ -4778,7 +4821,9 @@ encode_svcb_params_all_types(_Config) ->
     ?assertNotEqual(nomatch, string:find(Line, "port")),
     ?assertNotEqual(nomatch, string:find(Line, "alpn")),
     ?assertNotEqual(nomatch, string:find(Line, "ipv4hint")),
-    ?assertNotEqual(nomatch, string:find(Line, "ipv6hint")).
+    ?assertNotEqual(nomatch, string:find(Line, "ipv6hint")),
+    ?assertNotEqual(nomatch, string:find(Line, "dohpath")),
+    ?assertNotEqual(nomatch, string:find(Line, "ohttp")).
 
 encode_svcb_no_params(_Config) ->
     %% Test SVCB without parameters
@@ -5332,6 +5377,30 @@ encode_svcb_params_edge_cases(_Config) ->
     %% Note: Round-trip may fail due to double-quoting issue, so we just verify encoding works
     %% The encoded format uses quoted string escaping as intended
     ?assert(is_binary(Line3Str) orelse is_list(Line3Str)).
+
+encode_svcb_dohpath_escaping(_Config) ->
+    %% RFC 9461: dohpath is quoted UTF-8; use EscapeFun so " and \ are escaped (RFC 9460)
+    DohpathWithBackslash = ~"/path\\with\\backslash",
+    RR = #dns_rr{
+        name = ~"example.com.",
+        type = ?DNS_TYPE_SVCB,
+        class = ?DNS_CLASS_IN,
+        ttl = 3600,
+        data = #dns_rrdata_svcb{
+            svc_priority = 1,
+            target_name = ~"svc.example.com.",
+            svc_params = #{?DNS_SVCB_PARAM_DOHPATH => DohpathWithBackslash}
+        }
+    },
+    Line = dns_zone:encode_rr(RR),
+    LineBin = iolist_to_binary(Line),
+    %% Encoded dohpath must escape backslashes (valid zone text)
+    ?assertNotEqual(nomatch, string:find(LineBin, "\\\\")),
+    %% Round-trip: parse the encoded line and verify dohpath is preserved
+    Zone = <<LineBin/binary, $\n>>,
+    {ok, [Decoded]} = dns_zone:parse_string(Zone, #{origin => ~"example.com."}),
+    #dns_rr{data = #dns_rrdata_svcb{svc_params = Params}} = Decoded,
+    ?assertEqual(DohpathWithBackslash, maps:get(?DNS_SVCB_PARAM_DOHPATH, Params)).
 
 encode_rfc3597_unknown_type(_Config) ->
     %% Test RFC3597 encoding fallback for unknown types

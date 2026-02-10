@@ -46,6 +46,8 @@
     ~"6844" => ~"DNS Certification Authority Authorization (CAA) Resource Record",
     ~"9460" =>
         ~"Service Binding and Parameter Specification via the DNS (DNS SVCB and HTTPS Resource Records)",
+    ~"9461" => ~"Service Binding Mapping for DNS Servers",
+    ~"9540" => ~"Discovery of Oblivious Services via Service Binding Records",
     ~"2535" => ~"Domain Name System Security Extensions",
     ~"4034" => ~"Resource Records for the DNS Security Extensions",
     ~"4431" => ~"The DNSSEC Lookaside Validation (DLV) DNS Resource Record",

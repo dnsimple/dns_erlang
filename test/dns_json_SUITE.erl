@@ -25,6 +25,7 @@ groups() ->
             test_svcb_params_numeric_keys_0_to_6_equivalent_to_named,
             test_svcb_params_numeric_key_invalid_value_rejected,
             test_svcb_params_to_json_invalid_key_rejected,
+            test_svcb_params_dohpath_invalid_utf8_rejected,
             test_dnskey_formats,
             test_nsec3_salt,
             test_ipseckey_gateway,
@@ -675,6 +676,44 @@ test_svcb_params(_Config) ->
                     ?DNS_SVCB_PARAM_ALPN => [~"http/1.1"]
                 }
             }
+        },
+        #dns_rr{
+            name = ~"example.com",
+            type = ?DNS_TYPE_SVCB,
+            ttl = 3600,
+            data = #dns_rrdata_svcb{
+                svc_priority = 1,
+                target_name = ~"target.example.com",
+                svc_params = #{
+                    ?DNS_SVCB_PARAM_DOHPATH => ~"/dns-query{?dns}"
+                }
+            }
+        },
+        #dns_rr{
+            name = ~"example.com",
+            type = ?DNS_TYPE_SVCB,
+            ttl = 3600,
+            data = #dns_rrdata_svcb{
+                svc_priority = 1,
+                target_name = ~"target.example.com",
+                svc_params = #{
+                    ?DNS_SVCB_PARAM_OHTTP => none
+                }
+            }
+        },
+        #dns_rr{
+            name = ~"example.com",
+            type = ?DNS_TYPE_SVCB,
+            ttl = 3600,
+            data = #dns_rrdata_svcb{
+                svc_priority = 1,
+                target_name = ~"target.example.com",
+                svc_params = #{
+                    ?DNS_SVCB_PARAM_ALPN => [~"h2"],
+                    ?DNS_SVCB_PARAM_DOHPATH => ~"/dns-query{?dns}",
+                    ?DNS_SVCB_PARAM_OHTTP => none
+                }
+            }
         }
     ],
     [assert_transcode(Record) || Record <- Cases].
@@ -839,6 +878,11 @@ test_svcb_params_numeric_key_invalid_value_rejected(_Config) ->
 test_svcb_params_to_json_invalid_key_rejected(_Config) ->
     BadParams = #{70000 => ~"x"},
     ?assertError({svcb_param_invalid_key, 70000}, dns_svcb_params:to_json(BadParams)).
+
+%% RFC 9461: dohpath must be valid UTF-8; from_json rejects invalid UTF-8
+test_svcb_params_dohpath_invalid_utf8_rejected(_Config) ->
+    JsonParams = #{~"dohpath" => <<16#80>>},
+    ?assertError({svcb_bad_dohpath_utf8, _}, dns_svcb_params:from_json(JsonParams)).
 
 test_dnskey_formats(_Config) ->
     %% RRDATA records must be wrapped in dns_rr

@@ -44,6 +44,8 @@ functionality such as socket handling or query resolution.
 - **[RFC 8976](https://tools.ietf.org/html/rfc8976)**: Message Digest for DNS Zones
 - **[RFC 9077](https://tools.ietf.org/html/rfc9077)**: NSEC and NSEC3 TTL Values
 - **[RFC 9460](https://tools.ietf.org/html/rfc9460)**: Service Binding and Parameter Specification via the DNS (DNS SVCB and HTTPS Resource Records)
+- **[RFC 9461](https://tools.ietf.org/html/rfc9461)**: Service Binding Mapping for DNS Servers
+- **[RFC 9540](https://tools.ietf.org/html/rfc9540)**: Discovery of Oblivious Services via Service Binding Records
 - **[RFC 9606](https://tools.ietf.org/html/rfc9606)**: DNS Resolver Information
 - **[RFC 9619](https://tools.ietf.org/html/rfc9619)**: In the DNS, QDCOUNT Is (Usually) One
 - **[RFC 9859](https://tools.ietf.org/html/rfc9859)**: Generalized DNS Notifications

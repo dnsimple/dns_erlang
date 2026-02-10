@@ -68,7 +68,14 @@ groups() ->
             svcb_encode_wire_key_no_value,
             svcb_encode_wire_key_binary_value,
             svcb_encode_wire_key_invalid_value,
-            svcb_wire_roundtrip_unknown_key_none_preserved
+            svcb_wire_roundtrip_unknown_key_none_preserved,
+            svcb_wire_roundtrip_dohpath,
+            svcb_wire_roundtrip_ohttp,
+            svcb_ohttp_non_empty_value_rejected,
+            svcb_ohttp_non_empty_value_encode_rejected,
+            svcb_dohpath_utf8_roundtrip,
+            svcb_dohpath_invalid_utf8_to_wire_rejected,
+            svcb_dohpath_invalid_utf8_from_wire_rejected
         ]},
         {dname_utilities, [parallel], [
             dname_preserve_dot,
@@ -689,6 +696,25 @@ decode_encode_rrdata(_) ->
                     ]
             }
         }},
+        {?DNS_TYPE_SVCB, #dns_rrdata_svcb{
+            svc_priority = 0,
+            target_name = ~"target.example.com",
+            svc_params = #{?DNS_SVCB_PARAM_DOHPATH => ~"/dns-query{?dns}"}
+        }},
+        {?DNS_TYPE_SVCB, #dns_rrdata_svcb{
+            svc_priority = 0,
+            target_name = ~"target.example.com",
+            svc_params = #{?DNS_SVCB_PARAM_OHTTP => none}
+        }},
+        {?DNS_TYPE_SVCB, #dns_rrdata_svcb{
+            svc_priority = 1,
+            target_name = ~"target.example.com",
+            svc_params = #{
+                ?DNS_SVCB_PARAM_ALPN => [~"h2"],
+                ?DNS_SVCB_PARAM_DOHPATH => ~"/dns-query{?dns}",
+                ?DNS_SVCB_PARAM_OHTTP => none
+            }
+        }},
         {?DNS_TYPE_DNSKEY, #dns_rrdata_dnskey{
             flags = 257,
             protocol = 3,
@@ -1009,6 +1035,58 @@ svcb_wire_roundtrip_unknown_key_none_preserved(_) ->
     Params1 = dns_svcb_params:from_wire(Wire),
     ?assertEqual(none, maps:get(123, Params1)),
     ?assertEqual(Params0, Params1).
+
+svcb_wire_roundtrip_dohpath(_) ->
+    Params0 = #{?DNS_SVCB_PARAM_DOHPATH => ~"/dns-query{?dns}"},
+    Wire = dns_svcb_params:to_wire(Params0),
+    Params1 = dns_svcb_params:from_wire(Wire),
+    ?assertEqual(~"/dns-query{?dns}", maps:get(?DNS_SVCB_PARAM_DOHPATH, Params1)),
+    ?assertEqual(Params0, Params1).
+
+svcb_wire_roundtrip_ohttp(_) ->
+    Params0 = #{?DNS_SVCB_PARAM_OHTTP => none},
+    Wire = dns_svcb_params:to_wire(Params0),
+    Params1 = dns_svcb_params:from_wire(Wire),
+    ?assertEqual(none, maps:get(?DNS_SVCB_PARAM_OHTTP, Params1)),
+    ?assertEqual(Params0, Params1).
+
+svcb_ohttp_non_empty_value_rejected(_) ->
+    %% ohttp must have zero-length value on wire
+    OhttpKey = ?DNS_SVCB_PARAM_OHTTP,
+    InvalidBin = <<OhttpKey:16, 1:16, 0:8>>,
+    ?assertError({svcb_bad_ohttp, 1}, dns_svcb_params:from_wire(InvalidBin)).
+
+svcb_ohttp_non_empty_value_encode_rejected(_) ->
+    %% ohttp must have empty value; reject non-none on encode (RFC 9460)
+    ?assertError(
+        {svcb_bad_ohttp, value},
+        dns_svcb_params:to_wire(#{?DNS_SVCB_PARAM_OHTTP => ~"x"})
+    ).
+
+%% RFC 9461: dohpath is quoted UTF-8; verify valid UTF-8 round-trips and invalid is rejected.
+svcb_dohpath_utf8_roundtrip(_) ->
+    %% Non-ASCII UTF-8 (é = U+00E9 = bytes 0xC3 0xA9)
+    DohpathUtf8 = ~"/café",
+    Params0 = #{?DNS_SVCB_PARAM_DOHPATH => DohpathUtf8},
+    Wire = dns_svcb_params:to_wire(Params0),
+    Params1 = dns_svcb_params:from_wire(Wire),
+    ?assertEqual(DohpathUtf8, maps:get(?DNS_SVCB_PARAM_DOHPATH, Params1)).
+
+svcb_dohpath_invalid_utf8_to_wire_rejected(_) ->
+    %% Lone continuation byte 0x80 is invalid UTF-8
+    ?assertError(
+        {svcb_bad_dohpath_utf8, _},
+        dns_svcb_params:to_wire(#{?DNS_SVCB_PARAM_DOHPATH => <<16#80>>})
+    ).
+
+svcb_dohpath_invalid_utf8_from_wire_rejected(_) ->
+    %% Wire: key 7 (dohpath), length 1, value 0x80 (invalid UTF-8)
+    Key = ?DNS_SVCB_PARAM_DOHPATH,
+    InvalidWire = <<Key:16, 1:16, 16#80>>,
+    ?assertError(
+        {svcb_bad_dohpath_utf8, _},
+        dns_svcb_params:from_wire(InvalidWire)
+    ).
 
 %%%===================================================================
 %%% dname_utilities Tests
