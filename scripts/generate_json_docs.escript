@@ -408,6 +408,8 @@ extract_binary_key_regex(Expr) ->
 generate_documentation(Records, EncodingRules, KeyMappings) ->
     InitAcc =
         ~"""
+        # JSON format
+
         This document describes the JSON encoding format for all DNS record types.
 
         ## Format Structure
@@ -415,9 +417,10 @@ generate_documentation(Records, EncodingRules, KeyMappings) ->
         ### Resource Records (RR)
 
         Resource records (`dns_rr`) are encoded as follows:
+
         ```json
         {
-          "name": "example.com",
+          "name": "example.com.",
           "type": "A",
           "class": "in",
           "ttl": 3600,
@@ -428,6 +431,7 @@ generate_documentation(Records, EncodingRules, KeyMappings) ->
         ```
 
         The format includes:
+
         - `name`: Domain name (binary)
         - `type`: DNS type name as uppercase string (e.g., "A", "AAAA", "MX")
         - `ttl`: Time to live (integer)
@@ -437,6 +441,7 @@ generate_documentation(Records, EncodingRules, KeyMappings) ->
         ### Other Records
 
         Non-RR records (message, query, OPT records) use a two-level nested map format:
+
         - Outer key: Record type identifier (descriptive name)
         - Inner map: Record fields with binary keys
 
@@ -662,7 +667,7 @@ encoding_description(direct, FieldName, TypeStr) ->
         ip ->
             ~"IP address as string";
         svc_params when HasSvcbParams ->
-            ~"Map of SVCB service parameters (see [SVCB Service Parameters below](#module-svcb-service-parameters))";
+            ~"Map of SVCB service parameters (see [SVCB Service Parameters below](#svcb-service-parameters))";
         _ when HasDname orelse HasBinary -> ~"Binary data (dname format)";
         _ ->
             ~"Direct value"
@@ -694,6 +699,7 @@ generate_example(RecordName, Fields, KeyBin, Acc, EncodingRules) ->
     ),
     <<
         Acc/binary,
+        "\n",
         "**Example:**\n\n",
         "```json\n",
         "{\n",
@@ -717,10 +723,11 @@ generate_example_rr_format(_Fields, Acc) ->
     %% showing the structure with common fields
     <<
         Acc/binary,
+        "\n",
         "**Example:**\n\n",
         "```json\n",
         "{\n",
-        "  \"name\": \"example.com\",\n",
+        "  \"name\": \"example.com.\",\n",
         "  \"type\": \"A\",\n",
         "  \"class\": \"IN\",\n",
         "  \"ttl\": 3600,\n",
@@ -729,6 +736,7 @@ generate_example_rr_format(_Fields, Acc) ->
         "  }\n",
         "}\n",
         "```\n\n",
+        "\n",
         "**Note:** The `data` field contains the RRDATA-specific fields. ",
         "The `class` field is optional and defaults to `\"IN\"` if omitted. ",
         "See individual RRDATA record types below for complete field documentation.\n\n"
@@ -743,6 +751,7 @@ generate_example_rrdata_format(RecordName, Fields, Acc, EncodingRules) ->
     ExampleFieldsStr = format_example_fields(Fields, FieldNameFun, RecordName, EncodingRules),
     <<
         Acc/binary,
+        "\n",
         "**Example:**\n\n",
         "```json\n",
         "{\n",
@@ -750,6 +759,7 @@ generate_example_rrdata_format(RecordName, Fields, Acc, EncodingRules) ->
         "\n",
         "}\n",
         "```\n\n",
+        "\n",
         "**Note:** This format is used within the `data` field of `dns_rr` records.\n\n"
     >>.
 
@@ -814,13 +824,14 @@ example_category_map() ->
 example_value_map() ->
     #{
         ip => ~"\"192.168.1.1\"",
-        name => ~"\"example.com\"",
-        dname => ~"\"example.com\"",
-        hostname => ~"\"example.com\"",
-        exchange => ~"\"mail.example.com\"",
-        target => ~"\"target.example.com\"",
-        mname => ~"\"ns1.example.com\"",
-        rname => ~"\"admin.example.com\"",
+        name => ~"\"example.com.\"",
+        dname => ~"\"example.com.\"",
+        hostname => ~"\"example.com.\"",
+        exchange => ~"\"mail.example.com.\"",
+        target => ~"\"target.example.com.\"",
+        target_name => ~"\"target.example.com.\"",
+        mname => ~"\"ns1.example.com.\"",
+        rname => ~"\"admin.example.com.\"",
         ttl => ~"3600",
         svc_params => ~"{\"alpn\": [\"h2\", \"h3\"], \"port\": 443}"
     }.
@@ -914,7 +925,7 @@ generate_svcb_params_section() ->
     ```json
     {
         "svc_priority": 1,
-        "target_name": "target.example.com",
+        "target_name": "target.example.com.",
         "svc_params": {
             "mandatory": ["alpn", "port"],
             "alpn": ["h2", "h3"],
