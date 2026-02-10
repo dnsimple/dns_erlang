@@ -72,7 +72,10 @@ groups() ->
             svcb_wire_roundtrip_dohpath,
             svcb_wire_roundtrip_ohttp,
             svcb_ohttp_non_empty_value_rejected,
-            svcb_ohttp_non_empty_value_encode_rejected
+            svcb_ohttp_non_empty_value_encode_rejected,
+            svcb_dohpath_utf8_roundtrip,
+            svcb_dohpath_invalid_utf8_to_wire_rejected,
+            svcb_dohpath_invalid_utf8_from_wire_rejected
         ]},
         {dname_utilities, [parallel], [
             dname_preserve_dot,
@@ -1058,6 +1061,31 @@ svcb_ohttp_non_empty_value_encode_rejected(_) ->
     ?assertError(
         {svcb_bad_ohttp, value},
         dns_svcb_params:to_wire(#{?DNS_SVCB_PARAM_OHTTP => ~"x"})
+    ).
+
+%% RFC 9461: dohpath is quoted UTF-8; verify valid UTF-8 round-trips and invalid is rejected.
+svcb_dohpath_utf8_roundtrip(_) ->
+    %% Non-ASCII UTF-8 (é = U+00E9 = bytes 0xC3 0xA9)
+    DohpathUtf8 = ~"/café",
+    Params0 = #{?DNS_SVCB_PARAM_DOHPATH => DohpathUtf8},
+    Wire = dns_svcb_params:to_wire(Params0),
+    Params1 = dns_svcb_params:from_wire(Wire),
+    ?assertEqual(DohpathUtf8, maps:get(?DNS_SVCB_PARAM_DOHPATH, Params1)).
+
+svcb_dohpath_invalid_utf8_to_wire_rejected(_) ->
+    %% Lone continuation byte 0x80 is invalid UTF-8
+    ?assertError(
+        {svcb_bad_dohpath_utf8, _},
+        dns_svcb_params:to_wire(#{?DNS_SVCB_PARAM_DOHPATH => <<16#80>>})
+    ).
+
+svcb_dohpath_invalid_utf8_from_wire_rejected(_) ->
+    %% Wire: key 7 (dohpath), length 1, value 0x80 (invalid UTF-8)
+    Key = ?DNS_SVCB_PARAM_DOHPATH,
+    InvalidWire = <<Key:16, 1:16, 16#80>>,
+    ?assertError(
+        {svcb_bad_dohpath_utf8, _},
+        dns_svcb_params:from_wire(InvalidWire)
     ).
 
 %%%===================================================================

@@ -1,6 +1,9 @@
 -module(dns_svcb_params).
 -moduledoc false.
 
+%% Suppress "created fun only terminates with explicit exception" for the default error callback.
+-dialyzer({nowarn_function, validate_dohpath_utf8/1}).
+
 -include_lib("dns_erlang/include/dns.hrl").
 
 -type zone_rdata() ::
@@ -50,7 +53,7 @@ to_wire([{Key, Value} | Rest], Acc) ->
                  || {A, B, C, D, E, F, G, H} <- Value
                 >>;
             ?DNS_SVCB_PARAM_DOHPATH when is_binary(Value) ->
-                Value;
+                validate_dohpath_utf8(Value);
             ?DNS_SVCB_PARAM_OHTTP when Value =:= none ->
                 <<>>;
             ?DNS_SVCB_PARAM_OHTTP ->
@@ -95,7 +98,8 @@ from_wire(<<Key:16, Len:16, ValueBin:Len/binary, Rest/binary>>, SvcParams, K0) w
                 ],
                 SvcParams#{?DNS_SVCB_PARAM_IPV6HINT => Value};
             ?DNS_SVCB_PARAM_DOHPATH ->
-                SvcParams#{?DNS_SVCB_PARAM_DOHPATH => ValueBin};
+                UnicodeBin = validate_dohpath_utf8(ValueBin),
+                SvcParams#{?DNS_SVCB_PARAM_DOHPATH => UnicodeBin};
             ?DNS_SVCB_PARAM_OHTTP when Len =:= 0 ->
                 SvcParams#{?DNS_SVCB_PARAM_OHTTP => none};
             ?DNS_SVCB_PARAM_OHTTP ->
@@ -149,7 +153,8 @@ parse_svcb_params_from_json([{Key, Value} | Rest], Acc) ->
                 IPs = [parse_ipv6_for_json(IP) || IP <- Value],
                 Acc#{ParamKey => IPs};
             ?DNS_SVCB_PARAM_DOHPATH when is_binary(Value) ->
-                Acc#{ParamKey => Value};
+                UnicodeBin = validate_dohpath_utf8(Value),
+                Acc#{ParamKey => UnicodeBin};
             ?DNS_SVCB_PARAM_OHTTP when Value =:= null ->
                 Acc#{ParamKey => none};
             %% Unknown keys (key >= 9) stored as-is; key0-key8 with wrong value type are invalid
@@ -223,12 +228,24 @@ from_zone([{domain, "mandatory=" ++ Mandatory} | Rest], MakeError, Acc) ->
 from_zone([{domain, "ohttp"} | Rest], MakeError, Acc) ->
     NewAcc = Acc#{?DNS_SVCB_PARAM_OHTTP => none},
     from_zone(Rest, MakeError, NewAcc);
+%% Zone quoted string: Value is list of bytes (lexer) or codepoints;
+%% normalize to binary and validate UTF-8.
 from_zone([{domain, "dohpath="}, {string, Value} | Rest], MakeError, Acc) ->
-    NewAcc = Acc#{?DNS_SVCB_PARAM_DOHPATH => unicode:characters_to_binary(Value)},
-    from_zone(Rest, MakeError, NewAcc);
+    case validate_dohpath_utf8(Value, MakeError) of
+        Bin when is_binary(Bin) ->
+            NewAcc = Acc#{?DNS_SVCB_PARAM_DOHPATH => Bin},
+            from_zone(Rest, MakeError, NewAcc);
+        Error ->
+            {error, Error}
+    end;
 from_zone([{domain, "dohpath=" ++ Value} | Rest], MakeError, Acc) ->
-    NewAcc = Acc#{?DNS_SVCB_PARAM_DOHPATH => unicode:characters_to_binary(Value)},
-    from_zone(Rest, MakeError, NewAcc);
+    case validate_dohpath_utf8(Value, MakeError) of
+        Bin when is_binary(Bin) ->
+            NewAcc = Acc#{?DNS_SVCB_PARAM_DOHPATH => Bin},
+            from_zone(Rest, MakeError, NewAcc);
+        Error ->
+            {error, Error}
+    end;
 from_zone([{domain, "ech="}, {string, Value} | Rest], MakeError, Acc) ->
     case safe_base64_decode(Value) of
         error ->
@@ -355,7 +372,8 @@ to_zone_list(SvcParams, Acc, EscapeFun) ->
             ({?DNS_SVCB_PARAM_ECH, ECHConfig}, Acc0) ->
                 [[~"ech=\"", base64:encode(ECHConfig), ~"\""] | Acc0];
             ({?DNS_SVCB_PARAM_DOHPATH, Path}, Acc0) ->
-                [[~"dohpath=", EscapeFun(Path)] | Acc0];
+                UnicodeBin = validate_dohpath_utf8(Path),
+                [[~"dohpath=", EscapeFun(UnicodeBin)] | Acc0];
             ({?DNS_SVCB_PARAM_OHTTP, none}, Acc0) ->
                 [~"ohttp" | Acc0];
             ({KeyNum, Value}, Acc0) when is_integer(KeyNum) ->
@@ -463,7 +481,7 @@ encode_value_to_json(?DNS_SVCB_PARAM_ECH, Value) when is_binary(Value) ->
 encode_value_to_json(?DNS_SVCB_PARAM_IPV6HINT, Value) when is_list(Value) ->
     [list_to_binary(inet:ntoa(V)) || V <- Value];
 encode_value_to_json(?DNS_SVCB_PARAM_DOHPATH, Value) when is_binary(Value) ->
-    Value;
+    validate_dohpath_utf8(Value);
 encode_value_to_json(?DNS_SVCB_PARAM_OHTTP, none) ->
     null;
 encode_value_to_json(Key, none) when is_integer(Key) ->
@@ -476,6 +494,33 @@ encode_value_to_json(Key, Value) ->
 %% ============================================================================
 %% Helpers
 %% ============================================================================
+
+%% RFC 9461: dohpath SvcParamValue is UTF-8. Reject invalid sequences.
+%% Zone lexer may pass list of bytes (when zone was binary) or code points (when zone was list).
+-spec validate_dohpath_utf8(unicode:chardata()) -> unicode:unicode_binary() | dynamic().
+validate_dohpath_utf8(Input) ->
+    validate_dohpath_utf8(Input, fun(Error) -> error(Error) end).
+
+-spec validate_dohpath_utf8(unicode:chardata(), error_callback()) ->
+    unicode:unicode_binary() | dynamic().
+validate_dohpath_utf8(Input, MakeError) when is_binary(Input) ->
+    case unicode:characters_to_binary(Input, utf8, utf8) of
+        Bin when is_binary(Bin) -> Bin;
+        _ -> MakeError({svcb_bad_dohpath_utf8, Input})
+    end;
+validate_dohpath_utf8(Input, MakeError) when is_list(Input) ->
+    %% Try list as bytes first (zone parsed from binary);
+    %% then as Unicode code points (zone as list).
+    BinFromBytes = list_to_binary(Input),
+    case unicode:characters_to_binary(BinFromBytes, utf8, utf8) of
+        Bin when is_binary(Bin), Bin =:= BinFromBytes ->
+            Bin;
+        _ ->
+            case unicode:characters_to_binary(Input, unicode, utf8) of
+                Bin when is_binary(Bin) -> Bin;
+                _ -> MakeError({svcb_bad_dohpath_utf8, Input})
+            end
+    end.
 
 -spec safe_base64_decode(string() | binary()) -> binary() | error.
 safe_base64_decode(Value) ->
