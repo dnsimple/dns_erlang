@@ -11,6 +11,7 @@ functionality such as socket handling or query resolution.
 - **[RFC 2230](https://tools.ietf.org/html/rfc2230)**: Key Exchange Delegation Record for the DNS
 - **[RFC 2308](https://tools.ietf.org/html/rfc2308)**: Negative Caching of DNS Queries (DNS NCACHE)
 - **[RFC 2535](https://tools.ietf.org/html/rfc2535)**: Domain Name System Security Extensions
+- **[RFC 2536](https://tools.ietf.org/html/rfc2536)**: DSA KEYs and SIGs in the Domain Name System (DNS)
 - **[RFC 2782](https://tools.ietf.org/html/rfc2782)**: A DNS RR for specifying the location of services (DNS SRV)
 - **[RFC 2845](https://tools.ietf.org/html/rfc2845)**: Secret Key Transaction Authentication for DNS (TSIG)
 - **[RFC 3403](https://tools.ietf.org/html/rfc3403)**: Dynamic Delegation Discovery System (DDDS) Part Three: The Domain Name System (DNS) Database

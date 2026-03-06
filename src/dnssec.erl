@@ -419,10 +419,12 @@ sign_rrset(
 
 -spec sign(sigalg(), binary(), key()) -> binary().
 sign(Alg, BaseSigInput, Key) when Alg =:= ?DNS_ALG_DSA orelse Alg =:= ?DNS_ALG_NSEC3DSA ->
+    %% Key must be [P, Q, G, X] as integers (crypto key format).
     Asn1Sig = crypto:sign(dss, sha, BaseSigInput, Key),
     {R, S} = decode_asn1_dss_sig(Asn1Sig),
     [P, _Q, _G, _Y] = Key,
-    T = (byte_size(P) - 64) div 8,
+    M = byte_size(binary:encode_unsigned(P)),
+    T = (M - 64) div 8,
     <<T, R:20/unit:8, S:20/unit:8>>;
 sign(Alg, BaseSigInput, Key) when
     Alg =:= ?DNS_ALG_NSEC3RSASHA1 orelse
@@ -495,15 +497,12 @@ verify_rrsig(#dns_rr{type = ?DNS_TYPE_RRSIG, data = Data}, RRs, RRDNSKey, Opts) 
     end.
 
 -spec verify(sigalg(), key(), binary(), binary()) -> boolean().
-verify(Alg, Key, Signature, SigInput) when
-    Alg =:= ?DNS_ALG_DSA orelse
-        Alg =:= ?DNS_ALG_NSEC3DSA
-->
+verify(Alg, Key, Signature, SigInput) when Alg =:= ?DNS_ALG_DSA orelse Alg =:= ?DNS_ALG_NSEC3DSA ->
     <<_T, R:20/unit:8, S:20/unit:8>> = Signature,
     AsnSig = encode_asn1_dss_sig(R, S),
-    AsnSigSize = byte_size(AsnSig),
-    AsnBin = <<AsnSigSize:32, AsnSig/binary>>,
-    crypto:verify(dss, sha, SigInput, AsnBin, Key);
+    %% DNSKEY public_key from decode is [P, Q, G, Y] as binaries; normalize to integers for crypto.
+    KeyInts = dsa_pubkey_to_integers(Key),
+    crypto:verify(dss, sha, SigInput, AsnSig, KeyInts);
 verify(Alg, Key, Signature, SigInput) when
     Alg =:= ?DNS_ALG_NSEC3RSASHA1 orelse
         Alg =:= ?DNS_ALG_RSASHA1 orelse
@@ -766,6 +765,16 @@ do_count_labels([~"*" | Labels]) ->
 do_count_labels(List) when is_list(List) ->
     length(List).
 
+%% Convert DNSKEY public_key [P, Q, G, Y] (binaries from decode) to integers for crypto:verify.
+dsa_pubkey_to_integers([P, Q, G, Y]) ->
+    [dsa_elem_to_int(X) || X <- [P, Q, G, Y]].
+
+dsa_elem_to_int(B) when is_binary(B) ->
+    binary:decode_unsigned(B);
+dsa_elem_to_int(I) when is_integer(I) ->
+    I.
+
+%% Support RFC2536
 -spec decode_asn1_dss_sig(binary()) -> {integer(), integer()}.
 decode_asn1_dss_sig(Bin) when is_binary(Bin) ->
     {ok, #'DSS-Sig'{r = R, s = S}} = 'DNS-ASN1':decode('DSS-Sig', Bin),

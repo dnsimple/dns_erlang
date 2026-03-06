@@ -960,6 +960,7 @@ helper_samplekeypl_to_pubkey(Proplist) ->
 helper_samplekeypl_to_pubkey(DSA, Proplist) when
     DSA =:= ?DNS_ALG_DSA orelse DSA =:= ?DNS_ALG_NSEC3DSA
 ->
+    %% [P, Q, G, Y] as integers for crypto and for DNSKEY (encode_dsa_key accepts integers).
     P = proplists:get_value(p, Proplist),
     Q = proplists:get_value(q, Proplist),
     G = proplists:get_value(g, Proplist),
@@ -995,22 +996,11 @@ helper_pubkey_to_dnskey_pubkey(rsa, [E, M]) ->
         true ->
             erlang:error(badarg)
     end;
-helper_pubkey_to_dnskey_pubkey(dsa, Key) ->
-    {M, [P, Q, G, Y]} = lists:foldr(
-        fun(<<L:32, I:L/unit:8>>, {MaxL, Ints}) ->
-            NewMaxL =
-                case L > MaxL of
-                    true -> L;
-                    false -> MaxL
-                end,
-            {NewMaxL, [I | Ints]}
-        end,
-        {0, []},
-        Key
-    ),
-    T = (M - 64) div 8,
-    M = 64 + T * 8,
-    <<T, Q:20/unit:8, P:M/unit:8, G:M/unit:8, Y:M/unit:8>>;
+%% DNSKEY public_key for DSA must be [P, Q, G, Y] for dns_encode:encode_dsa_key/1 (list, not wire binary).
+helper_pubkey_to_dnskey_pubkey(dsa, [P, Q, G, Y]) ->
+    [P, Q, G, Y];
+helper_pubkey_to_dnskey_pubkey(nsec3dsa, [P, Q, G, Y]) ->
+    [P, Q, G, Y];
 helper_pubkey_to_dnskey_pubkey(ecdsap256, PubKey) when is_binary(PubKey) ->
     PubKey;
 helper_pubkey_to_dnskey_pubkey(ecdsap384, PubKey) when is_binary(PubKey) ->

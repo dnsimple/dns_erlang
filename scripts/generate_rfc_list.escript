@@ -32,6 +32,7 @@
     ~"3403" =>
         ~"Dynamic Delegation Discovery System (DDDS) Part Three: The Domain Name System (DNS) Database",
     ~"2308" => ~"Negative Caching of DNS Queries (DNS NCACHE)",
+    ~"2536" => ~"DSA KEYs and SIGs in the Domain Name System (DNS)",
     ~"3597" => ~"Handling of Unknown DNS Resource Record (RR) Types",
     ~"4025" => ~"A Method for Storing IPsec Keying Material in DNS",
     ~"4255" => ~"Using DNS to Securely Publish Secure Shell (SSH) Key Fingerprints",
