@@ -35,8 +35,19 @@ groups() ->
         {all, [parallel], [
             zone,
             gen_nsec,
+            gen_nsec_badarg,
+            gen_nsec3_badarg,
+            gen_nsec3_validation,
+            gen_nsec_name_order,
             pubkey_gen,
             verify_rrset,
+            verify_rrsig_expiry,
+            sign_rr_and_rrset_5arg,
+            add_keytag_to_cdnskey_test,
+            canonical_rrdata_form_test,
+            ih_custom_hash_test,
+            dsa_sign_verify_test,
+            ecdsa_sign_verify_test,
             sample_keys,
             ed25519_basic_test,
             ed448_basic_test
@@ -73,6 +84,123 @@ validate_nsec_generation(Config, Sample) ->
     %% 4. Compare
     ?assertEqual(lists:sort(ExpectedNSECs), lists:sort(NormalizedNSECs)).
 
+gen_nsec_badarg(_Config) ->
+    %% gen_nsec/1 requires a SOA in the list
+    ?assertError(badarg, dnssec:gen_nsec([])),
+    ?assertError(
+        badarg,
+        dnssec:gen_nsec([
+            #dns_rr{
+                name = ~"example",
+                type = ?DNS_TYPE_A,
+                class = ?DNS_CLASS_IN,
+                ttl = 3600,
+                data = #dns_rrdata_a{ip = {1, 2, 3, 4}}
+            }
+        ])
+    ).
+
+gen_nsec3_badarg(_Config) ->
+    SOA = #dns_rr{
+        name = ~"example",
+        type = ?DNS_TYPE_SOA,
+        class = ?DNS_CLASS_IN,
+        ttl = 3600,
+        data = #dns_rrdata_soa{
+            mname = ~"ns.example",
+            rname = ~"hostmaster.example",
+            serial = 1,
+            refresh = 3600,
+            retry = 600,
+            expire = 86400,
+            minimum = 3600
+        }
+    },
+    NSEC3Param = #dns_rr{
+        name = ~"example",
+        type = ?DNS_TYPE_NSEC3PARAM,
+        class = ?DNS_CLASS_IN,
+        ttl = 0,
+        data = #dns_rrdata_nsec3param{
+            hash_alg = 1,
+            flags = 0,
+            iterations = 0,
+            salt = <<>>
+        }
+    },
+    %% No SOA
+    ?assertError(badarg, dnssec:gen_nsec3([#dns_rr{type = ?DNS_TYPE_A}])),
+    %% SOA but no NSEC3PARAM
+    ?assertError(badarg, dnssec:gen_nsec3([SOA])),
+    %% Name not under zone -> name_mismatch
+    ?assertError(
+        name_mismatch,
+        dnssec:gen_nsec3([
+            SOA,
+            NSEC3Param,
+            #dns_rr{
+                name = ~"foo.bar.other",
+                type = ?DNS_TYPE_A,
+                class = ?DNS_CLASS_IN,
+                ttl = 3600,
+                data = #dns_rrdata_a{ip = {1, 1, 1, 1}}
+            }
+        ])
+    ).
+
+gen_nsec3_validation(Config) ->
+    %% Use a sample that has NSEC3 (nsec3rsasha1 or nsec3dsa)
+    Samples = proplists:get_value(dnssec_samples, Config),
+    [Sample | _] = [
+        S
+     || #dnssec_test_sample{nsec3 = N3} = S <- Samples,
+        N3 =/= undefined
+    ],
+    SourceRRs = Sample#dnssec_test_sample.rr_src,
+    Generated = dnssec:gen_nsec3(SourceRRs),
+    ?assert(length(Generated) >= 1).
+
+gen_nsec_name_order(_Config) ->
+    %% Exercise name_order by generating NSEC for zone with
+    %% a.example and b.example (different first labels)
+    ZoneName = ~"example",
+    SOA = #dns_rr{
+        name = ZoneName,
+        type = ?DNS_TYPE_SOA,
+        class = ?DNS_CLASS_IN,
+        ttl = 3600,
+        data = #dns_rrdata_soa{
+            mname = ~"ns.example",
+            rname = ~"hostmaster.example",
+            serial = 1,
+            refresh = 3600,
+            retry = 600,
+            expire = 86400,
+            minimum = 3600
+        }
+    },
+    RRs = [
+        SOA,
+        #dns_rr{
+            name = ~"a.example",
+            type = ?DNS_TYPE_A,
+            class = ?DNS_CLASS_IN,
+            ttl = 3600,
+            data = #dns_rrdata_a{ip = {1, 1, 1, 1}}
+        },
+        #dns_rr{
+            name = ~"b.example",
+            type = ?DNS_TYPE_A,
+            class = ?DNS_CLASS_IN,
+            ttl = 3600,
+            data = #dns_rrdata_a{ip = {2, 2, 2, 2}}
+        }
+    ],
+    Generated = dnssec:gen_nsec(RRs),
+    ?assertEqual(3, length(Generated)),
+    NSECs = [RR || #dns_rr{type = ?DNS_TYPE_NSEC} = RR <- Generated],
+    ?assertEqual(3, length(NSECs)).
+
 %% Simulates wire encoding/decoding to ensure the 'data' field
 %% matches the format expected by the test comparison.
 cycle_nsec_encoding(_Config, RRs) ->
@@ -91,6 +219,315 @@ verify_rrset(Config) ->
      || {RRSig, RRSet, DNSKeys, Opts} <- helper_verify_rrset_test_cases(Config)
     ].
 
+verify_rrsig_expiry(_Config) ->
+    %% Build a valid-looking RRSIG with inception in the future -> false
+    Now = erlang:system_time(second),
+    Future = Now + 86400,
+    Past = Now - 86400,
+    RRSigFuture = #dns_rr{
+        name = ~"example",
+        type = ?DNS_TYPE_RRSIG,
+        class = ?DNS_CLASS_IN,
+        ttl = 3600,
+        data = #dns_rrdata_rrsig{
+            type_covered = ?DNS_TYPE_SOA,
+            alg = ?DNS_ALG_RSASHA256,
+            labels = 1,
+            original_ttl = 3600,
+            inception = Future,
+            expiration = Future + 3600,
+            keytag = 12345,
+            signers_name = ~"example",
+            signature = <<0>>
+        }
+    },
+    RRSigExpired = RRSigFuture#dns_rr{
+        data = (RRSigFuture#dns_rr.data)#dns_rrdata_rrsig{
+            inception = Past,
+            expiration = Past
+        }
+    },
+    RR = #dns_rr{
+        name = ~"example",
+        type = ?DNS_TYPE_SOA,
+        class = ?DNS_CLASS_IN,
+        ttl = 3600,
+        data = #dns_rrdata_soa{
+            mname = ~"ns.example",
+            rname = ~"hostmaster.example",
+            serial = 1,
+            refresh = 3600,
+            retry = 600,
+            expire = 86400,
+            minimum = 3600
+        }
+    },
+    DNSKey = #dns_rr{
+        name = ~"example",
+        type = ?DNS_TYPE_DNSKEY,
+        class = ?DNS_CLASS_IN,
+        ttl = 3600,
+        data = #dns_rrdata_dnskey{
+            flags = 256, protocol = 3, alg = ?DNS_ALG_RSASHA256, public_key = <<>>
+        }
+    },
+    ?assertEqual(false, dnssec:verify_rrsig(RRSigFuture, [RR], [DNSKey], #{now => Now})),
+    ?assertEqual(false, dnssec:verify_rrsig(RRSigExpired, [RR], [DNSKey], #{now => Now})).
+
+sign_rr_and_rrset_5arg(_Config) ->
+    %% 5-arg sign_rr and sign_rrset (no opts map)
+    {_Ed25519Pub, Ed25519Priv} = crypto:generate_key(eddsa, ed25519),
+    RR = #dns_rr{
+        name = ~"test.example",
+        type = ?DNS_TYPE_A,
+        class = ?DNS_CLASS_IN,
+        ttl = 3600,
+        data = #dns_rrdata_a{ip = {1, 2, 3, 4}}
+    },
+    _ = dnssec:sign_rr([RR], ~"example", 12345, ?DNS_ALG_ED25519, Ed25519Priv),
+    _ = dnssec:sign_rrset([RR], ~"example", 12345, ?DNS_ALG_ED25519, Ed25519Priv),
+    ok.
+
+add_keytag_to_cdnskey_test(_Config) ->
+    CDNSKEY = #dns_rr{
+        name = ~"example",
+        type = ?DNS_TYPE_CDNSKEY,
+        class = ?DNS_CLASS_IN,
+        ttl = 3600,
+        data = #dns_rrdata_cdnskey{
+            flags = 0,
+            protocol = 3,
+            alg = ?DNS_ALG_RSASHA256,
+            public_key = <<0, 1, 2, 3>>
+        }
+    },
+    Result = dnssec:add_keytag_to_cdnskey(CDNSKEY),
+    ?assertMatch(#dns_rr{type = ?DNS_TYPE_CDNSKEY, data = #dns_rrdata_cdnskey{keytag = _}}, Result).
+
+canonical_rrdata_form_test(_Config) ->
+    %% Hit canonical_rrdata_form for record types that lower-case domain names
+    ?assertMatch(
+        #dns_rrdata_afsdb{hostname = ~"host.example"},
+        dnssec:canonical_rrdata_form(#dns_rrdata_afsdb{subtype = 1, hostname = ~"HOST.EXAMPLE"})
+    ),
+    ?assertMatch(
+        #dns_rrdata_cname{dname = ~"cname.example"},
+        dnssec:canonical_rrdata_form(#dns_rrdata_cname{dname = ~"CNAME.EXAMPLE"})
+    ),
+    ?assertMatch(
+        #dns_rrdata_dname{dname = ~"dname.example"},
+        dnssec:canonical_rrdata_form(#dns_rrdata_dname{dname = ~"DNAME.EXAMPLE"})
+    ),
+    ?assertMatch(
+        #dns_rrdata_dsync{target = ~"target.example"},
+        dnssec:canonical_rrdata_form(#dns_rrdata_dsync{
+            rrtype = 1,
+            scheme = 0,
+            port = 443,
+            target = ~"TARGET.EXAMPLE"
+        })
+    ),
+    ?assertMatch(
+        #dns_rrdata_ipseckey{gateway = ~"gateway.example"},
+        dnssec:canonical_rrdata_form(#dns_rrdata_ipseckey{
+            precedence = 10,
+            alg = 0,
+            gateway = ~"GATEWAY.EXAMPLE",
+            public_key = <<>>
+        })
+    ),
+    ?assertMatch(
+        #dns_rrdata_ipseckey{gateway = {1, 2, 3, 4}},
+        dnssec:canonical_rrdata_form(#dns_rrdata_ipseckey{
+            precedence = 10,
+            alg = 1,
+            gateway = {1, 2, 3, 4},
+            public_key = <<>>
+        })
+    ),
+    ?assertMatch(
+        #dns_rrdata_kx{exchange = ~"kx.example", preference = 10},
+        dnssec:canonical_rrdata_form(#dns_rrdata_kx{preference = 10, exchange = ~"KX.EXAMPLE"})
+    ),
+    ?assertMatch(
+        #dns_rrdata_mb{madname = ~"mb.example"},
+        dnssec:canonical_rrdata_form(#dns_rrdata_mb{madname = ~"MB.EXAMPLE"})
+    ),
+    ?assertMatch(
+        #dns_rrdata_mg{madname = ~"mg.example"},
+        dnssec:canonical_rrdata_form(#dns_rrdata_mg{madname = ~"MG.EXAMPLE"})
+    ),
+    ?assertMatch(
+        #dns_rrdata_minfo{rmailbx = ~"a.example", emailbx = ~"b.example"},
+        dnssec:canonical_rrdata_form(#dns_rrdata_minfo{
+            rmailbx = ~"A.EXAMPLE", emailbx = ~"B.EXAMPLE"
+        })
+    ),
+    ?assertMatch(
+        #dns_rrdata_mr{newname = ~"mr.example"},
+        dnssec:canonical_rrdata_form(#dns_rrdata_mr{newname = ~"MR.EXAMPLE"})
+    ),
+    ?assertMatch(
+        #dns_rrdata_mx{exchange = ~"mx.example", preference = 10},
+        dnssec:canonical_rrdata_form(#dns_rrdata_mx{preference = 10, exchange = ~"MX.EXAMPLE"})
+    ),
+    ?assertMatch(
+        #dns_rrdata_naptr{
+            replacement = ~"naptr.example",
+            order = 1,
+            preference = 1,
+            flags = <<>>,
+            services = <<>>,
+            regexp = <<>>
+        },
+        dnssec:canonical_rrdata_form(#dns_rrdata_naptr{
+            order = 1,
+            preference = 1,
+            flags = <<>>,
+            services = <<>>,
+            regexp = <<>>,
+            replacement = ~"NAPTR.EXAMPLE"
+        })
+    ),
+    ?assertMatch(
+        #dns_rrdata_ns{dname = ~"ns.example"},
+        dnssec:canonical_rrdata_form(#dns_rrdata_ns{dname = ~"NS.EXAMPLE"})
+    ),
+    ?assertMatch(
+        #dns_rrdata_nsec{next_dname = ~"next.example", types = []},
+        dnssec:canonical_rrdata_form(#dns_rrdata_nsec{next_dname = ~"NEXT.EXAMPLE", types = []})
+    ),
+    ?assertMatch(
+        #dns_rrdata_nxt{dname = ~"nxt.example", types = []},
+        dnssec:canonical_rrdata_form(#dns_rrdata_nxt{dname = ~"NXT.EXAMPLE", types = []})
+    ),
+    ?assertMatch(
+        #dns_rrdata_ptr{dname = ~"ptr.example"},
+        dnssec:canonical_rrdata_form(#dns_rrdata_ptr{dname = ~"PTR.EXAMPLE"})
+    ),
+    ?assertMatch(
+        #dns_rrdata_rp{mbox = ~"m.example", txt = ~"t.example"},
+        dnssec:canonical_rrdata_form(#dns_rrdata_rp{mbox = ~"M.EXAMPLE", txt = ~"T.EXAMPLE"})
+    ),
+    ?assertMatch(
+        #dns_rrdata_rrsig{signers_name = ~"sig.example"},
+        dnssec:canonical_rrdata_form(#dns_rrdata_rrsig{
+            type_covered = ?DNS_TYPE_A,
+            alg = 1,
+            labels = 1,
+            original_ttl = 3600,
+            inception = 0,
+            expiration = 0,
+            keytag = 0,
+            signers_name = ~"SIG.EXAMPLE",
+            signature = <<>>
+        })
+    ),
+    ?assertMatch(
+        #dns_rrdata_rt{host = ~"rt.example", preference = 10},
+        dnssec:canonical_rrdata_form(#dns_rrdata_rt{preference = 10, host = ~"RT.EXAMPLE"})
+    ),
+    ?assertMatch(
+        #dns_rrdata_soa{mname = ~"mname.example", rname = ~"rname.example"},
+        dnssec:canonical_rrdata_form(#dns_rrdata_soa{
+            mname = ~"MNAME.EXAMPLE",
+            rname = ~"RNAME.EXAMPLE",
+            serial = 1,
+            refresh = 3600,
+            retry = 600,
+            expire = 86400,
+            minimum = 3600
+        })
+    ),
+    ?assertMatch(
+        #dns_rrdata_srv{target = ~"srv.example", priority = 0, weight = 0, port = 0},
+        dnssec:canonical_rrdata_form(#dns_rrdata_srv{
+            priority = 0, weight = 0, port = 0, target = ~"SRV.EXAMPLE"
+        })
+    ),
+    ?assertMatch(
+        #dns_rrdata_svcb{target_name = ~"svcb.example", svc_priority = 1},
+        dnssec:canonical_rrdata_form(#dns_rrdata_svcb{
+            svc_priority = 1,
+            target_name = ~"SVCB.EXAMPLE",
+            svc_params = #{}
+        })
+    ),
+    ?assertMatch(
+        #dns_rrdata_https{target_name = ~"https.example", svc_priority = 1},
+        dnssec:canonical_rrdata_form(#dns_rrdata_https{
+            svc_priority = 1,
+            target_name = ~"HTTPS.EXAMPLE",
+            svc_params = #{}
+        })
+    ),
+    %% Passthrough for unknown type
+    ?assertEqual(~"binary", dnssec:canonical_rrdata_form(~"binary")).
+
+ih_custom_hash_test(_Config) ->
+    %% ih/4 with custom hash function (not default SHA1)
+    CustomHash = fun(Data) -> crypto:hash(sha, Data) end,
+    Salt = ~"salt",
+    NameWire = <<"example", 0>>,
+    Result = dnssec:ih(CustomHash, Salt, NameWire, 2),
+    ?assert(is_binary(Result)),
+    ?assert(byte_size(Result) =:= 20).
+
+dsa_sign_verify_test(Config) ->
+    Samples = proplists:get_value(dnssec_samples, Config),
+    DSASample = [S || #dnssec_test_sample{alg = dsa} = S <- Samples],
+    [#dnssec_test_sample{zonename = ZoneName, zsk_pl = ZskProps} | _] = DSASample,
+    PrivKey = helper_samplekeypl_to_privkey(ZskProps),
+    PubKeyRR = generate_key_struct(ZskProps, dsa, ZoneName),
+    DNSKeyWithTag = PubKeyRR#key_info.rr,
+    RR = #dns_rr{
+        name = <<"test.", ZoneName/binary>>,
+        type = ?DNS_TYPE_A,
+        class = ?DNS_CLASS_IN,
+        ttl = 3600,
+        data = #dns_rrdata_a{ip = {1, 2, 3, 4}}
+    },
+    RRSig = dnssec:sign_rrset(
+        [RR],
+        ZoneName,
+        PubKeyRR#key_info.tag,
+        PubKeyRR#key_info.alg,
+        PrivKey,
+        #{inception => 1000000, expiration => 2000000}
+    ),
+    ?assert(
+        dnssec:verify_rrsig(RRSig, [RR], [DNSKeyWithTag], #{now => 1500000})
+    ).
+
+ecdsa_sign_verify_test(Config) ->
+    Samples = proplists:get_value(dnssec_samples, Config),
+    [#dnssec_test_sample{zonename = ZoneName, zsk_pl = ZskProps, alg = Alg} | _] = [
+        S
+     || #dnssec_test_sample{alg = Alg} = S <- Samples,
+        Alg =:= ecdsap256 orelse Alg =:= ecdsap384
+    ],
+    PrivKey = helper_samplekeypl_to_privkey(ZskProps),
+    PubKeyRR = generate_key_struct(ZskProps, Alg, ZoneName),
+    DNSKeyWithTag = PubKeyRR#key_info.rr,
+    RR = #dns_rr{
+        name = <<"test.", ZoneName/binary>>,
+        type = ?DNS_TYPE_A,
+        class = ?DNS_CLASS_IN,
+        ttl = 3600,
+        data = #dns_rrdata_a{ip = {1, 2, 3, 4}}
+    },
+    RRSig = dnssec:sign_rrset(
+        [RR],
+        ZoneName,
+        PubKeyRR#key_info.tag,
+        PubKeyRR#key_info.alg,
+        PrivKey,
+        #{inception => 1000000, expiration => 2000000}
+    ),
+    ?assert(
+        dnssec:verify_rrsig(RRSig, [RR], [DNSKeyWithTag], #{now => 1500000})
+    ).
+
 zone(Config) ->
     Samples = proplists:get_value(dnssec_samples, Config),
     %% Run the validation for every sample in the config
@@ -100,12 +537,12 @@ generate_key_struct(Props, Alg, ZoneName) ->
     AlgNo = proplists:get_value(alg, Props),
     Flags = proplists:get_value(flags, Props),
     PubKey = helper_samplekeypl_to_pubkey(Props),
-    PubKeyBin = helper_pubkey_to_dnskey_pubkey(Alg, PubKey),
+    PubKeyForRR = helper_pubkey_to_dnskey_pubkey(Alg, PubKey),
     Data0 = #dns_rrdata_dnskey{
         flags = Flags,
         protocol = 3,
         alg = AlgNo,
-        public_key = PubKeyBin
+        public_key = PubKeyForRR
     },
     %% Calculate Key Tag
     #dns_rrdata_dnskey{keytag = KeyTag} = Data = helper_add_keytag_to_dnskey(Data0),
@@ -170,7 +607,7 @@ sign_zone_data(RRs, ZoneName, ZSK, KSK, Inception, Expiration) ->
 compare_rr_sets(Generated, Expected) ->
     %% Normalise names (lower case, trailing dot, etc) for comparison
     NormFun = fun(#dns_rr{name = Name} = RR) ->
-        RR#dns_rr{name = dnssec:normalise_dname(Name)}
+        RR#dns_rr{name = dns_domain:to_lower(Name)}
     end,
     GenSorted = lists:sort([NormFun(RR) || RR <- Generated]),
     ExpSorted = lists:sort([NormFun(RR) || RR <- Expected]),
@@ -247,7 +684,7 @@ sample_keys(Config) ->
 ed25519_basic_test(_Config) ->
     {Ed25519Pub, Ed25519Priv} = crypto:generate_key(eddsa, ed25519),
     Ed25519RR = #dns_rr{
-        name = <<"test.example">>,
+        name = ~"test.example",
         type = ?DNS_TYPE_A,
         class = ?DNS_CLASS_IN,
         ttl = 3600,
@@ -255,14 +692,14 @@ ed25519_basic_test(_Config) ->
     },
     Ed25519Sig = dnssec:sign_rrset(
         [Ed25519RR],
-        <<"example">>,
+        ~"example",
         12345,
         ?DNS_ALG_ED25519,
         Ed25519Priv,
         #{inception => 1000000, expiration => 2000000}
     ),
     Ed25519DNSKey = #dns_rr{
-        name = <<"example">>,
+        name = ~"example",
         type = ?DNS_TYPE_DNSKEY,
         class = ?DNS_CLASS_IN,
         ttl = 3600,
@@ -286,7 +723,7 @@ ed25519_basic_test(_Config) ->
 ed448_basic_test(_Config) ->
     {Ed448Pub, Ed448Priv} = crypto:generate_key(eddsa, ed448),
     Ed448RR = #dns_rr{
-        name = <<"test.example">>,
+        name = ~"test.example",
         type = ?DNS_TYPE_A,
         class = ?DNS_CLASS_IN,
         ttl = 3600,
@@ -294,14 +731,14 @@ ed448_basic_test(_Config) ->
     },
     Ed448Sig = dnssec:sign_rrset(
         [Ed448RR],
-        <<"example">>,
+        ~"example",
         12346,
         ?DNS_ALG_ED448,
         Ed448Priv,
         #{inception => 1000000, expiration => 2000000}
     ),
     Ed448DNSKey = #dns_rr{
-        name = <<"example">>,
+        name = ~"example",
         type = ?DNS_TYPE_DNSKEY,
         class = ?DNS_CLASS_IN,
         ttl = 3600,
@@ -328,27 +765,27 @@ test_sample_key(Alg, Proplist) ->
     test_sample_key(Alg, PrivKey, PubKey).
 
 test_sample_key(dsa, PrivKey, PubKey) ->
-    Sample = <<"1234">>,
+    Sample = ~"1234",
     Sig = crypto:sign(dss, sha, Sample, PrivKey),
     crypto:verify(dss, sha, Sample, Sig, PubKey);
 test_sample_key(rsa, PrivKey, PubKey) ->
-    Sample = <<"1234">>,
+    Sample = ~"1234",
     Cipher = crypto:sign(rsa, none, Sample, PrivKey, [{rsa_padding, rsa_pkcs1_padding}]),
     true =:= crypto:verify(rsa, none, Sample, Cipher, PubKey, [{rsa_padding, rsa_pkcs1_padding}]);
 test_sample_key(ecdsap256, PrivKey, PubKey) ->
-    Sample = crypto:hash(sha256, <<"1234">>),
+    Sample = crypto:hash(sha256, ~"1234"),
     Cipher = crypto:sign(ecdsa, sha256, Sample, [PrivKey, secp256r1]),
     true =:= crypto:verify(ecdsa, sha256, Sample, Cipher, [<<4, PubKey/binary>>, secp256r1]);
 test_sample_key(ecdsap384, PrivKey, PubKey) ->
-    Sample = crypto:hash(sha384, <<"1234">>),
+    Sample = crypto:hash(sha384, ~"1234"),
     Cipher = crypto:sign(ecdsa, sha384, Sample, [PrivKey, secp384r1]),
     true =:= crypto:verify(ecdsa, sha384, Sample, Cipher, [<<4, PubKey/binary>>, secp384r1]);
 test_sample_key(ed25519, PrivKey, PubKey) ->
-    Sample = <<"1234">>,
+    Sample = ~"1234",
     Cipher = crypto:sign(eddsa, none, Sample, [PrivKey, ed25519]),
     true =:= crypto:verify(eddsa, none, Sample, Cipher, [PubKey, ed25519]);
 test_sample_key(ed448, PrivKey, PubKey) ->
-    Sample = <<"1234">>,
+    Sample = ~"1234",
     Cipher = crypto:sign(eddsa, none, Sample, [PrivKey, ed448]),
     true =:= crypto:verify(eddsa, none, Sample, Cipher, [PubKey, ed448]).
 
@@ -439,7 +876,7 @@ helper_verify_rrset_test_cases(Config) ->
             begin
                 Opts = #{now => Now},
                 DNSKeys = [RR || #dns_rr{type = dnskey} = RR <- RRs],
-                Dict = lists:foldl(
+                Map = lists:foldl(
                     fun
                         (
                             #dns_rr{
@@ -450,25 +887,25 @@ helper_verify_rrset_test_cases(Config) ->
                                     type_covered = Type
                                 }
                             } = RR,
-                            Dict
+                            Acc
                         ) ->
                             Key = {dns_domain:to_lower(Name), Class, Type},
-                            dict:append(Key, RR, Dict);
+                            maps:update_with(Key, fun(L) -> L ++ [RR] end, [RR], Acc);
                         (
                             #dns_rr{
                                 name = Name,
                                 class = Class,
                                 type = Type
                             } = RR,
-                            Dict
+                            Acc
                         ) ->
                             Key = {dns_domain:to_lower(Name), Class, Type},
-                            dict:append(Key, RR, Dict)
+                            maps:update_with(Key, fun(L) -> L ++ [RR] end, [RR], Acc)
                     end,
-                    dict:new(),
+                    #{},
                     RRs
                 ),
-                RRSets = [RRSet || {_, RRSet} <- dict:to_list(Dict)],
+                RRSets = maps:values(Map),
                 lists:map(
                     fun(TestRR) ->
                         {RRSigs, RRSet} = lists:partition(
