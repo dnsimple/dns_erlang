@@ -48,6 +48,8 @@ groups() ->
             ih_custom_hash_test,
             dsa_sign_verify_test,
             ecdsa_sign_verify_test,
+            ecdsa_p256_wire_format_test,
+            ecdsa_p384_wire_format_test,
             sample_keys,
             ed25519_basic_test,
             ed448_basic_test
@@ -527,6 +529,82 @@ ecdsa_sign_verify_test(Config) ->
     ?assert(
         dnssec:verify_rrsig(RRSig, [RR], [DNSKeyWithTag], #{now => 1500000})
     ).
+
+%% RFC 6605 §4: ECDSA P-256 signatures must be exactly 64 bytes (r || s, 32+32).
+%% Before the fix, crypto:sign returned DER which is variable-length (~70-72 bytes).
+ecdsa_p256_wire_format_test(_Config) ->
+    {Pub, Priv} = crypto:generate_key(ecdh, secp256r1),
+    %% Strip the 0x04 uncompressed point prefix for DNSKEY public_key format
+    <<4, PubRaw/binary>> = Pub,
+    RR = #dns_rr{
+        name = ~"test.example",
+        type = ?DNS_TYPE_A,
+        class = ?DNS_CLASS_IN,
+        ttl = 3600,
+        data = #dns_rrdata_a{ip = {1, 2, 3, 4}}
+    },
+    RRSig = dnssec:sign_rrset(
+        [RR],
+        ~"example",
+        12345,
+        ?DNS_ALG_ECDSAP256SHA256,
+        Priv,
+        #{inception => 1000000, expiration => 2000000}
+    ),
+    #dns_rr{data = #dns_rrdata_rrsig{signature = Sig}} = RRSig,
+    %% The signature MUST be exactly 64 bytes per RFC 6605
+    ?assertEqual(64, byte_size(Sig)),
+    %% Verify round-trip: the wire-format signature must verify correctly
+    DNSKey = dnssec:add_keytag_to_dnskey(#dns_rr{
+        name = ~"example",
+        type = ?DNS_TYPE_DNSKEY,
+        class = ?DNS_CLASS_IN,
+        ttl = 3600,
+        data = #dns_rrdata_dnskey{
+            flags = 256,
+            protocol = 3,
+            alg = ?DNS_ALG_ECDSAP256SHA256,
+            public_key = PubRaw
+        }
+    }),
+    ?assert(dnssec:verify_rrsig(RRSig, [RR], [DNSKey], #{now => 1500000})).
+
+%% RFC 6605 §4: ECDSA P-384 signatures must be exactly 96 bytes (r || s, 48+48).
+ecdsa_p384_wire_format_test(_Config) ->
+    {Pub, Priv} = crypto:generate_key(ecdh, secp384r1),
+    <<4, PubRaw/binary>> = Pub,
+    RR = #dns_rr{
+        name = ~"test.example",
+        type = ?DNS_TYPE_A,
+        class = ?DNS_CLASS_IN,
+        ttl = 3600,
+        data = #dns_rrdata_a{ip = {1, 2, 3, 4}}
+    },
+    RRSig = dnssec:sign_rrset(
+        [RR],
+        ~"example",
+        12345,
+        ?DNS_ALG_ECDSAP384SHA384,
+        Priv,
+        #{inception => 1000000, expiration => 2000000}
+    ),
+    #dns_rr{data = #dns_rrdata_rrsig{signature = Sig}} = RRSig,
+    %% The signature MUST be exactly 96 bytes per RFC 6605
+    ?assertEqual(96, byte_size(Sig)),
+    %% Verify round-trip
+    DNSKey = dnssec:add_keytag_to_dnskey(#dns_rr{
+        name = ~"example",
+        type = ?DNS_TYPE_DNSKEY,
+        class = ?DNS_CLASS_IN,
+        ttl = 3600,
+        data = #dns_rrdata_dnskey{
+            flags = 256,
+            protocol = 3,
+            alg = ?DNS_ALG_ECDSAP384SHA384,
+            public_key = PubRaw
+        }
+    }),
+    ?assert(dnssec:verify_rrsig(RRSig, [RR], [DNSKey], #{now => 1500000})).
 
 zone(Config) ->
     Samples = proplists:get_value(dnssec_samples, Config),
