@@ -19,13 +19,13 @@
 %% -------------------------------------------------------------------
 -module(dnssec).
 -moduledoc """
-The `dnssec` module exports functions used for generating NSEC responses,
+The `dnssec` module exports functions used for generating NSEC/NSEC3 records,
 signing and verifying RRSIGs, and adding keytags to DNSKEY records.
 
 For example, the `sign_rr/6` function can be given a collection of resource records,
 the signer name, keytag, signing algorithm, private key, and a collection of options
-and it will return a list of RRSIG records. Currently only DSA and RSA algorithms are
-supported for signing RRSETs.
+and it will return a list of RRSIG records. Supported signing algorithms include
+DSA, RSA (SHA1/SHA256/SHA512), ECDSA (P-256/P-384), Ed25519, and Ed448.
 """.
 
 %% API
@@ -39,7 +39,7 @@ supported for signing RRSETs.
 -export([ih/4]).
 
 -include_lib("dns_erlang/include/dns.hrl").
--include_lib("dns_erlang/include/DNS-ASN1.hrl").
+-include_lib("public_key/include/public_key.hrl").
 
 -export_type([
     sigalg/0,
@@ -60,14 +60,22 @@ supported for signing RRSETs.
     nsec3/0
 ]).
 
+-doc "DS (Delegation Signer) resource record data.".
 -type ds() :: #dns_rrdata_ds{}.
+-doc "DNSKEY resource record data.".
 -type dnskey() :: #dns_rrdata_dnskey{}.
+-doc "RRSIG resource record data.".
 -type rrsig() :: #dns_rrdata_rrsig{}.
+-doc "NSEC resource record data.".
 -type nsec() :: #dns_rrdata_nsec{}.
+-doc "NSEC3 resource record data.".
 -type nsec3() :: #dns_rrdata_nsec3{}.
 
-%% this isn't a redefinition of dns:alg() - the algorithms here may only be used
-%% for signing zones. dns:alg() may contain other algorithms.
+-doc """
+DNSSEC signing algorithm identifier.
+
+Unlike `t:dns:alg/0`, this type is restricted to algorithms valid for zone signing.
+""".
 -type sigalg() ::
     ?DNS_ALG_DSA
     | ?DNS_ALG_NSEC3DSA
@@ -79,15 +87,25 @@ supported for signing RRSETs.
     | ?DNS_ALG_ECDSAP384SHA384
     | ?DNS_ALG_ED25519
     | ?DNS_ALG_ED448.
+-doc "NSEC3 hash algorithm identifier (currently only SHA-1).".
 -type nsec3_hashalg() :: ?DNSSEC_NSEC3_ALG_SHA1.
+-doc "Custom hash function for use with `ih/4`.".
 -type nsec3_hashalg_fun() :: fun((iodata()) -> binary()).
+-doc "NSEC3 salt value.".
 -type nsec3_salt() :: binary().
+-doc "NSEC3 iteration count.".
 -type nsec3_iterations() :: non_neg_integer().
+-doc "Options for `gen_nsec/4`.".
 -type gen_nsec_opts() :: #{base_types => [dns:type()]}.
+-doc "Options for `gen_nsec3/2`.".
 -type gen_nsec3_opts() :: gen_nsec_opts().
+-doc "DNSKEY key tag (RFC 4034 Appendix B).".
 -type keytag() :: integer().
+-doc "Cryptographic key material for signing or verification.".
 -type key() :: [binary()] | binary().
+-doc "Options for `sign_rr/6` and `sign_rrset/6`.".
 -type sign_rr_opts() :: #{inception => dns:unix_time(), expiration => dns:unix_time()}.
+-doc "Options for `verify_rrsig/4`.".
 -type verify_rrsig_opts() :: #{now => dns:unix_time()}.
 
 -define(RSASHA1_PREFIX,
@@ -297,6 +315,7 @@ build_rrmap_nonterm(ZoneName, [{Name, Class} | Rest], Map) when is_binary(ZoneNa
     NewMap = add_nonterm_ancestors(Class, NameAncs, Map),
     build_rrmap_nonterm(ZoneName, Rest, NewMap).
 
+-spec add_nonterm_ancestors(dns:class(), [dns:dname()], rrtype_map()) -> rrtype_map().
 add_nonterm_ancestors(_, [], Map) ->
     Map;
 add_nonterm_ancestors(Class, [Name | Rest], Map) ->
@@ -420,8 +439,8 @@ sign_rrset(
 -spec sign(sigalg(), binary(), key()) -> binary().
 sign(Alg, BaseSigInput, Key) when Alg =:= ?DNS_ALG_DSA orelse Alg =:= ?DNS_ALG_NSEC3DSA ->
     %% Key must be [P, Q, G, X] as integers (crypto key format).
-    Asn1Sig = crypto:sign(dss, sha, BaseSigInput, Key),
-    {R, S} = decode_asn1_dss_sig(Asn1Sig),
+    DerSig = crypto:sign(dss, sha, BaseSigInput, Key),
+    #'Dss-Sig-Value'{r = R, s = S} = public_key:der_decode('Dss-Sig-Value', DerSig),
     [P, _Q, _G, _Y] = Key,
     M = byte_size(binary:encode_unsigned(P)),
     T = (M - 64) div 8,
@@ -499,7 +518,7 @@ verify_rrsig(#dns_rr{type = ?DNS_TYPE_RRSIG, data = Data}, RRs, RRDNSKey, Opts) 
 -spec verify(sigalg(), key(), binary(), binary()) -> boolean().
 verify(Alg, Key, Signature, SigInput) when Alg =:= ?DNS_ALG_DSA orelse Alg =:= ?DNS_ALG_NSEC3DSA ->
     <<_T, R:20/unit:8, S:20/unit:8>> = Signature,
-    AsnSig = encode_asn1_dss_sig(R, S),
+    AsnSig = public_key:der_encode('Dss-Sig-Value', #'Dss-Sig-Value'{r = R, s = S}),
     %% DNSKEY public_key from decode is [P, Q, G, Y] as binaries; normalize to integers for crypto.
     KeyInts = dsa_pubkey_to_integers(Key),
     crypto:verify(dss, sha, SigInput, AsnSig, KeyInts);
@@ -616,12 +635,14 @@ add_keytag_to_dnskey(
 ) ->
     add_keytag_to_key_rr(RR, Data, ?DNS_TYPE_DNSKEY).
 
+-doc "Generates and appends a CDNSKEY records key tag.".
 -spec add_keytag_to_cdnskey(dns:rr()) -> dns:rr().
 add_keytag_to_cdnskey(
     #dns_rr{type = ?DNS_TYPE_CDNSKEY, data = #dns_rrdata_cdnskey{} = Data} = RR
 ) ->
     add_keytag_to_key_rr(RR, Data, ?DNS_TYPE_CDNSKEY).
 
+-spec add_keytag_to_key_rr(dns:rr(), dns:rrdata(), dns:type()) -> dns:rr().
 add_keytag_to_key_rr(RR, Data, Type) ->
     KeyBin = dns_encode:encode_rrdata(?DNS_CLASS_IN, Data),
     NewData = dns_decode:decode_rrdata(KeyBin, ?DNS_CLASS_IN, Type),
@@ -766,22 +787,12 @@ do_count_labels(List) when is_list(List) ->
     length(List).
 
 %% Convert DNSKEY public_key [P, Q, G, Y] (binaries from decode) to integers for crypto:verify.
+-spec dsa_pubkey_to_integers([binary() | integer()]) -> [integer()].
 dsa_pubkey_to_integers([P, Q, G, Y]) ->
     [dsa_elem_to_int(X) || X <- [P, Q, G, Y]].
 
+-spec dsa_elem_to_int(binary() | integer()) -> integer().
 dsa_elem_to_int(B) when is_binary(B) ->
     binary:decode_unsigned(B);
 dsa_elem_to_int(I) when is_integer(I) ->
     I.
-
-%% Support RFC2536
--spec decode_asn1_dss_sig(binary()) -> {integer(), integer()}.
-decode_asn1_dss_sig(Bin) when is_binary(Bin) ->
-    {ok, #'DSS-Sig'{r = R, s = S}} = 'DNS-ASN1':decode('DSS-Sig', Bin),
-    {R, S}.
-
--spec encode_asn1_dss_sig(non_neg_integer(), non_neg_integer()) -> binary().
-encode_asn1_dss_sig(R, S) when is_integer(R) andalso is_integer(S) ->
-    Rec = #'DSS-Sig'{r = R, s = S},
-    {ok, List} = 'DNS-ASN1':encode('DSS-Sig', Rec),
-    iolist_to_binary(List).
