@@ -18,6 +18,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Refactored `dnssec` to use the newer `dns_domain` API internally in a more efficient way
 - Incremented test coverage for DNSSEC
 
+### Removed
+
+- Internal ASN1 parser, as it is supported by OTP's `public_key` module.
+
 ## v5.0.5
 
 ### Fixed
