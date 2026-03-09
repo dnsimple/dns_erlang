@@ -38,11 +38,6 @@ supported for signing RRSETs.
 -export([canonical_rrdata_form/1]).
 -export([ih/4]).
 
-%% Private
--ifdef(TEST).
--export([normalise_dname/1]).
--endif.
-
 -include_lib("dns_erlang/include/dns.hrl").
 -include_lib("dns_erlang/include/DNS-ASN1.hrl").
 
@@ -57,8 +52,20 @@ supported for signing RRSETs.
     sign_rr_opts/0,
     verify_rrsig_opts/0,
     keytag/0,
-    key/0
+    key/0,
+    ds/0,
+    dnskey/0,
+    rrsig/0,
+    nsec/0,
+    nsec3/0
 ]).
+
+-type ds() :: #dns_rrdata_ds{}.
+-type dnskey() :: #dns_rrdata_dnskey{}.
+-type rrsig() :: #dns_rrdata_rrsig{}.
+-type nsec() :: #dns_rrdata_nsec{}.
+-type nsec3() :: #dns_rrdata_nsec3{}.
+
 %% this isn't a redefinition of dns:alg() - the algorithms here may only be used
 %% for signing zones. dns:alg() may contain other algorithms.
 -type sigalg() ::
@@ -121,9 +128,9 @@ gen_nsec(ZoneName, RR, TTL) ->
 -doc "Generate NSEC records.".
 -spec gen_nsec(dns:dname(), [dns:rr()], dns:ttl(), gen_nsec_opts()) -> [dns:rr()].
 gen_nsec(ZoneNameM, RR, TTL, Opts) ->
-    ZoneName = normalise_dname(ZoneNameM),
+    ZoneName = dns_domain:to_lower(ZoneNameM),
     BaseTypes = maps:get(base_types, Opts, [?DNS_TYPE_NSEC, ?DNS_TYPE_RRSIG]),
-    Map = build_rrmap(RR, BaseTypes),
+    Map = build_rrmap_gbt(RR, BaseTypes),
     Unsorted = [
         #dns_rr{
             name = Name,
@@ -132,7 +139,7 @@ gen_nsec(ZoneNameM, RR, TTL, Opts) ->
             ttl = TTL,
             data = #dns_rrdata_nsec{next_dname = Name, types = Types}
         }
-     || {{Name, Class}, Types} <- Map
+     || {Name, Class} := Types <- Map
     ],
     Sorted = name_order(Unsorted),
     add_next_dname([], Sorted, ZoneName).
@@ -180,7 +187,6 @@ gen_nsec3(RRs, Opts) ->
             end
     end.
 
--doc "Generate NSEC3 records.".
 -spec gen_nsec3(
     [dns:rr()],
     dns:dname(),
@@ -194,9 +200,9 @@ gen_nsec3(RRs, Opts) ->
 gen_nsec3(RRs, ZoneName, Alg, Salt, Iterations, TTL, Class, Opts) ->
     BaseTypes = maps:get(base_types, Opts, [?DNS_TYPE_RRSIG]),
     Map = build_rrmap(RRs, BaseTypes, ZoneName),
-    Unsorted = lists:foldl(
+    Unsorted = maps:fold(
         fun
-            ({{Name, SClass}, Types}, Acc) when SClass =:= Class ->
+            ({Name, SClass}, Types, Acc) when SClass =:= Class ->
                 DName = dns_domain:to_wire(Name),
                 HashedName = ih(Alg, Salt, DName, Iterations),
                 HexdHashName = base32:encode(HashedName, [hex, nopad]),
@@ -217,7 +223,7 @@ gen_nsec3(RRs, ZoneName, Alg, Salt, Iterations, TTL, Class, Opts) ->
                     data = Data
                 },
                 [{HashedName, NewRR} | Acc];
-            (_, Acc) ->
+            (_, _, Acc) ->
                 Acc
         end,
         [],
@@ -275,43 +281,40 @@ add_next_hash(
 normalise_rr(#dns_rr{name = Name} = RR) ->
     RR#dns_rr{name = dns_domain:to_lower(Name)}.
 
--spec build_rrmap([dns:rr()], [integer()]) -> [{_, _}].
-build_rrmap(RR, BaseTypes) ->
-    Base = build_rrmap_gbt(RR, BaseTypes),
-    maps:to_list(Base).
+-type rrtype_map() :: #{{dns:dname(), dns:class()} => [integer()]}.
 
--spec build_rrmap([dns:rr()], [integer()], _) -> [{_, _}].
+-spec build_rrmap([dns:rr()], [integer()], dns:dname()) -> rrtype_map().
 build_rrmap(RR, BaseTypes, ZoneName) ->
     Base = build_rrmap_gbt(RR, BaseTypes),
-    WithNonTerm = build_rrmap_nonterm(ZoneName, maps:keys(Base), Base),
-    maps:to_list(WithNonTerm).
+    build_rrmap_nonterm(ZoneName, maps:keys(Base), Base).
 
--spec build_rrmap_nonterm(_, [{dns:dname(), dns:class()} | binary()], #{
-    {dns:dname(), dns:class()} => [integer()]
-}) ->
-    #{{dns:dname(), dns:class()} => [integer()]}.
+-spec build_rrmap_nonterm(dns:dname(), [{dns:dname(), dns:class()} | binary()], rrtype_map()) ->
+    rrtype_map().
 build_rrmap_nonterm(_, [], Map) ->
     Map;
 build_rrmap_nonterm(ZoneName, [{Name, Class} | Rest], Map) when is_binary(ZoneName) ->
     NameAncs = name_ancestors(Name, ZoneName),
-    NewMap = build_rrmap_nonterm(Class, NameAncs, Map),
-    build_rrmap_nonterm(ZoneName, Rest, NewMap);
-build_rrmap_nonterm(Class, [Name | Rest], Map) ->
-    Key = {Name, Class},
-    case maps:is_key(Key, Map) of
-        true ->
-            Map;
-        false ->
-            NewMap = Map#{Key => []},
-            build_rrmap_nonterm(Class, Rest, NewMap)
-    end.
+    NewMap = add_nonterm_ancestors(Class, NameAncs, Map),
+    build_rrmap_nonterm(ZoneName, Rest, NewMap).
 
--spec build_rrmap_gbt([dns:rr()], [integer()]) -> #{{dns:dname(), dns:class()} => [integer()]}.
+add_nonterm_ancestors(_, [], Map) ->
+    Map;
+add_nonterm_ancestors(Class, [Name | Rest], Map) ->
+    Key = {Name, Class},
+    NewMap =
+        case maps:is_key(Key, Map) of
+            true ->
+                Map;
+            false ->
+                Map#{Key => []}
+        end,
+    add_nonterm_ancestors(Class, Rest, NewMap).
+
+-spec build_rrmap_gbt([dns:rr()], [dns:type()]) -> rrtype_map().
 build_rrmap_gbt(RR, BaseTypes) ->
     build_rrmap_gbt(RR, BaseTypes, #{}).
 
--spec build_rrmap_gbt([dns:rr()], [integer()], #{{dns:dname(), dns:class()} => [integer()]}) ->
-    #{{dns:dname(), dns:class()} => [integer()]}.
+-spec build_rrmap_gbt([dns:rr()], [dns:type()], rrtype_map()) -> rrtype_map().
 build_rrmap_gbt([], _BaseTypes, Map) ->
     Map;
 build_rrmap_gbt([#dns_rr{} = RR | Rest], BaseTypes, Map) ->
@@ -339,7 +342,7 @@ rrs_to_rrsets(RR) when is_list(RR) ->
 -spec rrs_to_rrsets([dns:rr()], #{tree_key() => dns:ttl()}, #{tree_key() => [dns:rrdata()]}) ->
     [[dns:rr()]].
 rrs_to_rrsets([], TTLMap, RRSets) ->
-    [rrs_to_rrsets(TTLMap, RRSet) || RRSet <- maps:to_list(RRSets)];
+    [finalise_rrs_to_rrsets(TTLMap, Key, Datas) || Key := Datas <- RRSets];
 rrs_to_rrsets([#dns_rr{} = RR | RRs], TTLMap, RRSets) ->
     #dns_rr{
         name = Name,
@@ -353,9 +356,9 @@ rrs_to_rrsets([#dns_rr{} = RR | RRs], TTLMap, RRSets) ->
     NewRRSets = maps:update_with(Key, fun(OldData) -> [Data | OldData] end, [Data], RRSets),
     rrs_to_rrsets(RRs, NewTTLMap, NewRRSets).
 
--spec rrs_to_rrsets(#{tree_key() => dns:ttl()}, {tree_key(), [dns:rrdata()]}) ->
+-spec finalise_rrs_to_rrsets(#{tree_key() => dns:ttl()}, tree_key(), [dns:rrdata()]) ->
     [dns:rr()].
-rrs_to_rrsets(TTLMap, {{Name, Class, Type} = Key, Datas}) ->
+finalise_rrs_to_rrsets(TTLMap, {Name, Class, Type} = Key, Datas) ->
     TTL = maps:get(Key, TTLMap),
     [
         #dns_rr{
@@ -403,14 +406,7 @@ sign_rrset(
     Incept = maps:get(inception, Opts, Now),
     %% 1 year
     Expire = maps:get(expiration, Opts, Now + ?SECS_IN_YEAR),
-    {Data0, BaseSigInput} = build_sig_input(
-        SignersName,
-        KeyTag,
-        Alg,
-        Incept,
-        Expire,
-        RRs
-    ),
+    {Data0, BaseSigInput} = build_sig_input(RRs, SignersName, KeyTag, Alg, Incept, Expire),
     Signature = sign(Alg, BaseSigInput, Key),
     Data = Data0#dns_rrdata_rrsig{signature = Signature},
     #dns_rr{
@@ -423,10 +419,12 @@ sign_rrset(
 
 -spec sign(sigalg(), binary(), key()) -> binary().
 sign(Alg, BaseSigInput, Key) when Alg =:= ?DNS_ALG_DSA orelse Alg =:= ?DNS_ALG_NSEC3DSA ->
+    %% Key must be [P, Q, G, X] as integers (crypto key format).
     Asn1Sig = crypto:sign(dss, sha, BaseSigInput, Key),
     {R, S} = decode_asn1_dss_sig(Asn1Sig),
     [P, _Q, _G, _Y] = Key,
-    T = (byte_size(P) - 64) div 8,
+    M = byte_size(binary:encode_unsigned(P)),
+    T = (M - 64) div 8,
     <<T, R:20/unit:8, S:20/unit:8>>;
 sign(Alg, BaseSigInput, Key) when
     Alg =:= ?DNS_ALG_NSEC3RSASHA1 orelse
@@ -476,7 +474,7 @@ verify_rrsig(#dns_rr{type = ?DNS_TYPE_RRSIG, data = Data}, RRs, RRDNSKey, Opts) 
             }
         } <- RRDNSKey,
         Alg =:= SigAlg,
-        normalise_dname(Name) =:= normalise_dname(SignersName)
+        dns_domain:to_lower(Name) =:= dns_domain:to_lower(SignersName)
     ],
     Keys =
         case lists:keytake(SigKeyTag, 1, Keys0) of
@@ -484,31 +482,27 @@ verify_rrsig(#dns_rr{type = ?DNS_TYPE_RRSIG, data = Data}, RRs, RRDNSKey, Opts) 
             {value, Match, RemKeys} -> [Match | RemKeys]
         end,
     case Now of
-        Now when Incept > Now -> false;
-        Now when Expire < Now -> false;
+        Now when Now < Incept; Expire < Now -> false;
         Now ->
             {_SigTuple, SigInput} = build_sig_input(
+                RRs,
                 SignersName,
                 SigKeyTag,
                 SigAlg,
                 Incept,
                 Expire,
-                RRs,
                 OTTL
             ),
             lists:any(fun({_KeyTag, Alg, Key}) -> verify(Alg, Key, Signature, SigInput) end, Keys)
     end.
 
 -spec verify(sigalg(), key(), binary(), binary()) -> boolean().
-verify(Alg, Key, Signature, SigInput) when
-    Alg =:= ?DNS_ALG_DSA orelse
-        Alg =:= ?DNS_ALG_NSEC3DSA
-->
+verify(Alg, Key, Signature, SigInput) when Alg =:= ?DNS_ALG_DSA orelse Alg =:= ?DNS_ALG_NSEC3DSA ->
     <<_T, R:20/unit:8, S:20/unit:8>> = Signature,
     AsnSig = encode_asn1_dss_sig(R, S),
-    AsnSigSize = byte_size(AsnSig),
-    AsnBin = <<AsnSigSize:32, AsnSig/binary>>,
-    crypto:verify(dss, sha, SigInput, AsnBin, Key);
+    %% DNSKEY public_key from decode is [P, Q, G, Y] as binaries; normalize to integers for crypto.
+    KeyInts = dsa_pubkey_to_integers(Key),
+    crypto:verify(dss, sha, SigInput, AsnSig, KeyInts);
 verify(Alg, Key, Signature, SigInput) when
     Alg =:= ?DNS_ALG_NSEC3RSASHA1 orelse
         Alg =:= ?DNS_ALG_RSASHA1 orelse
@@ -536,41 +530,34 @@ verify(?DNS_ALG_ED25519, Key, Signature, SigInput) ->
 verify(?DNS_ALG_ED448, Key, Signature, SigInput) ->
     crypto:verify(eddsa, none, SigInput, Signature, [Key, ed448]).
 
--spec build_sig_input(binary(), integer(), dns:alg(), integer(), integer(), [dns:rr(), ...]) ->
+-spec build_sig_input([dns:rr(), ...], dns:dname(), keytag(), dns:alg(), integer(), integer()) ->
     {dns:rrdata_rrsig(), binary()}.
 build_sig_input(
+    [#dns_rr{ttl = TTL} | _] = RRs,
     SignersName,
     KeyTag,
     Alg,
     Incept,
-    Expire,
-    [#dns_rr{ttl = TTL} | _] = RRs
+    Expire
 ) ->
-    build_sig_input(SignersName, KeyTag, Alg, Incept, Expire, RRs, TTL).
+    build_sig_input(RRs, SignersName, KeyTag, Alg, Incept, Expire, TTL).
 
 -spec build_sig_input(
-    binary(), integer(), dns:alg(), integer(), integer(), [dns:rr(), ...], non_neg_integer()
+    [dns:rr(), ...], dns:dname(), keytag(), dns:alg(), integer(), integer(), non_neg_integer()
 ) ->
     {dns:rrdata_rrsig(), binary()}.
 build_sig_input(
+    [#dns_rr{name = Name, class = Class, type = Type, ttl = TTL} | _] = RRs,
     SignersName,
     KeyTag,
     Alg,
     Incept,
     Expire,
-    [
-        #dns_rr{
-            name = Name,
-            class = Class,
-            type = Type,
-            ttl = TTL
-        }
-        | _
-    ] = RRs,
     TTL
 ) when is_integer(Alg) ->
+    LName = dns_domain:to_lower(Name),
     Datas = lists:sort([canonical_rrdata_bin(RR) || RR <- RRs]),
-    NameBin = dns_domain:to_wire(dns_domain:to_lower(Name)),
+    NameBin = dns_domain:to_wire(LName),
     RecordBase = <<NameBin/binary, Type:16, Class:16, TTL:32>>,
     RRSetBin = [
         <<RecordBase/binary, (byte_size(Data)):16, Data/binary>>
@@ -579,7 +566,7 @@ build_sig_input(
     RRSigData = #dns_rrdata_rrsig{
         type_covered = Type,
         alg = Alg,
-        labels = count_labels(Name),
+        labels = count_labels(LName),
         original_ttl = TTL,
         inception = Incept,
         expiration = Expire,
@@ -609,9 +596,7 @@ preprocess_sig_input(?DNS_ALG_ECDSAP256SHA256, SigInput) ->
     crypto:hash(sha256, SigInput);
 preprocess_sig_input(?DNS_ALG_ECDSAP384SHA384, SigInput) ->
     crypto:hash(sha384, SigInput);
-preprocess_sig_input(?DNS_ALG_ED25519, SigInput) ->
-    iolist_to_binary(SigInput);
-preprocess_sig_input(?DNS_ALG_ED448, SigInput) ->
+preprocess_sig_input(Alg, SigInput) when Alg =:= ?DNS_ALG_ED25519 orelse Alg =:= ?DNS_ALG_ED448 ->
     iolist_to_binary(SigInput).
 
 -spec choose_sha_prefix_and_type(sigalg()) -> {binary(), sha | sha256 | sha512}.
@@ -627,24 +612,19 @@ choose_sha_prefix_and_type(?DNS_ALG_RSASHA512) ->
 -doc "Generates and appends a DNS Key records key tag.".
 -spec add_keytag_to_dnskey(dns:rr()) -> dns:rr().
 add_keytag_to_dnskey(
-    #dns_rr{
-        type = ?DNS_TYPE_DNSKEY,
-        data = #dns_rrdata_dnskey{} = Data
-    } = RR
+    #dns_rr{type = ?DNS_TYPE_DNSKEY, data = #dns_rrdata_dnskey{} = Data} = RR
 ) ->
-    KeyBin = dns_encode:encode_rrdata(?DNS_CLASS_IN, Data),
-    NewData = dns_decode:decode_rrdata(KeyBin, ?DNS_CLASS_IN, ?DNS_TYPE_DNSKEY),
-    RR#dns_rr{data = NewData}.
+    add_keytag_to_key_rr(RR, Data, ?DNS_TYPE_DNSKEY).
 
 -spec add_keytag_to_cdnskey(dns:rr()) -> dns:rr().
 add_keytag_to_cdnskey(
-    #dns_rr{
-        type = ?DNS_TYPE_CDNSKEY,
-        data = #dns_rrdata_cdnskey{} = Data
-    } = RR
+    #dns_rr{type = ?DNS_TYPE_CDNSKEY, data = #dns_rrdata_cdnskey{} = Data} = RR
 ) ->
+    add_keytag_to_key_rr(RR, Data, ?DNS_TYPE_CDNSKEY).
+
+add_keytag_to_key_rr(RR, Data, Type) ->
     KeyBin = dns_encode:encode_rrdata(?DNS_CLASS_IN, Data),
-    NewData = dns_decode:decode_rrdata(KeyBin, ?DNS_CLASS_IN, ?DNS_TYPE_CDNSKEY),
+    NewData = dns_decode:decode_rrdata(KeyBin, ?DNS_CLASS_IN, Type),
     RR#dns_rr{data = NewData}.
 
 -spec rrsig_to_digestable(dns:rrdata_rrsig()) -> binary().
@@ -663,6 +643,10 @@ canonical_rrdata_form(#dns_rrdata_cname{dname = DName} = Data) ->
     Data#dns_rrdata_cname{dname = dns_domain:to_lower(DName)};
 canonical_rrdata_form(#dns_rrdata_dname{dname = DName} = Data) ->
     Data#dns_rrdata_dname{dname = dns_domain:to_lower(DName)};
+canonical_rrdata_form(#dns_rrdata_dsync{target = Target} = Data) ->
+    Data#dns_rrdata_dsync{target = dns_domain:to_lower(Target)};
+canonical_rrdata_form(#dns_rrdata_ipseckey{gateway = Gateway} = Data) when is_binary(Gateway) ->
+    Data#dns_rrdata_ipseckey{gateway = dns_domain:to_lower(Gateway)};
 canonical_rrdata_form(#dns_rrdata_kx{exchange = Exchange} = Data) ->
     Data#dns_rrdata_kx{exchange = dns_domain:to_lower(Exchange)};
 canonical_rrdata_form(#dns_rrdata_mb{madname = MaDname} = Data) ->
@@ -709,17 +693,20 @@ canonical_rrdata_form(#dns_rrdata_soa{mname = Mname, rname = Rname} = Data) ->
     };
 canonical_rrdata_form(#dns_rrdata_srv{target = Target} = Data) ->
     Data#dns_rrdata_srv{target = dns_domain:to_lower(Target)};
+canonical_rrdata_form(#dns_rrdata_svcb{target_name = TargetName} = Data) ->
+    Data#dns_rrdata_svcb{target_name = dns_domain:to_lower(TargetName)};
+canonical_rrdata_form(#dns_rrdata_https{target_name = TargetName} = Data) ->
+    Data#dns_rrdata_https{target_name = dns_domain:to_lower(TargetName)};
 canonical_rrdata_form(X) ->
     X.
 
--spec name_ancestors(iodata(), iodata()) -> binary() | [binary()].
+-spec name_ancestors(dns:dname(), dns:dname()) -> [binary()].
 name_ancestors(Name, ZoneName) ->
-    NameLwr = dns_domain:to_lower(iolist_to_binary(Name)),
-    ZoneNameLwr = dns_domain:to_lower(iolist_to_binary(ZoneName)),
+    NameLwr = dns_domain:to_lower(Name),
+    ZoneNameLwr = dns_domain:to_lower(ZoneName),
     gen_name_ancestors(NameLwr, ZoneNameLwr).
 
--spec gen_name_ancestors(binary() | [binary()], binary() | [binary(), ...]) ->
-    binary() | [binary()].
+-spec gen_name_ancestors(binary() | [binary()], binary() | [binary(), ...]) -> [binary()].
 gen_name_ancestors(ZoneName, ZoneName) when is_binary(ZoneName) -> [];
 gen_name_ancestors(Name, ZoneName) when
     is_binary(Name) andalso
@@ -755,8 +742,8 @@ name_order(X, X) ->
 name_order(#dns_rr{name = X}, #dns_rr{name = X}) ->
     true;
 name_order(#dns_rr{name = A}, #dns_rr{name = B}) ->
-    LabelsA = lists:reverse(normalise_dname_to_labels(A)),
-    LabelsB = lists:reverse(normalise_dname_to_labels(B)),
+    LabelsA = lists:reverse(dns_domain:split(A)),
+    LabelsB = lists:reverse(dns_domain:split(B)),
     name_order(LabelsA, LabelsB);
 name_order([X | A], [X | B]) ->
     name_order(A, B);
@@ -769,7 +756,7 @@ name_order([X | _], [Y | _]) ->
 
 -spec count_labels(binary()) -> non_neg_integer().
 count_labels(Name) ->
-    Labels = normalise_dname_to_labels(Name),
+    Labels = dns_domain:split(Name),
     do_count_labels(Labels).
 
 -spec do_count_labels([binary()]) -> non_neg_integer().
@@ -778,14 +765,16 @@ do_count_labels([~"*" | Labels]) ->
 do_count_labels(List) when is_list(List) ->
     length(List).
 
--spec normalise_dname(iodata()) -> binary().
-normalise_dname(Name) ->
-    dns_domain:to_lower(iolist_to_binary(Name)).
+%% Convert DNSKEY public_key [P, Q, G, Y] (binaries from decode) to integers for crypto:verify.
+dsa_pubkey_to_integers([P, Q, G, Y]) ->
+    [dsa_elem_to_int(X) || X <- [P, Q, G, Y]].
 
--spec normalise_dname_to_labels(binary()) -> [binary()].
-normalise_dname_to_labels(Name) ->
-    dns_domain:split(normalise_dname(Name)).
+dsa_elem_to_int(B) when is_binary(B) ->
+    binary:decode_unsigned(B);
+dsa_elem_to_int(I) when is_integer(I) ->
+    I.
 
+%% Support RFC2536
 -spec decode_asn1_dss_sig(binary()) -> {integer(), integer()}.
 decode_asn1_dss_sig(Bin) when is_binary(Bin) ->
     {ok, #'DSS-Sig'{r = R, s = S}} = 'DNS-ASN1':decode('DSS-Sig', Bin),
