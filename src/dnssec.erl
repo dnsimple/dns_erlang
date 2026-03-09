@@ -438,7 +438,7 @@ sign_rrset(
 
 -spec sign(sigalg(), binary(), key()) -> binary().
 sign(Alg, BaseSigInput, Key) when Alg =:= ?DNS_ALG_DSA orelse Alg =:= ?DNS_ALG_NSEC3DSA ->
-    %% Key must be [P, Q, G, X] as integers (crypto key format).
+    %% RFC2536: Key must be [P, Q, G, X] as integers (crypto key format).
     DerSig = crypto:sign(dss, sha, BaseSigInput, Key),
     #'Dss-Sig-Value'{r = R, s = S} = public_key:der_decode('Dss-Sig-Value', DerSig),
     [P, _Q, _G, _Y] = Key,
@@ -459,9 +459,13 @@ sign(Alg, BaseSigInput, Key) when
         [{rsa_padding, rsa_pkcs1_padding}]
     );
 sign(?DNS_ALG_ECDSAP256SHA256, BaseSigInput, Key) ->
-    crypto:sign(ecdsa, sha256, BaseSigInput, [Key, secp256r1]);
+    DerSig = crypto:sign(ecdsa, sha256, BaseSigInput, [Key, secp256r1]),
+    %% RFC6605: keys must be r||s of 32 octets each
+    ecdsa_der_to_wire(DerSig, 32);
 sign(?DNS_ALG_ECDSAP384SHA384, BaseSigInput, Key) ->
-    crypto:sign(ecdsa, sha384, BaseSigInput, [Key, secp384r1]);
+    DerSig = crypto:sign(ecdsa, sha384, BaseSigInput, [Key, secp384r1]),
+    %% RFC6605: keys must be r||s of 48 octets each
+    ecdsa_der_to_wire(DerSig, 48);
 sign(?DNS_ALG_ED25519, BaseSigInput, Key) ->
     crypto:sign(eddsa, none, BaseSigInput, [Key, ed25519]);
 sign(?DNS_ALG_ED448, BaseSigInput, Key) ->
@@ -541,9 +545,11 @@ verify(Alg, Key, Signature, SigInput) when
         error:decrypt_failed -> false
     end;
 verify(?DNS_ALG_ECDSAP256SHA256, Key, Signature, SigInput) ->
-    crypto:verify(ecdsa, sha256, SigInput, Signature, [<<4, Key/binary>>, secp256r1]);
+    DerSig = ecdsa_wire_to_der(Signature, 32),
+    crypto:verify(ecdsa, sha256, SigInput, DerSig, [<<4, Key/binary>>, secp256r1]);
 verify(?DNS_ALG_ECDSAP384SHA384, Key, Signature, SigInput) ->
-    crypto:verify(ecdsa, sha384, SigInput, Signature, [<<4, Key/binary>>, secp384r1]);
+    DerSig = ecdsa_wire_to_der(Signature, 48),
+    crypto:verify(ecdsa, sha384, SigInput, DerSig, [<<4, Key/binary>>, secp384r1]);
 verify(?DNS_ALG_ED25519, Key, Signature, SigInput) ->
     crypto:verify(eddsa, none, SigInput, Signature, [Key, ed25519]);
 verify(?DNS_ALG_ED448, Key, Signature, SigInput) ->
@@ -796,3 +802,26 @@ dsa_elem_to_int(B) when is_binary(B) ->
     binary:decode_unsigned(B);
 dsa_elem_to_int(I) when is_integer(I) ->
     I.
+
+%% RFC 6605 §4: ECDSA signatures on the wire are r || s, each padded to FieldSize bytes.
+%% crypto:sign returns DER-encoded ASN.1; crypto:verify expects DER-encoded ASN.1.
+-spec ecdsa_der_to_wire(binary(), pos_integer()) -> binary().
+ecdsa_der_to_wire(DerSig, FieldSize) ->
+    #'ECDSA-Sig-Value'{r = R, s = S} = public_key:der_decode('ECDSA-Sig-Value', DerSig),
+    RBin = pad_unsigned(binary:encode_unsigned(R), FieldSize),
+    SBin = pad_unsigned(binary:encode_unsigned(S), FieldSize),
+    <<RBin/binary, SBin/binary>>.
+
+-spec ecdsa_wire_to_der(binary(), pos_integer()) -> binary().
+ecdsa_wire_to_der(WireSig, FieldSize) ->
+    <<RBin:FieldSize/binary, SBin:FieldSize/binary>> = WireSig,
+    R = binary:decode_unsigned(RBin),
+    S = binary:decode_unsigned(SBin),
+    public_key:der_encode('ECDSA-Sig-Value', #'ECDSA-Sig-Value'{r = R, s = S}).
+
+-spec pad_unsigned(binary(), pos_integer()) -> binary().
+pad_unsigned(Bin, Size) when byte_size(Bin) >= Size ->
+    Bin;
+pad_unsigned(Bin, Size) ->
+    Pad = Size - byte_size(Bin),
+    <<0:(Pad * 8), Bin/binary>>.
