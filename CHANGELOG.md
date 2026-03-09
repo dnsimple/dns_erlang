@@ -7,6 +7,17 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## main
 
+## v5.0.6
+
+### Added
+
+- `dnssec` exports record types it works over as types.
+
+### Fixed
+
+- Refactored `dnssec` to use the newer `dns_domain` API internally in a more efficient way
+- Incremented test coverage for DNSSEC
+
 ## v5.0.5
 
 ### Fixed
