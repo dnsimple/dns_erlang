@@ -464,7 +464,7 @@ sign(?DNS_ALG_ECDSAP256SHA256, BaseSigInput, Key) ->
     ecdsa_der_to_wire(DerSig, 32);
 sign(?DNS_ALG_ECDSAP384SHA384, BaseSigInput, Key) ->
     DerSig = crypto:sign(ecdsa, sha384, BaseSigInput, [Key, secp384r1]),
-    %% RFC6605: keys must be r||s of 32 octets each
+    %% RFC6605: keys must be r||s of 48 octets each
     ecdsa_der_to_wire(DerSig, 48);
 sign(?DNS_ALG_ED25519, BaseSigInput, Key) ->
     crypto:sign(eddsa, none, BaseSigInput, [Key, ed25519]);
