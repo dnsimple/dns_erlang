@@ -46,7 +46,6 @@ dns_erlang is an Erlang DNS message library supporting most common record types,
 
 **Generated Files (excluded from formatting/linting):**
 
-- `src/DNS-ASN1.erl`, `include/DNS-ASN1.hrl` - ASN.1 generated code
 - `src/dns_zone_lexer.erl` - Generated from dns_zone_lexer.xrl
 - `src/dns_zone_parser.erl` - Generated from dns_zone_parser.yrl
 
