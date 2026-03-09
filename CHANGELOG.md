@@ -15,7 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
-- Fixed encoding and decoding of Ed25519 and Ed448 signatures
+- Fixed encoding and decoding of ECDSA signatures
 - Refactored `dnssec` to use the newer `dns_domain` API internally in a more efficient way
 - Incremented test coverage for DNSSEC
 
