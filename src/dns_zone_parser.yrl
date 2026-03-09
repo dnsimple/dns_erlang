@@ -263,6 +263,7 @@ quoted_string -> string : extract_token('$1').
 %% ============================================================================
 
 Erlang code.
+-moduledoc false.
 
 %% Extract the value from a token tuple
 extract_token({_Type, _Line, Value}) -> Value;

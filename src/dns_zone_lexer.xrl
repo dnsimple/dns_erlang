@@ -293,6 +293,7 @@ Rules.
 {LABEL}        : {token, {label, TokenLine, TokenChars}}.
 
 Erlang code.
+-moduledoc false.
 
 %% Extract string content from quoted string, handling escape sequences
 %% RFC 1035 §5.1 defines two escape formats:

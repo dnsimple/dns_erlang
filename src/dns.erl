@@ -67,12 +67,16 @@ domain names into different cases, converting to and from label lists, etc.
 -doc "DNS Return code. See RFC 1035: §4.1.1.".
 -type rcode() :: uint4().
 -doc #{group => "Types: integer codes"}.
+-doc "EDNS option code (e.g. NSID, COOKIE).".
 -type eoptcode() :: uint16().
 -doc #{group => "Types: integer codes"}.
+-doc "EDNS extended rcode (NOERROR or BADVERS).".
 -type ercode() :: 0 | 16.
 -doc #{group => "Types: integer codes"}.
+-doc "LLQ (Long-Lived Query) error code.".
 -type llqerrcode() :: 0..6.
 -doc #{group => "Types: integer codes"}.
+-doc "LLQ (Long-Lived Query) opcode.".
 -type llqopcode() :: 1..3.
 -export_type([
     uint2/0,
@@ -138,10 +142,10 @@ restrictions on the length. Labels must be 63 characters or less.
 -doc "DNS Message class. See RFC 1035: §4.1.2.".
 -type class() :: uint16().
 -doc #{group => "Types: integer codes"}.
--doc "DNS Message class. See RFC 1035: §4.1.2.".
+-doc "DNS resource record type (e.g. A, AAAA, NS). See RFC 1035: §3.2.2.".
 -type type() :: uint16().
 -doc #{group => "Types: integer codes"}.
--doc "DNS Message class. See RFC 1035: §4.1.3.".
+-doc "Time to live in seconds. See RFC 1035: §4.1.3.".
 -type ttl() :: 0..?MAX_INT32.
 -doc #{group => "Types: integer codes"}.
 -doc "Unix timestamp in seconds.".
@@ -163,30 +167,43 @@ restrictions on the length. Labels must be 63 characters or less.
 -doc "Main DNS message structure.".
 -type message() :: #dns_message{}.
 -doc #{group => "Types: records"}.
+-doc "Single DNS question (name, class, type). See RFC 1035.".
 -type query() :: #dns_query{}.
 -doc #{group => "Types: records"}.
+-doc "Resource record. See RFC 1035: §3.2.1.".
 -type rr() :: #dns_rr{}.
 -doc #{group => "Types: records"}.
+-doc "EDNS OPT pseudo-RR. See RFC 6891.".
 -type optrr() :: #dns_optrr{}.
 -doc #{group => "Types: records"}.
+-doc "EDNS NSID option.".
 -type opt_nsid() :: #dns_opt_nsid{}.
 -doc #{group => "Types: records"}.
+-doc "EDNS UL (Update Lease) option.".
 -type opt_ul() :: #dns_opt_ul{}.
 -doc #{group => "Types: records"}.
+-doc "EDNS Client Subnet option.".
 -type opt_ecs() :: #dns_opt_ecs{}.
 -doc #{group => "Types: records"}.
+-doc "EDNS LLQ option.".
 -type opt_llq() :: #dns_opt_llq{}.
 -doc #{group => "Types: records"}.
+-doc "EDNS Owner option.".
 -type opt_owner() :: #dns_opt_owner{}.
 -doc #{group => "Types: records"}.
+-doc "EDNS Cookie option. See RFC 7873.".
 -type opt_cookie() :: #dns_opt_cookie{}.
 -doc #{group => "Types: records"}.
+-doc "EDNS Extended DNS Error option. See RFC 8914.".
 -type opt_ede() :: #dns_opt_ede{}.
 -doc #{group => "Types: records"}.
+-doc "Unknown or unparsed EDNS option.".
 -type opt_unknown() :: #dns_opt_unknown{}.
 -doc #{group => "Types: records"}.
+-doc "RRSIG record payload (DNSSEC signature).".
 -type rrdata_rrsig() :: #dns_rrdata_rrsig{}.
 -doc #{group => "Types: records"}.
+-doc "Resource record data: binary for unknown types or a specific rrdata record.".
 -type rrdata() ::
     binary()
     | #dns_rrdata_a{}
@@ -242,8 +259,10 @@ restrictions on the length. Labels must be 63 characters or less.
     | #dns_rrdata_wallet{}
     | #dns_rrdata_zonemd{}.
 -doc #{group => "Types: records"}.
+-doc "Union of question, answer, authority, or additional section list type.".
 -type records() :: additional() | answers() | authority() | questions().
 -doc #{group => "Types: records"}.
+-doc "Single EDNS option (NSID, UL, ECS, LLQ, Owner, Cookie, EDE, or unknown).".
 -type optrr_elem() ::
     opt_nsid()
     | opt_ul()
@@ -254,12 +273,16 @@ restrictions on the length. Labels must be 63 characters or less.
     | opt_cookie()
     | opt_ede().
 -doc #{group => "Types: records"}.
+-doc "List of query records (question section).".
 -type questions() :: [query()].
 -doc #{group => "Types: records"}.
+-doc "List of resource records (answer section).".
 -type answers() :: [rr()].
 -doc #{group => "Types: records"}.
+-doc "List of resource records (authority section).".
 -type authority() :: [rr()].
 -doc #{group => "Types: records"}.
+-doc "List of OPT pseudo-RRs and/or resource records (additional section).".
 -type additional() :: [optrr() | rr()].
 -export_type([
     message/0,
@@ -283,12 +306,16 @@ restrictions on the length. Labels must be 63 characters or less.
 ]).
 
 -doc #{group => "Types: TSIG"}.
+-doc "TSIG message authentication code (MAC).".
 -type tsig_mac() :: binary().
 -doc #{group => "Types: TSIG"}.
+-doc "TSIG error code (NOERROR, BADSIG, BADKEY, BADTIME).".
 -type tsig_error() :: 0 | 16..18.
 -doc #{group => "Types: TSIG"}.
+-doc "TSIG algorithm name (e.g. HMAC-SHA256).".
 -type tsig_alg() :: binary().
 -doc #{group => "Types: TSIG"}.
+-doc "DNS algorithm identifier for DNSSEC and TSIG.".
 -type alg() ::
     ?DNS_ALG_DSA
     | ?DNS_ALG_NSEC3DSA
@@ -308,6 +335,7 @@ restrictions on the length. Labels must be 63 characters or less.
 ]).
 
 -doc #{group => "Types: options"}.
+-doc "SVCB/HTTPS service parameters map. Keys are SVCB parameter keys (e.g. alpn, port).".
 -type svcb_svc_params() :: #{
     ?DNS_SVCB_PARAM_MANDATORY => [dns:uint16()],
     ?DNS_SVCB_PARAM_ALPN => [binary()],
@@ -319,12 +347,14 @@ restrictions on the length. Labels must be 63 characters or less.
     uint16() => none | binary()
 }.
 -doc #{group => "Types: options"}.
+-doc "Options for `encode_message/2` (max size, TC mode, TSIG).".
 -type encode_message_opts() :: #{
     max_size => 512..65535,
     tc_mode => default | axfr | llq_event,
     tsig => encode_tsig_opts()
 }.
 -doc #{group => "Types: options"}.
+-doc "Options for adding TSIG when encoding (name, alg, secret, time, fudge, etc.).".
 -type encode_tsig_opts() :: #{
     name := dname(),
     alg := tsig_alg(),
@@ -338,6 +368,7 @@ restrictions on the length. Labels must be 63 characters or less.
     tail => boolean()
 }.
 -doc #{group => "Types: options"}.
+-doc "Options for TSIG verification (time, fudge, etc.).".
 -type tsig_opts() :: #{
     time => unix_time(),
     fudge => non_neg_integer(),
