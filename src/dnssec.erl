@@ -320,13 +320,7 @@ add_nonterm_ancestors(_, [], Map) ->
     Map;
 add_nonterm_ancestors(Class, [Name | Rest], Map) ->
     Key = {Name, Class},
-    NewMap =
-        case maps:is_key(Key, Map) of
-            true ->
-                Map;
-            false ->
-                Map#{Key => []}
-        end,
+    NewMap = maps:update_with(Key, fun(V) -> V end, [], Map),
     add_nonterm_ancestors(Class, Rest, NewMap).
 
 -spec build_rrmap_gbt([dns:rr()], [dns:type()]) -> rrtype_map().
@@ -497,7 +491,7 @@ verify_rrsig(#dns_rr{type = ?DNS_TYPE_RRSIG, data = Data}, RRs, RRDNSKey, Opts) 
             }
         } <- RRDNSKey,
         Alg =:= SigAlg,
-        dns_domain:to_lower(Name) =:= dns_domain:to_lower(SignersName)
+        dns_domain:are_equal(Name, SignersName)
     ],
     Keys =
         case lists:keytake(SigKeyTag, 1, Keys0) of
@@ -582,16 +576,14 @@ build_sig_input(
 ) when is_integer(Alg) ->
     LName = dns_domain:to_lower(Name),
     Datas = lists:sort([canonical_rrdata_bin(RR) || RR <- RRs]),
+    LLabels = dns_domain:split(LName),
     NameBin = dns_domain:to_wire(LName),
     RecordBase = <<NameBin/binary, Type:16, Class:16, TTL:32>>,
-    RRSetBin = [
-        <<RecordBase/binary, (byte_size(Data)):16, Data/binary>>
-     || Data <- Datas
-    ],
+    RRSetBin = [<<RecordBase/binary, (byte_size(Data)):16, Data/binary>> || Data <- Datas],
     RRSigData = #dns_rrdata_rrsig{
         type_covered = Type,
         alg = Alg,
-        labels = count_labels(LName),
+        labels = count_labels(LLabels),
         original_ttl = TTL,
         inception = Incept,
         expiration = Expire,
@@ -599,11 +591,11 @@ build_sig_input(
         signers_name = SignersName
     },
     RRSigRDataBin = rrsig_to_digestable(RRSigData),
-    SigInput0 = [RRSigRDataBin, RRSetBin],
+    SigInput0 = [RRSigRDataBin | RRSetBin],
     SigInput = preprocess_sig_input(Alg, SigInput0),
     {RRSigData, SigInput}.
 
--spec preprocess_sig_input(sigalg(), [binary() | [binary()]]) -> binary().
+-spec preprocess_sig_input(sigalg(), [binary()]) -> binary().
 preprocess_sig_input(Alg, SigInput) when Alg =:= ?DNS_ALG_DSA orelse Alg =:= ?DNS_ALG_NSEC3DSA ->
     NewSigInput = iolist_to_binary(SigInput),
     NewSigInputSize = byte_size(NewSigInput),
@@ -680,12 +672,7 @@ canonical_rrdata_form(#dns_rrdata_mb{madname = MaDname} = Data) ->
     Data#dns_rrdata_mb{madname = dns_domain:to_lower(MaDname)};
 canonical_rrdata_form(#dns_rrdata_mg{madname = MaDname} = Data) ->
     Data#dns_rrdata_mg{madname = dns_domain:to_lower(MaDname)};
-canonical_rrdata_form(
-    #dns_rrdata_minfo{
-        rmailbx = RmailBx,
-        emailbx = EmailBx
-    } = Data
-) ->
+canonical_rrdata_form(#dns_rrdata_minfo{rmailbx = RmailBx, emailbx = EmailBx} = Data) ->
     Data#dns_rrdata_minfo{
         rmailbx = dns_domain:to_lower(RmailBx),
         emailbx = dns_domain:to_lower(EmailBx)
@@ -733,13 +720,10 @@ name_ancestors(Name, ZoneName) ->
     ZoneNameLwr = dns_domain:to_lower(ZoneName),
     gen_name_ancestors(NameLwr, ZoneNameLwr).
 
--spec gen_name_ancestors(binary() | [binary()], binary() | [binary(), ...]) -> [binary()].
-gen_name_ancestors(ZoneName, ZoneName) when is_binary(ZoneName) -> [];
-gen_name_ancestors(Name, ZoneName) when
-    is_binary(Name) andalso
-        is_binary(ZoneName) andalso
-        (byte_size(Name) > byte_size(ZoneName) + 1)
-->
+-spec gen_name_ancestors(binary(), binary()) -> [binary()].
+gen_name_ancestors(ZoneName, ZoneName) ->
+    [];
+gen_name_ancestors(Name, ZoneName) when byte_size(Name) > byte_size(ZoneName) + 1 ->
     Offset = byte_size(Name) - byte_size(ZoneName) - 1,
     case Name of
         <<RelName:Offset/binary, $., ZoneName/binary>> ->
@@ -748,16 +732,17 @@ gen_name_ancestors(Name, ZoneName) when
                     [];
                 [_ | Labels0] ->
                     [FirstLabel | Labels] = lists:reverse(Labels0),
-                    gen_name_ancestors(Labels, [<<FirstLabel/binary, $., ZoneName/binary>>])
+                    gen_name_ancestors_labels(Labels, [<<FirstLabel/binary, $., ZoneName/binary>>])
             end;
         _ ->
             erlang:error(name_mismatch)
-    end;
-gen_name_ancestors([], Anc) ->
+    end.
+
+gen_name_ancestors_labels([], Anc) ->
     Anc;
-gen_name_ancestors([Label | Labels], [Parent | _] = Asc) ->
+gen_name_ancestors_labels([Label | Labels], [Parent | _] = Asc) ->
     NewName = <<Label/binary, $., Parent/binary>>,
-    gen_name_ancestors(Labels, [NewName | Asc]).
+    gen_name_ancestors_labels(Labels, [NewName | Asc]).
 
 -spec name_order([dns:rr(), ...]) -> [dns:rr(), ...].
 name_order(RRs) when is_list(RRs) ->
@@ -771,25 +756,21 @@ name_order(#dns_rr{name = X}, #dns_rr{name = X}) ->
 name_order(#dns_rr{name = A}, #dns_rr{name = B}) ->
     LabelsA = lists:reverse(dns_domain:split(A)),
     LabelsB = lists:reverse(dns_domain:split(B)),
-    name_order(LabelsA, LabelsB);
-name_order([X | A], [X | B]) ->
-    name_order(A, B);
-name_order([], [_ | _]) ->
+    name_order_labels(LabelsA, LabelsB).
+
+name_order_labels([X | A], [X | B]) ->
+    name_order_labels(A, B);
+name_order_labels([], [_ | _]) ->
     true;
-name_order([_ | _], []) ->
+name_order_labels([_ | _], []) ->
     false;
-name_order([X | _], [Y | _]) ->
+name_order_labels([X | _], [Y | _]) ->
     X < Y.
 
--spec count_labels(binary()) -> non_neg_integer().
-count_labels(Name) ->
-    Labels = dns_domain:split(Name),
-    do_count_labels(Labels).
-
--spec do_count_labels([binary()]) -> non_neg_integer().
-do_count_labels([~"*" | Labels]) ->
+-spec count_labels([binary()]) -> non_neg_integer().
+count_labels([~"*" | Labels]) ->
     length(Labels);
-do_count_labels(List) when is_list(List) ->
+count_labels(List) when is_list(List) ->
     length(List).
 
 %% Convert DNSKEY public_key [P, Q, G, Y] (binaries from decode) to integers for crypto:verify.
