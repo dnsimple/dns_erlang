@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## main
 
+## v5.0.7
+
+### Changed
+
+- Minor internal cleanups in the dnssec module (better function naming)
+
 ## v5.0.6
 
 ### Added
