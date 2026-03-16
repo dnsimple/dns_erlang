@@ -1403,17 +1403,17 @@ build_rdata("RRSIG", RData, Ctx) ->
             {domain, SignersName},
             SignatureToken
         ] when
-            is_list(TypeCovered),
-            is_integer(Alg),
-            is_integer(Labels),
-            is_integer(OriginalTTL),
-            is_integer(Expiration),
-            is_integer(Inception),
-            is_integer(KeyTag),
-            is_list(SignersName),
-            is_tuple(SignatureToken),
-            tuple_size(SignatureToken) =:= 2,
-            (element(1, SignatureToken) =:= string orelse element(1, SignatureToken) =:= domain)
+            is_list(TypeCovered) andalso
+                is_integer(Alg) andalso
+                is_integer(Labels) andalso
+                is_integer(OriginalTTL) andalso
+                is_integer(Expiration) andalso
+                is_integer(Inception) andalso
+                is_integer(KeyTag) andalso
+                is_list(SignersName) andalso
+                is_tuple(SignatureToken) andalso
+                tuple_size(SignatureToken) =:= 2 andalso
+                (element(1, SignatureToken) =:= string orelse element(1, SignatureToken) =:= domain)
         ->
             SignatureB64 = element(2, SignatureToken),
             TypeCoveredNum = type_to_number(TypeCovered),
@@ -1443,7 +1443,7 @@ build_rdata("NSEC", RData, Ctx) ->
     %% RFC 4034 - DNSSEC authenticated denial of existence
     %% Types are record type names (like "NS", "SOA", "RRSIG") parsed as rtype or domain tokens
     case RData of
-        [{domain, NextDName} | Types] when is_list(NextDName), length(Types) > 0 ->
+        [{domain, NextDName} | [_ | _] = Types] when is_list(NextDName) ->
             %% Parse type names - they can be rtype tokens (parsed as domain) or labels
             TypeNums = lists:map(
                 fun
@@ -1472,7 +1472,7 @@ build_rdata("NXT", RData, Ctx) ->
     %% RFC 2535 - DNSSEC authenticated denial of existence (obsoleted by NSEC)
     %% Similar format to NSEC
     case RData of
-        [{domain, NextDName} | Types] when is_list(NextDName), length(Types) > 0 ->
+        [{domain, NextDName} | [_ | _] = Types] when is_list(NextDName) ->
             %% Parse type names - they can be rtype tokens (parsed as domain) or labels
             TypeNums = lists:map(
                 fun
@@ -1502,11 +1502,12 @@ build_rdata("NSEC3", RData, Ctx) ->
     %% Salt can be "-" for empty, otherwise hex string
     %% Hash is base32hex encoded
     case RData of
-        [{int, HashAlg}, {int, Flags}, {int, Iterations}, SaltToken, HashToken | Types] when
+        [
+            {int, HashAlg}, {int, Flags}, {int, Iterations}, SaltToken, HashToken | [_ | _] = Types
+        ] when
             is_integer(HashAlg),
             is_integer(Flags),
-            is_integer(Iterations),
-            length(Types) > 0
+            is_integer(Iterations)
         ->
             %% Parse salt (can be "-" for empty, or hex string)
             Salt =
@@ -1612,8 +1613,8 @@ build_rdata("CSYNC", RData, Ctx) ->
     %% CSYNC format: soa_serial flags type1 type2 type3 ...
     %% RFC 7477 - Child-to-Parent Synchronization in DNS
     case RData of
-        [{int, SOASerial}, {int, Flags} | Types] when
-            is_integer(SOASerial), is_integer(Flags), length(Types) > 0
+        [{int, SOASerial}, {int, Flags} | [_ | _] = Types] when
+            is_integer(SOASerial), is_integer(Flags)
         ->
             %% Parse type names - they can be rtype tokens (parsed as domain) or labels
             TypeNums = lists:map(

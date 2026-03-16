@@ -542,13 +542,13 @@ encode_rrdata(_Pos, Class, #dns_rrdata_aaaa{ip = {A, B, C, D, E, F, G, H}}, Comp
 encode_rrdata(
     _Pos, Class, #dns_rrdata_eui48{address = Address}, CompMap
 ) when
-    ?CLASS_IS_IN(Class), 6 =:= byte_size(Address)
+    ?CLASS_IS_IN(Class) andalso 6 =:= byte_size(Address)
 ->
     {Address, CompMap};
 encode_rrdata(
     _Pos, Class, #dns_rrdata_eui64{address = Address}, CompMap
 ) when
-    ?CLASS_IS_IN(Class), 8 =:= byte_size(Address)
+    ?CLASS_IS_IN(Class) andalso 8 =:= byte_size(Address)
 ->
     {Address, CompMap};
 encode_rrdata(
@@ -1300,13 +1300,13 @@ do_encode_optrrdata(#dns_opt_cookie{client = <<ClientCookie:8/binary>>, server =
 do_encode_optrrdata(#dns_opt_cookie{
     client = <<ClientCookie:8/binary>>, server = <<ServerCookie/binary>>
 }) when
-    8 =< byte_size(ServerCookie), byte_size(ServerCookie) =< 32
+    8 =< byte_size(ServerCookie) andalso byte_size(ServerCookie) =< 32
 ->
     {?DNS_EOPTCODE_COOKIE, <<ClientCookie/binary, ServerCookie/binary>>};
 do_encode_optrrdata(#dns_opt_cookie{}) ->
     erlang:error(bad_cookie);
 do_encode_optrrdata(#dns_opt_ede{info_code = InfoCode, extra_text = ExtraText}) when
-    is_integer(InfoCode), is_binary(ExtraText)
+    is_integer(InfoCode) andalso is_binary(ExtraText)
 ->
     Data = <<InfoCode:16, ExtraText/binary>>,
     {?DNS_EOPTCODE_EDE, Data};

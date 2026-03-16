@@ -70,7 +70,7 @@ decode_query(
             decode_body(MsgBin, Rest0, Msg0);
         %% Expected: QR=0, TC=0, QC=1 (typically), ANC>=0 (may contain SOA), AUC>=0
         %% rfc1996 §3.7, 3.11: NOTIFY may contain SOA record in Answer section.
-        {0, 0, ?DNS_OPCODE_NOTIFY, 1, _, _, _} when 0 =:= AUC; 1 =:= AUC ->
+        {0, 0, ?DNS_OPCODE_NOTIFY, 1, _, _, _} when 0 =:= AUC orelse 1 =:= AUC ->
             Msg0 = create_message_from_header(
                 Id, QR, OC, AA, TC, RD, RA, AD, CD, RC, QC, ANC, AUC, ADC
             ),
@@ -91,9 +91,9 @@ decode_query(
         %% STATUS (opcode 2) - RFC 1035 (Not commonly supported)
         %% DSO (opcode 6) - rfc8490 (we don't support it)
         {0, 0, _, _, _, _, _} when
-            ?DNS_OPCODE_IQUERY =:= OC;
-            ?DNS_OPCODE_STATUS =:= OC;
-            ?DNS_OPCODE_DSO =:= OC
+            ?DNS_OPCODE_IQUERY =:= OC orelse
+                ?DNS_OPCODE_STATUS =:= OC orelse
+                ?DNS_OPCODE_DSO =:= OC
         ->
             create_notimp_message(MsgBin, Id, OC, RD, CD, QC, Rest0);
         %% Standard Query with invalid counts - reject with FORMERR
@@ -111,7 +111,7 @@ decode_query(
             {formerr, undefined, MsgBin};
         %% Reserved/Unassigned opcodes (3, 7-15) - return NOTIMP
         %% IANA DNS Opcodes Registry: Opcodes 3 and 7-15 are reserved/unassigned.
-        _ when OC =:= 3; (OC >= 7 andalso OC =< 15) ->
+        _ when OC =:= 3 orelse (OC >= 7 andalso OC =< 15) ->
             create_notimp_message(MsgBin, Id, OC, RD, CD, QC, Rest0)
     end;
 decode_query(MsgBin) ->
@@ -440,11 +440,11 @@ decode_rrdata(
 ) when ?CLASS_IS_IN(Class) ->
     #dns_rrdata_aaaa{ip = {A, B, C, D, E, F, G, H}};
 decode_rrdata(_MsgBin, Class, ?DNS_TYPE_EUI48, Bin) when
-    ?CLASS_IS_IN(Class), 6 =:= byte_size(Bin)
+    ?CLASS_IS_IN(Class) andalso 6 =:= byte_size(Bin)
 ->
     #dns_rrdata_eui48{address = Bin};
 decode_rrdata(_MsgBin, Class, ?DNS_TYPE_EUI64, Bin) when
-    ?CLASS_IS_IN(Class), 8 =:= byte_size(Bin)
+    ?CLASS_IS_IN(Class) andalso 8 =:= byte_size(Bin)
 ->
     #dns_rrdata_eui64{address = Bin};
 decode_rrdata(MsgBin, _Class, ?DNS_TYPE_AFSDB, <<Subtype:16, Bin/binary>>) ->
