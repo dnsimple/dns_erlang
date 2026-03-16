@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## main
 
+## v5.0.8
+
+### Fixed
+
+- Handle truncated RR headers in additional and body sections ([#121](https://github.com/dnsimple/dns_erlang/pull/121))
+
 ## v5.0.7
 
 ### Changed
