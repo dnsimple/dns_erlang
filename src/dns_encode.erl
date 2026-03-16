@@ -1328,7 +1328,11 @@ encode_bool(true) -> 1.
 
 -spec round_pow(non_neg_integer()) -> integer().
 round_pow(E) ->
-    round(math:pow(10, E)).
+    element(
+        E + 1,
+        {1, 10, 100, 1_000, 10_000, 100_000, 1_000_000, 10_000_000, 100_000_000, 1_000_000_000,
+            10_000_000_000}
+    ).
 
 -spec strip_leading_zeros(binary()) -> binary().
 strip_leading_zeros(<<0, Rest/binary>>) ->

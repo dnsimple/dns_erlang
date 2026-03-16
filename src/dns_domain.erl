@@ -759,10 +759,10 @@ Compare two domain names case-insensitively.
 Returns `true` if the names are equal, `false` otherwise.
 """.
 -spec are_equal(dname(), dname()) -> boolean().
-are_equal(Name, Name) ->
-    true;
-are_equal(NameA, NameB) ->
-    to_lower(NameA) =:= to_lower(NameB).
+are_equal(NameA, NameB) when is_binary(NameA) andalso is_binary(NameB) ->
+    byte_size(NameA) =:= byte_size(NameB) andalso
+        NameA =:= NameB orelse
+        to_lower_chunk(NameA, <<>>) =:= to_lower_chunk(NameB, <<>>).
 
 -doc """
 Compare two label lists case-insensitively.
@@ -776,11 +776,11 @@ are_equal_labels(LabelsA, LabelsB) when is_list(LabelsA), is_list(LabelsB) ->
 -spec do_are_equal_labels(labels(), labels()) -> boolean().
 do_are_equal_labels([], []) ->
     true;
-do_are_equal_labels([LA | LabelsA], [LA | LabelsB]) ->
-    do_are_equal_labels(LabelsA, LabelsB);
-do_are_equal_labels([LA | LabelsA], [LB | LabelsB]) ->
-    to_lower(LA) =:= to_lower(LB) andalso do_are_equal_labels(LabelsA, LabelsB);
 do_are_equal_labels([], [_ | _]) ->
     false;
 do_are_equal_labels([_ | _], []) ->
-    false.
+    false;
+do_are_equal_labels([LA | LabelsA], [LB | LabelsB]) ->
+    byte_size(LA) =:= byte_size(LB) andalso
+        to_lower_chunk(LA, <<>>) =:= to_lower_chunk(LB, <<>>) andalso
+        do_are_equal_labels(LabelsA, LabelsB).

@@ -1017,4 +1017,8 @@ decode_bool(1) -> true.
 
 -spec round_pow(non_neg_integer()) -> integer().
 round_pow(E) ->
-    round(math:pow(10, E)).
+    element(
+        E + 1,
+        {1, 10, 100, 1_000, 10_000, 100_000, 1_000_000, 10_000_000, 100_000_000, 1_000_000_000,
+            10_000_000_000}
+    ).
