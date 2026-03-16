@@ -324,9 +324,7 @@ do_decode_message_additional(MsgBin, DataBin, Count, RRs) ->
                 data = decode_rrdata(MsgBin, Class, Type, RdataBin)
             },
             do_decode_message_additional(MsgBin, RemBin, Count - 1, [RR | RRs]);
-        {_Name, <<_Type:16/unsigned, _Class:16/unsigned, _TTL:32/signed, Len:16, Data/binary>>} when
-            byte_size(Data) < Len
-        ->
+        {_Name, _Bin} ->
             {truncated, lists:reverse(RRs), DataBin}
     catch
         Error when is_atom(Error) ->
@@ -361,9 +359,7 @@ do_decode_message_body(MsgBin, DataBin, Count, RRs) ->
                 data = decode_rrdata(MsgBin, Class, Type, RdataBin)
             },
             do_decode_message_body(MsgBin, RemBin, Count - 1, [RR | RRs]);
-        {_Name, <<_Type:16/unsigned, _Class:16/unsigned, _TTL:32/signed, Len:16, Data/binary>>} when
-            byte_size(Data) < Len
-        ->
+        {_Name, _Bin} ->
             {truncated, lists:reverse(RRs), DataBin}
     catch
         Error when is_atom(Error) ->
