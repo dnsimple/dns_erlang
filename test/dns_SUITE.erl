@@ -27,7 +27,8 @@ groups() ->
         {message_basic, [parallel], [
             message_empty,
             message_query,
-            message_other
+            message_other,
+            truncated_answer_rr_header
         ]},
         {message_encoding, [parallel], [
             encode_message_max_size,
@@ -45,6 +46,8 @@ groups() ->
         {edns, [parallel], [
             message_edns,
             missing_additional_section,
+            truncated_additional_optrr_header,
+            truncated_additional_rr_header,
             edns_badvers,
             optrr_too_large,
             bad_optrr_too_large,
@@ -325,6 +328,15 @@ message_other(_) ->
     Bin = dns:encode_message(Msg),
     ?assertEqual(Msg, dns:decode_message(Bin)).
 
+truncated_answer_rr_header(_) ->
+    %% Answer section with a name followed by too few bytes for an RR header.
+    %% Regression test for try_clause crash in do_decode_message_body.
+    Header = <<0:16, 0:16, 0:16, 1:16, 0:16, 0:16>>,
+    %% A domain name followed by only 5 bytes (need 10 for type+class+ttl+rdlen)
+    AnswerBin = <<7, "example", 3, "com", 0, 0, 1, 0, 1, 0>>,
+    Bin = <<Header/binary, AnswerBin/binary>>,
+    ?assertMatch({truncated, _, _}, dns:decode_message(Bin)).
+
 long_txt(_) ->
     QName = <<"txt.example.org">>,
 
@@ -513,6 +525,27 @@ missing_additional_section(_) ->
     %% Query for test./IN/A with missing additional section
     Bin = <<192, 46, 0, 32, 0, 1, 0, 0, 0, 0, 0, 1, 4, 116, 101, 115, 116, 0, 0, 1, 0, 1>>,
     ?assertMatch({truncated, _, <<>>}, dns:decode_message(Bin)).
+
+truncated_additional_optrr_header(_) ->
+    %% OPT record (type 41) with truncated header - only 8 bytes after root name,
+    %% missing the EDNS data length field. Regression test for try_clause crash.
+    %% Reproduces: {try_clause,{<<>>,<<0,41,16,0,0,0,0,0>>}}
+    Header = <<0:16, 0:16, 0:16, 0:16, 0:16, 1:16>>,
+    %% Root name (0) + type OPT (0,41) + UPS (16,0) + ext_rcode+version+flags (0,0,0,0)
+    %% but missing the 2-byte EDNS data length
+    AdditionalBin = <<0, 0, 41, 16, 0, 0, 0, 0, 0>>,
+    Bin = <<Header/binary, AdditionalBin/binary>>,
+    ?assertMatch({truncated, _, _}, dns:decode_message(Bin)).
+
+truncated_additional_rr_header(_) ->
+    %% Non-root name with too few bytes for a full RR header (need 10 bytes: type+class+ttl+rdlen).
+    %% Regression test for try_clause crash.
+    %% Reproduces: {try_clause,{<<80,114,7,118,246,0,0,41,15,160>>,<<0,128,0,0,0>>}}
+    Header = <<0:16, 0:16, 0:16, 0:16, 0:16, 1:16>>,
+    %% A name followed by only 5 bytes (not enough for type+class+ttl+rdlen)
+    AdditionalBin = <<7, "example", 3, "com", 0, 0, 128, 0, 0, 0>>,
+    Bin = <<Header/binary, AdditionalBin/binary>>,
+    ?assertMatch({truncated, _, _}, dns:decode_message(Bin)).
 
 edns_badvers(_) ->
     QName = <<"example.com">>,
