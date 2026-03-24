@@ -783,5 +783,5 @@ do_are_equal_labels([_ | _], []) ->
 do_are_equal_labels([LA | LabelsA], [LB | LabelsB]) ->
     byte_size(LA) =:= byte_size(LB) andalso
         (LA =:= LB orelse
-        to_lower_chunk(LA, <<>>) =:= to_lower_chunk(LB, <<>>)) andalso
+            to_lower_chunk(LA, <<>>) =:= to_lower_chunk(LB, <<>>)) andalso
         do_are_equal_labels(LabelsA, LabelsB).
