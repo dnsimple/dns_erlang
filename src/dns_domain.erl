@@ -761,8 +761,8 @@ Returns `true` if the names are equal, `false` otherwise.
 -spec are_equal(dname(), dname()) -> boolean().
 are_equal(NameA, NameB) when is_binary(NameA) andalso is_binary(NameB) ->
     byte_size(NameA) =:= byte_size(NameB) andalso
-        NameA =:= NameB orelse
-        to_lower_chunk(NameA, <<>>) =:= to_lower_chunk(NameB, <<>>).
+        (NameA =:= NameB orelse
+            to_lower_chunk(NameA, <<>>) =:= to_lower_chunk(NameB, <<>>)).
 
 -doc """
 Compare two label lists case-insensitively.
