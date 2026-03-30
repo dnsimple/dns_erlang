@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## main
 
+## v5.0.10
+
+### Updated
+
+- Minimal performance improvement for `dns_domain:to_lower/1`, `dns_domain:to_upper/1`, and `dns_domain:are_equal/2`
+
 ## v5.0.9
 
 ### Updated
