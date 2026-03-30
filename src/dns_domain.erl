@@ -623,45 +623,31 @@ Returns provided name with case-insensitive characters in uppercase.
 to_upper(Data) when is_binary(Data) ->
     to_upper_chunk(Data, <<>>).
 
--compile({inline, [upper_byte/1]}).
--define(UP(X), (upper_byte(X)):8).
--spec to_upper_chunk(dname(), binary()) -> dname().
-to_upper_chunk(
-    <<B00, B01, B02, B03, B04, B05, B06, B07, B08, B09, B10, B11, B12, B13, B14, B15, B16, B17, B18,
-        B19, B20, B21, B22, B23, B24, B25, B26, B27, B28, B29, B30, B31, Rest/binary>>,
-    Acc
-) ->
-    Acc1 =
-        <<Acc/binary, ?UP(B00), ?UP(B01), ?UP(B02), ?UP(B03), ?UP(B04), ?UP(B05), ?UP(B06),
-            ?UP(B07), ?UP(B08), ?UP(B09), ?UP(B10), ?UP(B11), ?UP(B12), ?UP(B13), ?UP(B14),
-            ?UP(B15), ?UP(B16), ?UP(B17), ?UP(B18), ?UP(B19), ?UP(B20), ?UP(B21), ?UP(B22),
-            ?UP(B23), ?UP(B24), ?UP(B25), ?UP(B26), ?UP(B27), ?UP(B28), ?UP(B29), ?UP(B30),
-            ?UP(B31)>>,
-    to_upper_chunk(Rest, Acc1);
-to_upper_chunk(
-    <<B00, B01, B02, B03, B04, B05, B06, B07, B08, B09, B10, B11, B12, B13, B14, B15, Rest/binary>>,
-    Acc
-) ->
-    Acc1 =
-        <<Acc/binary, ?UP(B00), ?UP(B01), ?UP(B02), ?UP(B03), ?UP(B04), ?UP(B05), ?UP(B06),
-            ?UP(B07), ?UP(B08), ?UP(B09), ?UP(B10), ?UP(B11), ?UP(B12), ?UP(B13), ?UP(B14),
-            ?UP(B15)>>,
-    to_upper_chunk(Rest, Acc1);
-to_upper_chunk(<<B0, B1, B2, B3, B4, B5, B6, B7, Rest/binary>>, Acc) ->
-    Acc1 =
-        <<Acc/binary, ?UP(B0), ?UP(B1), ?UP(B2), ?UP(B3), ?UP(B4), ?UP(B5), ?UP(B6), ?UP(B7)>>,
-    to_upper_chunk(Rest, Acc1);
-to_upper_chunk(<<B0, B1, B2, B3, Rest/binary>>, Acc) ->
-    Acc1 = <<Acc/binary, ?UP(B0), ?UP(B1), ?UP(B2), ?UP(B3)>>,
-    to_upper_chunk(Rest, Acc1);
-to_upper_chunk(<<B0, B1, Rest/binary>>, Acc) ->
-    Acc1 = <<Acc/binary, ?UP(B0), ?UP(B1)>>,
-    to_upper_chunk(Rest, Acc1);
-to_upper_chunk(<<B0, Rest/binary>>, Acc) ->
-    Acc1 = <<Acc/binary, ?UP(B0)>>,
-    to_upper_chunk(Rest, Acc1);
-to_upper_chunk(<<>>, Acc) ->
-    Acc.
+-compile({inline, [lower_word56/1, upper_word56/1, lower_byte/1, upper_byte/1, are_equal_ci/2]}).
+
+%% 56-bit (7-byte) SWAR constants — stays within BEAM small integer range
+%% (60-bit on 64-bit systems), avoiding bignum allocation.
+-define(ONES56, 16#01010101010101).
+-define(HIGHS56, 16#80808080808080).
+
+%% Bitwise SWAR case conversion for 7 packed bytes.
+%% Carry-safe: even for bytes >= 128, (0x80 | b) - 91 >= 37, so no borrow
+%% propagates between byte lanes. An AsciiMask suppresses false-positive range
+%% hits on bytes 0xC1-0xDA (or 0xE1-0xFA for upper) that would otherwise
+%% corrupt non-ASCII input.
+-spec lower_word56(non_neg_integer()) -> non_neg_integer().
+lower_word56(W) ->
+    AsciiMask = (W band ?HIGHS56) bxor ?HIGHS56,
+    GeA = ((W bor ?HIGHS56) - (?ONES56 * $A)) band ?HIGHS56,
+    GeZ1 = ((W bor ?HIGHS56) - (?ONES56 * ($Z + 1))) band ?HIGHS56,
+    W bxor (((GeA bxor GeZ1) band AsciiMask) bsr 2).
+
+-spec upper_word56(non_neg_integer()) -> non_neg_integer().
+upper_word56(W) ->
+    AsciiMask = (W band ?HIGHS56) bxor ?HIGHS56,
+    GeA = ((W bor ?HIGHS56) - (?ONES56 * $a)) band ?HIGHS56,
+    GeZ1 = ((W bor ?HIGHS56) - (?ONES56 * ($z + 1))) band ?HIGHS56,
+    W bxor (((GeA bxor GeZ1) band AsciiMask) bsr 2).
 
 upper_byte(X) ->
     element(
@@ -682,54 +668,6 @@ upper_byte(X) ->
             251, 252, 253, 254, 255}
     ).
 
--doc """
-Returns provided name with case-insensitive characters in lowercase.
-""".
--spec to_lower(dname()) -> dname().
-to_lower(Data) when is_binary(Data) ->
-    to_lower_chunk(Data, <<>>).
-
--compile({inline, [lower_byte/1]}).
--define(LOW(X), (lower_byte(X)):8).
--spec to_lower_chunk(dname(), binary()) -> dname().
-to_lower_chunk(
-    <<B00, B01, B02, B03, B04, B05, B06, B07, B08, B09, B10, B11, B12, B13, B14, B15, B16, B17, B18,
-        B19, B20, B21, B22, B23, B24, B25, B26, B27, B28, B29, B30, B31, Rest/binary>>,
-    Acc
-) ->
-    Acc1 =
-        <<Acc/binary, ?LOW(B00), ?LOW(B01), ?LOW(B02), ?LOW(B03), ?LOW(B04), ?LOW(B05), ?LOW(B06),
-            ?LOW(B07), ?LOW(B08), ?LOW(B09), ?LOW(B10), ?LOW(B11), ?LOW(B12), ?LOW(B13), ?LOW(B14),
-            ?LOW(B15), ?LOW(B16), ?LOW(B17), ?LOW(B18), ?LOW(B19), ?LOW(B20), ?LOW(B21), ?LOW(B22),
-            ?LOW(B23), ?LOW(B24), ?LOW(B25), ?LOW(B26), ?LOW(B27), ?LOW(B28), ?LOW(B29), ?LOW(B30),
-            ?LOW(B31)>>,
-    to_lower_chunk(Rest, Acc1);
-to_lower_chunk(
-    <<B00, B01, B02, B03, B04, B05, B06, B07, B08, B09, B10, B11, B12, B13, B14, B15, Rest/binary>>,
-    Acc
-) ->
-    Acc1 =
-        <<Acc/binary, ?LOW(B00), ?LOW(B01), ?LOW(B02), ?LOW(B03), ?LOW(B04), ?LOW(B05), ?LOW(B06),
-            ?LOW(B07), ?LOW(B08), ?LOW(B09), ?LOW(B10), ?LOW(B11), ?LOW(B12), ?LOW(B13), ?LOW(B14),
-            ?LOW(B15)>>,
-    to_lower_chunk(Rest, Acc1);
-to_lower_chunk(<<B0, B1, B2, B3, B4, B5, B6, B7, Rest/binary>>, Acc) ->
-    Acc1 =
-        <<Acc/binary, ?LOW(B0), ?LOW(B1), ?LOW(B2), ?LOW(B3), ?LOW(B4), ?LOW(B5), ?LOW(B6),
-            ?LOW(B7)>>,
-    to_lower_chunk(Rest, Acc1);
-to_lower_chunk(<<B0, B1, B2, B3, Rest/binary>>, Acc) ->
-    Acc1 = <<Acc/binary, ?LOW(B0), ?LOW(B1), ?LOW(B2), ?LOW(B3)>>,
-    to_lower_chunk(Rest, Acc1);
-to_lower_chunk(<<B0, B1, Rest/binary>>, Acc) ->
-    Acc1 = <<Acc/binary, ?LOW(B0), ?LOW(B1)>>,
-    to_lower_chunk(Rest, Acc1);
-to_lower_chunk(<<B0, Rest/binary>>, Acc) ->
-    Acc1 = <<Acc/binary, ?LOW(B0)>>,
-    to_lower_chunk(Rest, Acc1);
-to_lower_chunk(<<>>, Acc) ->
-    Acc.
-
 lower_byte(X) ->
     element(
         X + 1,
@@ -749,6 +687,29 @@ lower_byte(X) ->
             241, 242, 243, 244, 245, 246, 247, 248, 249, 250, 251, 252, 253, 254, 255}
     ).
 
+-spec to_upper_chunk(dname(), binary()) -> dname().
+to_upper_chunk(<<W:56/unsigned-little, Rest/binary>>, Acc) ->
+    to_upper_chunk(Rest, <<Acc/binary, (upper_word56(W)):56/unsigned-little>>);
+to_upper_chunk(<<B, Rest/binary>>, Acc) ->
+    to_upper_chunk(Rest, <<Acc/binary, (upper_byte(B))>>);
+to_upper_chunk(<<>>, Acc) ->
+    Acc.
+
+-doc """
+Returns provided name with case-insensitive characters in lowercase.
+""".
+-spec to_lower(dname()) -> dname().
+to_lower(Data) when is_binary(Data) ->
+    to_lower_chunk(Data, <<>>).
+
+-spec to_lower_chunk(dname(), binary()) -> dname().
+to_lower_chunk(<<W:56/unsigned-little, Rest/binary>>, Acc) ->
+    to_lower_chunk(Rest, <<Acc/binary, (lower_word56(W)):56/unsigned-little>>);
+to_lower_chunk(<<B, Rest/binary>>, Acc) ->
+    to_lower_chunk(Rest, <<Acc/binary, (lower_byte(B))>>);
+to_lower_chunk(<<>>, Acc) ->
+    Acc.
+
 %% ============================================================================
 %% Comparison Functions
 %% ============================================================================
@@ -761,8 +722,7 @@ Returns `true` if the names are equal, `false` otherwise.
 -spec are_equal(dname(), dname()) -> boolean().
 are_equal(NameA, NameB) when is_binary(NameA) andalso is_binary(NameB) ->
     byte_size(NameA) =:= byte_size(NameB) andalso
-        NameA =:= NameB orelse
-        to_lower_chunk(NameA, <<>>) =:= to_lower_chunk(NameB, <<>>).
+        (NameA =:= NameB orelse are_equal_ci(NameA, NameB)).
 
 -doc """
 Compare two label lists case-insensitively.
@@ -782,6 +742,17 @@ do_are_equal_labels([_ | _], []) ->
     false;
 do_are_equal_labels([LA | LabelsA], [LB | LabelsB]) ->
     byte_size(LA) =:= byte_size(LB) andalso
-        (LA =:= LB orelse
-            to_lower_chunk(LA, <<>>) =:= to_lower_chunk(LB, <<>>)) andalso
+        (LA =:= LB orelse are_equal_ci(LA, LB)) andalso
         do_are_equal_labels(LabelsA, LabelsB).
+
+%% Word-at-a-time case-insensitive comparison — no intermediate binary allocated.
+%% Short-circuits on first mismatched word.
+-spec are_equal_ci(binary(), binary()) -> boolean().
+are_equal_ci(<<W0:56/unsigned-little, R1/binary>>, <<W0:56/unsigned-little, R2/binary>>) ->
+    are_equal_ci(R1, R2);
+are_equal_ci(<<W1:56/unsigned-little, R1/binary>>, <<W2:56/unsigned-little, R2/binary>>) ->
+    lower_word56(W1) =:= lower_word56(W2) andalso are_equal_ci(R1, R2);
+are_equal_ci(<<B1, R1/binary>>, <<B2, R2/binary>>) ->
+    lower_byte(B1) =:= lower_byte(B2) andalso are_equal_ci(R1, R2);
+are_equal_ci(<<>>, <<>>) ->
+    true.
