@@ -469,6 +469,36 @@ groups() ->
             parse_file_reverse,
             parse_file_simple_with_errors,
             parse_file_bad_list,
+            parse_file_data_2_0_192_in_addr_arpa_zone,
+            parse_file_data_addzone_com_zone,
+            parse_file_data_catalog_invalid_zone,
+            parse_file_data_cdnskey_cds_test_com_zone,
+            parse_file_data_cryptokeys_org_zone,
+            parse_file_data_delegated_dnssec_parent_com_zone,
+            parse_file_data_dnssec_parent_com_zone,
+            parse_file_data_example_com_zone,
+            parse_file_data_hiddencryptokeys_org_zone,
+            parse_file_data_insecure_dnssec_parent_com_zone,
+            parse_file_data_minimal_com_zone,
+            parse_file_data_nztest_com_zone,
+            parse_file_data_powerdnssec_org_zone,
+            parse_file_data_secure_delegated_dnssec_parent_com_zone,
+            parse_file_data_stest_com_zone,
+            parse_file_data_sub_test_dyndns_orig_zone,
+            parse_file_data_test_com_zone,
+            parse_file_data_test_dyndns_orig_zone,
+            parse_file_data_tsig_com_zone,
+            parse_file_data_unit_test_zone,
+            parse_file_data_wtest_com_zone,
+            parse_file_data_zonemd_allunsup_zone,
+            parse_file_data_zonemd_duplicate_zone,
+            parse_file_data_zonemd_invalid_zone,
+            parse_file_data_zonemd_nozonemd_zone,
+            parse_file_data_zonemd_serialmismatch_zone,
+            parse_file_data_zonemd_sha512_zone,
+            parse_file_data_zonemd_syntax_zone,
+            parse_file_data_unit2_test_zone,
+            parse_file_zonemd,
             test_format_error_with_file,
             parse_file_nonexistent
         ]},
@@ -2248,6 +2278,107 @@ parse_file_bad_list(Config) ->
     FormattedStr = lists:flatten(io_lib:format("~s", [Formatted])),
     ?assertNotEqual(nomatch, string:find(FormattedStr, "bad-list.zone"), FormattedStr).
 
+parse_file_data_2_0_192_in_addr_arpa_zone(Config) ->
+    parse_suite_data_file(Config, "2.0.192.in-addr.arpa.zone").
+
+parse_file_data_addzone_com_zone(Config) ->
+    parse_suite_data_file(Config, "addzone.com.zone").
+
+parse_file_data_catalog_invalid_zone(Config) ->
+    parse_suite_data_file(Config, "catalog.invalid.zone").
+
+parse_file_data_cdnskey_cds_test_com_zone(Config) ->
+    parse_suite_data_file(Config, "cdnskey-cds-test.com.zone").
+
+parse_file_data_cryptokeys_org_zone(Config) ->
+    parse_suite_data_file(Config, "cryptokeys.org.zone").
+
+parse_file_data_delegated_dnssec_parent_com_zone(Config) ->
+    parse_suite_data_file(Config, "delegated.dnssec-parent.com.zone").
+
+parse_file_data_dnssec_parent_com_zone(Config) ->
+    parse_suite_data_file(Config, "dnssec-parent.com.zone").
+
+parse_file_data_example_com_zone(Config) ->
+    parse_suite_data_file(Config, "example.com.zone").
+
+parse_file_data_hiddencryptokeys_org_zone(Config) ->
+    parse_suite_data_file(Config, "hiddencryptokeys.org.zone").
+
+parse_file_data_insecure_dnssec_parent_com_zone(Config) ->
+    parse_suite_data_file(Config, "insecure.dnssec-parent.com.zone").
+
+parse_file_data_minimal_com_zone(Config) ->
+    parse_suite_data_file(Config, "minimal.com.zone").
+
+parse_file_data_nztest_com_zone(Config) ->
+    parse_suite_data_file(Config, "nztest.com.zone").
+
+parse_file_data_powerdnssec_org_zone(Config) ->
+    parse_suite_data_file(Config, "powerdnssec.org.zone").
+
+parse_file_data_secure_delegated_dnssec_parent_com_zone(Config) ->
+    parse_suite_data_file(Config, "secure-delegated.dnssec-parent.com.zone").
+
+parse_file_data_stest_com_zone(Config) ->
+    parse_suite_data_file(Config, "stest.com.zone").
+
+parse_file_data_sub_test_dyndns_orig_zone(Config) ->
+    parse_suite_data_file(Config, "sub.test.dyndns.orig.zone").
+
+parse_file_data_test_com_zone(Config) ->
+    parse_suite_data_file(Config, "test.com.zone").
+
+parse_file_data_test_dyndns_orig_zone(Config) ->
+    parse_suite_data_file(Config, "test.dyndns.orig.zone").
+
+parse_file_data_tsig_com_zone(Config) ->
+    parse_suite_data_file(Config, "tsig.com.zone").
+
+parse_file_data_unit_test_zone(Config) ->
+    parse_suite_data_file(Config, "unit.test.zone").
+
+parse_file_data_wtest_com_zone(Config) ->
+    parse_suite_data_file(Config, "wtest.com.zone").
+
+parse_file_data_zonemd_allunsup_zone(Config) ->
+    parse_suite_data_file(Config, "zonemd-allunsup.zone").
+
+parse_file_data_zonemd_duplicate_zone(Config) ->
+    parse_suite_data_file(Config, "zonemd-duplicate.zone").
+
+parse_file_data_zonemd_invalid_zone(Config) ->
+    parse_suite_data_file(Config, "zonemd-invalid.zone").
+
+parse_file_data_zonemd_nozonemd_zone(Config) ->
+    parse_suite_data_file(Config, "zonemd-nozonemd.zone").
+
+parse_file_data_zonemd_serialmismatch_zone(Config) ->
+    parse_suite_data_file(Config, "zonemd-serialmismatch.zone").
+
+parse_file_data_zonemd_sha512_zone(Config) ->
+    parse_suite_data_file(Config, "zonemd-sha512.zone").
+
+parse_file_data_zonemd_syntax_zone(Config) ->
+    parse_suite_data_file_fail(Config, "zonemd-syntax.zone").
+
+parse_file_data_unit2_test_zone(Config) ->
+    parse_suite_data_file(Config, "unit2.test.zone").
+
+parse_file_zonemd(Config) ->
+    Files = ["zonemd" ++ integer_to_list(N) ++ ".zone" || N <- lists:seq(1, 5)],
+    [parse_suite_data_file(Config, File) || File <- Files].
+
+parse_suite_data_file(Config, RelativePath) ->
+    DataDir = proplists:get_value(data_dir, Config),
+    File = filename:join(DataDir, RelativePath),
+    {ok, _} = dns_zone:parse_file(File, #{}).
+
+parse_suite_data_file_fail(Config, RelativePath) ->
+    DataDir = proplists:get_value(data_dir, Config),
+    File = filename:join(DataDir, RelativePath),
+    {error, _} = dns_zone:parse_file(File, #{}).
+
 test_format_error_with_file(Config) ->
     %% Test format_error with file path in error location
     DataDir = proplists:get_value(priv_dir, Config),
@@ -3257,18 +3388,10 @@ parse_parser_error(_Config) ->
     {error, #{type := parser}} = dns_zone:parse_string(Zone, #{}).
 
 parse_generate_directive(_Config) ->
-    %% Test $GENERATE directive processing (returns empty records)
+    %% $GENERATE is not implemented; directive is accepted and produces no RRs
     Zone = ~"$GENERATE 1-10 server-$ A 192.0.2.$\n",
-    %% $GENERATE is not implemented, so it should parse but return empty
-    Result = dns_zone:parse_string(Zone, #{}),
-    %% May succeed with empty records or fail - both paths provide coverage
-    case Result of
-        {ok, Records} ->
-            %% Should handle gracefully
-            ?assert(is_list(Records));
-        {error, _} ->
-            ok
-    end.
+    {ok, Records} = dns_zone:parse_string(Zone, #{}),
+    ?assertEqual([], Records).
 
 parse_empty_entry(_Config) ->
     %% Test empty entry processing
