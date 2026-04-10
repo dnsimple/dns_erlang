@@ -33,7 +33,10 @@
     | {ipv4, string()}
     | {ipv6, string()}
     | {domain, string()}
-    | {rfc3597, string()}.
+    | {rfc3597, string()}
+    | {dollar, string()}
+    | {lbrace, string()}
+    | {rbrace, string()}.
 -type directive() ::
     {directive, origin, dynamic()}
     | {directive, ttl, dynamic()}
@@ -595,6 +598,186 @@ resolved_class({generic_class, _} = Class, _) ->
 resolved_class(Class, _) when is_list(Class) ->
     class_to_number(Class).
 
+%% Rejoin SVCB/HTTPS svcparam values split by { } lexer tokens (e.g. dohpath=/dns-query{?dns}).
+-spec merge_svcb_brace_fragments([rdata()]) -> [rdata()].
+merge_svcb_brace_fragments([]) ->
+    [];
+merge_svcb_brace_fragments([{domain, D} | Rest]) ->
+    case Rest of
+        [{lbrace, _} | R1] ->
+            case take_svcb_brace_inner(R1) of
+                {Inner, Rem} ->
+                    [{domain, D ++ "{" ++ Inner ++ "}"} | merge_svcb_brace_fragments(Rem)];
+                error ->
+                    [{domain, D} | merge_svcb_brace_fragments(Rest)]
+            end;
+        _ ->
+            [{domain, D} | merge_svcb_brace_fragments(Rest)]
+    end;
+merge_svcb_brace_fragments([H | Rest]) ->
+    [H | merge_svcb_brace_fragments(Rest)].
+
+-spec take_svcb_brace_inner([rdata()]) -> {string(), [rdata()]} | error.
+take_svcb_brace_inner([{domain, Inner}, {rbrace, _} | Rem]) ->
+    {Inner, Rem};
+take_svcb_brace_inner(_) ->
+    error.
+
+%% RFC 1876 LOC presentation (degrees/minutes/seconds + hemispheres + alt/size in meters)
+-define(LOC_MAX_INT32, 16#7FFFFFFF).
+
+-type rrdata_loc() :: #dns_rrdata_loc{}.
+
+-spec parse_loc_rfc1876_presentation([rdata()]) -> {ok, rrdata_loc()} | error.
+parse_loc_rfc1876_presentation(RData) ->
+    Words = loc_rdata_collect_words(RData, []),
+    case loc_split_lat_lon(Words) of
+        {ok, {LatD, LatM, LatS, North, LonD, LonM, LonS, East, Rest}} ->
+            case Rest of
+                [AltS, SizeS, HorizS, VertS] ->
+                    try
+                        LatMs = loc_dms_to_ms(LatD, LatM, LatS),
+                        LonMs = loc_dms_to_ms(LonD, LonM, LonS),
+                        LatPre = loc_hemisphere_to_pre(North, LatMs),
+                        LonPre = loc_hemisphere_to_lon_pre(East, LonMs),
+                        Lat = loc_wire_pre_to_internal(LatPre),
+                        Lon = loc_wire_pre_to_internal(LonPre),
+                        Alt = loc_parse_meters_cm(AltS),
+                        Size = loc_parse_meters_cm(SizeS),
+                        Horiz = loc_parse_meters_cm(HorizS),
+                        Vert = loc_parse_meters_cm(VertS),
+                        {ok, #dns_rrdata_loc{
+                            size = Size,
+                            horiz = Horiz,
+                            vert = Vert,
+                            lat = Lat,
+                            lon = Lon,
+                            alt = Alt
+                        }}
+                    catch
+                        _:_ -> error
+                    end;
+                _ ->
+                    error
+            end;
+        error ->
+            error
+    end.
+
+-spec loc_rdata_collect_words([rdata()], [string()]) -> [string()].
+loc_rdata_collect_words([], Acc) ->
+    lists:reverse(Acc);
+loc_rdata_collect_words([{int, I} | Rest], Acc) ->
+    loc_rdata_collect_words(Rest, [integer_to_list(I) | Acc]);
+loc_rdata_collect_words([{domain, D} | Rest], Acc) when is_list(D) ->
+    loc_rdata_collect_words(Rest, [D | Acc]);
+loc_rdata_collect_words([{string, S} | Rest], Acc) when is_list(S) ->
+    loc_rdata_collect_words(Rest, [S | Acc]);
+loc_rdata_collect_words([_ | Rest], Acc) ->
+    loc_rdata_collect_words(Rest, Acc).
+
+-spec loc_split_lat_lon([string()]) ->
+    {ok,
+        {string(), string(), string(), boolean(), string(), string(), string(), boolean(), [
+            string()
+        ]}}
+    | error.
+loc_split_lat_lon(Words) ->
+    case loc_take_until_hemisphere(Words, ["N", "S"]) of
+        error ->
+            error;
+        {LatParts, ["N" | AfterLat]} ->
+            loc_split_lon(AfterLat, LatParts, true);
+        {LatParts, ["S" | AfterLat]} ->
+            loc_split_lon(AfterLat, LatParts, false);
+        _ ->
+            error
+    end.
+
+loc_split_lon(AfterLat, LatParts, North) ->
+    case loc_take_until_hemisphere(AfterLat, ["E", "W"]) of
+        error ->
+            error;
+        {LonParts, ["E" | Rest]} ->
+            loc_parts_to_tuple(LatParts, North, LonParts, true, Rest);
+        {LonParts, ["W" | Rest]} ->
+            loc_parts_to_tuple(LatParts, North, LonParts, false, Rest);
+        _ ->
+            error
+    end.
+
+loc_parts_to_tuple(LatParts, North, LonParts, East, Rest) ->
+    case {LatParts, LonParts} of
+        {[D1, M1, S1], [D2, M2, S2]} ->
+            {ok, {D1, M1, S1, North, D2, M2, S2, East, Rest}};
+        _ ->
+            error
+    end.
+
+-spec loc_take_until_hemisphere([string()], [string()]) -> {[string()], [string()]} | error.
+loc_take_until_hemisphere(Words, Hems) ->
+    loc_take_until_hemisphere(Words, [], Hems).
+
+loc_take_until_hemisphere([W | T], Acc, Hems) ->
+    case lists:member(W, Hems) of
+        true ->
+            {lists:reverse(Acc), [W | T]};
+        false ->
+            loc_take_until_hemisphere(T, [W | Acc], Hems)
+    end;
+loc_take_until_hemisphere([], _, _) ->
+    error.
+
+-spec loc_dms_to_ms(string(), string(), string()) -> non_neg_integer().
+loc_dms_to_ms(D, M, S) ->
+    Deg = loc_parse_num(D),
+    Min = loc_parse_num(M),
+    Sec = loc_parse_num(S),
+    round((Deg * 3600.0 + Min * 60.0 + Sec) * 1000.0).
+
+-spec loc_parse_num(string()) -> float().
+loc_parse_num(S) ->
+    case string:to_float(S) of
+        {F, ""} ->
+            F;
+        {error, no_float} ->
+            case string:to_integer(S) of
+                {I, ""} -> I * 1.0;
+                _ -> error({bad_loc_num, S})
+            end
+    end.
+
+%% Thousandths of arcsecond from equator/prime meridian; RFC wire uses offset from 2^31-1.
+-spec loc_hemisphere_to_pre(boolean(), non_neg_integer()) -> non_neg_integer().
+loc_hemisphere_to_pre(true, Ms) ->
+    (?LOC_MAX_INT32 + Ms) band 16#FFFFFFFF;
+loc_hemisphere_to_pre(false, Ms) ->
+    (?LOC_MAX_INT32 - Ms) band 16#FFFFFFFF.
+
+-spec loc_hemisphere_to_lon_pre(boolean(), non_neg_integer()) -> non_neg_integer().
+loc_hemisphere_to_lon_pre(true, Ms) ->
+    (?LOC_MAX_INT32 + Ms) band 16#FFFFFFFF;
+loc_hemisphere_to_lon_pre(false, Ms) ->
+    (?LOC_MAX_INT32 - Ms) band 16#FFFFFFFF.
+
+-spec loc_wire_pre_to_internal(non_neg_integer()) -> integer().
+loc_wire_pre_to_internal(P) ->
+    case P > ?LOC_MAX_INT32 of
+        true -> P - ?LOC_MAX_INT32;
+        false -> -(?LOC_MAX_INT32 - P)
+    end.
+
+-spec loc_parse_meters_cm(string()) -> integer().
+loc_parse_meters_cm(S0) ->
+    S = string:trim(S0),
+    case string:split(S, "m", trailing) of
+        [NumPart, ""] ->
+            Meters = loc_parse_num(NumPart),
+            erlang:round(Meters * 100.0);
+        _ ->
+            error({bad_loc_m, S0})
+    end.
+
 %% Build RDATA for specific record types
 -spec build_rdata(string() | {generic_type, string()}, [rdata()], parse_ctx()) ->
     {ok, dns:rrdata()} | {error, error_detail()}.
@@ -649,6 +832,9 @@ build_rdata("NS", RData, Ctx) ->
         {error, Reason} ->
             {error, make_semantic_error(Reason, Ctx)}
     end;
+%% PowerDNS ALIAS: same presentation/wire handling as CNAME for zone parsing
+build_rdata("ALIAS", RData, Ctx) ->
+    build_rdata("CNAME", RData, Ctx);
 build_rdata("CNAME", RData, Ctx) ->
     case extract_domain(RData) of
         {ok, DName} ->
@@ -675,8 +861,12 @@ build_rdata("MX", RData, Ctx) ->
     end;
 build_rdata("TXT", RData, Ctx) ->
     case extract_strings(RData) of
-        {ok, Strings} -> {ok, #dns_rrdata_txt{txt = Strings}};
-        {error, Reason} -> {error, make_semantic_error(Reason, Ctx)}
+        {ok, []} ->
+            {error, make_rdata_error(~"TXT", RData, Ctx)};
+        {ok, Strings} ->
+            {ok, #dns_rrdata_txt{txt = Strings}};
+        {error, Reason} ->
+            {error, make_semantic_error(Reason, Ctx)}
     end;
 build_rdata("SOA", RData, Ctx) ->
     case RData of
@@ -684,28 +874,36 @@ build_rdata("SOA", RData, Ctx) ->
             {domain, MName},
             {domain, RName},
             {int, Serial},
-            {int, Refresh},
-            {int, Retry},
-            {int, Expire},
-            {int, Minimum}
+            TRefresh,
+            TRetry,
+            TExpire,
+            TMinimum
         ] when
             is_list(MName),
             is_list(RName),
-            is_integer(Serial),
-            is_integer(Refresh),
-            is_integer(Retry),
-            is_integer(Expire),
-            is_integer(Minimum)
+            is_integer(Serial)
         ->
-            {ok, #dns_rrdata_soa{
-                mname = resolve_name(MName, Ctx#parse_ctx.origin),
-                rname = resolve_name(RName, Ctx#parse_ctx.origin),
-                serial = Serial,
-                refresh = Refresh,
-                retry = Retry,
-                expire = Expire,
-                minimum = Minimum
-            }};
+            case
+                {
+                    soa_timer_to_seconds(TRefresh),
+                    soa_timer_to_seconds(TRetry),
+                    soa_timer_to_seconds(TExpire),
+                    soa_timer_to_seconds(TMinimum)
+                }
+            of
+                {{ok, Refresh}, {ok, Retry}, {ok, Expire}, {ok, Minimum}} ->
+                    {ok, #dns_rrdata_soa{
+                        mname = resolve_name(MName, Ctx#parse_ctx.origin),
+                        rname = resolve_name(RName, Ctx#parse_ctx.origin),
+                        serial = Serial,
+                        refresh = Refresh,
+                        retry = Retry,
+                        expire = Expire,
+                        minimum = Minimum
+                    }};
+                _ ->
+                    {error, make_semantic_error({invalid_rdata, 'SOA', RData}, Ctx)}
+            end;
         _ ->
             {error, make_semantic_error({invalid_rdata, 'SOA', RData}, Ctx)}
     end;
@@ -982,20 +1180,29 @@ build_rdata("RESINFO", RData, Ctx) ->
     %% RESINFO format: text strings (same as TXT)
     %% RFC 9606 - Resource Information (RESINFO) DNS Resource Record
     case extract_strings(RData) of
-        {ok, Strings} -> {ok, #dns_rrdata_resinfo{data = Strings}};
-        {error, Reason} -> {error, make_semantic_error(Reason, Ctx)}
+        {ok, []} ->
+            {error, make_rdata_error(~"RESINFO", RData, Ctx)};
+        {ok, Strings} ->
+            {ok, #dns_rrdata_resinfo{data = Strings}};
+        {error, Reason} ->
+            {error, make_semantic_error(Reason, Ctx)}
     end;
 build_rdata("WALLET", RData, Ctx) ->
-    %% WALLET format: base64-encoded data (single string)
-    case RData of
-        [{string, Base64Data}] when is_list(Base64Data) ->
+    %% WALLET: opaque payload — single base64 string or multiple TXT-like strings (joined with NUL).
+    case extract_strings(RData) of
+        {ok, [One]} ->
             try
-                Data = base64:decode(Base64Data),
-                {ok, #dns_rrdata_wallet{data = Data}}
+                {ok, #dns_rrdata_wallet{data = base64:decode(One)}}
             catch
                 _:_ ->
                     {error, make_rdata_error(~"WALLET", RData, Ctx)}
             end;
+        {ok, [_, _ | _] = Many} ->
+            {ok, #dns_rrdata_wallet{data = wallet_join_binaries(Many)}};
+        {ok, Strs} when Strs =/= [] ->
+            {ok, #dns_rrdata_wallet{data = iolist_to_binary(Strs)}};
+        {error, Reason} ->
+            {error, make_semantic_error(Reason, Ctx)};
         _ ->
             {error, make_rdata_error(~"WALLET", RData, Ctx)}
     end;
@@ -1021,11 +1228,11 @@ build_rdata("SMIMEA", RData, Ctx) ->
             {error, make_rdata_error(~"SMIMEA", RData, Ctx)}
     end;
 build_rdata("EUI48", RData, Ctx) ->
-    %% EUI48 format: 48-bit MAC address (hex string, 12 hex digits)
+    %% EUI48 format: 48-bit MAC address (hex string, 12 hex digits; may use - or : separators)
     %% RFC 7043 - EUI-48 address
     case RData of
         [{string, HexAddr}] when is_list(HexAddr) ->
-            case hex_to_binary(HexAddr) of
+            case hex_to_binary(eui_hex_normalize(HexAddr)) of
                 {ok, Addr} when byte_size(Addr) =:= 6 ->
                     {ok, #dns_rrdata_eui48{address = Addr}};
                 _ ->
@@ -1033,7 +1240,7 @@ build_rdata("EUI48", RData, Ctx) ->
             end;
         [{domain, HexAddr}] when is_list(HexAddr) ->
             %% Hex strings may be parsed as domain names
-            case hex_to_binary(HexAddr) of
+            case hex_to_binary(eui_hex_normalize(HexAddr)) of
                 {ok, Addr} when byte_size(Addr) =:= 6 ->
                     {ok, #dns_rrdata_eui48{address = Addr}};
                 _ ->
@@ -1043,11 +1250,11 @@ build_rdata("EUI48", RData, Ctx) ->
             {error, make_rdata_error(~"EUI48", RData, Ctx)}
     end;
 build_rdata("EUI64", RData, Ctx) ->
-    %% EUI64 format: 64-bit MAC address (hex string, 16 hex digits)
+    %% EUI64 format: 64-bit MAC address (hex string, 16 hex digits; may use - or : separators)
     %% RFC 7043 - EUI-64 address
     case RData of
         [{string, HexAddr}] when is_list(HexAddr) ->
-            case hex_to_binary(HexAddr) of
+            case hex_to_binary(eui_hex_normalize(HexAddr)) of
                 {ok, Addr} when byte_size(Addr) =:= 8 ->
                     {ok, #dns_rrdata_eui64{address = Addr}};
                 _ ->
@@ -1055,7 +1262,7 @@ build_rdata("EUI64", RData, Ctx) ->
             end;
         [{domain, HexAddr}] when is_list(HexAddr) ->
             %% Hex strings may be parsed as domain names
-            case hex_to_binary(HexAddr) of
+            case hex_to_binary(eui_hex_normalize(HexAddr)) of
                 {ok, Addr} when byte_size(Addr) =:= 8 ->
                     {ok, #dns_rrdata_eui64{address = Addr}};
                 _ ->
@@ -1178,44 +1385,30 @@ build_rdata("DLV", RData, Ctx) ->
 build_rdata("DNSKEY", RData, Ctx) ->
     %% DNSKEY format: flags protocol algorithm public-key(base64 string)
     %% RFC 4034 - DNS Public Key
-    %% Base64 strings are often unquoted, so they may be parsed as labels/domains
+    %% Base64 strings are often unquoted, so they may be parsed as labels/domains; may be split
+    %% across lines inside parentheses
     case RData of
-        [{int, Flags}, {int, Protocol}, {int, Alg}, {string, PublicKeyB64}] when
-            is_integer(Flags), is_integer(Protocol), is_integer(Alg), is_list(PublicKeyB64)
+        [{int, Flags}, {int, Protocol}, {int, Alg} | KeyParts] when
+            is_integer(Flags), is_integer(Protocol), is_integer(Alg)
         ->
-            try
-                PublicKey = base64:decode(PublicKeyB64),
-                %% Calculate keytag (RFC 4034 Appendix B)
-                KeyTag = calculate_keytag(Flags, Protocol, Alg, PublicKey),
-                {ok, #dns_rrdata_dnskey{
-                    flags = Flags,
-                    protocol = Protocol,
-                    alg = Alg,
-                    public_key = PublicKey,
-                    keytag = KeyTag
-                }}
-            catch
-                _:_ ->
-                    {error, make_rdata_error(~"DNSKEY", RData, Ctx)}
-            end;
-        [{int, Flags}, {int, Protocol}, {int, Alg}, {domain, PublicKeyB64}] when
-            is_integer(Flags), is_integer(Protocol), is_integer(Alg), is_list(PublicKeyB64)
-        ->
-            %% Base64 strings are unquoted and may be parsed as domain names
-            %% Convert to string and try to decode
-            try
-                PublicKey = base64:decode(PublicKeyB64),
-                %% Calculate keytag (RFC 4034 Appendix B)
-                KeyTag = calculate_keytag(Flags, Protocol, Alg, PublicKey),
-                {ok, #dns_rrdata_dnskey{
-                    flags = Flags,
-                    protocol = Protocol,
-                    alg = Alg,
-                    public_key = PublicKey,
-                    keytag = KeyTag
-                }}
-            catch
-                _:_ ->
+            case concat_rdata_string_parts(KeyParts) of
+                {ok, PublicKeyB64Bin} ->
+                    try
+                        PublicKey = base64:decode(PublicKeyB64Bin),
+                        %% Calculate keytag (RFC 4034 Appendix B)
+                        KeyTag = calculate_keytag(Flags, Protocol, Alg, PublicKey),
+                        {ok, #dns_rrdata_dnskey{
+                            flags = Flags,
+                            protocol = Protocol,
+                            alg = Alg,
+                            public_key = PublicKey,
+                            keytag = KeyTag
+                        }}
+                    catch
+                        _:_ ->
+                            {error, make_rdata_error(~"DNSKEY", RData, Ctx)}
+                    end;
+                error ->
                     {error, make_rdata_error(~"DNSKEY", RData, Ctx)}
             end;
         _ ->
@@ -1224,43 +1417,29 @@ build_rdata("DNSKEY", RData, Ctx) ->
 build_rdata("CDNSKEY", RData, Ctx) ->
     %% CDNSKEY format: flags protocol algorithm public-key(base64 string)
     %% RFC 7344 - Child DNSKEY
-    %% Same format as DNSKEY
+    %% Same format as DNSKEY (including multi-line parenthesized base64)
     case RData of
-        [{int, Flags}, {int, Protocol}, {int, Alg}, {string, PublicKeyB64}] when
-            is_integer(Flags), is_integer(Protocol), is_integer(Alg), is_list(PublicKeyB64)
+        [{int, Flags}, {int, Protocol}, {int, Alg} | KeyParts] when
+            is_integer(Flags), is_integer(Protocol), is_integer(Alg)
         ->
-            try
-                PublicKey = base64:decode(PublicKeyB64),
-                %% Calculate keytag (RFC 4034 Appendix B)
-                KeyTag = calculate_keytag(Flags, Protocol, Alg, PublicKey),
-                {ok, #dns_rrdata_cdnskey{
-                    flags = Flags,
-                    protocol = Protocol,
-                    alg = Alg,
-                    public_key = PublicKey,
-                    keytag = KeyTag
-                }}
-            catch
-                _:_ ->
-                    {error, make_rdata_error(~"CDNSKEY", RData, Ctx)}
-            end;
-        [{int, Flags}, {int, Protocol}, {int, Alg}, {domain, PublicKeyB64}] when
-            is_integer(Flags), is_integer(Protocol), is_integer(Alg), is_list(PublicKeyB64)
-        ->
-            %% Base64 strings are unquoted and may be parsed as domain names
-            try
-                PublicKey = base64:decode(PublicKeyB64),
-                %% Calculate keytag (RFC 4034 Appendix B)
-                KeyTag = calculate_keytag(Flags, Protocol, Alg, PublicKey),
-                {ok, #dns_rrdata_cdnskey{
-                    flags = Flags,
-                    protocol = Protocol,
-                    alg = Alg,
-                    public_key = PublicKey,
-                    keytag = KeyTag
-                }}
-            catch
-                _:_ ->
+            case concat_rdata_string_parts(KeyParts) of
+                {ok, PublicKeyB64Bin} ->
+                    try
+                        PublicKey = base64:decode(PublicKeyB64Bin),
+                        %% Calculate keytag (RFC 4034 Appendix B)
+                        KeyTag = calculate_keytag(Flags, Protocol, Alg, PublicKey),
+                        {ok, #dns_rrdata_cdnskey{
+                            flags = Flags,
+                            protocol = Protocol,
+                            alg = Alg,
+                            public_key = PublicKey,
+                            keytag = KeyTag
+                        }}
+                    catch
+                        _:_ ->
+                            {error, make_rdata_error(~"CDNSKEY", RData, Ctx)}
+                    end;
+                error ->
                     {error, make_rdata_error(~"CDNSKEY", RData, Ctx)}
             end;
         _ ->
@@ -1324,11 +1503,12 @@ build_rdata("KEY", RData, Ctx) ->
         _ ->
             {error, make_rdata_error(~"KEY", RData, Ctx)}
     end;
-build_rdata("SVCB", RData, Ctx) ->
+build_rdata("SVCB", RData0, Ctx) ->
     %% RFC 9460 - Service Binding
     %% SVCB format: priority target [svcparams...]
     %% Service parameters are key=value pairs or just key (for no-default-alpn)
     %% Note: TargetName "." in AliasMode (priority=0) means "service is not available"
+    RData = merge_svcb_brace_fragments(RData0),
     case RData of
         [{int, Priority}, {domain, Target}] when is_integer(Priority), is_list(Target) ->
             TargetName = resolve_name(Target, Ctx#parse_ctx.origin),
@@ -1355,8 +1535,9 @@ build_rdata("SVCB", RData, Ctx) ->
         _ ->
             {error, make_rdata_error(~"SVCB", RData, Ctx)}
     end;
-build_rdata("HTTPS", RData, Ctx) ->
+build_rdata("HTTPS", RData0, Ctx) ->
     %% RFC 9460 - HTTPS-specific Service Binding: same as SVCB but different type number
+    RData = merge_svcb_brace_fragments(RData0),
     case RData of
         [{int, Priority}, {domain, Target}] when is_integer(Priority), is_list(Target) ->
             TargetName = resolve_name(Target, Ctx#parse_ctx.origin),
@@ -1388,10 +1569,9 @@ build_rdata("RRSIG", RData, Ctx) ->
     %%      type_covered alg labels original_ttl expiration inception keytag signers_name signature
     %% RFC 4034 - DNSSEC signature
     %% type_covered can be a record type name (like "DS", "NSEC") parsed as rtype or domain
-    %% signature is base64-encoded and may be unquoted (parsed as domain/string)
+    %% signature is base64-encoded and may be unquoted (parsed as domain/string); may be split
+    %% across lines inside parentheses
     case RData of
-        %% type_covered parsed as domain (from rtype token or label),
-        %% then integers, then signers_name, then signature as string or domain (unquoted base64)
         [
             {domain, TypeCovered},
             {int, Alg},
@@ -1400,8 +1580,8 @@ build_rdata("RRSIG", RData, Ctx) ->
             {int, Expiration},
             {int, Inception},
             {int, KeyTag},
-            {domain, SignersName},
-            SignatureToken
+            {domain, SignersName}
+            | SigParts
         ] when
             is_list(TypeCovered) andalso
                 is_integer(Alg) andalso
@@ -1410,29 +1590,30 @@ build_rdata("RRSIG", RData, Ctx) ->
                 is_integer(Expiration) andalso
                 is_integer(Inception) andalso
                 is_integer(KeyTag) andalso
-                is_list(SignersName) andalso
-                is_tuple(SignatureToken) andalso
-                tuple_size(SignatureToken) =:= 2 andalso
-                (element(1, SignatureToken) =:= string orelse element(1, SignatureToken) =:= domain)
+                is_list(SignersName)
         ->
-            SignatureB64 = element(2, SignatureToken),
-            TypeCoveredNum = type_to_number(TypeCovered),
-            SignersNameBin = resolve_name(SignersName, Ctx#parse_ctx.origin),
-            try
-                Signature = base64:decode(SignatureB64),
-                {ok, #dns_rrdata_rrsig{
-                    type_covered = TypeCoveredNum,
-                    alg = Alg,
-                    labels = Labels,
-                    original_ttl = OriginalTTL,
-                    expiration = Expiration,
-                    inception = Inception,
-                    keytag = KeyTag,
-                    signers_name = SignersNameBin,
-                    signature = Signature
-                }}
-            catch
-                _:_ ->
+            case concat_rdata_string_parts(SigParts) of
+                {ok, SignatureB64Bin} ->
+                    TypeCoveredNum = type_to_number(TypeCovered),
+                    SignersNameBin = resolve_name(SignersName, Ctx#parse_ctx.origin),
+                    try
+                        Signature = base64:decode(SignatureB64Bin),
+                        {ok, #dns_rrdata_rrsig{
+                            type_covered = TypeCoveredNum,
+                            alg = Alg,
+                            labels = Labels,
+                            original_ttl = OriginalTTL,
+                            expiration = Expiration,
+                            inception = Inception,
+                            keytag = KeyTag,
+                            signers_name = SignersNameBin,
+                            signature = Signature
+                        }}
+                    catch
+                        _:_ ->
+                            {error, make_rdata_error(~"RRSIG", RData, Ctx)}
+                    end;
+                error ->
                     {error, make_rdata_error(~"RRSIG", RData, Ctx)}
             end;
         _ ->
@@ -1668,36 +1849,26 @@ build_rdata("DSYNC", RData, Ctx) ->
     end;
 build_rdata("ZONEMD", RData, Ctx) ->
     %% ZONEMD format: serial scheme algorithm hash(hex string)
-    %% RFC 8976 - Zone Metadata
+    %% RFC 8976 - Zone Metadata. Hash may be one token or multiple (parenthesized
+    %% multi-line layout in zone files, one hex segment per line).
     case RData of
-        [{int, Serial}, {int, Scheme}, {int, Algorithm}, {domain, HashHex}] when
-            is_integer(Serial), is_integer(Scheme), is_integer(Algorithm), is_list(HashHex)
+        [{int, Serial}, {int, Scheme}, {int, Algorithm} | HashParts] when
+            is_integer(Serial), is_integer(Scheme), is_integer(Algorithm)
         ->
-            %% Hash may be parsed as domain (unquoted hex string)
-            case hex_to_binary(HashHex) of
-                {ok, Hash} ->
-                    {ok, #dns_rrdata_zonemd{
-                        serial = Serial,
-                        scheme = Scheme,
-                        algorithm = Algorithm,
-                        hash = Hash
-                    }};
-                {error, _Reason} ->
-                    {error, make_rdata_error(~"ZONEMD", RData, Ctx)}
-            end;
-        [{int, Serial}, {int, Scheme}, {int, Algorithm}, {string, HashHex}] when
-            is_integer(Serial), is_integer(Scheme), is_integer(Algorithm), is_list(HashHex)
-        ->
-            %% Hash parsed as quoted string
-            case hex_to_binary(HashHex) of
-                {ok, Hash} ->
-                    {ok, #dns_rrdata_zonemd{
-                        serial = Serial,
-                        scheme = Scheme,
-                        algorithm = Algorithm,
-                        hash = Hash
-                    }};
-                {error, _Reason} ->
+            case concat_rdata_string_parts(HashParts) of
+                {ok, HexBin} ->
+                    case hex_to_binary(HexBin) of
+                        {ok, Hash} ->
+                            {ok, #dns_rrdata_zonemd{
+                                serial = Serial,
+                                scheme = Scheme,
+                                algorithm = Algorithm,
+                                hash = Hash
+                            }};
+                        {error, _Reason} ->
+                            {error, make_rdata_error(~"ZONEMD", RData, Ctx)}
+                    end;
+                error ->
                     {error, make_rdata_error(~"ZONEMD", RData, Ctx)}
             end;
         _ ->
@@ -1733,7 +1904,10 @@ build_rdata("LOC", RData, Ctx) ->
                 alt = Alt
             }};
         _ ->
-            {error, make_rdata_error(~"LOC", RData, Ctx)}
+            case parse_loc_rfc1876_presentation(RData) of
+                {ok, Loc} -> {ok, Loc};
+                error -> {error, make_rdata_error(~"LOC", RData, Ctx)}
+            end
     end;
 build_rdata("IPSECKEY", RData, Ctx) ->
     %% IPSECKEY format: precedence algorithm gateway public_key(hex)
@@ -1800,6 +1974,9 @@ calculate_keytag_sum(<<A:8>>, Acc) ->
 calculate_keytag_sum(<<>>, Acc) ->
     Acc.
 
+wallet_join_binaries([H | T]) ->
+    lists:foldl(fun(B, Acc) -> <<Acc/binary, 0, B/binary>> end, H, T).
+
 %% Extract a single domain name from RDATA
 -spec extract_domain([rdata()]) -> {ok, string()} | {error, term()}.
 extract_domain([{domain, Domain}]) when is_list(Domain) ->
@@ -1819,6 +1996,10 @@ extract_strings(RData) when is_list(RData) ->
 
 %% Resolve a name relative to the origin
 -spec resolve_name(string(), binary()) -> binary().
+resolve_name("@", Origin) when Origin =/= <<>> ->
+    ensure_fqdn(Origin);
+resolve_name("@", <<>>) ->
+    ~".";
 resolve_name(Name, Origin) when is_list(Name) ->
     %% Convert string name to binary for final record
     BinName = dns_domain:to_lower(list_to_binary(Name)),
@@ -1918,6 +2099,9 @@ type_to_number("A") ->
 type_to_number("NS") ->
     ?DNS_TYPE_NS;
 type_to_number("CNAME") ->
+    ?DNS_TYPE_CNAME;
+%% Non-standard PowerDNS name; treat as CNAME for parsing (same RDATA)
+type_to_number("ALIAS") ->
     ?DNS_TYPE_CNAME;
 type_to_number("SOA") ->
     ?DNS_TYPE_SOA;
@@ -2118,6 +2302,67 @@ parse_rfc3597_rdata(Length, HexData) ->
         {error, Reason} ->
             {error, Reason}
     end.
+
+%% SOA refresh/retry/expire/minimum: integer seconds or BIND-style suffix (8H, 30S, 1W, 1D, 1M).
+-spec soa_timer_to_seconds(rdata()) -> {ok, dns:ttl()} | error.
+soa_timer_to_seconds({int, N}) when is_integer(N) ->
+    {ok, N};
+soa_timer_to_seconds({domain, S}) when is_list(S) ->
+    bind_ttl_string_to_seconds(S);
+soa_timer_to_seconds(_) ->
+    error.
+
+%% @doc Parse BIND $TTL-style duration: digits, or digits + unit (s/m/h/d/w), case-insensitive.
+-spec bind_ttl_string_to_seconds(string()) -> {ok, dns:ttl()} | error.
+bind_ttl_string_to_seconds(Str) ->
+    case lists:splitwith(fun(C) -> C >= $0 andalso C =< $9 end, Str) of
+        {[], _} ->
+            error;
+        {NumChars, []} ->
+            {ok, list_to_integer(NumChars)};
+        {NumChars, [Unit]} ->
+            N = list_to_integer(NumChars),
+            case string:to_lower([Unit]) of
+                "s" -> {ok, N};
+                "m" -> {ok, N * 60};
+                "h" -> {ok, N * 3600};
+                "d" -> {ok, N * 86400};
+                "w" -> {ok, N * 604800};
+                _ -> error
+            end;
+        _ ->
+            error
+    end.
+
+%% Concatenate fragments ({domain|string, ...}) from parenthesized multi-line zone syntax.
+-spec concat_rdata_string_parts([rdata()]) -> {ok, binary()} | error.
+concat_rdata_string_parts(Parts) ->
+    try
+        case
+            lists:foldl(
+                fun
+                    ({domain, S}, Acc) when is_list(S) ->
+                        <<Acc/binary, (list_to_binary(S))/binary>>;
+                    ({string, S}, Acc) when is_list(S) ->
+                        <<Acc/binary, (list_to_binary(S))/binary>>;
+                    (_, _) ->
+                        error(invalid)
+                end,
+                <<>>,
+                Parts
+            )
+        of
+            <<>> -> error;
+            Bin -> {ok, Bin}
+        end
+    catch
+        error:invalid -> error
+    end.
+
+%% Strip separators common in EUI-48/EUI-64 zone presentations (00-11-22-33-44-55).
+-spec eui_hex_normalize(string()) -> string().
+eui_hex_normalize(S) when is_list(S) ->
+    [C || C <- S, C =/= $-, C =/= $:, C =/= $\s].
 
 %% Convert hexadecimal string to binary using OTP 26+ binary:decode_hex/1
 -spec hex_to_binary(binary() | string()) -> {ok, binary()} | {error, term()}.

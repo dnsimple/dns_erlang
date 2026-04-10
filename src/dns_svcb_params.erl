@@ -169,7 +169,7 @@ from_zone([{domain, "alpn=" ++ Alpn} | Rest], MakeError, Acc) ->
     Protocols = decode_alpn_list(zone, Alpn),
     NewAcc = Acc#{?DNS_SVCB_PARAM_ALPN => Protocols},
     from_zone(Rest, MakeError, NewAcc);
-from_zone([{domain, "port=" ++ PortStr} | Rest], MakeError, Acc) ->
+from_zone([{domain, "port=" ++ PortStr} | Rest], MakeError, Acc) when PortStr =/= "" ->
     case string:to_integer(PortStr) of
         {Port, ""} when Port >= 0, Port =< 65535 ->
             NewAcc = Acc#{?DNS_SVCB_PARAM_PORT => Port},
@@ -177,6 +177,23 @@ from_zone([{domain, "port=" ++ PortStr} | Rest], MakeError, Acc) ->
         _ ->
             {error, MakeError({invalid_port, PortStr})}
     end;
+%% port="8080" splits into port= + quoted string token
+from_zone([{domain, "port="}, {string, PortStr} | Rest], MakeError, Acc) ->
+    parse_svcb_port_value(PortStr, Rest, MakeError, Acc);
+from_zone([{domain, "port="}, {domain, PortStr} | Rest], MakeError, Acc) ->
+    parse_svcb_port_value(PortStr, Rest, MakeError, Acc);
+%% RFC 9460 key 8 (OHTTP) — flag with no value in some presentations
+from_zone([{domain, "ohttp"} | Rest], MakeError, Acc) ->
+    NewAcc = Acc#{8 => none},
+    from_zone(Rest, MakeError, NewAcc);
+%% RFC 9460 key 13
+from_zone([{domain, "tls-supported-groups=" ++ Value} | Rest], MakeError, Acc) ->
+    NewAcc = Acc#{13 => unicode:characters_to_binary(Value)},
+    from_zone(Rest, MakeError, NewAcc);
+%% RFC 9460 key 7 — value may contain reserved characters as one label (e.g. dohpath=/…{?dns})
+from_zone([{domain, "dohpath=" ++ Value} | Rest], MakeError, Acc) when Value =/= "" ->
+    NewAcc = Acc#{7 => unicode:characters_to_binary(Value)},
+    from_zone(Rest, MakeError, NewAcc);
 from_zone([{domain, "ipv4hint=" ++ Value} | Rest], MakeError, Acc) ->
     IPs = [string:trim(IP) || IP <- string:split(Value, ",", all), IP =/= ""],
     case parse_ipv4_list_for_zone(IPs, MakeError) of
@@ -243,6 +260,17 @@ from_zone([{domain, "key" ++ KeyNumStr} | Rest], MakeError, Acc) ->
     end;
 from_zone([Other | _], MakeError, _) ->
     {error, MakeError({invalid_svcparam_format, Other})}.
+
+-spec parse_svcb_port_value(string(), [zone_rdata()], error_callback(), dns:svcb_svc_params()) ->
+    {ok, dns:svcb_svc_params()} | {error, term()}.
+parse_svcb_port_value(PortStr, Rest, MakeError, Acc) ->
+    case string:to_integer(string:trim(PortStr)) of
+        {Port, ""} when Port >= 0, Port =< 65535 ->
+            NewAcc = Acc#{?DNS_SVCB_PARAM_PORT => Port},
+            from_zone(Rest, MakeError, NewAcc);
+        _ ->
+            {error, MakeError({invalid_port, PortStr})}
+    end.
 
 %% keyNNNN="value" path: key 0-6 -> named tokens + recurse
 -spec apply_key_with_value(

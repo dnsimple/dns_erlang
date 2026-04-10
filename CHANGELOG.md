@@ -7,6 +7,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## main
 
+## v5.0.11
+
+### Fixed
+
+- Zone file parsing and RDATA decoding: improved handling of BIND-style presentations and record types;
+- Empty TXT/RESINFO RDATA and invalid single-string WALLET base64 are rejected during semantic validation;
+- Empty A/AAAA RDATA is rejected (no longer skipped);
+
 ## v5.0.10
 
 ### Updated
