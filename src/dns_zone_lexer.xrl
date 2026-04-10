@@ -173,6 +173,7 @@ RTYPE_HTTPS    = HTTPS
 RTYPE_DLV      = DLV
 RTYPE_IPSECKEY = IPSECKEY
 RTYPE_ZONEMD   = ZONEMD
+RTYPE_ALIAS    = ALIAS
 
 % Quoted strings for TXT records, etc.
 STRING    = "([^"\\]|\\.)*"
@@ -226,6 +227,7 @@ Rules.
 {RTYPE_RESINFO}    : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_WALLET}     : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_ZONEMD}     : {token, {rtype, TokenLine, TokenChars}}.
+{RTYPE_ALIAS}      : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_CSYNC}      : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_DSYNC}      : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_NSEC3}      : {token, {rtype, TokenLine, TokenChars}}.
