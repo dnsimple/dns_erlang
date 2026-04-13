@@ -540,7 +540,7 @@ test_special_encodings(_Config) ->
             type = ?DNS_TYPE_WALLET,
             ttl = 3600,
             data = #dns_rrdata_wallet{
-                data = ~"test-wallet-data"
+                data = [<<"test-wallet-data">>]
             }
         },
         #dns_rr{

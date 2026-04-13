@@ -64,6 +64,10 @@ DOT       = \.
 LPAREN    = \(
 RPAREN    = \)
 COMMA     = ,
+% BIND $GENERATE templates and SVCB values (RFC 9460) may use $, {, } outside quoted strings
+DOLLAR    = \$
+LBRACE    = \{
+RBRACE    = \}
 
 % Numbers
 INT       = [0-9]+
@@ -88,8 +92,8 @@ TIME_VALUE = ({TIME_NUM}{TIME_UNIT}+)+
 %       but zone file labels are more permissive
 % Note: = is used for base64 padding and also as EQUALS token, but standalone = will
 % still match EQUALS since LABEL requires at least one non-= character
-LABEL_CHAR = [a-zA-Z0-9\-_*:+\/=]
-LABEL      = [a-zA-Z0-9\-_*:+\/=][a-zA-Z0-9\-_*:+\/=]*
+LABEL_CHAR = [a-zA-Z0-9\-_*:+\/=?]
+LABEL      = [a-zA-Z0-9\-_*:+\/=?][a-zA-Z0-9\-_*:+\/=?]*
 
 % IP addresses
 IPV4      = [0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}\.[0-9]{1,3}
@@ -173,6 +177,7 @@ RTYPE_HTTPS    = HTTPS
 RTYPE_DLV      = DLV
 RTYPE_IPSECKEY = IPSECKEY
 RTYPE_ZONEMD   = ZONEMD
+RTYPE_ALIAS    = ALIAS
 
 % Quoted strings for TXT records, etc.
 STRING    = "([^"\\]|\\.)*"
@@ -207,6 +212,9 @@ Rules.
 {RPAREN}       : {token, {rparen, TokenLine}}.
 {EQUALS}       : {token, {equals, TokenLine}}.
 {COMMA}        : {token, {comma, TokenLine}}.
+{DOLLAR}       : {token, {dollar, TokenLine}}.
+{LBRACE}       : {token, {lbrace, TokenLine}}.
+{RBRACE}       : {token, {rbrace, TokenLine}}.
 
 % Class
 {CLASS}        : {token, {class, TokenLine, TokenChars}}.
@@ -226,6 +234,7 @@ Rules.
 {RTYPE_RESINFO}    : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_WALLET}     : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_ZONEMD}     : {token, {rtype, TokenLine, TokenChars}}.
+{RTYPE_ALIAS}      : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_CSYNC}      : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_DSYNC}      : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_NSEC3}      : {token, {rtype, TokenLine, TokenChars}}.

@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## main
 
+## v5.0.11
+
+### Fixed
+
+- WALLET (type 262) RDATA uses TXT-style character-strings on the wire and in zone files (`data` as a list of binaries), per [IANA WALLET](https://www.iana.org/assignments/dns-parameters/WALLET/wallet-completed-template).
+- Zone file parsing and RDATA decoding: improved handling of BIND-style presentations and record types;
+- Empty TXT/RESINFO RDATA are rejected during semantic validation;
+- Empty A/AAAA RDATA is rejected (no longer skipped);
+
 ## v5.0.10
 
 ### Updated

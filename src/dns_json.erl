@@ -360,7 +360,6 @@ to_map_value(dns_rrdata_tlsa, certificate, Value) when is_binary(Value) -> binar
 to_map_value(dns_rrdata_smimea, certificate, Value) when is_binary(Value) ->
     binary:encode_hex(Value);
 to_map_value(dns_rrdata_tsig, mac, Value) when is_binary(Value) -> base64:encode(Value);
-to_map_value(dns_rrdata_wallet, data, Value) when is_binary(Value) -> base64:encode(Value);
 to_map_value(dns_rrdata_ds, digest, Value) when is_binary(Value) -> binary:encode_hex(Value);
 to_map_value(dns_rrdata_cds, digest, Value) when is_binary(Value) -> binary:encode_hex(Value);
 to_map_value(dns_rrdata_dlv, digest, Value) when is_binary(Value) -> binary:encode_hex(Value);
@@ -446,8 +445,6 @@ decode_field(dns_rrdata_tlsa, certificate, Value) ->
 decode_field(dns_rrdata_smimea, certificate, Value) ->
     binary:decode_hex(Value);
 decode_field(dns_rrdata_tsig, mac, Value) ->
-    base64:decode(Value);
-decode_field(dns_rrdata_wallet, data, Value) ->
     base64:decode(Value);
 decode_field(dns_rrdata_ds, digest, Value) ->
     binary:decode_hex(Value);

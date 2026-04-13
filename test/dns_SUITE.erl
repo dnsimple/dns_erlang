@@ -778,7 +778,7 @@ decode_encode_rrdata(_) ->
             certificate = base64:decode(<<"MIIBIjANBgkqhkiG9w0BAQEFAAOCAQ8AMIIBCgKCAQEA">>)
         }},
         {?DNS_TYPE_WALLET, #dns_rrdata_wallet{
-            data = base64:decode(<<"dGVzdC13YWxsZXQtZGF0YQ==">>)
+            data = [<<"test-wallet-data">>]
         }},
         {?DNS_TYPE_EUI48, #dns_rrdata_eui48{
             address = <<16#00, 16#1A, 16#2B, 16#3C, 16#4D, 16#5E>>
