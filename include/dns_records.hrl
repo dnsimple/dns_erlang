@@ -395,8 +395,8 @@
     data :: [binary()]
 }).
 
-%% WALLET record for public wallet address (IANA WALLET). Wire format: one or
-%% more character-strings, same as TXT (RFC 1035).
+%% WALLET record for public wallet address (IANA WALLET).
+%% Wire format: one or more character-strings, same as TXT.
 -record(dns_rrdata_wallet, {
     data :: [binary()]
 }).
