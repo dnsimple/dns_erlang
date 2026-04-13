@@ -639,7 +639,7 @@ parse_loc_rfc1876_presentation(RData) ->
                         LatMs = loc_dms_to_ms(LatD, LatM, LatS),
                         LonMs = loc_dms_to_ms(LonD, LonM, LonS),
                         LatPre = loc_hemisphere_to_pre(North, LatMs),
-                        LonPre = loc_hemisphere_to_lon_pre(East, LonMs),
+                        LonPre = loc_hemisphere_to_pre(East, LonMs),
                         Lat = loc_wire_pre_to_internal(LatPre),
                         Lon = loc_wire_pre_to_internal(LonPre),
                         Alt = loc_parse_meters_cm(AltS),
@@ -752,12 +752,6 @@ loc_parse_num(S) ->
 loc_hemisphere_to_pre(true, Ms) ->
     (?LOC_MAX_INT32 + Ms) band 16#FFFFFFFF;
 loc_hemisphere_to_pre(false, Ms) ->
-    (?LOC_MAX_INT32 - Ms) band 16#FFFFFFFF.
-
--spec loc_hemisphere_to_lon_pre(boolean(), non_neg_integer()) -> non_neg_integer().
-loc_hemisphere_to_lon_pre(true, Ms) ->
-    (?LOC_MAX_INT32 + Ms) band 16#FFFFFFFF;
-loc_hemisphere_to_lon_pre(false, Ms) ->
     (?LOC_MAX_INT32 - Ms) band 16#FFFFFFFF.
 
 -spec loc_wire_pre_to_internal(non_neg_integer()) -> integer().
