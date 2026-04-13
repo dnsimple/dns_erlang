@@ -764,7 +764,7 @@ loc_wire_pre_to_internal(P) ->
 -spec loc_parse_meters_cm(string()) -> integer().
 loc_parse_meters_cm(S0) ->
     S = string:trim(S0),
-    case string:split(S, "m", trailing) of
+    case string:split(S, "m", all) of
         [NumPart, ""] ->
             Meters = loc_parse_num(NumPart),
             erlang:round(Meters * 100.0);
