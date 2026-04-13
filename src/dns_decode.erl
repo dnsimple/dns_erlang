@@ -482,7 +482,7 @@ decode_rrdata(
 decode_rrdata(_MsgBin, Class, ?DNS_TYPE_RESINFO, Bin) when ?CLASS_IS_IN(Class) ->
     #dns_rrdata_resinfo{data = decode_text(Bin)};
 decode_rrdata(_MsgBin, Class, ?DNS_TYPE_WALLET, Bin) when ?CLASS_IS_IN(Class) ->
-    #dns_rrdata_wallet{data = Bin};
+    #dns_rrdata_wallet{data = decode_text(Bin)};
 decode_rrdata(_MsgBin, _Class, ?DNS_TYPE_DLV, <<KeyTag:16, Alg:8, DigestType:8, Digest/binary>>) ->
     #dns_rrdata_dlv{
         keytag = KeyTag,

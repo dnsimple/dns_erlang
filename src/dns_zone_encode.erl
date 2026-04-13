@@ -843,9 +843,9 @@ encode_rdata(
 ) ->
     base64:encode(Data);
 encode_rdata(
-    ?DNS_TYPE_WALLET, #dns_rrdata_wallet{data = Data}, _Origin, _RelativeNames, _Separator
+    ?DNS_TYPE_WALLET, #dns_rrdata_wallet{data = Strings}, _Origin, _RelativeNames, Separator
 ) ->
-    base64:encode(Data);
+    encode_quoted_strings(Strings, Separator);
 encode_rdata(
     ?DNS_TYPE_URI,
     #dns_rrdata_uri{

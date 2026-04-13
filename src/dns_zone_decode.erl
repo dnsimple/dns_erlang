@@ -1188,23 +1188,14 @@ build_rdata("RESINFO", RData, Ctx) ->
             {error, make_semantic_error(Reason, Ctx)}
     end;
 build_rdata("WALLET", RData, Ctx) ->
-    %% WALLET: opaque payload — single base64 string or multiple TXT-like strings (joined with NUL).
+    %% WALLET: character-strings (same presentation and wire format as TXT).
     case extract_strings(RData) of
-        {ok, [One]} ->
-            try
-                {ok, #dns_rrdata_wallet{data = base64:decode(One)}}
-            catch
-                _:_ ->
-                    {error, make_rdata_error(~"WALLET", RData, Ctx)}
-            end;
-        {ok, [_, _ | _] = Many} ->
-            {ok, #dns_rrdata_wallet{data = wallet_join_binaries(Many)}};
-        {ok, Strs} when Strs =/= [] ->
-            {ok, #dns_rrdata_wallet{data = iolist_to_binary(Strs)}};
+        {ok, []} ->
+            {error, make_rdata_error(~"WALLET", RData, Ctx)};
+        {ok, Strings} ->
+            {ok, #dns_rrdata_wallet{data = Strings}};
         {error, Reason} ->
-            {error, make_semantic_error(Reason, Ctx)};
-        _ ->
-            {error, make_rdata_error(~"WALLET", RData, Ctx)}
+            {error, make_semantic_error(Reason, Ctx)}
     end;
 build_rdata("SMIMEA", RData, Ctx) ->
     %% SMIMEA format: usage selector matching-type cert-data(hex string)
@@ -1973,9 +1964,6 @@ calculate_keytag_sum(<<A:8>>, Acc) ->
     Acc + (A bsl 8);
 calculate_keytag_sum(<<>>, Acc) ->
     Acc.
-
-wallet_join_binaries([H | T]) ->
-    lists:foldl(fun(B, Acc) -> <<Acc/binary, 0, B/binary>> end, H, T).
 
 %% Extract a single domain name from RDATA
 -spec extract_domain([rdata()]) -> {ok, string()} | {error, term()}.

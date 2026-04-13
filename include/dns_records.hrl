@@ -395,9 +395,10 @@
     data :: [binary()]
 }).
 
-%% WALLET record for public wallet address.
+%% WALLET record for public wallet address (IANA WALLET). Wire format: one or
+%% more character-strings, same as TXT (RFC 1035).
 -record(dns_rrdata_wallet, {
-    data :: binary()
+    data :: [binary()]
 }).
 
 %% TSIG record for transaction signature. See RFC 2845: §2.3.

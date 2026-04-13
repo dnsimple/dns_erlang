@@ -540,7 +540,7 @@ groups() ->
             parse_invalid_csync_rdata,
             parse_invalid_dsync_rdata,
             parse_invalid_wallet_rdata,
-            parse_invalid_wallet_base64,
+            parse_wallet_two_strings,
             parse_invalid_eui48_rdata,
             parse_invalid_eui48_hex,
             parse_invalid_eui64_rdata,
@@ -1519,14 +1519,14 @@ parse_dsync_record(_Config) ->
     ?assertEqual(~"target.example.com.", Target).
 
 parse_wallet_record(_Config) ->
-    %% WALLET for public wallet address
-    Zone = ~"example.com. 3600 IN WALLET \"dGVzdC13YWxsZXQtZGF0YQ==\"\n",
+    %% WALLET: character-strings (same as TXT on the wire)
+    Zone = ~"example.com. 3600 IN WALLET \"test-wallet-data\"\n",
     {ok, [RR]} = dns_zone:parse_string(Zone, #{origin => ~"example.com."}),
     ?assertEqual(?DNS_TYPE_WALLET, RR#dns_rr.type),
-    #dns_rrdata_wallet{data = Data} = RR#dns_rr.data,
-    %% Verify it's valid base64-decoded binary data
-    ?assert(is_binary(Data)),
-    ?assertEqual(~"test-wallet-data", Data).
+    ?assertMatch(
+        #dns_rrdata_wallet{data = [<<"test-wallet-data">>]},
+        RR#dns_rr.data
+    ).
 
 parse_eui48_record(_Config) ->
     %% EUI48 for 48-bit MAC address (RFC 7043)
@@ -2668,10 +2668,20 @@ parse_invalid_wallet_rdata(_Config) ->
     Zone = ~"example.com. 3600 IN WALLET\n",
     {error, #{type := parser}} = dns_zone:parse_string(Zone, #{origin => ~"example.com."}).
 
-parse_invalid_wallet_base64(_Config) ->
-    %% WALLET record with invalid base64 data
-    Zone = ~"example.com. 3600 IN WALLET \"!!!INVALID!!!\"\n",
-    {error, #{type := semantic}} = dns_zone:parse_string(Zone, #{origin => ~"example.com."}).
+parse_wallet_two_strings(_Config) ->
+    %% Typical use: currency abbreviation and display address (IANA WALLET template)
+    Zone = ~"example.com. 3600 IN WALLET \"BTC\" \"bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh\"\n",
+    {ok, [RR]} = dns_zone:parse_string(Zone, #{origin => ~"example.com."}),
+    ?assertEqual(?DNS_TYPE_WALLET, RR#dns_rr.type),
+    ?assertMatch(
+        #dns_rrdata_wallet{
+            data = [
+                <<"BTC">>,
+                <<"bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh">>
+            ]
+        },
+        RR#dns_rr.data
+    ).
 
 parse_invalid_eui48_rdata(_Config) ->
     %% EUI48 record with no RDATA
@@ -4233,7 +4243,7 @@ encode_wallet_record(_Config) ->
         type = ?DNS_TYPE_WALLET,
         class = ?DNS_CLASS_IN,
         ttl = 3600,
-        data = #dns_rrdata_wallet{data = <<1, 2, 3, 4, 5>>}
+        data = #dns_rrdata_wallet{data = [<<1, 2, 3, 4, 5>>]}
     },
     Line = dns_zone:encode_rr(RR),
     ?assertNotEqual(nomatch, string:find(Line, "WALLET")).

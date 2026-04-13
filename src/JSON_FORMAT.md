@@ -1276,13 +1276,13 @@ Non-RR records (message, query, OPT records) use a two-level nested map format:
 
 **Fields:**
 
-- `data` (`t:binary/0`): Base64-encoded data
+- `data` ([`t:binary/0`]): Character-strings (same wire format as TXT)
 
 **Example:**
 
 ```json
 {
-    "data": "base64-encoded-data"
+    "data": ["BTC", "bc1qxy2kgdygjrsqtzq2n0yrf2493p83kkfjhx0wlh"]
 }
 ```
 
