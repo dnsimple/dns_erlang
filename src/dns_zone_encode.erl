@@ -4,7 +4,6 @@
 -include_lib("dns_erlang/include/dns.hrl").
 
 -dialyzer(no_improper_lists).
--elvis([{elvis_style, dont_repeat_yourself, #{ignore => [{dns_zone_encode, encode_rdata}]}}]).
 
 -export([encode_rdata/2, encode_rdata/3, encode_rr/2, encode_string/2, encode_file/3]).
 

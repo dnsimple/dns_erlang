@@ -23,8 +23,7 @@
 -endif.
 
 -elvis([
-    {elvis_style, max_function_arity, #{ignore => [{dns_decode, create_message_from_header, 14}]}},
-    {elvis_style, dont_repeat_yourself, #{ignore => [{dns_decode, decode_query, 1}]}}
+    {elvis_style, max_function_arity, #{ignore => [{dns_decode, create_message_from_header, 14}]}}
 ]).
 -compile({inline, [decode_bool/1, round_pow/1, create_message_from_header/14]}).
 
