@@ -299,31 +299,44 @@ do_decode_message_additional(_MsgBin, DataBin, 0, RRs) ->
 do_decode_message_additional(_MsgBin, <<>>, _Count, RRs) ->
     {truncated, lists:reverse(RRs), <<>>};
 do_decode_message_additional(MsgBin, DataBin, Count, RRs) ->
-    try dns_domain:from_wire(MsgBin, DataBin) of
-        {<<>>,
-            <<?DNS_TYPE_OPT:16/unsigned, UPS:16/unsigned, ExtRcode:8, Version:8, DNSSEC:1, _Z:15,
-                EDataLen:16, EDataBin:EDataLen/binary, RemBin/binary>>} ->
-            Data = decode_optrrdata(EDataBin),
-            RR = #dns_optrr{
-                udp_payload_size = UPS,
-                ext_rcode = ExtRcode,
-                version = Version,
-                dnssec = decode_bool(DNSSEC),
-                data = Data
-            },
-            do_decode_message_additional(MsgBin, RemBin, Count - 1, [RR | RRs]);
-        {Name,
-            <<Type:16/unsigned, Class:16/unsigned, TTL:32/signed, Len:16, RdataBin:Len/binary,
-                RemBin/binary>>} ->
-            RR = #dns_rr{
-                name = Name,
-                type = Type,
-                class = Class,
-                ttl = TTL,
-                data = decode_rrdata(MsgBin, Class, Type, RdataBin)
-            },
-            do_decode_message_additional(MsgBin, RemBin, Count - 1, [RR | RRs]);
-        {_Name, _Bin} ->
+    %% The record parse is the `try` protected expression so a malformed rdata — e.g. a bad EDNS
+    %% COOKIE (RFC 7873), which raises `bad_cookie` — surfaces as a decode-error tuple instead of
+    %% escaping. The recursion stays in the `of` body to remain in tail position.
+    try
+        case dns_domain:from_wire(MsgBin, DataBin) of
+            {<<>>,
+                <<?DNS_TYPE_OPT:16/unsigned, UPS:16/unsigned, ExtRcode:8, Version:8, DNSSEC:1,
+                    _Z:15, EDataLen:16, EDataBin:EDataLen/binary, RemBin/binary>>} ->
+                {
+                    #dns_optrr{
+                        udp_payload_size = UPS,
+                        ext_rcode = ExtRcode,
+                        version = Version,
+                        dnssec = decode_bool(DNSSEC),
+                        data = decode_optrrdata(EDataBin)
+                    },
+                    RemBin
+                };
+            {Name,
+                <<Type:16/unsigned, Class:16/unsigned, TTL:32/signed, Len:16, RdataBin:Len/binary,
+                    RemBin/binary>>} ->
+                {
+                    #dns_rr{
+                        name = Name,
+                        type = Type,
+                        class = Class,
+                        ttl = TTL,
+                        data = decode_rrdata(MsgBin, Class, Type, RdataBin)
+                    },
+                    RemBin
+                };
+            {_Name, _Bin} ->
+                truncated
+        end
+    of
+        {RR, Rest} ->
+            do_decode_message_additional(MsgBin, Rest, Count - 1, [RR | RRs]);
+        truncated ->
             {truncated, lists:reverse(RRs), DataBin}
     catch
         Error when is_atom(Error) ->
@@ -346,19 +359,31 @@ do_decode_message_body(_MsgBin, DataBin, 0, RRs) ->
 do_decode_message_body(_MsgBin, <<>>, _Count, RRs) ->
     {truncated, lists:reverse(RRs), <<>>};
 do_decode_message_body(MsgBin, DataBin, Count, RRs) ->
-    try dns_domain:from_wire(MsgBin, DataBin) of
-        {Name,
-            <<Type:16/unsigned, Class:16/unsigned, TTL:32/signed, Len:16, RdataBin:Len/binary,
-                RemBin/binary>>} ->
-            RR = #dns_rr{
-                name = Name,
-                type = Type,
-                class = Class,
-                ttl = TTL,
-                data = decode_rrdata(MsgBin, Class, Type, RdataBin)
-            },
-            do_decode_message_body(MsgBin, RemBin, Count - 1, [RR | RRs]);
-        {_Name, _Bin} ->
+    %% As in `do_decode_message_additional/4`: the parse is the protected expression so a failure
+    %% decoding an RR's rdata (e.g. a bad compression pointer reached via `from_wire/2`) surfaces
+    %% as a decode-error tuple, while the recursion stays in the `of` body (tail position).
+    try
+        case dns_domain:from_wire(MsgBin, DataBin) of
+            {Name,
+                <<Type:16/unsigned, Class:16/unsigned, TTL:32/signed, Len:16, RdataBin:Len/binary,
+                    RemBin/binary>>} ->
+                {
+                    #dns_rr{
+                        name = Name,
+                        type = Type,
+                        class = Class,
+                        ttl = TTL,
+                        data = decode_rrdata(MsgBin, Class, Type, RdataBin)
+                    },
+                    RemBin
+                };
+            {_Name, _Bin} ->
+                truncated
+        end
+    of
+        {RR, Rest} ->
+            do_decode_message_body(MsgBin, Rest, Count - 1, [RR | RRs]);
+        truncated ->
             {truncated, lists:reverse(RRs), DataBin}
     catch
         Error when is_atom(Error) ->

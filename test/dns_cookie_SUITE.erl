@@ -91,7 +91,8 @@ error_encode_too_small(_) ->
         <<66, 248, 0, 0, 0, 1, 0, 0, 0, 0, 0, 1, 7, 101, 120, 97, 109, 112, 108, 101, 3, 99, 111,
             109, 0, 0, 1, 0, 1, 0, 0, 41, 16, 0, 0, 0, 0, 0, 0, 9, 0, 10, 0, 5, 115, 109, 97, 108,
             108>>,
-    ?assertError(bad_cookie, dns:decode_message(TooSmallCookie)).
+    %% RFC 7873: a malformed COOKIE is a format error, surfaced as a FORMERR decode result.
+    ?assertMatch({formerr, _, _}, dns:decode_message(TooSmallCookie)).
 
 error_encode_bad_msg(_) ->
     Query = #dns_query{name = ~"example.com", type = ?DNS_TYPE_A},
@@ -343,7 +344,7 @@ malformed_wire_cookie_no_data(_) ->
         0,
         0
     >>,
-    ?assertError(bad_cookie, dns:decode_message(BadBin)).
+    ?assertMatch({formerr, _, _}, dns:decode_message(BadBin)).
 
 malformed_wire_cookie_insufficient_data(_) ->
     BadBin = <<
@@ -402,7 +403,7 @@ malformed_wire_cookie_insufficient_data(_) ->
         % 5 bytes (invalid!)
         "small"
     >>,
-    ?assertError(bad_cookie, dns:decode_message(BadBin)).
+    ?assertMatch({formerr, _, _}, dns:decode_message(BadBin)).
 
 boundary_server_cookie_minimum(_) ->
     boundary_server_cookie_test_valid(?FUNCTION_NAME, ~"12345678").
