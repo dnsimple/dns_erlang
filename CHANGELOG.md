@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## main
 
+## v5.0.12
+
+### Fixed
+
+- A malformed EDNS COOKIE option (RFC 7873) in a received message now decodes to a `formerr` result instead of raising `bad_cookie`.
+
 ## v5.0.11
 
 ### Fixed
