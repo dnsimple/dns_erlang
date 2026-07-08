@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## main
 
+## v5.0.13
+
+### Fixed
+
+- Correctly return `formerr` on invalid NOTIFY DNS messages (rfc1996 §3.7: a NOTIFY carries exactly one question (QDCOUNT=1) and at most one), (#130)
+
 ## v5.0.12
 
 ### Fixed
