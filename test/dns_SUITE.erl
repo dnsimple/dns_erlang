@@ -107,6 +107,7 @@ groups() ->
             decode_query_nscount_rejected,
             decode_query_qdcount_invalid,
             decode_query_notify_allowed,
+            decode_query_notify_invalid_counts,
             decode_query_update_allowed,
             decode_query_too_short,
             decode_query_iquery_notimp,
@@ -1254,6 +1255,22 @@ decode_query_notify_allowed(_) ->
     Encoded = dns:encode_message(Msg),
     Decoded = dns:decode_query(Encoded),
     ?assertMatch(#dns_message{oc = 4, anc = 1, auc = 1}, Decoded).
+
+decode_query_notify_invalid_counts(_) ->
+    %% NOTIFY (opcode 4) with QDCOUNT > 1 must be rejected as FORMERR, not crash.
+    %% Regression for a case_clause seen on malformed traffic: {0,0,4,256,1,0,0}.
+    QName = <<"example.com">>,
+    Query = #dns_query{name = QName, type = ?DNS_TYPE_SOA},
+    Msg = #dns_message{qc = 1, oc = ?DNS_OPCODE_NOTIFY, questions = [Query]},
+    Encoded = dns:encode_message(Msg),
+    %% Rewrite the header to advertise QDCOUNT=256 while keeping the single question body.
+    <<Id:16, QR:1, OC:4, AA:1, TC:1, RD:1, RA:1, Z:1, AD:1, CD:1, RC:4, _QC:16, ANC:16, AUC:16,
+        ADC:16, Rest/binary>> = Encoded,
+    ModifiedHeader =
+        <<Id:16, QR:1, OC:4, AA:1, TC:1, RD:1, RA:1, Z:1, AD:1, CD:1, RC:4, 256:16, ANC:16, AUC:16,
+            ADC:16>>,
+    ModifiedBin = <<ModifiedHeader/binary, Rest/binary>>,
+    ?assertMatch({formerr, undefined, _}, dns:decode_query(ModifiedBin)).
 
 decode_query_update_allowed(_) ->
     %% UPDATE (opcode 5) should be allowed even with Answer/Authority records
