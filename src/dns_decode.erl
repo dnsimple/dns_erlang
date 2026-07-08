@@ -74,6 +74,12 @@ decode_query(
                 Id, QR, OC, AA, TC, RD, RA, AD, CD, RC, QC, ANC, AUC, ADC
             ),
             decode_body(MsgBin, Rest0, Msg0);
+        %% NOTIFY (opcode 4) with invalid counts - reject with FORMERR
+        %% rfc1996 §3.7: a NOTIFY carries exactly one question (QDCOUNT=1) and at most one
+        %% SOA in the authority section. Anything else (e.g. QDCOUNT > 1 from malformed
+        %% traffic) must be rejected rather than fall through the case and crash.
+        {0, 0, ?DNS_OPCODE_NOTIFY, _, _, _, _} ->
+            {formerr, undefined, MsgBin};
         %% UPDATE (opcode 5) - rfc2136
         %% Expected: QR=0, TC=0, QC=1 (ZONE section), ANC>=0 (PREREQ section),
         %%   AUC>=0 (UPDATE section)
