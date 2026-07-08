@@ -12,8 +12,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Check out
-        uses: actions/checkout@v7
-      - uses: erlef/setup-beam@v1
+        uses: actions/checkout@v7.0.0
+      - uses: erlef/setup-beam@v1.24.1
         with:
           otp-version: '29'
           rebar3-version: '3.27'
