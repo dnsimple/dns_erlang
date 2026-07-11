@@ -54,7 +54,7 @@ jobs:
       - run: make build
       - run: make test
       - name: Coveralls
-        uses: coverallsapp/github-action@v2.0.0
+        uses: coverallsapp/github-action@v2.3.6
         with:
           file: _build/test/covertool/dns_erlang.covertool.xml
           parallel: true
@@ -65,6 +65,6 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - name: Close parallel build
-        uses: coverallsapp/github-action@v2.0.0
+        uses: coverallsapp/github-action@v2.3.6
         with:
           parallel-finished: true
