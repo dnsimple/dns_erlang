@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## main
 
+### Fixed
+
+- Correct name compression in the additional section of `encode_message/2` for non-EDNS responses
+
 ## v5.0.13
 
 ### Fixed

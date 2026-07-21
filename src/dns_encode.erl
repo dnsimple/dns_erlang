@@ -172,7 +172,7 @@ encode_message_default(
             BodySize = byte_size(Body),
             {OptRRBin, Ad0} = encode_message_pop_optrr(Additional),
             OptRRBinSize = byte_size(OptRRBin),
-            Pos2 = BodySize,
+            Pos2 = ?HEADER_SIZE + BodySize,
             #dns_message{anc = ANC, auc = AUC} = Msg0,
             case SpaceLeft1 + PreservedOptRRBinSize - BodySize of
                 SpaceLeft2 when SpaceLeft2 < OptRRBinSize ->
