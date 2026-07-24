@@ -776,7 +776,7 @@ decode_rrdata(MsgBin, _Class, ?DNS_TYPE_MB, Bin) ->
 decode_rrdata(MsgBin, _Class, ?DNS_TYPE_MG, Bin) ->
     #dns_rrdata_mg{madname = decode_dnameonly(MsgBin, Bin)};
 decode_rrdata(MsgBin, _Class, ?DNS_TYPE_MINFO, Bin) when is_binary(Bin) ->
-    {RMB, EMB} = dns_domain:from_wire(Bin, MsgBin),
+    {RMB, EMB} = dns_domain:from_wire(MsgBin, Bin),
     #dns_rrdata_minfo{rmailbx = RMB, emailbx = decode_dnameonly(MsgBin, EMB)};
 decode_rrdata(MsgBin, _Class, ?DNS_TYPE_MR, Bin) ->
     #dns_rrdata_mr{newname = decode_dnameonly(MsgBin, Bin)};

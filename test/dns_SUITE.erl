@@ -61,7 +61,9 @@ groups() ->
         ]},
         {rrdata, [parallel], [
             decode_encode_rrdata_wire_samples,
-            decode_encode_rrdata
+            decode_encode_rrdata,
+            encode_nsec_type_bitmaps,
+            decode_minfo_in_message
         ]},
         {svcb, [parallel], [
             decode_encode_svcb_params,
@@ -839,6 +841,32 @@ decode_encode_rrdata(_) ->
         }},
         {?DNS_TYPE_EUI64, #dns_rrdata_eui64{
             address = <<16#00, 16#1A, 16#2B, 16#3C, 16#4D, 16#5E, 16#6F, 16#70>>
+        }},
+        %% Bitmap windows whose first present type is a multiple of 256
+        %% (URI = 256, CAA = 257; TA = 32768, DLV = 32769): regression for the
+        %% off-by-one that encoded [256, 257] as the bitmap for {256, 258}
+        {?DNS_TYPE_NSEC, #dns_rrdata_nsec{
+            next_dname = <<"next.example.com">>,
+            types = [?DNS_TYPE_URI, ?DNS_TYPE_CAA]
+        }},
+        {?DNS_TYPE_NSEC, #dns_rrdata_nsec{
+            next_dname = <<"next.example.com">>,
+            types = [
+                ?DNS_TYPE_A, ?DNS_TYPE_RRSIG, ?DNS_TYPE_URI, ?DNS_TYPE_CAA, 32768, ?DNS_TYPE_DLV
+            ]
+        }},
+        {?DNS_TYPE_NSEC3, #dns_rrdata_nsec3{
+            hash_alg = 1,
+            opt_out = true,
+            iterations = 5,
+            salt = <<16#AB, 16#CD>>,
+            hash = <<"12345678901234567890">>,
+            types = [?DNS_TYPE_URI, ?DNS_TYPE_CAA]
+        }},
+        {?DNS_TYPE_CSYNC, #dns_rrdata_csync{
+            soa_serial = 2025072400,
+            flags = 1,
+            types = [?DNS_TYPE_URI, ?DNS_TYPE_CAA]
         }}
     ],
     [
@@ -854,6 +882,71 @@ decode_encode_rrdata(_) ->
         end
      || {Type, Data} <- Cases
     ].
+
+%% Exact wire assertions for NSEC/CSYNC type bitmaps (RFC 4034 §4.1.2): the bit
+%% for type T must land at position T rem 256 of its window, including when the
+%% window's first present type is a multiple of 256.
+encode_nsec_type_bitmaps(_) ->
+    Cases = [
+        {[?DNS_TYPE_A], <<0, 1, 2#01000000>>},
+        {[?DNS_TYPE_A, ?DNS_TYPE_NS], <<0, 1, 2#01100000>>},
+        {
+            [?DNS_TYPE_RRSIG, ?DNS_TYPE_NSEC, ?DNS_TYPE_DNSKEY],
+            <<0, 7, 0, 0, 0, 0, 0, 2#00000011, 2#10000000>>
+        },
+        {[?DNS_TYPE_URI], <<1, 1, 2#10000000>>},
+        {[?DNS_TYPE_CAA], <<1, 1, 2#01000000>>},
+        {[?DNS_TYPE_URI, ?DNS_TYPE_CAA], <<1, 1, 2#11000000>>},
+        {[32768, ?DNS_TYPE_DLV], <<128, 1, 2#11000000>>},
+        {[?DNS_TYPE_A, ?DNS_TYPE_URI, ?DNS_TYPE_CAA], <<0, 1, 2#01000000, 1, 1, 2#11000000>>},
+        %% type 0 (reserved) occupies bit 0 of window 0
+        {[0, ?DNS_TYPE_A], <<0, 1, 2#11000000>>}
+    ],
+    [
+        begin
+            <<_SOASerial:32, _Flags:16, BitmapWire/binary>> = dns_encode:encode_rrdata(
+                ?DNS_CLASS_IN, #dns_rrdata_csync{soa_serial = 0, flags = 0, types = Types}
+            ),
+            ?assertEqual(Expected, BitmapWire, Types)
+        end
+     || {Types, Expected} <- Cases
+    ],
+    %% NXT (RFC 2535 §5.2) uses a windowless bitmap; type 0 followed by another
+    %% type exercised the same off-by-one
+    <<1, $a, 0, NxtBMP/binary>> = dns_encode:encode_rrdata(
+        ?DNS_CLASS_IN, #dns_rrdata_nxt{dname = <<"a">>, types = [0, 5]}
+    ),
+    ?assertEqual(<<2#10000100>>, NxtBMP).
+
+%% MINFO rdata names must decode inside a full message, where the rdata is a
+%% sub-binary of the message and its names compress against earlier names.
+%% Regression for swapped from_wire/2 arguments, which the rdata-level
+%% round-trip cannot catch (there MsgBin and Bin are the same binary).
+decode_minfo_in_message(_) ->
+    Rdata = #dns_rrdata_minfo{
+        rmailbx = <<"rmail.example.com">>,
+        emailbx = <<"email.example.com">>
+    },
+    Msg = #dns_message{
+        id = 1234,
+        qr = true,
+        qc = 1,
+        anc = 1,
+        questions = [
+            #dns_query{name = <<"example.com">>, type = ?DNS_TYPE_MINFO, class = ?DNS_CLASS_IN}
+        ],
+        answers = [
+            #dns_rr{
+                name = <<"example.com">>,
+                type = ?DNS_TYPE_MINFO,
+                class = ?DNS_CLASS_IN,
+                ttl = 3600,
+                data = Rdata
+            }
+        ]
+    },
+    Decoded = dns:decode_message(dns:encode_message(Msg)),
+    ?assertMatch(#dns_message{answers = [#dns_rr{data = Rdata}]}, Decoded).
 
 uri_decode_normalization(_) ->
     %% Test that URI targets are normalized during decoding

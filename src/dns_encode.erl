@@ -1184,49 +1184,40 @@ encode_nsec_types([]) ->
 encode_nsec_types([_ | _] = UnsortedTypes) ->
     [FirstType | _] = Types = lists:usort(UnsortedTypes),
     FirstWindowNum = FirstType div 256,
-    FirstLastType = FirstWindowNum * 256,
-    do_encode_nsec_types(<<>>, <<>>, FirstWindowNum, FirstLastType, Types).
+    do_encode_nsec_types(<<>>, <<>>, FirstWindowNum, Types).
 
--spec do_encode_nsec_types(binary(), bitstring(), integer(), number(), [integer()]) ->
+-spec do_encode_nsec_types(binary(), bitstring(), integer(), [integer()]) ->
     <<_:16, _:_*8>>.
-do_encode_nsec_types(Bin, BMP0, WindowNum, _LastType, []) ->
+do_encode_nsec_types(Bin, BMP0, WindowNum, []) ->
     BMP = pad_bmp(BMP0),
     BMPSize = byte_size(BMP),
     <<Bin/binary, WindowNum:8, BMPSize:8, BMP:BMPSize/binary>>;
-do_encode_nsec_types(Bin, BMP0, OldWindowNum, _LastType, [Type | _] = Types) when
+do_encode_nsec_types(Bin, BMP0, OldWindowNum, [Type | _] = Types) when
     Type div 256 =/= OldWindowNum
 ->
     BMP = pad_bmp(BMP0),
     BMPSize = byte_size(BMP),
     NewBin = <<Bin/binary, OldWindowNum:8, BMPSize:8, BMP:BMPSize/binary>>,
-    NewBMP = <<>>,
     NewWindowNum = Type div 256,
-    NewLastType = NewWindowNum * 256,
-    do_encode_nsec_types(NewBin, NewBMP, NewWindowNum, NewLastType, Types);
-do_encode_nsec_types(Bin, BMP, WindowNum, LastType, [Type | Types]) ->
-    PadBy =
-        case LastType rem 256 of
-            0 -> Type rem 256;
-            _ -> Type - LastType - 1
-        end,
+    do_encode_nsec_types(NewBin, <<>>, NewWindowNum, Types);
+do_encode_nsec_types(Bin, BMP, WindowNum, [Type | Types]) ->
+    PadBy = Type rem 256 - bit_size(BMP),
     NewBMP = <<BMP/bitstring, 0:PadBy/unit:1, 1:1>>,
-    do_encode_nsec_types(Bin, NewBMP, WindowNum, Type, Types).
+    do_encode_nsec_types(Bin, NewBMP, WindowNum, Types).
 
 -spec encode_nxt_bmp([non_neg_integer()]) -> bitstring().
 encode_nxt_bmp(UnsortedTypes) when is_list(UnsortedTypes) ->
     Types = lists:usort(UnsortedTypes),
-    encode_nxt_bmp(Types, 0, <<>>).
+    encode_nxt_bmp(Types, <<>>).
 
--spec encode_nxt_bmp([non_neg_integer()], non_neg_integer(), bitstring()) -> bitstring().
-encode_nxt_bmp([], _LastType, BMP) ->
+-spec encode_nxt_bmp([non_neg_integer()], bitstring()) -> bitstring().
+encode_nxt_bmp([], BMP) ->
     pad_bmp(BMP);
-encode_nxt_bmp([Type | Types], 0, BMP) ->
-    NewBMP = <<BMP/bitstring, 0:Type/unit:1, 1:1>>,
-    encode_nxt_bmp(Types, Type, NewBMP);
-encode_nxt_bmp([Type | Types], LastType, BMP) ->
-    PadBy = Type - LastType - 1,
+encode_nxt_bmp([Type | Types], BMP) ->
+    %% The bit for Type sits at absolute position Type in the (windowless) bitmap.
+    PadBy = Type - bit_size(BMP),
     NewBMP = <<BMP/bitstring, 0:PadBy/unit:1, 1:1>>,
-    encode_nxt_bmp(Types, Type, NewBMP).
+    encode_nxt_bmp(Types, NewBMP).
 
 -spec pad_bmp(bitstring()) -> bitstring().
 pad_bmp(BMP) when is_binary(BMP) -> BMP;
