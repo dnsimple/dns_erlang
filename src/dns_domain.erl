@@ -367,32 +367,115 @@ Use this when encoding DNS messages where multiple names may share suffixes
 """.
 -spec to_wire(compmap(), non_neg_integer(), dname()) -> {wire(), compmap()}.
 to_wire(CompMap, Pos, Name) when is_binary(Name) ->
-    Labels = do_split(Name, <<>>),
-    LowerLabels = do_split(to_lower_chunk(Name, <<>>), <<>>),
-    to_wire_labels_compressed(CompMap, Pos, Labels, LowerLabels, <<>>).
+    {Labels, LowerLabels} = to_wire_prep(Name),
+    to_wire_labels_compressed(CompMap, Pos, Labels, LowerLabels, <<>>, []).
 
-to_wire_labels_compressed(_, _, [], [], Acc) when 255 < byte_size(Acc) ->
-    error(name_too_long);
-to_wire_labels_compressed(CompMap, _Pos, [], [], Acc) ->
-    {<<Acc/binary, 0>>, CompMap};
-to_wire_labels_compressed(_, _, [L | _], [_ | _] = _, _) when 63 < byte_size(L) ->
-    error({label_too_long, L});
-to_wire_labels_compressed(CompMap, Pos, [L | Ls], [_ | LwrLs] = LwrLabels, Acc) ->
-    case maps:get(LwrLabels, CompMap, undefined) of
-        %% Compression pointer must point to prior occurrence
-        Ptr when is_integer(Ptr), Ptr < Pos ->
-            {<<Acc/binary, 3:2, Ptr:14>>, CompMap};
+%% Label preparation: returns {Labels, LowerLabels}, where both are the same term when the name
+%% needs no lowering (the common case). Note also that label offsets are case-invariant.
+%%
+%% to_lower/1 is a strict byte-for-byte map that never touches $. or $\\ and
+%% never produces them, so label offsets are case-invariant: the name never
+%% needs to be split twice. When the name contains no backslash, labels are
+%% sub-binaries produced by binary:split/3, a trailing dot is trimmed up
+%% front (with no backslash it cannot be an escaped dot) so no trailing
+%% empty part can occur, and mixed-case names lower the trimmed name once
+%% and split it again — guaranteed to yield the structure of the already
+%% validated Labels. Escaped names fall back to the copying do_split/2.
+to_wire_prep(Name) ->
+    {DotPat, BslashPat} = compiled_patterns(),
+    case binary:match(Name, BslashPat) of
+        nomatch ->
+            Trimmed = trim_dot(Name),
+            Labels = validate(binary:split(Trimmed, DotPat, [global])),
+            case has_upper(Trimmed) of
+                false ->
+                    {Labels, Labels};
+                true ->
+                    Lower = to_lower_chunk(Trimmed, <<>>),
+                    {Labels, binary:split(Lower, DotPat, [global])}
+            end;
         _ ->
-            NewCompMap =
-                case Pos < (1 bsl 14) of
-                    true -> CompMap#{LwrLabels => Pos};
-                    false -> CompMap
-                end,
-            Len = byte_size(L),
-            NewPos = Pos + 1 + Len,
-            NewAcc = <<Acc/binary, Len, L/binary>>,
-            to_wire_labels_compressed(NewCompMap, NewPos, Ls, LwrLs, NewAcc)
+            Labels = do_split(Name, <<>>),
+            case has_upper(Name) of
+                false -> {Labels, Labels};
+                true -> {Labels, [to_lower_chunk(L, <<>>) || L <- Labels]}
+            end
     end.
+
+compiled_patterns() ->
+    case persistent_term:get({?MODULE, patterns}, undefined) of
+        undefined ->
+            Pats = {binary:compile_pattern(<<$.>>), binary:compile_pattern(<<$\\>>)},
+            persistent_term:put({?MODULE, patterns}, Pats),
+            Pats;
+        Pats ->
+            Pats
+    end.
+
+%% Drop one trailing dot (FQDN form) so binary:split cannot produce a trailing empty part.
+trim_dot(<<>>) ->
+    <<>>;
+trim_dot(Name) ->
+    Sz = byte_size(Name) - 1,
+    case Name of
+        <<Trimmed:Sz/binary, $.>> -> Trimmed;
+        _ -> Name
+    end.
+
+%% Enforce do_split's semantics on the split parts, position-ordered: a leading empty label is
+%% tolerated (historical quirk: ".foo"), any other empty label raises empty_label, and labels are
+%% limited to 63 bytes.
+validate([<<>>]) ->
+    %% "" and "." both reduce to this
+    [];
+validate([First | Rest] = Parts) when byte_size(First) =< 63 ->
+    validate_rest(Rest),
+    Parts;
+validate([First | _]) ->
+    error({label_too_long, First}).
+
+validate_rest([]) ->
+    ok;
+validate_rest([<<>> | _]) ->
+    error({invalid_dname, empty_label});
+validate_rest([L | _]) when 63 < byte_size(L) ->
+    error({label_too_long, L});
+validate_rest([_ | Rest]) ->
+    validate_rest(Rest).
+
+to_wire_labels_compressed(_, _, [], [], Acc, _) when 255 < byte_size(Acc) ->
+    error(name_too_long);
+to_wire_labels_compressed(CompMap, _Pos, [], [], Acc, Pending) ->
+    {<<Acc/binary, 0>>, merge_pending(CompMap, Pending)};
+to_wire_labels_compressed(CompMap, Pos, [L | Ls], [_ | LwrLs] = LwrLabels, Acc, Pending) ->
+    case CompMap of
+        %% Compression pointer must point to prior occurrence
+        #{LwrLabels := Ptr} when is_integer(Ptr), Ptr < Pos ->
+            {<<Acc/binary, 3:2, Ptr:14>>, merge_pending(CompMap, Pending)};
+        _ ->
+            Len = byte_size(L),
+            63 < Len andalso error({label_too_long, L}),
+            NewPending =
+                case Pos < (1 bsl 14) of
+                    true -> [{LwrLabels, Pos} | Pending];
+                    false -> Pending
+                end,
+            NewAcc = <<Acc/binary, Len, L/binary>>,
+            to_wire_labels_compressed(CompMap, Pos + 1 + Len, Ls, LwrLs, NewAcc, NewPending)
+    end.
+
+%% Suffix keys of the name being encoded can never be looked up while encoding that same name
+%% (suffixes strictly shrink), so this is observably identical while avoiding one map copy per label
+merge_pending(CompMap, []) ->
+    CompMap;
+merge_pending(CompMap, [{K, P}]) ->
+    CompMap#{K => P};
+merge_pending(CompMap, [{K1, P1}, {K2, P2}]) ->
+    CompMap#{K1 => P1, K2 => P2};
+merge_pending(CompMap, [{K1, P1}, {K2, P2}, {K3, P3}]) ->
+    CompMap#{K1 => P1, K2 => P2, K3 => P3};
+merge_pending(CompMap, Pending) ->
+    maps:merge(CompMap, maps:from_list(Pending)).
 
 -doc """
 Convert wire format to domain name.
@@ -623,7 +706,11 @@ Returns provided name with case-insensitive characters in uppercase.
 to_upper(Data) when is_binary(Data) ->
     to_upper_chunk(Data, <<>>).
 
--compile({inline, [lower_word56/1, upper_word56/1, lower_byte/1, upper_byte/1, are_equal_ci/2]}).
+-compile(
+    {inline, [
+        lower_word56/1, upper_word56/1, lower_byte/1, upper_byte/1, are_equal_ci/2, has_upper_word/1
+    ]}
+).
 
 %% 56-bit (7-byte) SWAR constants — stays within BEAM small integer range
 %% (60-bit on 64-bit systems), avoiding bignum allocation.
@@ -648,6 +735,22 @@ upper_word56(W) ->
     GeA = ((W bor ?HIGHS56) - (?ONES56 * $a)) band ?HIGHS56,
     GeZ1 = ((W bor ?HIGHS56) - (?ONES56 * ($z + 1))) band ?HIGHS56,
     W bxor (((GeA bxor GeZ1) band AsciiMask) bsr 2).
+
+%% SWAR scan for any byte in [$A, $Z], 7 bytes at a time.
+-spec has_upper(binary()) -> boolean().
+has_upper(<<W:56/unsigned-little, Rest/binary>>) ->
+    has_upper_word(W) orelse has_upper(Rest);
+has_upper(<<C, Rest/binary>>) ->
+    ($A =< C andalso C =< $Z) orelse has_upper(Rest);
+has_upper(<<>>) ->
+    false.
+
+-spec has_upper_word(non_neg_integer()) -> boolean().
+has_upper_word(W) ->
+    AsciiMask = (W band ?HIGHS56) bxor ?HIGHS56,
+    GeA = ((W bor ?HIGHS56) - (?ONES56 * $A)) band ?HIGHS56,
+    GeZ1 = ((W bor ?HIGHS56) - (?ONES56 * ($Z + 1))) band ?HIGHS56,
+    (GeA band (bnot GeZ1) band AsciiMask) =/= 0.
 
 upper_byte(X) ->
     element(
