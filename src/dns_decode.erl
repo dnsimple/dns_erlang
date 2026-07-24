@@ -25,7 +25,15 @@
 -elvis([
     {elvis_style, max_function_arity, #{ignore => [{dns_decode, create_message_from_header, 14}]}}
 ]).
--compile({inline, [decode_bool/1, round_pow/1, create_message_from_header/14]}).
+-compile(
+    {inline, [
+        decode_bool/1,
+        round_pow/1,
+        create_message_from_header/14,
+        decode_bmp_byte/3,
+        bmp_bit/3
+    ]}
+).
 
 -spec decode(dns:message_bin()) ->
     dns:message() | {dns:decode_error(), dns:message() | undefined, binary()}.
@@ -1014,29 +1022,38 @@ do_decode_nsec_types(<<>>, Types) ->
     lists:reverse(Types);
 do_decode_nsec_types(<<WindowNum:8, BMPLength:8, BMP:BMPLength/binary, Rest/binary>>, Types) ->
     BaseNo = WindowNum * 256,
-    NewTypes = do_decode_nsec_types(BMP, BaseNo, Types),
+    NewTypes = decode_bmp_bytes(BMP, BaseNo, Types),
     do_decode_nsec_types(Rest, NewTypes).
 
--spec do_decode_nsec_types(bitstring(), non_neg_integer(), [non_neg_integer()]) ->
+-spec decode_bmp_bytes(binary(), non_neg_integer(), [non_neg_integer()]) ->
     [non_neg_integer()].
-do_decode_nsec_types(<<>>, _Num, Types) ->
+decode_bmp_bytes(<<>>, _Num, Types) ->
     Types;
-do_decode_nsec_types(<<0:1, Rest/bitstring>>, Num, Types) ->
-    do_decode_nsec_types(Rest, Num + 1, Types);
-do_decode_nsec_types(<<1:1, Rest/bitstring>>, Num, Types) ->
-    do_decode_nsec_types(Rest, Num + 1, [Num | Types]).
+decode_bmp_bytes(<<0, Rest/binary>>, Num, Types) ->
+    decode_bmp_bytes(Rest, Num + 8, Types);
+decode_bmp_bytes(<<B, Rest/binary>>, Num, Types) ->
+    decode_bmp_bytes(Rest, Num + 8, decode_bmp_byte(B, Num, Types)).
 
--spec decode_nxt_bmp(bitstring()) -> [non_neg_integer()].
+%% Bits are MSB-first: bit 7 of B is type Num, bit 0 is type Num + 7.
+%% Set types are prepended in ascending order; callers reverse once at the end.
+-spec decode_bmp_byte(byte(), non_neg_integer(), [non_neg_integer()]) -> [non_neg_integer()].
+decode_bmp_byte(B, Num, Acc0) ->
+    Acc1 = bmp_bit(B band 2#10000000, Num, Acc0),
+    Acc2 = bmp_bit(B band 2#01000000, Num + 1, Acc1),
+    Acc3 = bmp_bit(B band 2#00100000, Num + 2, Acc2),
+    Acc4 = bmp_bit(B band 2#00010000, Num + 3, Acc3),
+    Acc5 = bmp_bit(B band 2#00001000, Num + 4, Acc4),
+    Acc6 = bmp_bit(B band 2#00000100, Num + 5, Acc5),
+    Acc7 = bmp_bit(B band 2#00000010, Num + 6, Acc6),
+    bmp_bit(B band 2#00000001, Num + 7, Acc7).
+
+-spec bmp_bit(non_neg_integer(), non_neg_integer(), [non_neg_integer()]) -> [non_neg_integer()].
+bmp_bit(0, _Num, Acc) -> Acc;
+bmp_bit(_, Num, Acc) -> [Num | Acc].
+
+-spec decode_nxt_bmp(binary()) -> [non_neg_integer()].
 decode_nxt_bmp(BMP) ->
-    do_decode_nxt_bmp(BMP, 0, []).
-
--spec do_decode_nxt_bmp(bitstring(), non_neg_integer(), [non_neg_integer()]) -> [non_neg_integer()].
-do_decode_nxt_bmp(<<>>, _Offset, Types) ->
-    lists:reverse(Types);
-do_decode_nxt_bmp(<<1:1, Rest/bitstring>>, Offset, Types) ->
-    do_decode_nxt_bmp(Rest, Offset + 1, [Offset | Types]);
-do_decode_nxt_bmp(<<0:1, Rest/bitstring>>, Offset, Types) ->
-    do_decode_nxt_bmp(Rest, Offset + 1, Types).
+    lists:reverse(decode_bmp_bytes(BMP, 0, [])).
 
 -spec decode_svcb_svc_params(binary()) -> dns:svcb_svc_params().
 decode_svcb_svc_params(Bin) ->
