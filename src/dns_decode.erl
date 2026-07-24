@@ -213,58 +213,71 @@ create_message_from_header(Id, QR, OC, AA, TC, RD, RA, AD, CD, RC, QC, ANC, AUC,
         adc = ADC
     }.
 
+%% The #dns_message{} record is updated exactly once, on completion — updating it
+%% per section would copy the full 19-word record four times per message.
 -spec decode_body(dns:message_bin(), binary(), dns:message()) ->
     dns:message() | {dns:decode_error(), dns:message() | undefined, binary()}.
-decode_body(MsgBin, Rest0, #dns_message{} = Msg0) ->
-    maybe
-        {Msg1, Rest1} ?= decode_questions(MsgBin, Rest0, Msg0),
-        {Msg2, Rest2} ?= decode_answers(MsgBin, Rest1, Msg1),
-        {Msg3, Rest3} ?= decode_authority(MsgBin, Rest2, Msg2),
-        {Msg4, Rest4} ?= decode_additional(MsgBin, Rest3, Msg3),
-        decode_finished(MsgBin, Rest4, Msg4)
-    else
-        Other ->
-            Other
-    end.
-
--spec decode_questions(dns:message_bin(), binary(), dns:message()) ->
-    {dns:message(), binary()} | {dns:decode_error(), dns:message(), binary()}.
-decode_questions(MsgBin, Body, #dns_message{qc = QC} = Msg) ->
-    case decode_message_questions(MsgBin, Body, QC, []) of
-        {Questions, Rest} ->
-            {Msg#dns_message{questions = Questions}, Rest};
+decode_body(MsgBin, Rest0, #dns_message{qc = QC} = Msg0) ->
+    case decode_message_questions(MsgBin, Rest0, QC, []) of
+        {Questions, Rest1} ->
+            decode_body_answers(MsgBin, Rest1, Msg0, Questions);
         {Error, Questions, Rest} ->
-            {Error, Msg#dns_message{questions = Questions}, Rest}
+            {Error, Msg0#dns_message{questions = Questions}, Rest}
     end.
 
--spec decode_answers(dns:message_bin(), binary(), dns:message()) ->
-    {dns:message(), binary()} | {dns:decode_error(), dns:message(), binary()}.
-decode_answers(MsgBin, Body, #dns_message{anc = ANC} = Msg) ->
+-spec decode_body_answers(dns:message_bin(), binary(), dns:message(), dns:questions()) ->
+    dns:message() | {dns:decode_error(), dns:message(), binary()}.
+decode_body_answers(MsgBin, Body, #dns_message{anc = ANC} = Msg0, Questions) ->
     case decode_message_body(MsgBin, Body, ANC) of
-        {RR, Rest} ->
-            {Msg#dns_message{answers = RR}, Rest};
-        {Error, RR, Rest} ->
-            {Error, Msg#dns_message{answers = RR}, Rest}
+        {Answers, Rest} ->
+            decode_body_authority(MsgBin, Rest, Msg0, Questions, Answers);
+        {Error, Answers, Rest} ->
+            {Error, Msg0#dns_message{questions = Questions, answers = Answers}, Rest}
     end.
 
--spec decode_authority(dns:message_bin(), binary(), dns:message()) ->
-    {dns:message(), binary()} | {dns:decode_error(), dns:message(), binary()}.
-decode_authority(MsgBin, Body, #dns_message{auc = AUC} = Msg) ->
+-spec decode_body_authority(
+    dns:message_bin(), binary(), dns:message(), dns:questions(), dns:answers()
+) ->
+    dns:message() | {dns:decode_error(), dns:message(), binary()}.
+decode_body_authority(MsgBin, Body, #dns_message{auc = AUC} = Msg0, Questions, Answers) ->
     case decode_message_body(MsgBin, Body, AUC) of
-        {RR, Rest} ->
-            {Msg#dns_message{authority = RR}, Rest};
-        {Error, RR, Rest} ->
-            {Error, Msg#dns_message{authority = RR}, Rest}
+        {Authority, Rest} ->
+            decode_body_additional(MsgBin, Rest, Msg0, Questions, Answers, Authority);
+        {Error, Authority, Rest} ->
+            {Error,
+                Msg0#dns_message{
+                    questions = Questions,
+                    answers = Answers,
+                    authority = Authority
+                },
+                Rest}
     end.
 
--spec decode_additional(dns:message_bin(), binary(), dns:message()) ->
-    {dns:message(), binary()} | {dns:decode_error(), dns:message(), binary()}.
-decode_additional(MsgBin, Body, #dns_message{adc = ADC} = Msg) ->
+-spec decode_body_additional(
+    dns:message_bin(), binary(), dns:message(), dns:questions(), dns:answers(), dns:authority()
+) ->
+    dns:message() | {dns:decode_error(), dns:message(), binary()}.
+decode_body_additional(
+    MsgBin, Body, #dns_message{adc = ADC} = Msg0, Questions, Answers, Authority
+) ->
     case decode_message_additional(MsgBin, Body, ADC) of
-        {RR, Rest} ->
-            {Msg#dns_message{additional = RR}, Rest};
-        {Error, RR, Rest} ->
-            {Error, Msg#dns_message{additional = RR}, Rest}
+        {Additional, Rest} ->
+            Msg = Msg0#dns_message{
+                questions = Questions,
+                answers = Answers,
+                authority = Authority,
+                additional = Additional
+            },
+            decode_finished(MsgBin, Rest, Msg);
+        {Error, Additional, Rest} ->
+            {Error,
+                Msg0#dns_message{
+                    questions = Questions,
+                    answers = Answers,
+                    authority = Authority,
+                    additional = Additional
+                },
+                Rest}
     end.
 
 -spec decode_finished(dns:message_bin(), binary(), dns:message()) ->
