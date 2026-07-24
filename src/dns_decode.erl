@@ -992,6 +992,8 @@ bin_to_key_tag(Binary) when is_binary(Binary) ->
 -spec do_bin_to_key_tag(binary(), non_neg_integer()) -> dns:uint16().
 do_bin_to_key_tag(<<>>, AC) ->
     (AC + ((AC bsr 16) band 16#FFFF)) band 16#FFFF;
+do_bin_to_key_tag(<<A:16, B:16, C:16, D:16, Rest/binary>>, AC) ->
+    do_bin_to_key_tag(Rest, AC + A + B + C + D);
 do_bin_to_key_tag(<<X:16, Rest/binary>>, AC) ->
     do_bin_to_key_tag(Rest, AC + X);
 do_bin_to_key_tag(<<X:8>>, AC) ->
