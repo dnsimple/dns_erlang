@@ -12,6 +12,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Updated
 
 - Optimized `dns_domain:to_wire/3` (compressed name encoding): 1.4–2.8x faster on typical names, up to 17–22x on many-label names such as IPv6 reverse PTRs, with 1.1–3x less allocation.
+- Optimized `dns_domain:from_wire/1,2` (wire-format name decoding): ~1.1–1.2x faster on typical compressed names, up to 1.4–1.5x on pointer chains, with up to 18% less allocation on pointer-heavy names.
 
 ### Fixed
 

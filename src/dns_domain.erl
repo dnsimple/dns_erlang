@@ -477,6 +477,30 @@ merge_pending(CompMap, [{K1, P1}, {K2, P2}, {K3, P3}]) ->
 merge_pending(CompMap, Pending) ->
     maps:merge(CompMap, maps:from_list(Pending)).
 
+%% 56-bit (7-byte) and 32-bit SWAR constants — stay within BEAM small integer range
+-define(ONES56, 16#01010101010101).
+-define(HIGHS56, 16#80808080808080).
+-define(ONES32, 16#01010101).
+-define(HIGHS32, 16#80808080).
+-define(DOTS56, (?ONES56 * $.)).
+-define(BSLS56, (?ONES56 * $\\)).
+-define(DOTS32, (?ONES32 * $.)).
+-define(BSLS32, (?ONES32 * $\\)).
+
+%% Guard-legal test that a word contains neither '.' nor '\': W bxor (C *
+%% ones) has a zero byte iff W contains byte C, and (V - ones) band (bnot V)
+%% band highs =/= 0 iff V has a zero byte (exact, no false positives).
+-define(CLEAN56(W),
+    (0 =:=
+        ((((((W) bxor ?DOTS56) - ?ONES56) band bnot ((W) bxor ?DOTS56)) bor
+            ((((W) bxor ?BSLS56) - ?ONES56) band bnot ((W) bxor ?BSLS56))) band ?HIGHS56))
+).
+-define(CLEAN32(W),
+    (0 =:=
+        ((((((W) bxor ?DOTS32) - ?ONES32) band bnot ((W) bxor ?DOTS32)) bor
+            ((((W) bxor ?BSLS32) - ?ONES32) band bnot ((W) bxor ?BSLS32))) band ?HIGHS32))
+).
+
 -doc """
 Convert wire format to domain name.
 
@@ -519,7 +543,7 @@ from_wire_first(<<Len, _/binary>>) when Len > 63 ->
 from_wire_first(<<Len, Rest/binary>>) when byte_size(Rest) < Len ->
     error(truncated);
 from_wire_first(<<Len, Label:Len/binary, Rest/binary>>) ->
-    Acc = escape_label_inline(Label, <<>>),
+    Acc = escape_label_chunk(Label, <<>>),
     from_wire_rest(Rest, Acc, 1).
 
 from_wire_rest(_, Acc, _) when byte_size(Acc) > 255 ->
@@ -536,59 +560,22 @@ from_wire_rest(<<Len, _:Len/binary, _/binary>>, _, 127) ->
     error({too_many_labels, 128});
 from_wire_rest(<<Len, Label:Len/binary, Rest/binary>>, Acc, LabelCount) ->
     %% Add dot separator, then escape label directly into accumulator
-    AccWithDot = <<Acc/binary, $.>>,
-    AccEscaped = escape_label_inline(Label, AccWithDot),
+    AccEscaped = escape_label_chunk(Label, <<Acc/binary, $.>>),
     from_wire_rest(Rest, AccEscaped, LabelCount + 1).
 
-%% Escape label inline, appending directly to accumulator
-%% Optimized to process chunks of safe characters (8, 4, 2 bytes) when possible
-%% VM optimizes binary pattern matching and guards efficiently
-escape_label_inline(<<>>, Acc) ->
-    Acc;
-%% Match 8 bytes at once when all are safe (common case - no escaping needed)
-escape_label_inline(<<A, B, C, D, E, F, G, H, Rest/binary>>, Acc) when
-    A =/= $.,
-    A =/= $\\,
-    B =/= $.,
-    B =/= $\\,
-    C =/= $.,
-    C =/= $\\,
-    D =/= $.,
-    D =/= $\\,
-    E =/= $.,
-    E =/= $\\,
-    F =/= $.,
-    F =/= $\\,
-    G =/= $.,
-    G =/= $\\,
-    H =/= $.,
-    H =/= $\\
-->
-    escape_label_inline(Rest, <<Acc/binary, A, B, C, D, E, F, G, H>>);
-%% Match 4 bytes
-escape_label_inline(<<A, B, C, D, Rest/binary>>, Acc) when
-    A =/= $.,
-    A =/= $\\,
-    B =/= $.,
-    B =/= $\\,
-    C =/= $.,
-    C =/= $\\,
-    D =/= $.,
-    D =/= $\\
-->
-    escape_label_inline(Rest, <<Acc/binary, A, B, C, D>>);
-%% Match 2 bytes
-escape_label_inline(<<A, B, Rest/binary>>, Acc) when
-    A =/= $., A =/= $\\, B =/= $., B =/= $\\
-->
-    escape_label_inline(Rest, <<Acc/binary, A, B>>);
-%% Single byte fallback
-escape_label_inline(<<$., Rest/binary>>, Acc) ->
-    escape_label_inline(Rest, <<Acc/binary, "\\.">>);
-escape_label_inline(<<$\\, Rest/binary>>, Acc) ->
-    escape_label_inline(Rest, <<Acc/binary, "\\\\">>);
-escape_label_inline(<<C, Rest/binary>>, Acc) ->
-    escape_label_inline(Rest, <<Acc/binary, C>>).
+%% Escape a label, appending directly into the accumulator. SWAR optimised.
+escape_label_chunk(<<W:56/unsigned-little, Rest/binary>>, Acc) when ?CLEAN56(W) ->
+    escape_label_chunk(Rest, <<Acc/binary, W:56/unsigned-little>>);
+escape_label_chunk(<<W:32/unsigned-little, Rest/binary>>, Acc) when ?CLEAN32(W) ->
+    escape_label_chunk(Rest, <<Acc/binary, W:32/unsigned-little>>);
+escape_label_chunk(<<$., Rest/binary>>, Acc) ->
+    escape_label_chunk(Rest, <<Acc/binary, "\\.">>);
+escape_label_chunk(<<$\\, Rest/binary>>, Acc) ->
+    escape_label_chunk(Rest, <<Acc/binary, "\\\\">>);
+escape_label_chunk(<<C, Rest/binary>>, Acc) ->
+    escape_label_chunk(Rest, <<Acc/binary, C>>);
+escape_label_chunk(<<>>, Acc) ->
+    Acc.
 
 -doc """
 Convert wire format to domain name with compression support.
@@ -621,17 +608,32 @@ compression pointer is invalid or points outside the message.
 """.
 -spec from_wire(MsgBin :: wire(), DataBin :: wire()) -> {dname(), wire()}.
 from_wire(MsgBin, DataBin) when is_binary(MsgBin), is_binary(DataBin) ->
-    from_wire_first_compressed(MsgBin, DataBin, 0, 0).
+    from_wire_first_compressed(MsgBin, DataBin, <<>>, 0, 0, none).
 
-%% First label - matches structure of from_wire_first
-from_wire_first_compressed(_MsgBin, _Acc, _Count, TotalSize) when 255 < TotalSize ->
+%% Compressed decode threads the accumulator through pointer jumps: a
+%% pointer target's labels are appended straight into the same accumulator
+%% (a rest-position jump appends the '.' separator first) instead of
+%% decoding the target into its own binary and copying that into the
+%% accumulator. "First" position means the next label is appended without a
+%% separator: the start of the name, or right after a followed pointer.
+%% SavedRest is the Rest captured at the first pointer followed — the
+%% remainder from_wire/2 must return. Behavior quirks are preserved
+%% exactly: the label counter restarts on every pointer segment,
+%% decode_loop is checked only for pointers in first position
+%% (pointer-to-pointer chains; any label in between grows TotalSize, which
+%% is bounded), and a pointer to a terminating zero byte yields a
+%% trailing-dot name.
+from_wire_first_compressed(_MsgBin, _DataBin, _Acc, _Count, TotalSize, _SavedRest) when
+    255 < TotalSize
+->
     error({name_too_long, TotalSize});
-from_wire_first_compressed(_MsgBin, <<>>, _Count, _TotalSize) ->
+from_wire_first_compressed(_MsgBin, <<>>, _Acc, _Count, _TotalSize, _SavedRest) ->
     error(truncated);
-from_wire_first_compressed(_MsgBin, <<0, Rest/binary>>, _Count, _TotalSize) ->
-    {<<>>, Rest};
-from_wire_first_compressed(MsgBin, <<3:2, Ptr:14, Rest/binary>>, Count, TotalSize) ->
-    %% Compression pointer as first label
+from_wire_first_compressed(_MsgBin, <<0, Rest/binary>>, Acc, _Count, _TotalSize, SavedRest) ->
+    {Acc, keep_first(SavedRest, Rest)};
+from_wire_first_compressed(
+    MsgBin, <<3:2, Ptr:14, Rest/binary>>, Acc, Count, TotalSize, SavedRest
+) ->
     NewCount = Count + 2,
     case NewCount > byte_size(MsgBin) of
         true ->
@@ -639,65 +641,88 @@ from_wire_first_compressed(MsgBin, <<3:2, Ptr:14, Rest/binary>>, Count, TotalSiz
         false ->
             case MsgBin of
                 <<_:Ptr/binary, PtrDataBin/binary>> ->
-                    {PtrName, _} = from_wire_first_compressed(
-                        MsgBin, PtrDataBin, NewCount, 2 + TotalSize
-                    ),
-                    {PtrName, Rest};
+                    from_wire_first_compressed(
+                        MsgBin,
+                        PtrDataBin,
+                        Acc,
+                        NewCount,
+                        2 + TotalSize,
+                        keep_first(SavedRest, Rest)
+                    );
                 _ ->
                     error({bad_pointer, Ptr})
             end
     end;
-from_wire_first_compressed(_MsgBin, <<Len, _/binary>>, _Count, _TotalSize) when 63 < Len ->
+from_wire_first_compressed(_MsgBin, <<Len, _/binary>>, _Acc, _Count, _TotalSize, _SavedRest) when
+    63 < Len
+->
     error({invalid_label_length, Len});
-from_wire_first_compressed(_MsgBin, <<Len, Rest/binary>>, _Count, _TotalSize) when
+from_wire_first_compressed(_MsgBin, <<Len, Rest/binary>>, _Acc, _Count, _TotalSize, _SavedRest) when
     byte_size(Rest) < Len
 ->
     error(truncated);
-from_wire_first_compressed(MsgBin, <<Len, Label:Len/binary, Rest/binary>>, Count, TotalSize) ->
-    Acc = escape_label_inline(Label, <<>>),
-    from_wire_rest_compressed(MsgBin, Rest, Acc, Count, 1, 1 + Len + TotalSize).
+from_wire_first_compressed(
+    MsgBin, <<Len, Label:Len/binary, Rest/binary>>, Acc, Count, TotalSize, SavedRest
+) ->
+    NewAcc = escape_label_chunk(Label, Acc),
+    from_wire_rest_compressed(MsgBin, Rest, NewAcc, Count, 1, 1 + Len + TotalSize, SavedRest).
 
 %% Rest labels - matches structure of from_wire_rest
-from_wire_rest_compressed(_MsgBin, _, _Acc, _Count, _LabelCount, TotalSize) when 255 < TotalSize ->
+from_wire_rest_compressed(_MsgBin, _, _Acc, _Count, _LabelCount, TotalSize, _SavedRest) when
+    255 < TotalSize
+->
     error({name_too_long, TotalSize});
-from_wire_rest_compressed(_MsgBin, <<>>, _Acc, _Count, _LabelCount, _TotalSize) ->
+from_wire_rest_compressed(_MsgBin, <<>>, _Acc, _Count, _LabelCount, _TotalSize, _SavedRest) ->
     error(truncated);
-from_wire_rest_compressed(_MsgBin, <<0, Rest/binary>>, Acc, _Count, _LabelCount, _TotalSize) ->
-    {Acc, Rest};
 from_wire_rest_compressed(
-    MsgBin, <<3:2, Ptr:14, Rest/binary>>, Acc, Count, _LabelCount, TotalSize
+    _MsgBin, <<0, Rest/binary>>, Acc, _Count, _LabelCount, _TotalSize, SavedRest
+) ->
+    {Acc, keep_first(SavedRest, Rest)};
+from_wire_rest_compressed(
+    MsgBin, <<3:2, Ptr:14, Rest/binary>>, Acc, Count, _LabelCount, TotalSize, SavedRest
 ) ->
     case MsgBin of
         <<_:Ptr/binary, PtrDataBin/binary>> ->
-            {PtrName, _} = from_wire_first_compressed(
-                MsgBin, PtrDataBin, 2 + Count, 2 + TotalSize
-            ),
-            {<<Acc/binary, $., PtrName/binary>>, Rest};
+            from_wire_first_compressed(
+                MsgBin,
+                PtrDataBin,
+                <<Acc/binary, $.>>,
+                2 + Count,
+                2 + TotalSize,
+                keep_first(SavedRest, Rest)
+            );
         _ ->
             error({bad_pointer, Ptr})
     end;
-from_wire_rest_compressed(_MsgBin, <<Len, _/binary>>, _Acc, _Count, _LabelCount, _TotalSize) when
+from_wire_rest_compressed(
+    _MsgBin, <<Len, _/binary>>, _Acc, _Count, _LabelCount, _TotalSize, _SavedRest
+) when
     Len > 63
 ->
     error({invalid_label_length, Len});
-from_wire_rest_compressed(_MsgBin, <<Len, Rest/binary>>, _Acc, _Count, _LabelCount, _TotalSize) when
+from_wire_rest_compressed(
+    _MsgBin, <<Len, Rest/binary>>, _Acc, _Count, _LabelCount, _TotalSize, _SavedRest
+) when
     byte_size(Rest) < Len
 ->
     error(truncated);
-from_wire_rest_compressed(_MsgBin, <<Len, _:Len/binary, _/binary>>, _Acc, _Count, 127, _) ->
+from_wire_rest_compressed(
+    _MsgBin, <<Len, _:Len/binary, _/binary>>, _Acc, _Count, 127, _, _SavedRest
+) ->
     error({too_many_labels, 128});
 from_wire_rest_compressed(
-    MsgBin,
-    <<Len, Label:Len/binary, Rest/binary>>,
-    Acc,
-    Count,
-    LabelCount,
-    TotalSize
+    MsgBin, <<Len, Label:Len/binary, Rest/binary>>, Acc, Count, LabelCount, TotalSize, SavedRest
 ) ->
     %% Add dot separator, then escape label directly into accumulator
-    AccWithDot = <<Acc/binary, $.>>,
-    AccEscaped = escape_label_inline(Label, AccWithDot),
-    from_wire_rest_compressed(MsgBin, Rest, AccEscaped, Count, 1 + LabelCount, 1 + Len + TotalSize).
+    AccEscaped = escape_label_chunk(Label, <<Acc/binary, $.>>),
+    from_wire_rest_compressed(
+        MsgBin, Rest, AccEscaped, Count, 1 + LabelCount, 1 + Len + TotalSize, SavedRest
+    ).
+
+%% The remainder returned by from_wire/2 is the Rest at the first pointer
+%% followed; later pointer sites don't change it.
+keep_first(none, Rest) -> Rest;
+keep_first(Saved, _Rest) -> Saved.
 
 -doc """
 Returns provided name with case-insensitive characters in uppercase.
@@ -708,14 +733,15 @@ to_upper(Data) when is_binary(Data) ->
 
 -compile(
     {inline, [
-        lower_word56/1, upper_word56/1, lower_byte/1, upper_byte/1, are_equal_ci/2, has_upper_word/1
+        lower_word56/1,
+        upper_word56/1,
+        lower_byte/1,
+        upper_byte/1,
+        are_equal_ci/2,
+        has_upper_word/1,
+        keep_first/2
     ]}
 ).
-
-%% 56-bit (7-byte) SWAR constants — stays within BEAM small integer range
-%% (60-bit on 64-bit systems), avoiding bignum allocation.
--define(ONES56, 16#01010101010101).
--define(HIGHS56, 16#80808080808080).
 
 %% Bitwise SWAR case conversion for 7 packed bytes.
 %% Carry-safe: even for bytes >= 128, (0x80 | b) - 91 >= 37, so no borrow
