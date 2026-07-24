@@ -62,7 +62,8 @@ groups() ->
         {rrdata, [parallel], [
             decode_encode_rrdata_wire_samples,
             decode_encode_rrdata,
-            encode_nsec_type_bitmaps
+            encode_nsec_type_bitmaps,
+            decode_minfo_in_message
         ]},
         {svcb, [parallel], [
             decode_encode_svcb_params,
@@ -916,6 +917,36 @@ encode_nsec_type_bitmaps(_) ->
         ?DNS_CLASS_IN, #dns_rrdata_nxt{dname = <<"a">>, types = [0, 5]}
     ),
     ?assertEqual(<<2#10000100>>, NxtBMP).
+
+%% MINFO rdata names must decode inside a full message, where the rdata is a
+%% sub-binary of the message and its names compress against earlier names.
+%% Regression for swapped from_wire/2 arguments, which the rdata-level
+%% round-trip cannot catch (there MsgBin and Bin are the same binary).
+decode_minfo_in_message(_) ->
+    Rdata = #dns_rrdata_minfo{
+        rmailbx = <<"rmail.example.com">>,
+        emailbx = <<"email.example.com">>
+    },
+    Msg = #dns_message{
+        id = 1234,
+        qr = true,
+        qc = 1,
+        anc = 1,
+        questions = [
+            #dns_query{name = <<"example.com">>, type = ?DNS_TYPE_MINFO, class = ?DNS_CLASS_IN}
+        ],
+        answers = [
+            #dns_rr{
+                name = <<"example.com">>,
+                type = ?DNS_TYPE_MINFO,
+                class = ?DNS_CLASS_IN,
+                ttl = 3600,
+                data = Rdata
+            }
+        ]
+    },
+    Decoded = dns:decode_message(dns:encode_message(Msg)),
+    ?assertMatch(#dns_message{answers = [#dns_rr{data = Rdata}]}, Decoded).
 
 uri_decode_normalization(_) ->
     %% Test that URI targets are normalized during decoding
