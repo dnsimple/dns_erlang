@@ -25,7 +25,15 @@
 -elvis([
     {elvis_style, max_function_arity, #{ignore => [{dns_decode, create_message_from_header, 14}]}}
 ]).
--compile({inline, [decode_bool/1, round_pow/1, create_message_from_header/14]}).
+-compile(
+    {inline, [
+        decode_bool/1,
+        round_pow/1,
+        create_message_from_header/14,
+        decode_bmp_byte/3,
+        bmp_bit/3
+    ]}
+).
 
 -spec decode(dns:message_bin()) ->
     dns:message() | {dns:decode_error(), dns:message() | undefined, binary()}.
@@ -205,58 +213,71 @@ create_message_from_header(Id, QR, OC, AA, TC, RD, RA, AD, CD, RC, QC, ANC, AUC,
         adc = ADC
     }.
 
+%% The #dns_message{} record is updated exactly once, on completion — updating it
+%% per section would copy the full 19-word record four times per message.
 -spec decode_body(dns:message_bin(), binary(), dns:message()) ->
     dns:message() | {dns:decode_error(), dns:message() | undefined, binary()}.
-decode_body(MsgBin, Rest0, #dns_message{} = Msg0) ->
-    maybe
-        {Msg1, Rest1} ?= decode_questions(MsgBin, Rest0, Msg0),
-        {Msg2, Rest2} ?= decode_answers(MsgBin, Rest1, Msg1),
-        {Msg3, Rest3} ?= decode_authority(MsgBin, Rest2, Msg2),
-        {Msg4, Rest4} ?= decode_additional(MsgBin, Rest3, Msg3),
-        decode_finished(MsgBin, Rest4, Msg4)
-    else
-        Other ->
-            Other
-    end.
-
--spec decode_questions(dns:message_bin(), binary(), dns:message()) ->
-    {dns:message(), binary()} | {dns:decode_error(), dns:message(), binary()}.
-decode_questions(MsgBin, Body, #dns_message{qc = QC} = Msg) ->
-    case decode_message_questions(MsgBin, Body, QC, []) of
-        {Questions, Rest} ->
-            {Msg#dns_message{questions = Questions}, Rest};
+decode_body(MsgBin, Rest0, #dns_message{qc = QC} = Msg0) ->
+    case decode_message_questions(MsgBin, Rest0, QC, []) of
+        {Questions, Rest1} ->
+            decode_body_answers(MsgBin, Rest1, Msg0, Questions);
         {Error, Questions, Rest} ->
-            {Error, Msg#dns_message{questions = Questions}, Rest}
+            {Error, Msg0#dns_message{questions = Questions}, Rest}
     end.
 
--spec decode_answers(dns:message_bin(), binary(), dns:message()) ->
-    {dns:message(), binary()} | {dns:decode_error(), dns:message(), binary()}.
-decode_answers(MsgBin, Body, #dns_message{anc = ANC} = Msg) ->
+-spec decode_body_answers(dns:message_bin(), binary(), dns:message(), dns:questions()) ->
+    dns:message() | {dns:decode_error(), dns:message(), binary()}.
+decode_body_answers(MsgBin, Body, #dns_message{anc = ANC} = Msg0, Questions) ->
     case decode_message_body(MsgBin, Body, ANC) of
-        {RR, Rest} ->
-            {Msg#dns_message{answers = RR}, Rest};
-        {Error, RR, Rest} ->
-            {Error, Msg#dns_message{answers = RR}, Rest}
+        {Answers, Rest} ->
+            decode_body_authority(MsgBin, Rest, Msg0, Questions, Answers);
+        {Error, Answers, Rest} ->
+            {Error, Msg0#dns_message{questions = Questions, answers = Answers}, Rest}
     end.
 
--spec decode_authority(dns:message_bin(), binary(), dns:message()) ->
-    {dns:message(), binary()} | {dns:decode_error(), dns:message(), binary()}.
-decode_authority(MsgBin, Body, #dns_message{auc = AUC} = Msg) ->
+-spec decode_body_authority(
+    dns:message_bin(), binary(), dns:message(), dns:questions(), dns:answers()
+) ->
+    dns:message() | {dns:decode_error(), dns:message(), binary()}.
+decode_body_authority(MsgBin, Body, #dns_message{auc = AUC} = Msg0, Questions, Answers) ->
     case decode_message_body(MsgBin, Body, AUC) of
-        {RR, Rest} ->
-            {Msg#dns_message{authority = RR}, Rest};
-        {Error, RR, Rest} ->
-            {Error, Msg#dns_message{authority = RR}, Rest}
+        {Authority, Rest} ->
+            decode_body_additional(MsgBin, Rest, Msg0, Questions, Answers, Authority);
+        {Error, Authority, Rest} ->
+            {Error,
+                Msg0#dns_message{
+                    questions = Questions,
+                    answers = Answers,
+                    authority = Authority
+                },
+                Rest}
     end.
 
--spec decode_additional(dns:message_bin(), binary(), dns:message()) ->
-    {dns:message(), binary()} | {dns:decode_error(), dns:message(), binary()}.
-decode_additional(MsgBin, Body, #dns_message{adc = ADC} = Msg) ->
+-spec decode_body_additional(
+    dns:message_bin(), binary(), dns:message(), dns:questions(), dns:answers(), dns:authority()
+) ->
+    dns:message() | {dns:decode_error(), dns:message(), binary()}.
+decode_body_additional(
+    MsgBin, Body, #dns_message{adc = ADC} = Msg0, Questions, Answers, Authority
+) ->
     case decode_message_additional(MsgBin, Body, ADC) of
-        {RR, Rest} ->
-            {Msg#dns_message{additional = RR}, Rest};
-        {Error, RR, Rest} ->
-            {Error, Msg#dns_message{additional = RR}, Rest}
+        {Additional, Rest} ->
+            Msg = Msg0#dns_message{
+                questions = Questions,
+                answers = Answers,
+                authority = Authority,
+                additional = Additional
+            },
+            decode_finished(MsgBin, Rest, Msg);
+        {Error, Additional, Rest} ->
+            {Error,
+                Msg0#dns_message{
+                    questions = Questions,
+                    answers = Answers,
+                    authority = Authority,
+                    additional = Additional
+                },
+                Rest}
     end.
 
 -spec decode_finished(dns:message_bin(), binary(), dns:message()) ->
@@ -978,9 +999,8 @@ decode_dsa_key(T, Q, KeyBin, Bin) ->
 -spec decode_text(binary()) -> [binary()].
 decode_text(<<>>) ->
     [];
-decode_text(Bin) when is_binary(Bin) ->
-    {RB, String} = decode_string(Bin),
-    [String | decode_text(RB)].
+decode_text(<<Len, String:Len/binary, Rest/binary>>) ->
+    [String | decode_text(Rest)].
 
 -spec decode_string(nonempty_binary()) -> {binary(), binary()}.
 decode_string(<<Len, Bin:Len/binary, Rest/binary>>) ->
@@ -993,6 +1013,8 @@ bin_to_key_tag(Binary) when is_binary(Binary) ->
 -spec do_bin_to_key_tag(binary(), non_neg_integer()) -> dns:uint16().
 do_bin_to_key_tag(<<>>, AC) ->
     (AC + ((AC bsr 16) band 16#FFFF)) band 16#FFFF;
+do_bin_to_key_tag(<<A:16, B:16, C:16, D:16, Rest/binary>>, AC) ->
+    do_bin_to_key_tag(Rest, AC + A + B + C + D);
 do_bin_to_key_tag(<<X:16, Rest/binary>>, AC) ->
     do_bin_to_key_tag(Rest, AC + X);
 do_bin_to_key_tag(<<X:8>>, AC) ->
@@ -1013,29 +1035,38 @@ do_decode_nsec_types(<<>>, Types) ->
     lists:reverse(Types);
 do_decode_nsec_types(<<WindowNum:8, BMPLength:8, BMP:BMPLength/binary, Rest/binary>>, Types) ->
     BaseNo = WindowNum * 256,
-    NewTypes = do_decode_nsec_types(BMP, BaseNo, Types),
+    NewTypes = decode_bmp_bytes(BMP, BaseNo, Types),
     do_decode_nsec_types(Rest, NewTypes).
 
--spec do_decode_nsec_types(bitstring(), non_neg_integer(), [non_neg_integer()]) ->
+-spec decode_bmp_bytes(binary(), non_neg_integer(), [non_neg_integer()]) ->
     [non_neg_integer()].
-do_decode_nsec_types(<<>>, _Num, Types) ->
+decode_bmp_bytes(<<>>, _Num, Types) ->
     Types;
-do_decode_nsec_types(<<0:1, Rest/bitstring>>, Num, Types) ->
-    do_decode_nsec_types(Rest, Num + 1, Types);
-do_decode_nsec_types(<<1:1, Rest/bitstring>>, Num, Types) ->
-    do_decode_nsec_types(Rest, Num + 1, [Num | Types]).
+decode_bmp_bytes(<<0, Rest/binary>>, Num, Types) ->
+    decode_bmp_bytes(Rest, Num + 8, Types);
+decode_bmp_bytes(<<B, Rest/binary>>, Num, Types) ->
+    decode_bmp_bytes(Rest, Num + 8, decode_bmp_byte(B, Num, Types)).
 
--spec decode_nxt_bmp(bitstring()) -> [non_neg_integer()].
+%% Bits are MSB-first: bit 7 of B is type Num, bit 0 is type Num + 7.
+%% Set types are prepended in ascending order; callers reverse once at the end.
+-spec decode_bmp_byte(byte(), non_neg_integer(), [non_neg_integer()]) -> [non_neg_integer()].
+decode_bmp_byte(B, Num, Acc0) ->
+    Acc1 = bmp_bit(B band 2#10000000, Num, Acc0),
+    Acc2 = bmp_bit(B band 2#01000000, Num + 1, Acc1),
+    Acc3 = bmp_bit(B band 2#00100000, Num + 2, Acc2),
+    Acc4 = bmp_bit(B band 2#00010000, Num + 3, Acc3),
+    Acc5 = bmp_bit(B band 2#00001000, Num + 4, Acc4),
+    Acc6 = bmp_bit(B band 2#00000100, Num + 5, Acc5),
+    Acc7 = bmp_bit(B band 2#00000010, Num + 6, Acc6),
+    bmp_bit(B band 2#00000001, Num + 7, Acc7).
+
+-spec bmp_bit(non_neg_integer(), non_neg_integer(), [non_neg_integer()]) -> [non_neg_integer()].
+bmp_bit(0, _Num, Acc) -> Acc;
+bmp_bit(_, Num, Acc) -> [Num | Acc].
+
+-spec decode_nxt_bmp(binary()) -> [non_neg_integer()].
 decode_nxt_bmp(BMP) ->
-    do_decode_nxt_bmp(BMP, 0, []).
-
--spec do_decode_nxt_bmp(bitstring(), non_neg_integer(), [non_neg_integer()]) -> [non_neg_integer()].
-do_decode_nxt_bmp(<<>>, _Offset, Types) ->
-    lists:reverse(Types);
-do_decode_nxt_bmp(<<1:1, Rest/bitstring>>, Offset, Types) ->
-    do_decode_nxt_bmp(Rest, Offset + 1, [Offset | Types]);
-do_decode_nxt_bmp(<<0:1, Rest/bitstring>>, Offset, Types) ->
-    do_decode_nxt_bmp(Rest, Offset + 1, Types).
+    lists:reverse(decode_bmp_bytes(BMP, 0, [])).
 
 -spec decode_svcb_svc_params(binary()) -> dns:svcb_svc_params().
 decode_svcb_svc_params(Bin) ->
