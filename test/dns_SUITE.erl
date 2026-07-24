@@ -33,6 +33,7 @@ groups() ->
         {message_encoding, [parallel], [
             encode_message_max_size,
             encode_message_invalid_size,
+            encode_optrr_kept_near_max_size,
             truncated_query_enforces_opt_record,
             encode_default_message_question_offset_correct,
             encode_default_message_additional_offset_correct
@@ -177,6 +178,39 @@ encode_message_max_size(_) ->
             is_binary(Bin) andalso Msg =:= dns:decode_message(Bin)
         end)
     ].
+
+%% A response close to max_size must still carry the OPT RR when it fits:
+%% 12 B header + 17 B question + 29 x 16 B answers = 493 B, plus the 11 B
+%% OPT RR is 504 B =< 512. Regression for space accounting that subtracted
+%% the question section twice, dropping the OPT RR and additional records
+%% up to question-size bytes before the limit.
+encode_optrr_kept_near_max_size(_) ->
+    Answers = [
+        #dns_rr{
+            name = <<"example.com">>,
+            type = ?DNS_TYPE_A,
+            class = ?DNS_CLASS_IN,
+            ttl = 60,
+            data = #dns_rrdata_a{ip = {192, 0, 2, I}}
+        }
+     || I <- lists:seq(1, 29)
+    ],
+    Msg = #dns_message{
+        id = 1,
+        qr = true,
+        qc = 1,
+        anc = 29,
+        adc = 1,
+        questions = [
+            #dns_query{name = <<"example.com">>, type = ?DNS_TYPE_A, class = ?DNS_CLASS_IN}
+        ],
+        answers = Answers,
+        additional = [#dns_optrr{udp_payload_size = 1232}]
+    },
+    Bin = dns:encode_message(Msg, #{max_size => 512}),
+    ?assert(byte_size(Bin) =< 512),
+    Decoded = dns:decode_message(Bin),
+    ?assertMatch(#dns_message{tc = false, anc = 29, adc = 1, additional = [#dns_optrr{}]}, Decoded).
 
 encode_message_invalid_size(_) ->
     Qs = [#dns_query{name = <<"example">>, type = ?DNS_TYPE_A}],

@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Correct name compression in the additional section of `encode_message/2` for non-EDNS responses
 - NSEC/NSEC3/CSYNC/NXT type bitmap encoding shifted every type after the first by one bit position in any window whose first present type is a multiple of 256
 - MINFO records failed to decode inside full messages (`formerr`) due to swapped `dns_domain:from_wire/2` arguments in the MINFO rdata decoder
+- `encode_message/2` subtracted the question section twice when sizing the OPT RR and additional records, wrongly dropping them (including the EDNS OPT RR, contra RFC 6891) from responses within question-size bytes of `max_size`
 
 ## v5.0.13
 
