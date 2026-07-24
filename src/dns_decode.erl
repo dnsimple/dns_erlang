@@ -978,9 +978,8 @@ decode_dsa_key(T, Q, KeyBin, Bin) ->
 -spec decode_text(binary()) -> [binary()].
 decode_text(<<>>) ->
     [];
-decode_text(Bin) when is_binary(Bin) ->
-    {RB, String} = decode_string(Bin),
-    [String | decode_text(RB)].
+decode_text(<<Len, String:Len/binary, Rest/binary>>) ->
+    [String | decode_text(Rest)].
 
 -spec decode_string(nonempty_binary()) -> {binary(), binary()}.
 decode_string(<<Len, Bin:Len/binary, Rest/binary>>) ->
