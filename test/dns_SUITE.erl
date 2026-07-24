@@ -34,7 +34,8 @@ groups() ->
             encode_message_max_size,
             encode_message_invalid_size,
             truncated_query_enforces_opt_record,
-            encode_default_message_question_offset_correct
+            encode_default_message_question_offset_correct,
+            encode_default_message_additional_offset_correct
         ]},
         {txt_records, [parallel], [
             long_txt,
@@ -308,6 +309,58 @@ encode_default_message_question_offset_correct(_) ->
             answers = [#dns_rr{name = QName}],
             authority = [#dns_rr{name = QName}],
             additional = [#dns_rr{name = QName}]
+        },
+        Decoded
+    ).
+
+encode_default_message_additional_offset_correct(_) ->
+    QName = <<"example.com">>,
+    MailName = <<"mail.example.com">>,
+    Question = #dns_query{name = QName, type = ?DNS_TYPE_MX},
+    %% The MX answer introduces MailName earlier in the message.
+    Answer = #dns_rr{
+        name = QName,
+        type = ?DNS_TYPE_MX,
+        ttl = 3600,
+        data = #dns_rrdata_mx{preference = 10, exchange = MailName}
+    },
+    %% Two additional (glue) records sharing the same owner name. Unlike
+    %% encode_default_message_question_offset_correct (which has a single
+    %% additional record), this exercises name compression *within* the
+    %% additional section, where the section start position matters.
+    AddA = #dns_rr{
+        name = MailName,
+        type = ?DNS_TYPE_A,
+        ttl = 3600,
+        data = #dns_rrdata_a{ip = {1, 2, 3, 4}}
+    },
+    AddAAAA = #dns_rr{
+        name = MailName,
+        type = ?DNS_TYPE_AAAA,
+        ttl = 3600,
+        data = #dns_rrdata_aaaa{ip = {0, 0, 0, 0, 0, 0, 0, 1}}
+    },
+    Msg = #dns_message{
+        qc = 1,
+        anc = 1,
+        auc = 0,
+        adc = 2,
+        questions = [Question],
+        answers = [Answer],
+        additional = [AddA, AddAAAA]
+    },
+    %% encode_message/2 uses encode_message_default/2, which positions the
+    %% additional section at Pos2 = BodySize -- omitting the 12-byte header.
+    %% The additional-section names are therefore registered 12 bytes too low,
+    %% so the AAAA owner-name emits a compression pointer into the middle of an
+    %% earlier record and the message fails to decode ({formerr, ...}).
+    Encoded = dns:encode_message(Msg, #{max_size => 512}),
+    Decoded = dns:decode_message(Encoded),
+    ?assertEqual(Msg, Decoded),
+    ?assertMatch(
+        #dns_message{
+            answers = [#dns_rr{name = QName}],
+            additional = [#dns_rr{name = MailName}, #dns_rr{name = MailName}]
         },
         Decoded
     ).
