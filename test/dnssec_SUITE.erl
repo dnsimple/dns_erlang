@@ -44,6 +44,7 @@ groups() ->
             verify_rrsig_expiry,
             sign_rr_and_rrset_5arg,
             add_keytag_to_cdnskey_test,
+            keytag_known_answers,
             canonical_rrdata_form_test,
             ih_custom_hash_test,
             dsa_sign_verify_test,
@@ -305,6 +306,56 @@ add_keytag_to_cdnskey_test(_Config) ->
     },
     Result = dnssec:add_keytag_to_cdnskey(CDNSKEY),
     ?assertMatch(#dns_rr{type = ?DNS_TYPE_CDNSKEY, data = #dns_rrdata_cdnskey{keytag = _}}, Result).
+
+%% The other keytag tests only assert that *a* keytag was produced, so nothing
+%% pinned the arithmetic. RFC4034 Appendix B computes it over the whole DNSKEY
+%% RDATA as ac += (i & 1) ? key[i] : key[i] << 8, then ac += (ac >> 16) & 0xFFFF.
+%% These expectations are computed by hand from that definition rather than from
+%% the implementation, so they would catch a change to either the word summing or
+%% the carry fold.
+keytag_known_answers(_Config) ->
+    Cases = [
+        %% flags=256, protocol=3, alg=5, key = <<1,2>>
+        %% 0x01<<8 + 0x00 + 0x03<<8 + 0x05 + 0x01<<8 + 0x02
+        %%   = 256 + 0 + 768 + 5 + 256 + 2 = 1287, no carry
+        {<<1, 0, 3, 5, 1, 2>>, 1287},
+        %% Odd length: the final byte sits at an even index, so it is shifted.
+        %% 65280 + 255 + 65280 + 255 + 65280 = 196350; 196350 >> 16 = 2;
+        %%   196352 band 0xFFFF = 65280
+        {<<255, 255, 255, 255, 255>>, 65280},
+        %% Even length, exercises the carry fold:
+        %% 3 * 0xFFFF = 196605; 196605 >> 16 = 2; 196607 band 0xFFFF = 65535
+        {<<255, 255, 255, 255, 255, 255>>, 65535}
+    ],
+    [
+        begin
+            DNSKEY = dns_decode:decode_rrdata(<<>>, ?DNS_CLASS_IN, ?DNS_TYPE_DNSKEY, Rdata),
+            ?assertEqual(Expected, DNSKEY#dns_rrdata_dnskey.keytag, Rdata),
+            %% CDNSKEY shares the computation
+            CDNSKEY = dns_decode:decode_rrdata(<<>>, ?DNS_CLASS_IN, ?DNS_TYPE_CDNSKEY, Rdata),
+            ?assertEqual(Expected, CDNSKEY#dns_rrdata_cdnskey.keytag, Rdata)
+        end
+     || {Rdata, Expected} <- Cases
+    ],
+    %% add_keytag_to_dnskey/1 must agree with decoding the same RDATA
+    [
+        begin
+            <<Flags:16, Protocol:8, Alg:8, PublicKey/binary>> = Rdata,
+            RR = #dns_rr{
+                name = ~"example",
+                type = ?DNS_TYPE_DNSKEY,
+                class = ?DNS_CLASS_IN,
+                ttl = 3600,
+                data = #dns_rrdata_dnskey{
+                    flags = Flags, protocol = Protocol, alg = Alg, public_key = PublicKey
+                }
+            },
+            #dns_rr{data = #dns_rrdata_dnskey{keytag = KeyTag}} =
+                dnssec:add_keytag_to_dnskey(RR),
+            ?assertEqual(Expected, KeyTag, Rdata)
+        end
+     || {Rdata, Expected} <- Cases
+    ].
 
 canonical_rrdata_form_test(_Config) ->
     %% Hit canonical_rrdata_form for record types that lower-case domain names
