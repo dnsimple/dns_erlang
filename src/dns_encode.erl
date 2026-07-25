@@ -1001,8 +1001,7 @@ encode_rrdata_append(
 ) ->
     Bin0 = encode_string(<<Order:16, Pref:16>>, Flags),
     Bin1 = encode_string(Bin0, Svcs),
-    Regexp0 = unicode:characters_to_binary(Regexp, unicode, utf8),
-    Bin2 = encode_string(Bin1, Regexp0),
+    Bin2 = encode_string(Bin1, encode_naptr_regexp(Regexp)),
     ReplacementBin = dns_domain:to_wire(Replacement),
     {
         <<Acc/binary, (byte_size(Bin2) + byte_size(ReplacementBin)):16, Bin2/binary,
@@ -1323,6 +1322,14 @@ append_dname_rdata(Acc, Pos, Name, CompMap) ->
 append_text_rdata(Acc, Strings, CompMap) ->
     TextBin = encode_text(Strings),
     {<<Acc/binary, (byte_size(TextBin)):16, TextBin/binary>>, CompMap}.
+
+%% RFC3403§4.1: the NAPTR REGEXP field is UTF-8
+-spec encode_naptr_regexp(unicode:chardata()) -> binary().
+encode_naptr_regexp(Regexp) ->
+    case unicode:characters_to_binary(Regexp, unicode, utf8) of
+        Encoded when is_binary(Encoded) -> Encoded;
+        _ -> erlang:error(badarg, [Regexp])
+    end.
 
 -spec encode_loc_size(integer()) -> <<_:8>>.
 encode_loc_size(Size) when is_integer(Size), 0 =< Size, Size =< ?LOC_MAX_PRECISION ->

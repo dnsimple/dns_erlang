@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - LOC `size`/`horiz`/`vert` outside the representable 0–9e9 cm range now raise `badarg`, and in-range values round to nearest instead of truncating (RFC 1876 §2)
 - `encode_message/2` with `tc_mode => llq_event` raised `badmatch` when the authority/additional tail or the question section exceeded `max_size`; it now truncates and sets TC
 - Zero-length `<character-string>`s were dropped when encoding TXT, SPF, RESINFO and WALLET records (RFC 1035 §3.3)
+- A NAPTR record whose REGEXP is not valid UTF-8 decoded into a record holding an error tuple instead of being rejected (RFC 3403 §4.1)
 
 ## v5.0.13
 

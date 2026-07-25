@@ -68,7 +68,8 @@ groups() ->
             encode_nsec_type_bitmaps,
             decode_minfo_in_message,
             loc_wire_reference_point,
-            loc_precision_range
+            loc_precision_range,
+            naptr_invalid_utf8_regexp_rejected
         ]},
         {svcb, [parallel], [
             decode_encode_svcb_params,
@@ -1181,6 +1182,44 @@ loc_wire_reference_point(_) ->
         end
      || {Label, Lat, Lon, ExpLat, ExpLon} <- Cases
     ].
+
+%% RFC3403§4.1: the NAPTR REGEXP field is UTF-8. unicode:characters_to_binary/2
+%% reports invalid input by returning an error tuple instead of raising, so the
+%% tuple was stored in the regexp field: decoding a hostile packet appeared to
+%% succeed and produced a record whose regexp was not a binary at all, which then
+%% blew up with a badarg somewhere else entirely when it was re-encoded.
+naptr_invalid_utf8_regexp_rejected(_) ->
+    %% order, preference, flags "u", services "s", regexp <<16#C3, 16#28>>, root
+    BadRegexp = <<0:16, 0:16, 1, $u, 1, $s, 2, 16#C3, 16#28, 0>>,
+    ?assertError(
+        bad_naptr_regexp,
+        dns_decode:decode_rrdata(<<>>, ?DNS_CLASS_IN, ?DNS_TYPE_NAPTR, BadRegexp)
+    ),
+    %% Inside a message the section decoders turn it into a decode error rather
+    %% than letting it escape, as they already do for a malformed EDNS COOKIE
+    Header =
+        <<16#4321:16, 0:1, 0:4, 0:1, 0:1, 0:1, 0:1, 0:1, 0:1, 0:1, 0:4, 0:16, 1:16, 0:16, 0:16>>,
+    Answer =
+        <<3, $f, $o, $o, 0, ?DNS_TYPE_NAPTR:16, ?DNS_CLASS_IN:16, 300:32, (byte_size(BadRegexp)):16,
+            BadRegexp/binary>>,
+    ?assertMatch({formerr, _, _}, dns:decode_message(<<Header/binary, Answer/binary>>)),
+    %% Valid UTF-8, including multi-byte sequences, still decodes and round-trips
+    %% C3 A9 is a valid two-byte UTF-8 sequence (LATIN SMALL LETTER E WITH ACUTE)
+    Utf8 = <<"!^.*$!sip:love@caf", 16#C3, 16#A9, ".example.com!">>,
+    GoodRegexp =
+        <<0:16, 0:16, 1, $u, 1, $s, (byte_size(Utf8)):8, Utf8/binary, 0>>,
+    Decoded = dns_decode:decode_rrdata(<<>>, ?DNS_CLASS_IN, ?DNS_TYPE_NAPTR, GoodRegexp),
+    ?assertEqual(Utf8, Decoded#dns_rrdata_naptr.regexp),
+    ?assertEqual(GoodRegexp, dns_encode:encode_rrdata(?DNS_CLASS_IN, Decoded)),
+    %% Encoding a record whose regexp is not valid UTF-8 is a bad argument, named
+    %% at the point of the offending field
+    ?assertError(
+        badarg,
+        dns_encode:encode_rrdata(
+            ?DNS_CLASS_IN,
+            Decoded#dns_rrdata_naptr{regexp = <<16#C3, 16#28>>}
+        )
+    ).
 
 %% RFC1876§2: size/horiz/vert are a four-bit base (0-9) times ten to a four-bit
 %% power (0-9), i.e. 0 to 9e9 centimetres. Out-of-range input used to raise a

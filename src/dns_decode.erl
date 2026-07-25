@@ -795,7 +795,7 @@ decode_rrdata(
     {Bin1, Flags} = decode_string(Bin),
     {Bin2, Services} = decode_string(Bin1),
     {Bin3, RawRegexp} = decode_string(Bin2),
-    Regexp = unicode:characters_to_binary(RawRegexp, utf8),
+    Regexp = decode_naptr_regexp(RawRegexp),
     #dns_rrdata_naptr{
         order = Order,
         preference = Preference,
@@ -967,6 +967,14 @@ decode_rrdata(_MsgBin, _Class, ?DNS_TYPE_TXT, Bin) ->
     #dns_rrdata_txt{txt = decode_text(Bin)};
 decode_rrdata(_MsgBin, _Class, _Type, Bin) ->
     Bin.
+
+%% RFC3403§4.1: the NAPTR REGEXP field is UTF-8
+-spec decode_naptr_regexp(binary()) -> binary().
+decode_naptr_regexp(RawRegexp) ->
+    case unicode:characters_to_binary(RawRegexp, utf8) of
+        Regexp when is_binary(Regexp) -> Regexp;
+        _ -> error(bad_naptr_regexp)
+    end.
 
 -spec decode_dnameonly(dns:message_bin(), nonempty_binary()) -> binary().
 decode_dnameonly(MsgBin, Bin) ->
