@@ -40,8 +40,6 @@ encode(
     Head = encode_message_header(Msg),
     encode_sections(Head, #{}, [Questions, Answers, Authority, Additional]).
 
-%% Tail-recursive function to encode all sections (replaces lists:foldl)
-%% This allows BEAM to optimize binary appending
 -spec encode_sections(binary(), compmap(), [dns:records()]) -> binary().
 encode_sections(Acc, _CompMap, []) ->
     Acc;
@@ -49,8 +47,6 @@ encode_sections(Acc, CompMap, [Section | Rest]) ->
     {NewBin, NewCompMap} = encode_append_section(Acc, CompMap, Section),
     encode_sections(NewBin, NewCompMap, Rest).
 
-%% Tail-recursive function to encode records within a section (replaces lists:foldl)
-%% This allows BEAM to optimize binary appending
 -spec encode_append_section(binary(), compmap(), dns:records()) -> {binary(), compmap()}.
 encode_append_section(Acc, CompMap, []) ->
     {Acc, CompMap};
@@ -130,29 +126,35 @@ get_max_size(_, _) ->
 
 -spec encode_message_default(dns:message(), number()) -> binary().
 encode_message_default(
-    #dns_message{qc = QC, questions = Questions, additional = Additional} = Msg0, MaxSize
+    #dns_message{
+        qc = QC,
+        anc = ANC,
+        auc = AUC,
+        adc = ADC,
+        questions = Questions,
+        answers = Answers,
+        authority = Authority,
+        additional = Additional
+    } = Msg0,
+    MaxSize
 ) ->
     %% If EDNS0 is used, we need to reserve space for appending the OptRR record at its minimal
     PreservedOptRRBinSize = preserve_optrr_size(Additional),
     SpaceLeft0 = MaxSize - ?HEADER_SIZE - PreservedOptRRBinSize,
     %% RFC6891 §7, the question section MUST always be present
-    %% Pass a 12-byte placeholder header so position calculations start from 12 (header size)
-    %% instead of 0. This ensures compression pointers are calculated correctly.
-    HeaderPlaceholder = <<0:96>>,
-    {Acc1WithHeader, CompMap1} = encode_append_section(HeaderPlaceholder, #{}, Questions),
-    %% Extract the question section (skip the 12-byte header placeholder)
-    Acc1 = binary_part(Acc1WithHeader, ?HEADER_SIZE, byte_size(Acc1WithHeader) - ?HEADER_SIZE),
-    Acc1Size = byte_size(Acc1),
-    SpaceLeft1 = SpaceLeft0 - Acc1Size,
-    Pos1 = ?HEADER_SIZE + Acc1Size,
-    MsgTmp = Msg0#dns_message{qc = 0, questions = []},
-    case encode_message_d_req(MsgTmp, CompMap1, Pos1, SpaceLeft1, Acc1) of
+    %% The 12-byte placeholder keeps positions message-relative so compression
+    %% pointers are correct; the real header replaces it in one final assembly.
+    {AccQ, CompMap1} = encode_append_section(<<0:96>>, #{}, Questions),
+    QSize = byte_size(AccQ) - ?HEADER_SIZE,
+    SpaceLeft1 = SpaceLeft0 - QSize,
+    case encode_message_d_req(Answers, Authority, CompMap1, byte_size(AccQ), SpaceLeft1, AccQ) of
         truncated ->
             %% We ran out of space, we MUST append a OptRR EDNS0 record,
             %% and this takes precedence over the body
             {AddCountFull, OptRRBinFull} = ensure_optrr(Additional, full),
             OptRRBinSizeFull = byte_size(OptRRBinFull),
-            SpaceForOptRR = MaxSize - ?HEADER_SIZE - Acc1Size,
+            SpaceForOptRR = MaxSize - ?HEADER_SIZE - QSize,
+            Acc1 = binary_part(AccQ, ?HEADER_SIZE, QSize),
             case OptRRBinSizeFull =< SpaceForOptRR of
                 true ->
                     %% Full OptRR fits
@@ -168,114 +170,123 @@ encode_message_default(
                     %% We MUST include OptRR per RFC6891, so include even if it may exceed the space
                     <<Head/binary, Acc1/binary, OptRRBinMin/binary>>
             end;
-        {Body, CompMap2} ->
-            %% Body includes the question section, so subtract it from SpaceLeft0:
+        {AccB, CompMap2} ->
+            %% AccB includes the question section, so subtract it from SpaceLeft0:
             %% SpaceLeft1 would subtract the question bytes a second time
-            BodySize = byte_size(Body),
-            {OptRRBin, Ad0} = encode_message_pop_optrr(Additional),
-            OptRRBinSize = byte_size(OptRRBin),
-            Pos2 = ?HEADER_SIZE + BodySize,
-            #dns_message{anc = ANC, auc = AUC} = Msg0,
+            BodySize = byte_size(AccB) - ?HEADER_SIZE,
+            {Acc2, Ad0} = append_optrr(AccB, Additional),
+            OptRRBinSize = byte_size(Acc2) - byte_size(AccB),
             case SpaceLeft0 + PreservedOptRRBinSize - BodySize of
                 SpaceLeft2 when SpaceLeft2 < OptRRBinSize ->
                     Head = build_header(Msg0, false, QC, ANC, AUC, 0),
-                    <<Head/binary, Body/binary>>;
+                    finish_message(Head, AccB);
                 SpaceLeft2 ->
-                    Pos3 = Pos2 + OptRRBinSize,
                     SpaceLeft3 = SpaceLeft2 - OptRRBinSize,
                     OptC =
                         case OptRRBinSize of
                             0 -> 0;
                             _ -> 1
                         end,
-                    case encode_message_d_opt(Pos3, SpaceLeft3, CompMap2, Ad0) of
+                    case encode_message_d_opt(byte_size(Acc2), SpaceLeft3, CompMap2, Ad0, Acc2) of
                         false ->
                             Head = build_header(Msg0, false, QC, ANC, AUC, OptC),
-                            <<Head/binary, Body/binary, OptRRBin/binary>>;
-                        {_, AdBin} ->
-                            #dns_message{adc = ADC} = Msg0,
+                            finish_message(Head, Acc2);
+                        AccAd ->
                             Head = build_header(Msg0, false, QC, ANC, AUC, ADC),
-                            <<Head/binary, Body/binary, OptRRBin/binary, AdBin/binary>>
+                            finish_message(Head, AccAd)
                     end
             end
     end.
+
+%% Splice the real header over the 12-byte placeholder: the single body copy
+%% of the bounded encode paths.
+-spec finish_message(<<_:96>>, binary()) -> binary().
+finish_message(Head, Acc) ->
+    <<Head/binary, (binary_part(Acc, ?HEADER_SIZE, byte_size(Acc) - ?HEADER_SIZE))/binary>>.
 
 -spec build_header(
     dns:message(), boolean(), dns:uint16(), dns:uint16(), dns:uint16(), dns:uint16()
 ) ->
     dns:message_bin().
-build_header(#dns_message{tc = TC} = Msg, TCBool, EncQC, EncANC, EncAUC, EncADC) ->
-    Msg0 = Msg#dns_message{
-        qc = EncQC,
-        anc = EncANC,
-        auc = EncAUC,
-        adc = EncADC,
-        tc = TC orelse TCBool
+build_header(
+    #dns_message{
+        id = Id,
+        qr = QR,
+        oc = OC,
+        aa = AA,
+        tc = TC,
+        rd = RD,
+        ra = RA,
+        ad = AD,
+        cd = CD,
+        rc = RC
     },
-    encode_message_header(Msg0).
+    TCBool,
+    EncQC,
+    EncANC,
+    EncAUC,
+    EncADC
+) ->
+    <<Id:16, (encode_bool(QR)):1, OC:4, (encode_bool(AA)):1, (encode_bool(TC orelse TCBool)):1,
+        (encode_bool(RD)):1, (encode_bool(RA)):1, 0:1, (encode_bool(AD)):1, (encode_bool(CD)):1,
+        RC:4, EncQC:16, EncANC:16, EncAUC:16, EncADC:16>>.
 
-%% Encodes authorities, and answers, for as long as there is space
-%% Will return a false tag if there wasn't enough space
--spec encode_message_d_req(dns:message(), compmap(), pos_integer(), integer(), binary()) ->
+%% Encodes answers, then authorities, for as long as there is space.
+%% Requires both sections to fit completely, as the shipped encoder does.
+-spec encode_message_d_req(
+    dns:answers(), dns:authority(), compmap(), pos_integer(), number(), binary()
+) ->
     truncated | {binary(), compmap()}.
-encode_message_d_req(Msg, CompMap, Pos, SpaceLeft, Acc) ->
-    case encode_message_pop(Msg) of
-        {additional, _, _} ->
-            {Acc, CompMap};
-        {Section, RecsLen, Recs} ->
-            case encode_message_rec_list(Recs, CompMap, Pos, SpaceLeft) of
-                {CompMap1, NewBin, []} ->
-                    NewBinSize = byte_size(NewBin),
-                    Pos1 = Pos + NewBinSize,
-                    SpaceLeft1 = SpaceLeft - NewBinSize,
-                    Msg1 = encode_message_put(Msg, [], RecsLen, Section),
-                    Acc1 = <<Acc/binary, NewBin/binary>>,
-                    encode_message_d_req(Msg1, CompMap1, Pos1, SpaceLeft1, Acc1);
-                _ ->
-                    truncated
-            end
+encode_message_d_req(Answers, Authority, CompMap, Pos, SpaceLeft, Acc) ->
+    case encode_message_rec_list(Answers, CompMap, Pos, SpaceLeft, Acc) of
+        {CompMap1, Acc1, []} ->
+            Pos1 = byte_size(Acc1),
+            SpaceLeft1 = SpaceLeft - (Pos1 - Pos),
+            case encode_message_rec_list(Authority, CompMap1, Pos1, SpaceLeft1, Acc1) of
+                {CompMap2, Acc2, []} -> {Acc2, CompMap2};
+                {_, _, _} -> truncated
+            end;
+        {_, _, _} ->
+            truncated
     end.
 
--spec encode_message_d_opt(
-    pos_integer(),
-    number(),
-    compmap(),
-    dns:records()
-) -> false | {non_neg_integer(), bitstring()}.
-encode_message_d_opt(Pos, SpaceLeft, CompMap, Recs) ->
-    case encode_message_rec_list(Recs, CompMap, Pos, SpaceLeft) of
-        {_, Bin, []} -> {length(Recs), Bin};
-        _ -> false
+-spec encode_message_d_opt(pos_integer(), number(), compmap(), dns:records(), binary()) ->
+    false | binary().
+encode_message_d_opt(Pos, SpaceLeft, CompMap, Recs, Acc) ->
+    case encode_message_rec_list(Recs, CompMap, Pos, SpaceLeft, Acc) of
+        {_, Acc1, []} -> Acc1;
+        {_, _, _} -> false
     end.
+
+-spec append_optrr(binary(), dns:additional()) -> {binary(), dns:additional()}.
+append_optrr(Acc, [#dns_optrr{} = OptRR | Rest]) ->
+    {encode_optrr(Acc, OptRR), Rest};
+append_optrr(Acc, Other) ->
+    {Acc, Other}.
 
 -spec encode_message_axfr(dns:message(), number()) -> binary() | {binary(), dns:message()}.
 encode_message_axfr(#dns_message{} = Msg, MaxSize) ->
-    Pos = ?HEADER_SIZE,
-    SpaceLeft = MaxSize - Pos,
-    encode_message_axfr(Msg, Pos, SpaceLeft, #{}, <<>>).
+    SpaceLeft = MaxSize - ?HEADER_SIZE,
+    encode_message_axfr(Msg, ?HEADER_SIZE, SpaceLeft, #{}, <<0:96>>).
 
 -spec encode_message_axfr(dns:message(), pos_integer(), number(), compmap(), binary()) ->
     binary() | {binary(), dns:message()}.
-encode_message_axfr(Msg, Pos, SpaceLeft, CompMap, Bin) ->
+encode_message_axfr(Msg, Pos, SpaceLeft, CompMap, Acc) ->
     {Section, RecsLen, Recs} = encode_message_pop(Msg),
-    {CompMap0, NewBin, Recs0} = encode_message_rec_list(Recs, CompMap, Pos, SpaceLeft),
+    {CompMap0, Acc0, Recs0} = encode_message_rec_list(Recs, CompMap, Pos, SpaceLeft, Acc),
     Recs0Len = length(Recs0),
     EncodedLen = RecsLen - Recs0Len,
     Msg1 = encode_message_put(Msg, Recs0, EncodedLen, Section),
     case Recs0Len of
         0 when Section =:= additional ->
-            Head = encode_message_header(Msg1),
-            <<Head/binary, Bin/binary, NewBin/binary>>;
+            finish_message(encode_message_header(Msg1), Acc0);
         0 ->
-            NewBinSize = byte_size(NewBin),
-            Pos0 = Pos + NewBinSize,
-            SpaceLeft0 = SpaceLeft - NewBinSize,
-            Bin0 = <<Bin/binary, NewBin/binary>>,
-            encode_message_axfr(Msg1, Pos0, SpaceLeft0, CompMap0, Bin0);
+            Pos0 = byte_size(Acc0),
+            encode_message_axfr(Msg1, Pos0, SpaceLeft - (Pos0 - Pos), CompMap0, Acc0);
         _ ->
             Head = encode_message_header(Msg1),
             Msg2 = encode_message_a_setcounts(Msg1),
-            {<<Head/binary, Bin/binary, NewBin/binary>>, Msg2}
+            {finish_message(Head, Acc0), Msg2}
     end.
 
 -spec encode_message_pop(dns:message()) ->
@@ -358,35 +369,28 @@ encode_message_llq(
     AuthorityLen = length(Authority),
     AdditionalLen = length(Additional),
     AuAd = Authority ++ Additional,
-    Pos = ?HEADER_SIZE,
-    SpaceLeft = MaxSize - Pos,
-    {CompMap0, QBin, []} = encode_message_rec_list(Q, #{}, Pos, SpaceLeft),
-    QBinSize = byte_size(QBin),
-    SpaceLeft0 = SpaceLeft - QBinSize,
-    Pos0 = QBinSize + Pos,
-    {_, AuAdTmp, []} = encode_message_rec_list(AuAd, CompMap0, Pos0, SpaceLeft0),
+    SpaceLeft = MaxSize - ?HEADER_SIZE,
+    {CompMap0, AccQ, []} = encode_message_rec_list(Q, #{}, ?HEADER_SIZE, SpaceLeft, <<0:96>>),
+    Pos0 = byte_size(AccQ),
+    SpaceLeft0 = SpaceLeft - (Pos0 - ?HEADER_SIZE),
+    %% Size probe only: measures the authority+additional tail without keeping it
+    {_, AuAdTmp, []} = encode_message_rec_list(AuAd, CompMap0, Pos0, SpaceLeft0, <<>>),
     AuAdTmpSize = byte_size(AuAdTmp),
-    {CompMap1, AnBin, LeftoverAn} =
-        encode_message_rec_list(Answers, CompMap0, Pos0, SpaceLeft0 - AuAdTmpSize),
+    {CompMap1, AccAn, LeftoverAn} =
+        encode_message_rec_list(Answers, CompMap0, Pos0, SpaceLeft0 - AuAdTmpSize, AccQ),
     LeftoverAnC = length(LeftoverAn),
     EncodedAnC = AnswersLen - LeftoverAnC,
-    AnBinSize = byte_size(AnBin),
-    Pos1 = Pos0 + AnBinSize,
-    SpaceLeft1 = SpaceLeft0 - AnBinSize,
-    {_, AuAdBin, []} =
-        encode_message_rec_list(AuAd, CompMap1, Pos1, SpaceLeft1),
+    Pos1 = byte_size(AccAn),
+    SpaceLeft1 = SpaceLeft0 - (Pos1 - Pos0),
+    {_, AccFull, []} =
+        encode_message_rec_list(AuAd, CompMap1, Pos1, SpaceLeft1, AccAn),
     Msg0 = Msg#dns_message{qc = QC, anc = EncodedAnC, auc = AuthorityLen, adc = AdditionalLen},
     Head = encode_message_header(Msg0),
-    Bin = <<Head/binary, QBin/binary, AnBin/binary, AuAdBin/binary>>,
+    Bin = finish_message(Head, AccFull),
     case LeftoverAnC of
         0 -> Bin;
         _ -> {Bin, Msg#dns_message{anc = LeftoverAnC, answers = LeftoverAn}}
     end.
-
--spec encode_message_rec_list(dns:records(), compmap(), pos_integer(), number()) ->
-    {compmap(), binary(), dns:records()}.
-encode_message_rec_list(Recs, CompMap, Pos, SpaceLeft) ->
-    encode_message_rec_list(Recs, CompMap, Pos, SpaceLeft, <<>>).
 
 -spec encode_message_rec_list(dns:records(), compmap(), pos_integer(), number(), binary()) ->
     {compmap(), binary(), dns:records()}.
@@ -403,11 +407,15 @@ encode_message_rec_list([Rec | Rest] = Recs, CompMap, Pos, SpaceLeft, Body) ->
 encode_message_rec_list([], CompMap, _, _, Body) ->
     {CompMap, Body, []}.
 
+%% Appends the record to Acc if it fits in MaxSize. On not_appended the
+%% caller keeps the pre-append Acc term; a failed append may have consumed
+%% the writable extension, but every caller then only slices or concatenates
+%% that term, so no extra copy is taken on the hot path.
 -spec encode_message_rec(
     dns:query() | dns:optrr() | dns:rr(),
     compmap(),
     non_neg_integer(),
-    non_neg_integer() | infinity,
+    number(),
     binary()
 ) -> {binary(), compmap()} | not_appended.
 encode_message_rec(#dns_query{name = N, type = T, class = C}, CompMap, Pos, MaxSize, Acc) ->
@@ -421,11 +429,9 @@ encode_message_rec(#dns_query{name = N, type = T, class = C}, CompMap, Pos, MaxS
             not_appended
     end;
 encode_message_rec(#dns_optrr{} = OptRR, CompMap, _Pos, MaxSize, Acc) ->
-    OptRRBin = encode_optrr(<<>>, OptRR),
-    OptRRSize = byte_size(OptRRBin),
-    case OptRRSize =< MaxSize of
+    Acc1 = encode_optrr(Acc, OptRR),
+    case byte_size(Acc1) - byte_size(Acc) =< MaxSize of
         true ->
-            Acc1 = <<Acc/binary, OptRRBin/binary>>,
             {Acc1, CompMap};
         false ->
             not_appended
@@ -445,12 +451,11 @@ encode_message_rec(
         FixedHeaderSize = byte_size(NameBin) + 10,
         true ?= FixedHeaderSize =< MaxSize,
         DPos = Pos + FixedHeaderSize,
-        {DBin, CompMap1} = encode_rrdata(DPos, C, D, CompMap0),
-        DSize = byte_size(DBin),
-        RecSize = FixedHeaderSize + DSize,
+        Acc1 = <<Acc/binary, NameBin/binary, T:16, C:16, TTL:32>>,
+        {Acc2, CompMap1} = encode_rrdata_append(Acc1, DPos, C, D, CompMap0),
+        RecSize = byte_size(Acc2) - byte_size(Acc),
         true ?= RecSize =< MaxSize,
-        Acc1 = <<Acc/binary, NameBin/binary, T:16, C:16, TTL:32, DSize:16, DBin/binary>>,
-        {Acc1, CompMap1}
+        {Acc2, CompMap1}
     else
         false ->
             not_appended
@@ -460,11 +465,9 @@ encode_message_rec(
     {binary(), compmap()}.
 encode_message_rec_unbounded(Acc, CompMap, #dns_query{name = N, type = T, class = C}) ->
     {Wire, CompMap0} = encode_dname(CompMap, byte_size(Acc), N),
-    Acc1 = <<Acc/binary, Wire/binary>>,
-    {<<Acc1/binary, T:16, C:16>>, CompMap0};
+    {<<Acc/binary, Wire/binary, T:16, C:16>>, CompMap0};
 encode_message_rec_unbounded(Acc, CompMap, #dns_optrr{} = OptRR) ->
-    Acc1 = encode_optrr(Acc, OptRR),
-    {Acc1, CompMap};
+    {encode_optrr(Acc, OptRR), CompMap};
 encode_message_rec_unbounded(
     Acc,
     CompMap,
@@ -477,17 +480,8 @@ encode_message_rec_unbounded(
     }
 ) ->
     {Wire, CompMap0} = encode_dname(CompMap, byte_size(Acc), N),
-    Acc1 = <<Acc/binary, Wire/binary>>,
-    Acc2 = <<Acc1/binary, T:16, C:16, TTL:32>>,
-    {DBin, CompMap1} = encode_rrdata(byte_size(Acc2) + 2, C, D, CompMap0),
-    Acc3 = <<Acc2/binary, (byte_size(DBin)):16, DBin/binary>>,
-    {Acc3, CompMap1}.
-
--spec encode_message_pop_optrr(dns:additional()) -> {binary(), dns:additional()}.
-encode_message_pop_optrr([#dns_optrr{} = OptRR | Rest]) ->
-    {encode_optrr(<<>>, OptRR), Rest};
-encode_message_pop_optrr(Other) ->
-    {<<>>, Other}.
+    Acc1 = <<Acc/binary, Wire/binary, T:16, C:16, TTL:32>>,
+    encode_rrdata_append(Acc1, byte_size(Acc1) + 2, C, D, CompMap0).
 
 -spec ensure_optrr(dns:additional(), minimal | full) -> {0 | 1, binary()}.
 ensure_optrr([#dns_optrr{} = OptRR | _], full) ->
@@ -531,29 +525,43 @@ encode_rrdata(Class, Data) ->
     {Bin, undefined} = encode_rrdata(0, Class, Data, undefined),
     Bin.
 
+%% Compatibility wrapper over the appending encoder: Pos is the message
+%% position where the RDATA begins, as before.
 -spec encode_rrdata(non_neg_integer(), dns:class(), dns:rrdata(), undefined | compmap()) ->
     {binary(), undefined | compmap()}.
-encode_rrdata(_Pos, Class, #dns_rrdata_a{ip = {A, B, C, D}}, CompMap) when
+encode_rrdata(Pos, Class, Data, CompMap) ->
+    {WithLen, CompMap1} = encode_rrdata_append(<<>>, Pos, Class, Data, CompMap),
+    <<_:16, Bin/binary>> = WithLen,
+    {Bin, CompMap1}.
+
+%% Appends <<RDLENGTH:16, RDATA/binary>> to Acc in a single binary append per
+%% record, with the length computed from the parts instead of measuring an
+%% intermediate rdata binary. RdataPos is the message position where the
+%% RDATA begins (i.e. after the RDLENGTH field).
+-spec encode_rrdata_append(
+    binary(), non_neg_integer(), dns:class(), dns:rrdata(), undefined | compmap()
+) ->
+    {binary(), undefined | compmap()}.
+encode_rrdata_append(Acc, _Pos, Class, #dns_rrdata_a{ip = {A, B, C, D}}, CompMap) when
     ?CLASS_IS_IN(Class)
 ->
-    {<<A, B, C, D>>, CompMap};
-encode_rrdata(_Pos, Class, #dns_rrdata_aaaa{ip = {A, B, C, D, E, F, G, H}}, CompMap) when
-    ?CLASS_IS_IN(Class)
-->
-    {<<A:16, B:16, C:16, D:16, E:16, F:16, G:16, H:16>>, CompMap};
-encode_rrdata(
-    _Pos, Class, #dns_rrdata_eui48{address = Address}, CompMap
+    {<<Acc/binary, 4:16, A, B, C, D>>, CompMap};
+encode_rrdata_append(
+    Acc, _Pos, Class, #dns_rrdata_aaaa{ip = {A, B, C, D, E, F, G, H}}, CompMap
 ) when
+    ?CLASS_IS_IN(Class)
+->
+    {<<Acc/binary, 16:16, A:16, B:16, C:16, D:16, E:16, F:16, G:16, H:16>>, CompMap};
+encode_rrdata_append(Acc, _Pos, Class, #dns_rrdata_eui48{address = Address}, CompMap) when
     ?CLASS_IS_IN(Class) andalso 6 =:= byte_size(Address)
 ->
-    {Address, CompMap};
-encode_rrdata(
-    _Pos, Class, #dns_rrdata_eui64{address = Address}, CompMap
-) when
+    {<<Acc/binary, 6:16, Address/binary>>, CompMap};
+encode_rrdata_append(Acc, _Pos, Class, #dns_rrdata_eui64{address = Address}, CompMap) when
     ?CLASS_IS_IN(Class) andalso 8 =:= byte_size(Address)
 ->
-    {Address, CompMap};
-encode_rrdata(
+    {<<Acc/binary, 8:16, Address/binary>>, CompMap};
+encode_rrdata_append(
+    Acc,
     _Pos,
     _Class,
     #dns_rrdata_afsdb{
@@ -563,11 +571,17 @@ encode_rrdata(
     CompMap
 ) ->
     HostnameBin = dns_domain:to_wire(Hostname),
-    {<<Subtype:16, HostnameBin/binary>>, CompMap};
-encode_rrdata(_Pos, _Class, #dns_rrdata_caa{flags = Flags, tag = Tag, value = Value}, CompMap) ->
+    {<<Acc/binary, (2 + byte_size(HostnameBin)):16, Subtype:16, HostnameBin/binary>>, CompMap};
+encode_rrdata_append(
+    Acc, _Pos, _Class, #dns_rrdata_caa{flags = Flags, tag = Tag, value = Value}, CompMap
+) ->
     Len = byte_size(Tag),
-    {<<Flags:8, Len:8, Tag/binary, Value/binary>>, CompMap};
-encode_rrdata(
+    {
+        <<Acc/binary, (2 + Len + byte_size(Value)):16, Flags:8, Len:8, Tag/binary, Value/binary>>,
+        CompMap
+    };
+encode_rrdata_append(
+    Acc,
     _Pos,
     _Class,
     #dns_rrdata_cert{
@@ -578,14 +592,15 @@ encode_rrdata(
     },
     CompMap
 ) ->
-    {<<Type:16, KeyTag:16, Alg, Bin/binary>>, CompMap};
-encode_rrdata(Pos, _Class, #dns_rrdata_cname{dname = Name}, CompMap) ->
-    encode_dname(CompMap, Pos, Name);
-encode_rrdata(_Pos, ?DNS_CLASS_IN, #dns_rrdata_dhcid{data = Bin}, CompMap) ->
-    {Bin, CompMap};
-encode_rrdata(_Pos, ?DNS_CLASS_IN, #dns_rrdata_openpgpkey{data = Bin}, CompMap) ->
-    {Bin, CompMap};
-encode_rrdata(
+    {<<Acc/binary, (5 + byte_size(Bin)):16, Type:16, KeyTag:16, Alg, Bin/binary>>, CompMap};
+encode_rrdata_append(Acc, Pos, _Class, #dns_rrdata_cname{dname = Name}, CompMap) ->
+    append_dname_rdata(Acc, Pos, Name, CompMap);
+encode_rrdata_append(Acc, _Pos, ?DNS_CLASS_IN, #dns_rrdata_dhcid{data = Bin}, CompMap) ->
+    {<<Acc/binary, (byte_size(Bin)):16, Bin/binary>>, CompMap};
+encode_rrdata_append(Acc, _Pos, ?DNS_CLASS_IN, #dns_rrdata_openpgpkey{data = Bin}, CompMap) ->
+    {<<Acc/binary, (byte_size(Bin)):16, Bin/binary>>, CompMap};
+encode_rrdata_append(
+    Acc,
     _Pos,
     _Class,
     #dns_rrdata_uri{
@@ -595,12 +610,13 @@ encode_rrdata(
     },
     CompMap
 ) ->
-    {<<Priority:16, Weight:16, Target/binary>>, CompMap};
-encode_rrdata(_Pos, _Class, #dns_rrdata_resinfo{data = Strings}, CompMap) ->
-    {encode_text(Strings), CompMap};
-encode_rrdata(_Pos, ?DNS_CLASS_IN, #dns_rrdata_wallet{data = Strings}, CompMap) ->
-    {encode_text(Strings), CompMap};
-encode_rrdata(
+    {<<Acc/binary, (4 + byte_size(Target)):16, Priority:16, Weight:16, Target/binary>>, CompMap};
+encode_rrdata_append(Acc, _Pos, _Class, #dns_rrdata_resinfo{data = Strings}, CompMap) ->
+    append_text_rdata(Acc, Strings, CompMap);
+encode_rrdata_append(Acc, _Pos, ?DNS_CLASS_IN, #dns_rrdata_wallet{data = Strings}, CompMap) ->
+    append_text_rdata(Acc, Strings, CompMap);
+encode_rrdata_append(
+    Acc,
     _Pos,
     _Class,
     #dns_rrdata_dlv{
@@ -611,10 +627,14 @@ encode_rrdata(
     },
     CompMap
 ) ->
-    {<<KeyTag:16, Alg:8, DigestType:8, Digest/binary>>, CompMap};
-encode_rrdata(Pos, _Class, #dns_rrdata_dname{dname = Name}, CompMap) ->
-    encode_dname(CompMap, Pos, Name);
-encode_rrdata(
+    {
+        <<Acc/binary, (4 + byte_size(Digest)):16, KeyTag:16, Alg:8, DigestType:8, Digest/binary>>,
+        CompMap
+    };
+encode_rrdata_append(Acc, Pos, _Class, #dns_rrdata_dname{dname = Name}, CompMap) ->
+    append_dname_rdata(Acc, Pos, Name, CompMap);
+encode_rrdata_append(
+    Acc,
     _Pos,
     _Class,
     #dns_rrdata_dnskey{
@@ -631,8 +651,9 @@ encode_rrdata(
         Alg =:= ?DNS_ALG_RSASHA512
 ->
     PKBin = encode_rsa_key(E, M),
-    {<<Flags:16, Protocol:8, Alg:8, PKBin/binary>>, CompMap};
-encode_rrdata(
+    {<<Acc/binary, (4 + byte_size(PKBin)):16, Flags:16, Protocol:8, Alg:8, PKBin/binary>>, CompMap};
+encode_rrdata_append(
+    Acc,
     _Pos,
     _Class,
     #dns_rrdata_dnskey{
@@ -647,8 +668,9 @@ encode_rrdata(
         Alg =:= ?DNS_ALG_NSEC3DSA
 ->
     PKBin = encode_dsa_key(PKM),
-    {<<Flags:16, Protocol:8, Alg:8, PKBin/binary>>, CompMap};
-encode_rrdata(
+    {<<Acc/binary, (4 + byte_size(PKBin)):16, Flags:16, Protocol:8, Alg:8, PKBin/binary>>, CompMap};
+encode_rrdata_append(
+    Acc,
     _Pos,
     _Class,
     #dns_rrdata_dnskey{
@@ -664,8 +686,9 @@ encode_rrdata(
         (Alg =:= ?DNS_ALG_ED25519 andalso is_binary(PK) andalso 32 =:= byte_size(PK)) orelse
         (Alg =:= ?DNS_ALG_ED448 andalso is_binary(PK) andalso 57 =:= byte_size(PK))
 ->
-    {<<Flags:16, Protocol:8, Alg:8, PK/binary>>, CompMap};
-encode_rrdata(
+    {<<Acc/binary, (4 + byte_size(PK)):16, Flags:16, Protocol:8, Alg:8, PK/binary>>, CompMap};
+encode_rrdata_append(
+    Acc,
     _Pos,
     _Class,
     #dns_rrdata_dnskey{
@@ -676,8 +699,9 @@ encode_rrdata(
     },
     CompMap
 ) ->
-    {<<Flags:16, Protocol:8, Alg:8, PK/binary>>, CompMap};
-encode_rrdata(
+    {<<Acc/binary, (4 + byte_size(PK)):16, Flags:16, Protocol:8, Alg:8, PK/binary>>, CompMap};
+encode_rrdata_append(
+    Acc,
     _Pos,
     _Class,
     #dns_rrdata_cdnskey{
@@ -694,8 +718,9 @@ encode_rrdata(
         Alg =:= ?DNS_ALG_RSASHA512
 ->
     PKBin = encode_rsa_key(E, M),
-    {<<Flags:16, Protocol:8, Alg:8, PKBin/binary>>, CompMap};
-encode_rrdata(
+    {<<Acc/binary, (4 + byte_size(PKBin)):16, Flags:16, Protocol:8, Alg:8, PKBin/binary>>, CompMap};
+encode_rrdata_append(
+    Acc,
     _Pos,
     _Class,
     #dns_rrdata_cdnskey{
@@ -710,8 +735,9 @@ encode_rrdata(
         Alg =:= ?DNS_ALG_NSEC3DSA
 ->
     PKBin = encode_dsa_key(PKM),
-    {<<Flags:16, Protocol:8, Alg:8, PKBin/binary>>, CompMap};
-encode_rrdata(
+    {<<Acc/binary, (4 + byte_size(PKBin)):16, Flags:16, Protocol:8, Alg:8, PKBin/binary>>, CompMap};
+encode_rrdata_append(
+    Acc,
     _Pos,
     _Class,
     #dns_rrdata_cdnskey{
@@ -727,8 +753,9 @@ encode_rrdata(
         (Alg =:= ?DNS_ALG_ED25519 andalso is_binary(PK) andalso 32 =:= byte_size(PK)) orelse
         (Alg =:= ?DNS_ALG_ED448 andalso is_binary(PK) andalso 57 =:= byte_size(PK))
 ->
-    {<<Flags:16, Protocol:8, Alg:8, PK/binary>>, CompMap};
-encode_rrdata(
+    {<<Acc/binary, (4 + byte_size(PK)):16, Flags:16, Protocol:8, Alg:8, PK/binary>>, CompMap};
+encode_rrdata_append(
+    Acc,
     _Pos,
     _Class,
     #dns_rrdata_cdnskey{
@@ -739,8 +766,9 @@ encode_rrdata(
     },
     CompMap
 ) ->
-    {<<Flags:16, Protocol:8, Alg:8, PK/binary>>, CompMap};
-encode_rrdata(
+    {<<Acc/binary, (4 + byte_size(PK)):16, Flags:16, Protocol:8, Alg:8, PK/binary>>, CompMap};
+encode_rrdata_append(
+    Acc,
     _Pos,
     _Class,
     #dns_rrdata_ds{
@@ -751,8 +779,12 @@ encode_rrdata(
     },
     CompMap
 ) ->
-    {<<KeyTag:16, Alg:8, DigestType:8, Digest/binary>>, CompMap};
-encode_rrdata(
+    {
+        <<Acc/binary, (4 + byte_size(Digest)):16, KeyTag:16, Alg:8, DigestType:8, Digest/binary>>,
+        CompMap
+    };
+encode_rrdata_append(
+    Acc,
     _Pos,
     _Class,
     #dns_rrdata_cds{
@@ -763,8 +795,12 @@ encode_rrdata(
     },
     CompMap
 ) ->
-    {<<KeyTag:16, Alg:8, DigestType:8, Digest/binary>>, CompMap};
-encode_rrdata(
+    {
+        <<Acc/binary, (4 + byte_size(Digest)):16, KeyTag:16, Alg:8, DigestType:8, Digest/binary>>,
+        CompMap
+    };
+encode_rrdata_append(
+    Acc,
     _Pos,
     _Class,
     #dns_rrdata_zonemd{
@@ -775,10 +811,14 @@ encode_rrdata(
     },
     CompMap
 ) ->
-    {<<Serial:32, Scheme:8, Algorithm:8, Hash/binary>>, CompMap};
-encode_rrdata(_Pos, _Class, #dns_rrdata_hinfo{cpu = CPU, os = OS}, CompMap) ->
-    {encode_text([CPU, OS]), CompMap};
-encode_rrdata(
+    {
+        <<Acc/binary, (6 + byte_size(Hash)):16, Serial:32, Scheme:8, Algorithm:8, Hash/binary>>,
+        CompMap
+    };
+encode_rrdata_append(Acc, _Pos, _Class, #dns_rrdata_hinfo{cpu = CPU, os = OS}, CompMap) ->
+    append_text_rdata(Acc, [CPU, OS], CompMap);
+encode_rrdata_append(
+    Acc,
     _Pos,
     _Class,
     #dns_rrdata_ipseckey{
@@ -789,8 +829,13 @@ encode_rrdata(
     },
     CompMap
 ) ->
-    {<<Precedence:8, 0:8, Algorithm:8, PublicKey/binary>>, CompMap};
-encode_rrdata(
+    {
+        <<Acc/binary, (3 + byte_size(PublicKey)):16, Precedence:8, 0:8, Algorithm:8,
+            PublicKey/binary>>,
+        CompMap
+    };
+encode_rrdata_append(
+    Acc,
     _Pos,
     _Class,
     #dns_rrdata_ipseckey{
@@ -801,8 +846,13 @@ encode_rrdata(
     },
     CompMap
 ) ->
-    {<<Precedence:8, 1:8, Algorithm:8, A:8, B:8, C:8, D:8, PublicKey/binary>>, CompMap};
-encode_rrdata(
+    {
+        <<Acc/binary, (7 + byte_size(PublicKey)):16, Precedence:8, 1:8, Algorithm:8, A:8, B:8, C:8,
+            D:8, PublicKey/binary>>,
+        CompMap
+    };
+encode_rrdata_append(
+    Acc,
     _Pos,
     _Class,
     #dns_rrdata_ipseckey{
@@ -814,11 +864,12 @@ encode_rrdata(
     CompMap
 ) ->
     {
-        <<Precedence:8, 2:8, Algorithm:8, A:16, B:16, C:16, D:16, E:16, F:16, G:16, H:16,
-            PublicKey/binary>>,
+        <<Acc/binary, (19 + byte_size(PublicKey)):16, Precedence:8, 2:8, Algorithm:8, A:16, B:16,
+            C:16, D:16, E:16, F:16, G:16, H:16, PublicKey/binary>>,
         CompMap
     };
-encode_rrdata(
+encode_rrdata_append(
+    Acc,
     _Pos,
     _Class,
     #dns_rrdata_ipseckey{
@@ -830,8 +881,13 @@ encode_rrdata(
     CompMap
 ) ->
     DNameBin = dns_domain:to_wire(DName),
-    {<<Precedence:8, 3:8, Algorithm:8, DNameBin/binary, PublicKey/binary>>, CompMap};
-encode_rrdata(
+    {
+        <<Acc/binary, (3 + byte_size(DNameBin) + byte_size(PublicKey)):16, Precedence:8, 3:8,
+            Algorithm:8, DNameBin/binary, PublicKey/binary>>,
+        CompMap
+    };
+encode_rrdata_append(
+    Acc,
     _Pos,
     _Class,
     #dns_rrdata_key{
@@ -846,18 +902,21 @@ encode_rrdata(
     CompMap
 ) ->
     {
-        <<Type:2, 0:1, XT:1, 0:2, NameType:2, 0:4, Sig:4, Protocol:8, Alg:8, PublicKey/binary>>,
+        <<Acc/binary, (4 + byte_size(PublicKey)):16, Type:2, 0:1, XT:1, 0:2, NameType:2, 0:4, Sig:4,
+            Protocol:8, Alg:8, PublicKey/binary>>,
         CompMap
     };
-encode_rrdata(
+encode_rrdata_append(
+    Acc,
     Pos,
     _Class,
     #dns_rrdata_kx{preference = Pref, exchange = Name},
     CompMap
 ) ->
     {Wire, NewCompMap} = dns_domain:to_wire(CompMap, Pos + 2, Name),
-    {<<Pref:16, Wire/binary>>, NewCompMap};
-encode_rrdata(
+    {<<Acc/binary, (2 + byte_size(Wire)):16, Pref:16, Wire/binary>>, NewCompMap};
+encode_rrdata_append(
+    Acc,
     _Pos,
     _Class,
     #dns_rrdata_loc{
@@ -876,35 +935,40 @@ encode_rrdata(
     LatEnc = Lat + ?MAX_INT32,
     LonEnc = Lon + ?MAX_INT32,
     {
-        <<0:8, SizeEnc:1/binary, HorizEnc:1/binary, VertEnc:1/binary, LatEnc:32, LonEnc:32,
-            (Alt + 10000000):32>>,
+        <<Acc/binary, 16:16, 0:8, SizeEnc:1/binary, HorizEnc:1/binary, VertEnc:1/binary, LatEnc:32,
+            LonEnc:32, (Alt + 10000000):32>>,
         CompMap
     };
-encode_rrdata(Pos, _Class, #dns_rrdata_mb{madname = Name}, CompMap) ->
-    encode_dname(CompMap, Pos, Name);
-encode_rrdata(Pos, _Class, #dns_rrdata_mg{madname = Name}, CompMap) ->
-    encode_dname(CompMap, Pos, Name);
-encode_rrdata(
+encode_rrdata_append(Acc, Pos, _Class, #dns_rrdata_mb{madname = Name}, CompMap) ->
+    append_dname_rdata(Acc, Pos, Name, CompMap);
+encode_rrdata_append(Acc, Pos, _Class, #dns_rrdata_mg{madname = Name}, CompMap) ->
+    append_dname_rdata(Acc, Pos, Name, CompMap);
+encode_rrdata_append(
+    Acc,
     Pos,
     _Class,
     #dns_rrdata_minfo{rmailbx = RMB, emailbx = EMB},
     CompMap
 ) ->
     {RMBBin, CompMap0} = encode_dname(CompMap, Pos, RMB),
-    NewPos = Pos + byte_size(RMBBin),
-    {EMBBin, NewCompMap} = encode_dname(CompMap0, NewPos, EMB),
-    {<<RMBBin/binary, EMBBin/binary>>, NewCompMap};
-encode_rrdata(Pos, _Class, #dns_rrdata_mr{newname = Name}, CompMap) ->
-    encode_dname(CompMap, Pos, Name);
-encode_rrdata(
+    {EMBBin, NewCompMap} = encode_dname(CompMap0, Pos + byte_size(RMBBin), EMB),
+    {
+        <<Acc/binary, (byte_size(RMBBin) + byte_size(EMBBin)):16, RMBBin/binary, EMBBin/binary>>,
+        NewCompMap
+    };
+encode_rrdata_append(Acc, Pos, _Class, #dns_rrdata_mr{newname = Name}, CompMap) ->
+    append_dname_rdata(Acc, Pos, Name, CompMap);
+encode_rrdata_append(
+    Acc,
     Pos,
     _Class,
     #dns_rrdata_mx{preference = Pref, exchange = Name},
     CompMap
 ) ->
     {Wire, NewCompMap} = encode_dname(CompMap, Pos + 2, Name),
-    {<<Pref:16, Wire/binary>>, NewCompMap};
-encode_rrdata(
+    {<<Acc/binary, (2 + byte_size(Wire)):16, Pref:16, Wire/binary>>, NewCompMap};
+encode_rrdata_append(
+    Acc,
     _Pos,
     _Class,
     #dns_rrdata_naptr{
@@ -922,10 +986,15 @@ encode_rrdata(
     Regexp0 = unicode:characters_to_binary(Regexp, unicode, utf8),
     Bin2 = encode_string(Bin1, Regexp0),
     ReplacementBin = dns_domain:to_wire(Replacement),
-    {<<Bin2/binary, ReplacementBin/binary>>, CompMap};
-encode_rrdata(Pos, _Class, #dns_rrdata_ns{dname = Name}, CompMap) ->
-    encode_dname(CompMap, Pos, Name);
-encode_rrdata(
+    {
+        <<Acc/binary, (byte_size(Bin2) + byte_size(ReplacementBin)):16, Bin2/binary,
+            ReplacementBin/binary>>,
+        CompMap
+    };
+encode_rrdata_append(Acc, Pos, _Class, #dns_rrdata_ns{dname = Name}, CompMap) ->
+    append_dname_rdata(Acc, Pos, Name, CompMap);
+encode_rrdata_append(
+    Acc,
     _Pos,
     _Class,
     #dns_rrdata_nsec{
@@ -936,8 +1005,13 @@ encode_rrdata(
 ) ->
     NextDNameBin = dns_domain:to_wire(NextDName),
     TypesBin = encode_nsec_types(Types),
-    {<<NextDNameBin/binary, TypesBin/binary>>, CompMap};
-encode_rrdata(
+    {
+        <<Acc/binary, (byte_size(NextDNameBin) + byte_size(TypesBin)):16, NextDNameBin/binary,
+            TypesBin/binary>>,
+        CompMap
+    };
+encode_rrdata_append(
+    Acc,
     _Pos,
     _Class,
     #dns_rrdata_csync{
@@ -948,8 +1022,12 @@ encode_rrdata(
     CompMap
 ) ->
     TypesBin = encode_nsec_types(Types),
-    {<<SOASerial:32, Flags:16, TypesBin/binary>>, CompMap};
-encode_rrdata(
+    {
+        <<Acc/binary, (6 + byte_size(TypesBin)):16, SOASerial:32, Flags:16, TypesBin/binary>>,
+        CompMap
+    };
+encode_rrdata_append(
+    Acc,
     _Pos,
     _Class,
     #dns_rrdata_dsync{
@@ -962,8 +1040,13 @@ encode_rrdata(
 ) ->
     %% DSYNC target must be uncompressed per RFC 9859
     TargetBin = dns_domain:to_wire(Target),
-    {<<RRType:16, Scheme:8, Port:16, TargetBin/binary>>, CompMap};
-encode_rrdata(
+    {
+        <<Acc/binary, (5 + byte_size(TargetBin)):16, RRType:16, Scheme:8, Port:16,
+            TargetBin/binary>>,
+        CompMap
+    };
+encode_rrdata_append(
+    Acc,
     _Pos,
     _Class,
     #dns_rrdata_nsec3{
@@ -981,12 +1064,13 @@ encode_rrdata(
     SaltLength = byte_size(Salt),
     HashLength = byte_size(Hash),
     {
-        <<HashAlg:8, 0:7, OptOutN:1, Iterations:16, SaltLength:8/unsigned,
-            Salt:SaltLength/binary-unit:8, HashLength:8/unsigned, Hash:HashLength/binary-unit:8,
-            TypeBMP/binary>>,
+        <<Acc/binary, (6 + SaltLength + HashLength + byte_size(TypeBMP)):16, HashAlg:8, 0:7,
+            OptOutN:1, Iterations:16, SaltLength:8/unsigned, Salt/binary, HashLength:8/unsigned,
+            Hash/binary, TypeBMP/binary>>,
         CompMap
     };
-encode_rrdata(
+encode_rrdata_append(
+    Acc,
     _Pos,
     _Class,
     #dns_rrdata_nsec3param{
@@ -998,8 +1082,13 @@ encode_rrdata(
     CompMap
 ) ->
     SaltLength = byte_size(Salt),
-    {<<HashAlg:8, Flags:8, Iterations:16, SaltLength:8/unsigned, Salt:SaltLength/binary>>, CompMap};
-encode_rrdata(
+    {
+        <<Acc/binary, (5 + SaltLength):16, HashAlg:8, Flags:8, Iterations:16, SaltLength:8/unsigned,
+            Salt/binary>>,
+        CompMap
+    };
+encode_rrdata_append(
+    Acc,
     _Pos,
     _Class,
     #dns_rrdata_tlsa{
@@ -1010,8 +1099,13 @@ encode_rrdata(
     },
     CompMap
 ) ->
-    {<<Usage:8, Selector:8, MatchingType:8, Certificate/binary>>, CompMap};
-encode_rrdata(
+    {
+        <<Acc/binary, (3 + byte_size(Certificate)):16, Usage:8, Selector:8, MatchingType:8,
+            Certificate/binary>>,
+        CompMap
+    };
+encode_rrdata_append(
+    Acc,
     _Pos,
     _Class,
     #dns_rrdata_smimea{
@@ -1022,8 +1116,13 @@ encode_rrdata(
     },
     CompMap
 ) ->
-    {<<Usage:8, Selector:8, MatchingType:8, Certificate/binary>>, CompMap};
-encode_rrdata(
+    {
+        <<Acc/binary, (3 + byte_size(Certificate)):16, Usage:8, Selector:8, MatchingType:8,
+            Certificate/binary>>,
+        CompMap
+    };
+encode_rrdata_append(
+    Acc,
     Pos,
     _Class,
     #dns_rrdata_nxt{dname = NxtDName, types = Types},
@@ -1031,14 +1130,22 @@ encode_rrdata(
 ) ->
     {NextDNameBin, NewCompMap} = encode_dname(CompMap, Pos, NxtDName),
     BMP = encode_nxt_bmp(Types),
-    {<<NextDNameBin/binary, BMP/binary>>, NewCompMap};
-encode_rrdata(Pos, _Class, #dns_rrdata_ptr{dname = Name}, CompMap) ->
-    encode_dname(CompMap, Pos, Name);
-encode_rrdata(_Pos, _Class, #dns_rrdata_rp{mbox = Mbox, txt = Txt}, CompMap) ->
+    {
+        <<Acc/binary, (byte_size(NextDNameBin) + byte_size(BMP)):16, NextDNameBin/binary,
+            BMP/binary>>,
+        NewCompMap
+    };
+encode_rrdata_append(Acc, Pos, _Class, #dns_rrdata_ptr{dname = Name}, CompMap) ->
+    append_dname_rdata(Acc, Pos, Name, CompMap);
+encode_rrdata_append(Acc, _Pos, _Class, #dns_rrdata_rp{mbox = Mbox, txt = Txt}, CompMap) ->
     MboxBin = dns_domain:to_wire(Mbox),
     TxtBin = dns_domain:to_wire(Txt),
-    {<<MboxBin/binary, TxtBin/binary>>, CompMap};
-encode_rrdata(
+    {
+        <<Acc/binary, (byte_size(MboxBin) + byte_size(TxtBin)):16, MboxBin/binary, TxtBin/binary>>,
+        CompMap
+    };
+encode_rrdata_append(
+    Acc,
     _Pos,
     _Class,
     #dns_rrdata_rrsig{
@@ -1056,19 +1163,22 @@ encode_rrdata(
 ) ->
     SignersNameBin = dns_domain:to_wire(SignersName),
     {
-        <<TypeCovered:16, Alg:8, Labels:8, OriginalTTL:32, SigExpire:32, SigIncept:32, KeyTag:16,
-            SignersNameBin/binary, Sig/binary>>,
+        <<Acc/binary, (18 + byte_size(SignersNameBin) + byte_size(Sig)):16, TypeCovered:16, Alg:8,
+            Labels:8, OriginalTTL:32, SigExpire:32, SigIncept:32, KeyTag:16, SignersNameBin/binary,
+            Sig/binary>>,
         CompMap
     };
-encode_rrdata(
+encode_rrdata_append(
+    Acc,
     Pos,
     _Class,
     #dns_rrdata_rt{preference = Pref, host = Name},
     CompMap
 ) ->
     {Wire, NewCompMap} = encode_dname(CompMap, Pos + 2, Name),
-    {<<Pref:16, Wire/binary>>, NewCompMap};
-encode_rrdata(
+    {<<Acc/binary, (2 + byte_size(Wire)):16, Pref:16, Wire/binary>>, NewCompMap};
+encode_rrdata_append(
+    Acc,
     Pos,
     _Class,
     #dns_rrdata_soa{
@@ -1083,13 +1193,16 @@ encode_rrdata(
     CompMap
 ) ->
     {MNBin, MNCMap} = encode_dname(CompMap, Pos, MName),
-    NewPos = Pos + byte_size(MNBin),
-    {RWire, RNCMap} = encode_dname(MNCMap, NewPos, RName),
-    RNBin = <<MNBin/binary, RWire/binary>>,
-    {<<RNBin/binary, Serial:32, Refresh:32, Retry:32, Expire:32, Minimum:32>>, RNCMap};
-encode_rrdata(_Pos, _Class, #dns_rrdata_spf{spf = Strings}, CompMap) ->
-    {encode_text(Strings), CompMap};
-encode_rrdata(
+    {RWire, RNCMap} = encode_dname(MNCMap, Pos + byte_size(MNBin), RName),
+    {
+        <<Acc/binary, (20 + byte_size(MNBin) + byte_size(RWire)):16, MNBin/binary, RWire/binary,
+            Serial:32, Refresh:32, Retry:32, Expire:32, Minimum:32>>,
+        RNCMap
+    };
+encode_rrdata_append(Acc, _Pos, _Class, #dns_rrdata_spf{spf = Strings}, CompMap) ->
+    append_text_rdata(Acc, Strings, CompMap);
+encode_rrdata_append(
+    Acc,
     _Pos,
     _Class,
     #dns_rrdata_srv{
@@ -1101,8 +1214,12 @@ encode_rrdata(
     CompMap
 ) ->
     TargetBin = dns_domain:to_wire(Target),
-    {<<Pri:16, Wght:16, Port:16, TargetBin/binary>>, CompMap};
-encode_rrdata(
+    {
+        <<Acc/binary, (6 + byte_size(TargetBin)):16, Pri:16, Wght:16, Port:16, TargetBin/binary>>,
+        CompMap
+    };
+encode_rrdata_append(
+    Acc,
     _Pos,
     _Class,
     #dns_rrdata_sshfp{
@@ -1112,8 +1229,9 @@ encode_rrdata(
     },
     CompMap
 ) ->
-    {<<Alg:8, FPType:8, FingerPrint/binary>>, CompMap};
-encode_rrdata(
+    {<<Acc/binary, (2 + byte_size(FingerPrint)):16, Alg:8, FPType:8, FingerPrint/binary>>, CompMap};
+encode_rrdata_append(
+    Acc,
     _Pos,
     _Class,
     #dns_rrdata_svcb{
@@ -1125,8 +1243,13 @@ encode_rrdata(
 ) ->
     TargetNameBin = dns_domain:to_wire(TargetName),
     SvcParamsBin = encode_svcb_svc_params(SvcParams),
-    {<<SvcPriority:16, TargetNameBin/binary, SvcParamsBin/binary>>, CompMap};
-encode_rrdata(
+    {
+        <<Acc/binary, (2 + byte_size(TargetNameBin) + byte_size(SvcParamsBin)):16, SvcPriority:16,
+            TargetNameBin/binary, SvcParamsBin/binary>>,
+        CompMap
+    };
+encode_rrdata_append(
+    Acc,
     _Pos,
     _Class,
     #dns_rrdata_https{
@@ -1138,8 +1261,13 @@ encode_rrdata(
 ) ->
     TargetNameBin = dns_domain:to_wire(TargetName),
     SvcParamsBin = encode_svcb_svc_params(SvcParams),
-    {<<SvcPriority:16, TargetNameBin/binary, SvcParamsBin/binary>>, CompMap};
-encode_rrdata(
+    {
+        <<Acc/binary, (2 + byte_size(TargetNameBin) + byte_size(SvcParamsBin)):16, SvcPriority:16,
+            TargetNameBin/binary, SvcParamsBin/binary>>,
+        CompMap
+    };
+encode_rrdata_append(
+    Acc,
     _Pos,
     _Class,
     #dns_rrdata_tsig{
@@ -1157,14 +1285,26 @@ encode_rrdata(
     MACSize = byte_size(MAC),
     OtherLen = byte_size(Other),
     {
-        <<AlgBin/binary, Time:48, Fudge:16, MACSize:16, MAC:MACSize/bytes, MsgId:16, Err:16,
-            OtherLen:16, Other/binary>>,
+        <<Acc/binary, (16 + byte_size(AlgBin) + MACSize + OtherLen):16, AlgBin/binary, Time:48,
+            Fudge:16, MACSize:16, MAC:MACSize/bytes, MsgId:16, Err:16, OtherLen:16, Other/binary>>,
         CompMap
     };
-encode_rrdata(_Pos, _Class, #dns_rrdata_txt{txt = Strings}, CompMap) ->
-    {encode_text(Strings), CompMap};
-encode_rrdata(_Pos, _Class, Bin, CompMap) when is_binary(Bin) ->
-    {Bin, CompMap}.
+encode_rrdata_append(Acc, _Pos, _Class, #dns_rrdata_txt{txt = Strings}, CompMap) ->
+    append_text_rdata(Acc, Strings, CompMap);
+encode_rrdata_append(Acc, _Pos, _Class, Bin, CompMap) when is_binary(Bin) ->
+    {<<Acc/binary, (byte_size(Bin)):16, Bin/binary>>, CompMap}.
+
+-spec append_dname_rdata(binary(), non_neg_integer(), dns:dname(), undefined | compmap()) ->
+    {binary(), undefined | compmap()}.
+append_dname_rdata(Acc, Pos, Name, CompMap) ->
+    {NameBin, CompMap1} = encode_dname(CompMap, Pos, Name),
+    {<<Acc/binary, (byte_size(NameBin)):16, NameBin/binary>>, CompMap1}.
+
+-spec append_text_rdata(binary(), [binary()], undefined | compmap()) ->
+    {binary(), undefined | compmap()}.
+append_text_rdata(Acc, Strings, CompMap) ->
+    TextBin = encode_text(Strings),
+    {<<Acc/binary, (byte_size(TextBin)):16, TextBin/binary>>, CompMap}.
 
 -spec encode_loc_size(integer()) -> <<_:8>>.
 encode_loc_size(Size) when is_integer(Size) ->
@@ -1203,6 +1343,8 @@ do_encode_nsec_types(Bin, BMP0, OldWindowNum, [Type | _] = Types) when
     NewWindowNum = Type div 256,
     do_encode_nsec_types(NewBin, <<>>, NewWindowNum, Types);
 do_encode_nsec_types(Bin, BMP, WindowNum, [Type | Types]) ->
+    %% The bit for Type sits at absolute position Type rem 256 within the window,
+    %% and bit_size(BMP) bits of the window are already written.
     PadBy = Type rem 256 - bit_size(BMP),
     NewBMP = <<BMP/bitstring, 0:PadBy/unit:1, 1:1>>,
     do_encode_nsec_types(Bin, NewBMP, WindowNum, Types).
