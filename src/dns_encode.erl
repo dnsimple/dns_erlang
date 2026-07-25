@@ -367,17 +367,21 @@ encode_message_llq(
     } = Msg,
     MaxSize
 ) ->
-    QC = length(Q),
     AnswersLen = length(Answers),
     AuthorityLen = length(Authority),
-    AdditionalLen = length(Additional),
     AuAd = Authority ++ Additional,
+    AuAdLen = AuthorityLen + length(Additional),
     SpaceLeft = MaxSize - ?HEADER_SIZE,
-    {CompMap0, AccQ, []} = encode_message_rec_list(Q, #{}, ?HEADER_SIZE, SpaceLeft, <<0:96>>),
+    %% Only the answer section is split across LLQ events; the question and the authority/additional
+    %% tail can still overflow MaxSize on their own, so encode as much of each as fits and flag
+    %% truncation rather than failing to match an empty leftover list.
+    {CompMap0, AccQ, LeftoverQ} =
+        encode_message_rec_list(Q, #{}, ?HEADER_SIZE, SpaceLeft, <<0:96>>),
     Pos0 = byte_size(AccQ),
     SpaceLeft0 = SpaceLeft - (Pos0 - ?HEADER_SIZE),
-    %% Size probe only: measures the authority+additional tail without keeping it
-    {_, AuAdTmp, []} = encode_message_rec_list(AuAd, CompMap0, Pos0, SpaceLeft0, <<>>),
+    %% Size probe only: measures how much of the authority+additional tail fits,
+    %% so that space can be reserved for it ahead of the answers
+    {_, AuAdTmp, _} = encode_message_rec_list(AuAd, CompMap0, Pos0, SpaceLeft0, <<>>),
     AuAdTmpSize = byte_size(AuAdTmp),
     {CompMap1, AccAn, LeftoverAn} =
         encode_message_rec_list(Answers, CompMap0, Pos0, SpaceLeft0 - AuAdTmpSize, AccQ),
@@ -385,9 +389,20 @@ encode_message_llq(
     EncodedAnC = AnswersLen - LeftoverAnC,
     Pos1 = byte_size(AccAn),
     SpaceLeft1 = SpaceLeft0 - (Pos1 - Pos0),
-    {_, AccFull, []} =
+    {_, AccFull, LeftoverAuAd} =
         encode_message_rec_list(AuAd, CompMap1, Pos1, SpaceLeft1, AccAn),
-    Msg0 = Msg#dns_message{qc = QC, anc = EncodedAnC, auc = AuthorityLen, adc = AdditionalLen},
+    %% Leftovers come off the end of Authority ++ Additional, so whatever was
+    %% encoded fills the authority section first. The counts must describe what
+    %% is actually on the wire or the peer reads the message as malformed.
+    EncodedAuAdC = AuAdLen - length(LeftoverAuAd),
+    EncodedAuC = min(EncodedAuAdC, AuthorityLen),
+    Msg0 = Msg#dns_message{
+        tc = Msg#dns_message.tc orelse [] =/= LeftoverQ orelse [] =/= LeftoverAuAd,
+        qc = length(Q) - length(LeftoverQ),
+        anc = EncodedAnC,
+        auc = EncodedAuC,
+        adc = EncodedAuAdC - EncodedAuC
+    },
     Head = encode_message_header(Msg0),
     Bin = finish_message(Head, AccFull),
     case LeftoverAnC of

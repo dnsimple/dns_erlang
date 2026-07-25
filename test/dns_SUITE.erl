@@ -36,7 +36,8 @@ groups() ->
             encode_optrr_kept_near_max_size,
             truncated_query_enforces_opt_record,
             encode_default_message_question_offset_correct,
-            encode_default_message_additional_offset_correct
+            encode_default_message_additional_offset_correct,
+            encode_llq_truncates_instead_of_crashing
         ]},
         {txt_records, [parallel], [
             long_txt,
@@ -401,6 +402,107 @@ encode_default_message_additional_offset_correct(_) ->
             additional = [#dns_rr{name = MailName}, #dns_rr{name = MailName}]
         },
         Decoded
+    ).
+
+%% tc_mode => llq_event splits only the answer section across events. The
+%% question and the authority/additional tail were matched against an empty
+%% leftover list, so a tail (or a question section) that did not fit MaxSize
+%% raised badmatch instead of truncating. Whatever is emitted must still decode,
+%% with section counts describing what is actually on the wire.
+encode_llq_truncates_instead_of_crashing(_) ->
+    Big = fun(Prefix, N) ->
+        Label = binary:copy(<<($a + (N rem 26))>>, 60),
+        #dns_rr{
+            name = <<Prefix/binary, (integer_to_binary(N))/binary, ".", Label/binary, ".test">>,
+            type = ?DNS_TYPE_TXT,
+            class = ?DNS_CLASS_IN,
+            ttl = 300,
+            data = #dns_rrdata_txt{txt = [binary:copy(<<$x>>, 200)]}
+        }
+    end,
+    Question = [
+        #dns_query{name = <<"example.com">>, type = ?DNS_TYPE_TXT, class = ?DNS_CLASS_IN}
+    ],
+    Twenty = fun(Prefix) -> [Big(Prefix, N) || N <- lists:seq(1, 20)] end,
+    Cases = [
+        {"oversized authority", #dns_message{
+            id = 1, qc = 1, questions = Question, auc = 20, authority = Twenty(<<"au">>)
+        }},
+        {"oversized additional", #dns_message{
+            id = 2, qc = 1, questions = Question, adc = 20, additional = Twenty(<<"ad">>)
+        }},
+        {"oversized authority and additional", #dns_message{
+            id = 3,
+            qc = 1,
+            questions = Question,
+            auc = 10,
+            authority = Twenty(<<"au">>),
+            adc = 10,
+            additional = Twenty(<<"ad">>)
+        }},
+        %% distinct long names, so compression cannot shrink the question section
+        {"oversized question section", #dns_message{
+            id = 4,
+            qc = 8,
+            questions = [
+                #dns_query{
+                    name =
+                        <<
+                            (binary:copy(<<($a + N)>>, 63))/binary,
+                            ".",
+                            (binary:copy(<<($a + N)>>, 63))/binary,
+                            ".",
+                            (binary:copy(<<($a + N)>>, 63))/binary,
+                            ".com"
+                        >>,
+                    type = ?DNS_TYPE_A,
+                    class = ?DNS_CLASS_IN
+                }
+             || N <- lists:seq(0, 7)
+            ]
+        }}
+    ],
+    [
+        begin
+            Encoded = dns:encode_message(Msg, #{tc_mode => llq_event, max_size => 512}),
+            Bin =
+                case Encoded of
+                    {B, #dns_message{}} -> B;
+                    B when is_binary(B) -> B
+                end,
+            %% The emitted message must be well formed: counts matching contents
+            Decoded = dns:decode_message(Bin),
+            ?assertMatch(#dns_message{}, Decoded, Label),
+            #dns_message{
+                tc = TC,
+                questions = Qs,
+                answers = As,
+                authority = Au,
+                additional = Ad
+            } = Decoded,
+            ?assertEqual(Decoded#dns_message.qc, length(Qs), {Label, qc}),
+            ?assertEqual(Decoded#dns_message.anc, length(As), {Label, anc}),
+            ?assertEqual(Decoded#dns_message.auc, length(Au), {Label, auc}),
+            ?assertEqual(Decoded#dns_message.adc, length(Ad), {Label, adc}),
+            %% something was dropped, so truncation must be advertised
+            ?assert(TC, {Label, tc})
+        end
+     || {Label, Msg} <- Cases
+    ],
+    %% A message that fits is unaffected: no truncation, all sections intact
+    Fits = #dns_message{
+        id = 5,
+        qc = 1,
+        questions = Question,
+        auc = 1,
+        authority = [Big(<<"au">>, 1)],
+        adc = 1,
+        additional = [Big(<<"ad">>, 2)]
+    },
+    FitsBin = dns:encode_message(Fits, #{tc_mode => llq_event, max_size => 4096}),
+    ?assertMatch(
+        #dns_message{tc = false, qc = 1, anc = 0, auc = 1, adc = 1},
+        dns:decode_message(FitsBin)
     ).
 
 message_other(_) ->
