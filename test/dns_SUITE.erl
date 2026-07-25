@@ -81,7 +81,9 @@ groups() ->
             svcb_encode_wire_key_no_value,
             svcb_encode_wire_key_binary_value,
             svcb_encode_wire_key_invalid_value,
-            svcb_wire_roundtrip_unknown_key_none_preserved
+            svcb_wire_roundtrip_unknown_key_none_preserved,
+            svcb_oversized_alpn_id_rejected,
+            svcb_truncated_fixed_width_params_rejected
         ]},
         {dname_utilities, [parallel], [
             dname_preserve_dot,
@@ -1578,6 +1580,87 @@ svcb_wire_roundtrip_unknown_key_none_preserved(_) ->
     Params1 = dns_svcb_params:from_wire(Wire),
     ?assertEqual(none, maps:get(123, Params1)),
     ?assertEqual(Params0, Params1).
+
+%% RFC9460§7.1: an alpn-id is length-prefixed with a single octet, so it cannot
+%% exceed 255 bytes. byte_size(P):8 truncated a longer id's length modulo 256, so
+%% a 256-byte id wrote a length octet of 0 and the result no longer decoded.
+svcb_oversized_alpn_id_rejected(_) ->
+    Alpn = fun(Ids) -> #{?DNS_SVCB_PARAM_ALPN => Ids} end,
+    [
+        ?assertError(
+            {svcb_invalid_alpn_id, _},
+            dns_svcb_params:to_wire(Alpn([binary:copy(<<$a>>, Size)])),
+            Size
+        )
+     || Size <- [256, 257, 512, 1000]
+    ],
+    %% An oversized id anywhere in the list is caught, not just the first
+    ?assertError(
+        {svcb_invalid_alpn_id, _},
+        dns_svcb_params:to_wire(Alpn([<<"h2">>, binary:copy(<<$a>>, 300)]))
+    ),
+    %% The 255-byte boundary and ordinary ids still round-trip
+    [
+        begin
+            Params = Alpn(Ids),
+            ?assertEqual(Params, dns_svcb_params:from_wire(dns_svcb_params:to_wire(Params)), Ids)
+        end
+     || Ids <- [
+            [binary:copy(<<$a>>, 255)],
+            [<<"h2">>, <<"h3">>],
+            [<<"h2">>, binary:copy(<<$b>>, 255)],
+            []
+        ]
+    ].
+
+%% RFC9460 §7.4 and §8: mandatory, ipv4hint and ipv6hint are sequences of
+%% fixed-width elements. A binary comprehension silently discarded a trailing
+%% partial element, so a 6-byte ipv4hint decoded to one address and quietly threw
+%% away the other two bytes.
+svcb_truncated_fixed_width_params_rejected(_) ->
+    Param = fun(Key, ValueBin) ->
+        <<Key:16, (byte_size(ValueBin)):16, ValueBin/binary>>
+    end,
+    Truncated = [
+        {"ipv4hint, 6 bytes", ?DNS_SVCB_PARAM_IPV4HINT, <<1, 2, 3, 4, 9, 9>>},
+        {"ipv4hint, 1 byte", ?DNS_SVCB_PARAM_IPV4HINT, <<1>>},
+        {"ipv6hint, 17 bytes", ?DNS_SVCB_PARAM_IPV6HINT, binary:copy(<<0>>, 17)},
+        {"ipv6hint, 8 bytes", ?DNS_SVCB_PARAM_IPV6HINT, binary:copy(<<0>>, 8)},
+        {"mandatory, 3 bytes", ?DNS_SVCB_PARAM_MANDATORY, <<0, 1, 9>>}
+    ],
+    [
+        ?assertError(
+            {svcb_truncated_param, _, _, _},
+            dns_svcb_params:from_wire(Param(Key, ValueBin)),
+            Label
+        )
+     || {Label, Key, ValueBin} <- Truncated
+    ],
+    %% Whole numbers of elements still decode, including the empty value
+    ?assertEqual(
+        #{?DNS_SVCB_PARAM_IPV4HINT => [{1, 2, 3, 4}, {5, 6, 7, 8}]},
+        dns_svcb_params:from_wire(Param(?DNS_SVCB_PARAM_IPV4HINT, <<1, 2, 3, 4, 5, 6, 7, 8>>))
+    ),
+    ?assertEqual(
+        #{?DNS_SVCB_PARAM_IPV4HINT => []},
+        dns_svcb_params:from_wire(Param(?DNS_SVCB_PARAM_IPV4HINT, <<>>))
+    ),
+    ?assertEqual(
+        #{?DNS_SVCB_PARAM_IPV6HINT => [{0, 0, 0, 0, 0, 0, 0, 1}]},
+        dns_svcb_params:from_wire(
+            Param(?DNS_SVCB_PARAM_IPV6HINT, <<0:112, 1:16>>)
+        )
+    ),
+    %% A truncated parameter inside a full SVCB record is a decode error, not a
+    %% record with silently dropped hints
+    Rdata =
+        <<1:16, 0, (Param(?DNS_SVCB_PARAM_IPV4HINT, <<1, 2, 3, 4, 9, 9>>))/binary>>,
+    Header =
+        <<16#5678:16, 0:1, 0:4, 0:1, 0:1, 0:1, 0:1, 0:1, 0:1, 0:1, 0:4, 0:16, 1:16, 0:16, 0:16>>,
+    Answer =
+        <<3, $f, $o, $o, 0, ?DNS_TYPE_SVCB:16, ?DNS_CLASS_IN:16, 300:32, (byte_size(Rdata)):16,
+            Rdata/binary>>,
+    ?assertMatch({formerr, _, _}, dns:decode_message(<<Header/binary, Answer/binary>>)).
 
 %%%===================================================================
 %%% dname_utilities Tests

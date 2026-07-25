@@ -28,6 +28,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A NAPTR record whose REGEXP is not valid UTF-8 decoded into a record holding an error tuple instead of being rejected (RFC 3403 §4.1)
 - An EDNS OPT RR advertising a UDP payload size below 512 is clamped to 512 instead of raising `badarg` (RFC 6891 §6.2.3)
 - `encode_message/2` with an unsupported `tsig` algorithm raised `case_clause` instead of `badarg`
+- An SVCB/HTTPS `alpn` id longer than 255 bytes silently truncated its length octet, producing undecodable wire data; it now raises `{svcb_invalid_alpn_id, _}`
+- SVCB/HTTPS `mandatory`, `ipv4hint` and `ipv6hint` values that are not a whole number of elements are rejected instead of silently dropping the remainder (RFC 9460 §7.4, §8)
 
 ## v5.0.13
 

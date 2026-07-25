@@ -69,7 +69,7 @@ from_wire(<<Key:16, Len:16, ValueBin:Len/binary, Rest/binary>>, SvcParams, K0) w
             ?DNS_SVCB_PARAM_NO_DEFAULT_ALPN ->
                 error({svcb_bad_no_default_alpn, Len});
             ?DNS_SVCB_PARAM_MANDATORY ->
-                Value = [K || <<K:16>> <= ValueBin],
+                Value = [K || <<K:16>> <= exact_multiple(mandatory, 2, ValueBin)],
                 SvcParams#{?DNS_SVCB_PARAM_MANDATORY => Value};
             ?DNS_SVCB_PARAM_ALPN ->
                 Value = decode_alpn_list(wire, ValueBin),
@@ -80,12 +80,16 @@ from_wire(<<Key:16, Len:16, ValueBin:Len/binary, Rest/binary>>, SvcParams, K0) w
             ?DNS_SVCB_PARAM_ECH ->
                 SvcParams#{?DNS_SVCB_PARAM_ECH => ValueBin};
             ?DNS_SVCB_PARAM_IPV4HINT ->
-                Value = [{A, B, C, D} || <<A, B, C, D>> <= ValueBin],
+                Value = [
+                    {A, B, C, D}
+                 || <<A, B, C, D>> <= exact_multiple(ipv4hint, 4, ValueBin)
+                ],
                 SvcParams#{?DNS_SVCB_PARAM_IPV4HINT => Value};
             ?DNS_SVCB_PARAM_IPV6HINT ->
                 Value = [
                     {A, B, C, D, E, F, G, H}
-                 || <<A:16, B:16, C:16, D:16, E:16, F:16, G:16, H:16>> <= ValueBin
+                 || <<A:16, B:16, C:16, D:16, E:16, F:16, G:16, H:16>> <=
+                        exact_multiple(ipv6hint, 16, ValueBin)
                 ],
                 SvcParams#{?DNS_SVCB_PARAM_IPV6HINT => Value};
             _ when Len =:= 0 ->
@@ -96,6 +100,13 @@ from_wire(<<Key:16, Len:16, ValueBin:Len/binary, Rest/binary>>, SvcParams, K0) w
     from_wire(Rest, NewSvcParams, Key);
 from_wire(<<Key:16, Len:16, _:Len/binary, _/binary>>, _, K0) when Key =< K0 ->
     error({svcb_key_ordering_error, {prev_key, K0}, {current_key, Key}}).
+
+%% RFC9460 §7.4 and §8: ipv4hint and ipv6hint are each a sequence of fixed-width elements
+-spec exact_multiple(atom(), pos_integer(), binary()) -> binary().
+exact_multiple(_Param, Width, Bin) when byte_size(Bin) rem Width =:= 0 ->
+    Bin;
+exact_multiple(Param, Width, Bin) ->
+    error({svcb_truncated_param, Param, {expected_multiple_of, Width}, byte_size(Bin)}).
 
 -spec to_json(dns:svcb_svc_params()) -> json:encode_value().
 to_json(SvcParams) ->
@@ -559,7 +570,7 @@ parse_ipv6_list_for_zone([IP | Rest], MakeError, Acc) ->
     (wire, [binary()]) -> binary();
     (zone, [binary()]) -> iodata().
 encode_alpn_list(wire, Protocols) ->
-    <<<<(byte_size(P)):8, P/binary>> || P <- Protocols>>;
+    <<<<(alpn_id_size(P)):8, P/binary>> || P <- Protocols>>;
 encode_alpn_list(zone, Protocols) ->
     join_with_separator(~",", Protocols).
 
@@ -570,6 +581,13 @@ decode_alpn_list(wire, Bin) when is_binary(Bin) ->
     decode_alpn_wire(Bin);
 decode_alpn_list(zone, AlpnStr) when is_list(AlpnStr) ->
     [list_to_binary(string:trim(P)) || P <- string:split(AlpnStr, ",", all), P =/= ""].
+
+%% RFC9460§7.1: an alpn-id is a length-prefixed byte string, so it cannot be longer than 255 bytes.
+-spec alpn_id_size(binary()) -> byte().
+alpn_id_size(P) when is_binary(P), byte_size(P) =< 255 ->
+    byte_size(P);
+alpn_id_size(P) ->
+    error({svcb_invalid_alpn_id, P}).
 
 -spec decode_alpn_wire(binary()) -> [binary()].
 decode_alpn_wire(<<Len:8, Str:Len/binary, Rest/binary>>) ->
