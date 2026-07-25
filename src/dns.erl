@@ -441,7 +441,20 @@ verify_tsig(MsgBin, Name, Secret) ->
     dns_tsig:verify_tsig(MsgBin, Name, Secret).
 
 -doc #{group => "Functions: TSIG"}.
--doc "Verifies a TSIG message signature.".
+-doc """
+Verifies a TSIG message signature.
+
+Returns `{error, Code}` for a signature that is present but does not verify:
+`?DNS_TSIGERR_BADKEY` when the key name or algorithm does not match,
+`?DNS_TSIGERR_BADSIG` when the MAC does not match, and `?DNS_TSIGERR_BADTIME`
+when the MAC matches but the timestamp is outside the fudge window.
+
+A message that carries no verifiable TSIG RR at all is a different condition,
+and raises rather than returning: `error:no_tsig` when the last additional
+record is not a TSIG RR (including when the additional section is empty), and
+`error:trailing_garbage` when data follows it. Callers handling untrusted input
+should be prepared for both.
+""".
 -spec verify_tsig(message_bin(), dname(), binary(), tsig_opts()) ->
     {ok, tsig_mac()} | {error, tsig_error()}.
 verify_tsig(MsgBin, Name, Secret, Options) ->

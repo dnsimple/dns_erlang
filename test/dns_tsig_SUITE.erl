@@ -21,7 +21,8 @@ groups() ->
             tsig_badtime,
             tsig_ok,
             tsig_wire,
-            tsig_encode_unsupported_alg
+            tsig_encode_unsupported_alg,
+            tsig_verify_without_tsig_rr_raises
         ]}
     ].
 
@@ -136,6 +137,38 @@ tsig_ok(_) ->
         end
      || Alg <- Algs
     ].
+
+%% verify_tsig/3,4 is specced as {ok, _} | {error, tsig_error()}, but a message
+%% carrying no verifiable TSIG RR raises instead of returning. Pin that, so the
+%% documented contract and the behaviour cannot drift apart again.
+tsig_verify_without_tsig_rr_raises(_) ->
+    Name = ~"key.name",
+    Secret = ~"secret",
+    %% Empty additional section
+    ?assertError(
+        no_tsig, dns:verify_tsig(dns:encode_message(#dns_message{}), Name, Secret)
+    ),
+    %% Last additional record is not a TSIG RR
+    NotTsig = #dns_rr{
+        name = ~"example.com",
+        type = ?DNS_TYPE_A,
+        class = ?DNS_CLASS_IN,
+        ttl = 300,
+        data = #dns_rrdata_a{ip = {192, 0, 2, 1}}
+    },
+    NotTsigBin = dns:encode_message(#dns_message{adc = 1, additional = [NotTsig]}),
+    ?assertError(no_tsig, dns:verify_tsig(NotTsigBin, Name, Secret)),
+    %% A signature that is present but does not verify still returns an error
+    %% tuple, which is the documented distinction
+    Signed = dns:add_tsig(#dns_message{id = 7}, ?DNS_TSIG_ALG_SHA256, Name, Secret, 0),
+    SignedBin = dns:encode_message(Signed),
+    ?assertMatch({ok, _}, dns:verify_tsig(SignedBin, Name, Secret)),
+    ?assertEqual(
+        {error, ?DNS_TSIGERR_BADSIG}, dns:verify_tsig(SignedBin, Name, ~"wrong-secret")
+    ),
+    ?assertEqual(
+        {error, ?DNS_TSIGERR_BADKEY}, dns:verify_tsig(SignedBin, ~"other.name", Secret)
+    ).
 
 %% encode_message/2 sizes the TSIG RR before generating the MAC, so an
 %% unsupported algorithm hit a case with no catch-all and escaped as a bare

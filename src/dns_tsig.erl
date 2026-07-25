@@ -149,7 +149,7 @@ mac_size(Alg) -> erlang:error(badarg, [Alg]).
 -spec encode_message_tsig_add(
     dns:message_id(),
     binary(),
-    dns:message_bin(),
+    dns:tsig_alg(),
     binary(),
     dns:encode_tsig_opts(),
     dns:message_bin()

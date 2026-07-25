@@ -392,7 +392,7 @@ check_optrr(_Name, _SeenOptRR) -> error(bad_optrr_name).
 -spec decode_message_body(dns:message_bin(), binary(), dns:uint16()) ->
     {[dns:rr()], binary()} | {dns:decode_error(), [dns:rr()], binary()}.
 decode_message_body(MsgBin, DataBin, Count) when
-    is_binary(MsgBin), is_binary(MsgBin), is_integer(Count), 0 =< Count, Count =< 65535
+    is_binary(MsgBin), is_binary(DataBin), is_integer(Count), 0 =< Count, Count =< 65535
 ->
     do_decode_message_body(MsgBin, DataBin, Count, []).
 
