@@ -537,14 +537,16 @@ decode_rrdata(
     ?DNS_TYPE_URI,
     <<Priority:16, Weight:16, Target/binary>>
 ) ->
+    %% RFC7553§4.5: validated as a URI but stored verbatim; normalizing the target
+    %% changed the canonical RDATA an RRSIG covers.
     case uri_string:normalize(Target) of
         {error, Reason, _} ->
             erlang:error({bad_uri, Target, Reason});
-        NormalizedTarget ->
+        _Normalized ->
             #dns_rrdata_uri{
                 priority = Priority,
                 weight = Weight,
-                target = NormalizedTarget
+                target = Target
             }
     end;
 decode_rrdata(_MsgBin, Class, ?DNS_TYPE_RESINFO, Bin) when ?CLASS_IS_IN(Class) ->

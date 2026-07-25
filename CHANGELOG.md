@@ -33,6 +33,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - An EDNS OPT RR with a non-root owner name, and a message carrying more than one OPT RR, now decode to `formerr` (RFC 6891 §6.1.1)
 - `RDLENGTH = 0` for a type this library decodes now decodes to `formerr` instead of an opaque `<<>>` (RFC 1035 §3.2.1)
 - An OPT RR anywhere but first in the additional section was ignored when sizing the response and dropped from truncated ones (RFC 6891 §6.1.1)
+- URI targets were replaced by their normalized form when decoding, losing data and changing the canonical RDATA that RRSIGs cover (RFC 7553 §4.5)
 
 ## v5.0.13
 

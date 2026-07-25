@@ -58,7 +58,7 @@ groups() ->
             bad_optrr_too_large,
             optrr_must_be_root_named_and_singular,
             optrr_honoured_anywhere_in_additional,
-            uri_decode_normalization,
+            uri_decode_preserves_target,
             uri_decode_invalid_error,
             decode_encode_rrdata_wire_samples,
             decode_encode_rrdata,
@@ -1602,46 +1602,44 @@ decode_minfo_in_message(_) ->
     Decoded = dns:decode_message(dns:encode_message(Msg)),
     ?assertMatch(#dns_message{answers = [#dns_rr{data = Rdata}]}, Decoded).
 
-uri_decode_normalization(_) ->
-    %% Test that URI targets are normalized during decoding
-    Cases = [
-        %% {Input URI, Expected normalized URI}
-        {<<"HTTPS://EXAMPLE.COM/">>, <<"https://example.com/">>},
-        {<<"http://example.com/path">>, <<"http://example.com/path">>},
-        {<<"https://www.example.com/">>, <<"https://www.example.com/">>},
-        {<<"HTTPS://EXAMPLE.COM:443/">>, <<"https://example.com/">>}
+%% RFC7553§4.5: the target is a URI. It used to be replaced by
+%% uri_string:normalize/1 during decoding, which lost a default port, the case of
+%% the host, percent-escapes and dot segments -- and, since dnssec builds
+%% signature input by re-encoding decoded records, silently changed the canonical
+%% RDATA an RRSIG covers, so a signature made elsewhere over an unnormalized
+%% target could not verify here. Decoding now preserves the bytes exactly.
+uri_decode_preserves_target(_) ->
+    Targets = [
+        <<"https://example.com/">>,
+        <<"HTTPS://EXAMPLE.COM/">>,
+        <<"HTTPS://EXAMPLE.COM:443/">>,
+        <<"https://example.com/a/../b">>,
+        <<"ftp://x/%7Euser">>,
+        <<"http://example.com/path">>,
+        <<"https://example.com:8443/x?q=1#f">>
     ],
     [
         begin
-            %% Encode the URI record
-            Priority = 10,
-            Weight = 1,
-            Rdata = #dns_rrdata_uri{
-                priority = Priority,
-                weight = Weight,
-                target = InputURI
-            },
-            {Encoded, _} = dns_encode:encode_rrdata(0, ?DNS_CLASS_IN, Rdata, #{}),
-
-            %% Decode and verify normalization
-            Decoded = dns_decode:decode_rrdata(Encoded, ?DNS_CLASS_IN, ?DNS_TYPE_URI, Encoded),
-            #dns_rrdata_uri{
-                priority = DecodedPriority,
-                weight = DecodedWeight,
-                target = DecodedTarget
-            } = Decoded,
-            ?assertEqual(Priority, DecodedPriority),
-            ?assertEqual(Weight, DecodedWeight),
-            ?assertEqual(
-                ExpectedNormalized,
-                DecodedTarget,
-                io_lib:format(
-                    "URI normalization failed: ~p -> ~p (expected ~p)",
-                    [InputURI, DecodedTarget, ExpectedNormalized]
-                )
-            )
+            Wire = <<10:16, 1:16, Target/binary>>,
+            Decoded = dns_decode:decode_rrdata(<<>>, ?DNS_CLASS_IN, ?DNS_TYPE_URI, Wire),
+            ?assertMatch(#dns_rrdata_uri{priority = 10, weight = 1}, Decoded, Target),
+            ?assertEqual(Target, Decoded#dns_rrdata_uri.target, Target),
+            %% ... so the wire form is reproduced byte for byte
+            ?assertEqual(Wire, dns_encode:encode_rrdata(?DNS_CLASS_IN, Decoded), Target)
         end
-     || {InputURI, ExpectedNormalized} <- Cases
+     || Target <- Targets
+    ],
+    %% The canonical RDATA dnssec signs over must equal what arrived
+    [
+        begin
+            Wire = <<10:16, 1:16, Target/binary>>,
+            Decoded = dns_decode:decode_rrdata(<<>>, ?DNS_CLASS_IN, ?DNS_TYPE_URI, Wire),
+            Canonical = dns_encode:encode_rrdata(
+                ?DNS_CLASS_IN, dnssec:canonical_rrdata_form(Decoded)
+            ),
+            ?assertEqual(Wire, Canonical, Target)
+        end
+     || Target <- Targets
     ].
 
 uri_decode_invalid_error(_) ->
