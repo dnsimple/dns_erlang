@@ -20,7 +20,8 @@ groups() ->
             tsig_bad_sig,
             tsig_badtime,
             tsig_ok,
-            tsig_wire
+            tsig_wire,
+            tsig_encode_unsupported_alg
         ]}
     ].
 
@@ -135,6 +136,39 @@ tsig_ok(_) ->
         end
      || Alg <- Algs
     ].
+
+%% encode_message/2 sizes the TSIG RR before generating the MAC, so an
+%% unsupported algorithm hit a case with no catch-all and escaped as a bare
+%% case_clause. gen_tsig_mac/7 already reports one as BADKEY, which
+%% encode_message_tsig_add/6 turns into badarg, so sizing must agree.
+tsig_encode_unsupported_alg(_) ->
+    Qs = [#dns_query{name = ~"example.com", type = ?DNS_TYPE_A}],
+    Msg = #dns_message{id = 1, qc = length(Qs), questions = Qs},
+    Opts = fun(Alg) ->
+        #{tsig => #{alg => Alg, name => ~"key.name", secret => ~"secret"}}
+    end,
+    [
+        ?assertError(badarg, dns:encode_message(Msg, Opts(Alg)), Alg)
+     || Alg <- [~"hmac-sha3-256", ~"null", ~"", ~"hmac-md5", ~"gss-tsig"]
+    ],
+    %% Every supported algorithm still encodes, and verifies against itself
+    [
+        begin
+            {Bin, MAC} = dns:encode_message(Msg, Opts(Alg)),
+            ?assert(is_binary(MAC), Alg),
+            ?assertMatch({ok, _}, dns:verify_tsig(Bin, ~"key.name", ~"secret"), Alg)
+        end
+     || Alg <- [
+            ?DNS_TSIG_ALG_MD5,
+            ?DNS_TSIG_ALG_SHA1,
+            ?DNS_TSIG_ALG_SHA224,
+            ?DNS_TSIG_ALG_SHA256,
+            ?DNS_TSIG_ALG_SHA384,
+            ?DNS_TSIG_ALG_SHA512
+        ]
+    ],
+    %% Mixed case is still accepted: encode/2 lowercases before sizing
+    ?assertMatch({_, _}, dns:encode_message(Msg, Opts(~"HMAC-SHA256"))).
 
 tsig_wire(_) ->
     Now = 1292459455,

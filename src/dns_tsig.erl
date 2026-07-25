@@ -129,22 +129,22 @@ strip_tsig(
             error(no_tsig)
     end.
 
--spec encode_message_tsig_size(binary(), dns:message_bin(), bitstring()) -> pos_integer().
+-spec encode_message_tsig_size(binary(), dns:tsig_alg(), binary()) -> pos_integer().
 encode_message_tsig_size(EncodedName, Alg, Other) ->
     NameSize = byte_size(EncodedName),
     AlgSize = byte_size(dns_domain:to_wire(Alg)),
-    MACSize =
-        case Alg of
-            ?DNS_TSIG_ALG_MD5 -> 16;
-            ?DNS_TSIG_ALG_SHA1 -> 20;
-            ?DNS_TSIG_ALG_SHA224 -> 28;
-            ?DNS_TSIG_ALG_SHA256 -> 32;
-            ?DNS_TSIG_ALG_SHA384 -> 48;
-            ?DNS_TSIG_ALG_SHA512 -> 64
-        end,
     OtherSize = byte_size(Other),
-    DataSize = AlgSize + 16 + MACSize + OtherSize,
+    DataSize = AlgSize + 16 + mac_size(Alg) + OtherSize,
     NameSize + 10 + DataSize.
+
+-spec mac_size(dns:tsig_alg()) -> pos_integer().
+mac_size(?DNS_TSIG_ALG_MD5) -> 16;
+mac_size(?DNS_TSIG_ALG_SHA1) -> 20;
+mac_size(?DNS_TSIG_ALG_SHA224) -> 28;
+mac_size(?DNS_TSIG_ALG_SHA256) -> 32;
+mac_size(?DNS_TSIG_ALG_SHA384) -> 48;
+mac_size(?DNS_TSIG_ALG_SHA512) -> 64;
+mac_size(Alg) -> erlang:error(badarg, [Alg]).
 
 -spec encode_message_tsig_add(
     dns:message_id(),

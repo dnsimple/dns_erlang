@@ -27,6 +27,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Zero-length `<character-string>`s were dropped when encoding TXT, SPF, RESINFO and WALLET records (RFC 1035 §3.3)
 - A NAPTR record whose REGEXP is not valid UTF-8 decoded into a record holding an error tuple instead of being rejected (RFC 3403 §4.1)
 - An EDNS OPT RR advertising a UDP payload size below 512 is clamped to 512 instead of raising `badarg` (RFC 6891 §6.2.3)
+- `encode_message/2` with an unsupported `tsig` algorithm raised `case_clause` instead of `badarg`
 
 ## v5.0.13
 
