@@ -64,7 +64,8 @@ groups() ->
             decode_encode_rrdata_wire_samples,
             decode_encode_rrdata,
             encode_nsec_type_bitmaps,
-            decode_minfo_in_message
+            decode_minfo_in_message,
+            loc_wire_reference_point
         ]},
         {svcb, [parallel], [
             decode_encode_svcb_params,
@@ -951,6 +952,54 @@ encode_nsec_type_bitmaps(_) ->
         ?DNS_CLASS_IN, #dns_rrdata_nxt{dname = <<"a">>, types = [0, 5]}
     ),
     ?assertEqual(<<2#10000100>>, NxtBMP).
+
+%% RFC1876§2: latitude/longitude are unsigned 32-bit thousandths of an arcsecond
+%% where 2^31 -- not 2^31-1 -- encodes the equator/prime meridian. Encoding and
+%% decoding were both offset by one, so a round-trip could not catch it; these are
+%% known-answer vectors against the wire values other implementations produce.
+loc_wire_reference_point(_) ->
+    Equator = 1 bsl 31,
+    Arcsec = 1000,
+    Degree = 3600 * Arcsec,
+    Cases = [
+        {"equator/prime meridian", 0, 0, <<128, 0, 0, 0>>, <<128, 0, 0, 0>>},
+        {"1 degree north/east", Degree, Degree, <<(Equator + Degree):32>>, <<
+            (Equator + Degree):32
+        >>},
+        {"1 degree south/west", -Degree, -Degree, <<(Equator - Degree):32>>, <<
+            (Equator - Degree):32
+        >>},
+        %% 42 21 54 N, 71 06 18 W (RFC1876§4 style presentation)
+        {"42 21 54 N / 71 06 18 W", (42 * 3600 + 21 * 60 + 54) * Arcsec,
+            -((71 * 3600 + 6 * 60 + 18) * Arcsec),
+            <<(Equator + (42 * 3600 + 21 * 60 + 54) * Arcsec):32>>, <<
+                (Equator - (71 * 3600 + 6 * 60 + 18) * Arcsec):32
+            >>}
+    ],
+    [
+        begin
+            Data = #dns_rrdata_loc{
+                size = 100, horiz = 100, vert = 100, lat = Lat, lon = Lon, alt = 0
+            },
+            <<0:8, _Size:8, _Horiz:8, _Vert:8, LatWire:4/binary, LonWire:4/binary, _Alt:32>> =
+                dns_encode:encode_rrdata(?DNS_CLASS_IN, Data),
+            ?assertEqual(ExpLat, LatWire, {Label, lat}),
+            ?assertEqual(ExpLon, LonWire, {Label, lon})
+        end
+     || {Label, Lat, Lon, ExpLat, ExpLon} <- Cases
+    ],
+    %% Decoding the wire values other implementations emit must round-trip exactly
+    [
+        begin
+            Wire =
+                <<0:8, 18:8, 18:8, 18:8, ExpLat/binary, ExpLon/binary, 10000000:32>>,
+            Decoded = dns_decode:decode_rrdata(<<>>, ?DNS_CLASS_IN, ?DNS_TYPE_LOC, Wire),
+            ?assertEqual(Lat, Decoded#dns_rrdata_loc.lat, {Label, lat}),
+            ?assertEqual(Lon, Decoded#dns_rrdata_loc.lon, {Label, lon}),
+            ?assertEqual(0, Decoded#dns_rrdata_loc.alt, {Label, alt})
+        end
+     || {Label, Lat, Lon, ExpLat, ExpLon} <- Cases
+    ].
 
 %% MINFO rdata names must decode inside a full message, where the rdata is a
 %% sub-binary of the message and its names compress against earlier names.

@@ -5,8 +5,8 @@
 
 %% Minimal size of an OptRR record without any data
 -define(OPTRR_MIN_SIZE, 11).
-%% 2^31 - 1, the largest signed 32-bit integer value
--define(MAX_INT32, ((1 bsl 31) - 1)).
+%% RFC1876§2: in LOC latitude/longitude, 2^31 encodes the equator/prime meridian
+-define(LOC_REFERENCE_POINT, (1 bsl 31)).
 -define(HEADER_SIZE, 12).
 -define(CLASS_IS_IN(T), (T =:= ?DNS_CLASS_IN orelse T =:= ?DNS_CLASS_NONE)).
 
@@ -932,8 +932,8 @@ encode_rrdata_append(
     SizeEnc = encode_loc_size(Size),
     HorizEnc = encode_loc_size(Horiz),
     VertEnc = encode_loc_size(Vert),
-    LatEnc = Lat + ?MAX_INT32,
-    LonEnc = Lon + ?MAX_INT32,
+    LatEnc = Lat + ?LOC_REFERENCE_POINT,
+    LonEnc = Lon + ?LOC_REFERENCE_POINT,
     {
         <<Acc/binary, 16:16, 0:8, SizeEnc:1/binary, HorizEnc:1/binary, VertEnc:1/binary, LatEnc:32,
             LonEnc:32, (Alt + 10000000):32>>,

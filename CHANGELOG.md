@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - NSEC/NSEC3/CSYNC/NXT type bitmap encoding shifted every type after the first by one bit position in any window whose first present type is a multiple of 256
 - MINFO records failed to decode inside full messages (`formerr`) due to swapped `dns_domain:from_wire/2` arguments in the MINFO rdata decoder
 - `encode_message/2` subtracted the question section twice when sizing the OPT RR and additional records, wrongly dropping them (including the EDNS OPT RR, contra RFC 6891) from responses within question-size bytes of `max_size`
+- LOC latitude and longitude used `2^31 - 1` instead of `2^31` as the equator/prime-meridian reference point (RFC 1876 §2)
 
 ## v5.0.13
 

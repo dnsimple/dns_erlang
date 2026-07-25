@@ -4,7 +4,8 @@
 -include_lib("dns_erlang/include/dns.hrl").
 
 -define(CLASS_IS_IN(T), (T =:= ?DNS_CLASS_IN orelse T =:= ?DNS_CLASS_NONE)).
--define(MAX_INT32, ((1 bsl 31) - 1)).
+%% RFC1876§2: in LOC latitude/longitude, 2^31 encodes the equator/prime meridian
+-define(LOC_REFERENCE_POINT, (1 bsl 31)).
 
 -export([decode/1, decode_query/1]).
 -export([
@@ -1020,11 +1021,10 @@ do_bin_to_key_tag(<<X:16, Rest/binary>>, AC) ->
 do_bin_to_key_tag(<<X:8>>, AC) ->
     do_bin_to_key_tag(<<>>, AC + (X bsl 8)).
 
--spec decode_loc_point(non_neg_integer()) -> dns:uint32().
-decode_loc_point(P) when is_integer(P), P > ?MAX_INT32 ->
-    P - ?MAX_INT32;
-decode_loc_point(P) when is_integer(P), P =< ?MAX_INT32 ->
-    -(?MAX_INT32 - P).
+%% Values below the reference point are south/west, and decode to negative offsets.
+-spec decode_loc_point(dns:uint32()) -> integer().
+decode_loc_point(P) when is_integer(P) ->
+    P - ?LOC_REFERENCE_POINT.
 
 -spec decode_nsec_types(binary()) -> [non_neg_integer()].
 decode_nsec_types(Bin) ->
