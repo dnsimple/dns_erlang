@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - MINFO records failed to decode inside full messages (`formerr`) due to swapped `dns_domain:from_wire/2` arguments in the MINFO rdata decoder
 - `encode_message/2` subtracted the question section twice when sizing the OPT RR and additional records, wrongly dropping them (including the EDNS OPT RR, contra RFC 6891) from responses within question-size bytes of `max_size`
 - LOC latitude and longitude used `2^31 - 1` instead of `2^31` as the equator/prime-meridian reference point (RFC 1876 §2)
+- LOC `size`/`horiz`/`vert` outside the representable 0–9e9 cm range now raise `badarg`, and in-range values round to nearest instead of truncating (RFC 1876 §2)
 
 ## v5.0.13
 

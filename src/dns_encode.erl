@@ -7,6 +7,9 @@
 -define(OPTRR_MIN_SIZE, 11).
 %% RFC1876§2: in LOC latitude/longitude, 2^31 encodes the equator/prime meridian
 -define(LOC_REFERENCE_POINT, (1 bsl 31)).
+%% RFC1876§2: LOC size/horiz/vert are a four-bit base (0-9) times ten to a
+%% four-bit power (0-9), so 9e9 centimetres (90_000 km) is the largest value
+-define(LOC_MAX_PRECISION, 9_000_000_000).
 -define(HEADER_SIZE, 12).
 -define(CLASS_IS_IN(T), (T =:= ?DNS_CLASS_IN orelse T =:= ?DNS_CLASS_NONE)).
 
@@ -1307,18 +1310,19 @@ append_text_rdata(Acc, Strings, CompMap) ->
     {<<Acc/binary, (byte_size(TextBin)):16, TextBin/binary>>, CompMap}.
 
 -spec encode_loc_size(integer()) -> <<_:8>>.
-encode_loc_size(Size) when is_integer(Size) ->
-    do_encode_loc_size(Size, 0).
+encode_loc_size(Size) when is_integer(Size), 0 =< Size, Size =< ?LOC_MAX_PRECISION ->
+    do_encode_loc_size(Size, 0);
+encode_loc_size(_) ->
+    erlang:error(badarg).
 
--spec do_encode_loc_size(integer(), non_neg_integer()) -> <<_:8>>.
+%% Shift out one power of ten at a time, rounding half up, until the mantissa
+%% fits the four-bit base. Truncating instead of rounding put a value such as
+%% 99_999_999 cm two orders of magnitude out (9e7 rather than 1e8).
+-spec do_encode_loc_size(non_neg_integer(), non_neg_integer()) -> <<_:8>>.
+do_encode_loc_size(Base, Exponent) when Base < 10 ->
+    <<Base:4, Exponent:4>>;
 do_encode_loc_size(Size, Exponent) ->
-    case Size rem round_pow(Exponent + 1) of
-        Size ->
-            Base = Size div round_pow(Exponent),
-            <<Base:4, Exponent:4>>;
-        _ ->
-            do_encode_loc_size(Size, Exponent + 1)
-    end.
+    do_encode_loc_size((Size + 5) div 10, Exponent + 1).
 
 -spec encode_nsec_types([integer()]) -> binary().
 encode_nsec_types([]) ->
@@ -1460,14 +1464,6 @@ encode_dname(CompMap, Pos, Name) ->
 -spec encode_bool(boolean()) -> 0 | 1.
 encode_bool(false) -> 0;
 encode_bool(true) -> 1.
-
--spec round_pow(non_neg_integer()) -> integer().
-round_pow(E) ->
-    element(
-        E + 1,
-        {1, 10, 100, 1_000, 10_000, 100_000, 1_000_000, 10_000_000, 100_000_000, 1_000_000_000,
-            10_000_000_000}
-    ).
 
 -spec strip_leading_zeros(binary()) -> binary().
 strip_leading_zeros(<<0, Rest/binary>>) ->

@@ -65,7 +65,8 @@ groups() ->
             decode_encode_rrdata,
             encode_nsec_type_bitmaps,
             decode_minfo_in_message,
-            loc_wire_reference_point
+            loc_wire_reference_point,
+            loc_precision_range
         ]},
         {svcb, [parallel], [
             decode_encode_svcb_params,
@@ -1000,6 +1001,56 @@ loc_wire_reference_point(_) ->
         end
      || {Label, Lat, Lon, ExpLat, ExpLon} <- Cases
     ].
+
+%% RFC1876§2: size/horiz/vert are a four-bit base (0-9) times ten to a four-bit
+%% power (0-9), i.e. 0 to 9e9 centimetres. Out-of-range input used to raise a
+%% confusing badarg from inside an exponent-table lookup (or, when negative,
+%% silently encode as an unrelated value), and in-range values that are not
+%% exactly representable were truncated rather than rounded, putting
+%% 99_999_999 cm two orders of magnitude out.
+loc_precision_range(_) ->
+    Loc = fun(Size) ->
+        #dns_rrdata_loc{size = Size, horiz = 0, vert = 0, lat = 0, lon = 0, alt = 0}
+    end,
+    Roundtrip = fun(Size) ->
+        Wire = dns_encode:encode_rrdata(?DNS_CLASS_IN, Loc(Size)),
+        Decoded = dns_decode:decode_rrdata(<<>>, ?DNS_CLASS_IN, ?DNS_TYPE_LOC, Wire),
+        Decoded#dns_rrdata_loc.size
+    end,
+    %% Exactly representable values survive unchanged
+    [?assertEqual(Exact, Roundtrip(Exact), Exact) || Exact <- [0, 1, 9, 100, 900, 9_000_000_000]],
+    %% Values that are not representable round to the nearest that is
+    [
+        ?assertEqual(Nearest, Roundtrip(Size), Size)
+     || {Size, Nearest} <- [
+            {12345, 10000},
+            {99_999_999, 100_000_000},
+            {15, 20},
+            {14, 10},
+            {8_999_999_999, 9_000_000_000}
+        ]
+    ],
+    %% Outside the representable range is a bad argument, not a crash deep in a
+    %% table lookup nor a silently wrong value
+    [
+        ?assertError(badarg, dns_encode:encode_rrdata(?DNS_CLASS_IN, Loc(Bad)), Bad)
+     || Bad <- [-1, -100, 9_000_000_001, 10_000_000_000, 1 bsl 40]
+    ],
+    %% horiz and vert are validated on the same path
+    ?assertError(
+        badarg,
+        dns_encode:encode_rrdata(
+            ?DNS_CLASS_IN,
+            #dns_rrdata_loc{size = 0, horiz = -1, vert = 0, lat = 0, lon = 0, alt = 0}
+        )
+    ),
+    ?assertError(
+        badarg,
+        dns_encode:encode_rrdata(
+            ?DNS_CLASS_IN,
+            #dns_rrdata_loc{size = 0, horiz = 0, vert = 1 bsl 40, lat = 0, lon = 0, alt = 0}
+        )
+    ).
 
 %% MINFO rdata names must decode inside a full message, where the rdata is a
 %% sub-binary of the message and its names compress against earlier names.
