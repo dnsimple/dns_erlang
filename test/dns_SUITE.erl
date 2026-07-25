@@ -58,6 +58,7 @@ groups() ->
             bad_optrr_too_large,
             optrr_must_be_root_named_and_singular,
             optrr_honoured_anywhere_in_additional,
+            dnskey_dsa_alg_short_rdata_reencodes,
             uri_decode_preserves_target,
             uri_decode_invalid_error,
             decode_encode_rrdata_wire_samples,
@@ -1368,6 +1369,57 @@ optrr_must_be_root_named_and_singular(_) ->
     ?assertMatch(
         #dns_message{additional = [#dns_optrr{}, #dns_rr{type = ?DNS_TYPE_A}]},
         dns:decode_message(<<(Header(2))/binary, RootOpt/binary, PlainRR/binary>>)
+    ).
+
+%% RFC2536§2 lays a DSA DNSKEY out as T, Q, P, G, Y, so rdata shorter than that
+%% cannot be parsed as one and decodes through the generic clause, leaving
+%% public_key a binary. The DSA encode clause matched a bare variable guarded only
+%% on the algorithm, so that binary reached encode_dsa_key/1 and died in a list
+%% comprehension: one crafted rdata made decode succeed and re-encode crash, which
+%% is reachable by anything that decodes then re-encodes.
+dnskey_dsa_alg_short_rdata_reencodes(_) ->
+    DsaAlgs = [?DNS_ALG_DSA, ?DNS_ALG_NSEC3DSA],
+    Short = fun(Alg) -> <<256:16, 3:8, Alg:8, 1, 2, 3, 4, 5, 6, 7, 8>> end,
+    [
+        begin
+            Rdata = Short(Alg),
+            Data = dns_decode:decode_rrdata(<<>>, ?DNS_CLASS_IN, Type, Rdata),
+            %% too short for the DSA layout, so the key stays opaque ...
+            PK =
+                case Type of
+                    ?DNS_TYPE_DNSKEY -> Data#dns_rrdata_dnskey.public_key;
+                    ?DNS_TYPE_CDNSKEY -> Data#dns_rrdata_cdnskey.public_key
+                end,
+            ?assert(is_binary(PK), {Type, Alg}),
+            %% ... and re-encoding reproduces the original bytes instead of crashing
+            ?assertEqual(Rdata, dns_encode:encode_rrdata(?DNS_CLASS_IN, Data), {Type, Alg})
+        end
+     || Type <- [?DNS_TYPE_DNSKEY, ?DNS_TYPE_CDNSKEY], Alg <- DsaAlgs
+    ],
+    %% Reachable through a full message: decode then re-encode must both survive
+    Rdata = Short(?DNS_ALG_NSEC3DSA),
+    Header = <<1:16, 1:1, 0:4, 0:1, 0:1, 0:1, 0:1, 0:1, 0:1, 0:1, 0:4, 0:16, 1:16, 0:16, 0:16>>,
+    Answer =
+        <<3, $f, $o, $o, 0, (?DNS_TYPE_DNSKEY):16, (?DNS_CLASS_IN):16, 300:32,
+            (byte_size(Rdata)):16, Rdata/binary>>,
+    Wire = <<Header/binary, Answer/binary>>,
+    Decoded = dns:decode_message(Wire),
+    ?assertMatch(#dns_message{}, Decoded),
+    ?assertEqual(Wire, dns:encode_message(Decoded)),
+
+    %% A well-formed DSA key still takes the DSA path and round-trips
+    Q = 16#7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF,
+    P = binary:decode_unsigned(binary:copy(<<16#FF>>, 64)),
+    WellFormed = #dns_rrdata_dnskey{
+        flags = 256,
+        protocol = 3,
+        alg = ?DNS_ALG_DSA,
+        public_key = [P, Q, P, P]
+    },
+    DsaWire = dns_encode:encode_rrdata(?DNS_CLASS_IN, WellFormed),
+    ?assertMatch(
+        #dns_rrdata_dnskey{alg = ?DNS_ALG_DSA, public_key = [_, _, _, _]},
+        dns_decode:decode_rrdata(<<>>, ?DNS_CLASS_IN, ?DNS_TYPE_DNSKEY, DsaWire)
     ).
 
 %% RFC6891§6.1.1: the OPT RR "MAY be placed anywhere within the additional data

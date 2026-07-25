@@ -723,8 +723,7 @@ encode_rrdata_append(
     },
     CompMap
 ) when
-    Alg =:= ?DNS_ALG_DSA orelse
-        Alg =:= ?DNS_ALG_NSEC3DSA
+    (Alg =:= ?DNS_ALG_DSA orelse Alg =:= ?DNS_ALG_NSEC3DSA) andalso is_list(PKM)
 ->
     PKBin = encode_dsa_key(PKM),
     {<<Acc/binary, (4 + byte_size(PKBin)):16, Flags:16, Protocol:8, Alg:8, PKBin/binary>>, CompMap};
@@ -790,8 +789,7 @@ encode_rrdata_append(
     },
     CompMap
 ) when
-    Alg =:= ?DNS_ALG_DSA orelse
-        Alg =:= ?DNS_ALG_NSEC3DSA
+    (Alg =:= ?DNS_ALG_DSA orelse Alg =:= ?DNS_ALG_NSEC3DSA) andalso is_list(PKM)
 ->
     PKBin = encode_dsa_key(PKM),
     {<<Acc/binary, (4 + byte_size(PKBin)):16, Flags:16, Protocol:8, Alg:8, PKBin/binary>>, CompMap};
@@ -1549,7 +1547,8 @@ encode_rsa_key(E, M) ->
             erlang:error(badarg)
     end.
 
-%% Helper function to encode DSA keys for DNSKEY and CDNSKEY records
+%% Helper function to encode DSA keys for DNSKEY and CDNSKEY records.
+%% Only reachable with the [P, Q, G, Y] list (RFC2536§2); an opaque key is emitted verbatim.
 -spec encode_dsa_key(list()) -> binary().
 encode_dsa_key(PKM) ->
     [P, Q, G, Y] = [

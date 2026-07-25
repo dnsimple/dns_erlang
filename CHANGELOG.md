@@ -34,6 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `RDLENGTH = 0` for a type this library decodes now decodes to `formerr` instead of an opaque `<<>>` (RFC 1035 §3.2.1)
 - An OPT RR anywhere but first in the additional section was ignored when sizing the response and dropped from truncated ones (RFC 6891 §6.1.1)
 - URI targets were replaced by their normalized form when decoding, losing data and changing the canonical RDATA that RRSIGs cover (RFC 7553 §4.5)
+- A DNSKEY or CDNSKEY with a DSA algorithm but rdata too short to parse as one crashed on re-encode (RFC 2536 §2)
 
 ## v5.0.13
 
