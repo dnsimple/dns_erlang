@@ -169,12 +169,14 @@ encode_message_default(
                     <<Head/binary, Acc1/binary, OptRRBinMin/binary>>
             end;
         {Body, CompMap2} ->
+            %% Body includes the question section, so subtract it from SpaceLeft0:
+            %% SpaceLeft1 would subtract the question bytes a second time
             BodySize = byte_size(Body),
             {OptRRBin, Ad0} = encode_message_pop_optrr(Additional),
             OptRRBinSize = byte_size(OptRRBin),
             Pos2 = ?HEADER_SIZE + BodySize,
             #dns_message{anc = ANC, auc = AUC} = Msg0,
-            case SpaceLeft1 + PreservedOptRRBinSize - BodySize of
+            case SpaceLeft0 + PreservedOptRRBinSize - BodySize of
                 SpaceLeft2 when SpaceLeft2 < OptRRBinSize ->
                     Head = build_header(Msg0, false, QC, ANC, AUC, 0),
                     <<Head/binary, Body/binary>>;
