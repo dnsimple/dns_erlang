@@ -57,6 +57,7 @@ groups() ->
             optrr_too_large,
             bad_optrr_too_large,
             optrr_must_be_root_named_and_singular,
+            optrr_honoured_anywhere_in_additional,
             uri_decode_normalization,
             uri_decode_invalid_error,
             decode_encode_rrdata_wire_samples,
@@ -1368,6 +1369,120 @@ optrr_must_be_root_named_and_singular(_) ->
         #dns_message{additional = [#dns_optrr{}, #dns_rr{type = ?DNS_TYPE_A}]},
         dns:decode_message(<<(Header(2))/binary, RootOpt/binary, PlainRR/binary>>)
     ).
+
+%% RFC6891§6.1.1: the OPT RR "MAY be placed anywhere within the additional data
+%% section". The encoder matched it only at the head, so an OPT sitting anywhere
+%% else was invisible to the payload-size lookup and to the space reserved for
+%% it, and was dropped from truncated responses -- contra the same section's
+%% requirement that a response carry an OPT whenever the request did. The
+%% decoder preserves wire order, so [A, OPT] is exactly what a caller gets for a
+%% legal query.
+optrr_honoured_anywhere_in_additional(_) ->
+    Answers = [
+        #dns_rr{
+            name = <<"h", (integer_to_binary(N))/binary, ".example.com">>,
+            type = ?DNS_TYPE_TXT,
+            class = ?DNS_CLASS_IN,
+            ttl = 300,
+            data = #dns_rrdata_txt{txt = [binary:copy(<<$x>>, 200)]}
+        }
+     || N <- lists:seq(1, 20)
+    ],
+    ARR = #dns_rr{
+        name = <<"ns.example.com">>,
+        type = ?DNS_TYPE_A,
+        class = ?DNS_CLASS_IN,
+        ttl = 300,
+        data = #dns_rrdata_a{ip = {192, 0, 2, 1}}
+    },
+    Msg = fun(Additional) ->
+        #dns_message{
+            id = 1,
+            qc = 1,
+            questions = [
+                #dns_query{name = <<"example.com">>, type = ?DNS_TYPE_TXT, class = ?DNS_CLASS_IN}
+            ],
+            anc = length(Answers),
+            answers = Answers,
+            adc = length(Additional),
+            additional = Additional
+        }
+    end,
+    Encode = fun(Additional, Opts) ->
+        case dns:encode_message(Msg(Additional), Opts) of
+            {truncated, Bin, _} -> Bin;
+            Bin when is_binary(Bin) -> Bin
+        end
+    end,
+    HasOpt = fun(Bin) ->
+        #dns_message{additional = Ad} = dns:decode_message(Bin),
+        lists:any(
+            fun
+                (#dns_optrr{}) -> true;
+                (_) -> false
+            end,
+            Ad
+        )
+    end,
+    Opt = #dns_optrr{udp_payload_size = 1232},
+
+    %% A truncated response must carry the OPT wherever it sat in the request
+    [
+        ?assert(HasOpt(Encode(Additional, #{max_size => 512})), Label)
+     || {Label, Additional} <- [
+            {"[OPT]", [Opt]},
+            {"[A, OPT]", [ARR, Opt]},
+            {"[A, A, OPT]", [ARR, ARR, Opt]}
+        ]
+    ],
+    %% The advertised payload size is honoured from any position: a non-head OPT
+    %% used to fall back to the 512 default and truncate harder
+    Big = #dns_optrr{udp_payload_size = 4096},
+    ?assertEqual(
+        byte_size(Encode([Big], #{})),
+        byte_size(Encode([ARR, Big], #{})),
+        "advertised payload size must not depend on OPT position"
+    ),
+    %% ... including the RFC6891§6.2.3 clamp
+    Small = #dns_optrr{udp_payload_size = 0},
+    ?assert(byte_size(Encode([ARR, Small], #{})) =< 512),
+
+    %% The OPT is emitted first, which the placement flexibility allows, and a
+    %% trailing TSIG stays last as RFC2845§3.2 requires
+    TSIG = #dns_rr{
+        name = <<"key.name">>,
+        type = ?DNS_TYPE_TSIG,
+        class = ?DNS_CLASS_ANY,
+        ttl = 0,
+        data = #dns_rrdata_tsig{
+            alg = <<"hmac-sha256">>,
+            time = 0,
+            fudge = 300,
+            mac = <<0:256>>,
+            msgid = 1,
+            err = 0,
+            other = <<>>
+        }
+    },
+    Roomy = #{max_size => 65535},
+    Shape = fun(Additional) ->
+        #dns_message{additional = Ad} = dns:decode_message(Encode(Additional, Roomy)),
+        [
+            case R of
+                #dns_optrr{} -> opt;
+                #dns_rr{type = ?DNS_TYPE_TSIG} -> tsig;
+                #dns_rr{} -> rr
+            end
+         || R <- Ad
+        ]
+    end,
+    ?assertEqual([opt, rr], Shape([ARR, Opt])),
+    ?assertEqual([opt, rr], Shape([Opt, ARR])),
+    ?assertEqual([opt, rr, tsig], Shape([ARR, Opt, TSIG])),
+    ?assertEqual([opt, rr, tsig], Shape([Opt, ARR, TSIG])),
+    %% Without an OPT nothing is reordered, and no space is reserved
+    ?assertEqual([rr, tsig], Shape([ARR, TSIG])),
+    ?assertNot(HasOpt(Encode([ARR], #{max_size => 512}))).
 
 %% RFC3403§4.1: the NAPTR REGEXP field is UTF-8. unicode:characters_to_binary/2
 %% reports invalid input by returning an error tuple instead of raising, so the

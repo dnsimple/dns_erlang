@@ -118,15 +118,24 @@ get_max_size(#{max_size := Value}, _) when
     erlang:error(badarg);
 get_max_size(#{max_size := Value}, _) ->
     Value;
+get_max_size(_, []) ->
+    512;
+%% The OPT is nearly always the first additional record;
+get_max_size(_, [#dns_optrr{} = OptRR | _]) ->
+    optrr_max_size(OptRR);
+get_max_size(_, Additional) ->
+    optrr_max_size(find_optrr(Additional)).
+
+-spec optrr_max_size(dns:optrr() | undefined) -> 512..65535.
 %% A payload size wider than the 16-bit OPT field cannot be encoded at all
-get_max_size(_, [#dns_optrr{udp_payload_size = Value} | _]) when
+optrr_max_size(#dns_optrr{udp_payload_size = Value}) when
     not is_integer(Value) orelse 65535 < Value
 ->
     erlang:error(badarg);
 %% RFC6891§6.2.3: "Values lower than 512 MUST be treated as equal to 512."
-get_max_size(_, [#dns_optrr{udp_payload_size = Value} | _]) ->
+optrr_max_size(#dns_optrr{udp_payload_size = Value}) ->
     max(512, Value);
-get_max_size(_, _) ->
+optrr_max_size(undefined) ->
     512.
 
 -spec encode_message_default(dns:message(), number()) -> binary().
@@ -266,8 +275,26 @@ encode_message_d_opt(Pos, SpaceLeft, CompMap, Recs, Acc) ->
 -spec append_optrr(binary(), dns:additional()) -> {binary(), dns:additional()}.
 append_optrr(Acc, [#dns_optrr{} = OptRR | Rest]) ->
     {encode_optrr(Acc, OptRR), Rest};
-append_optrr(Acc, Other) ->
-    {Acc, Other}.
+append_optrr(Acc, []) ->
+    {Acc, []};
+append_optrr(Acc, [RR | Rest]) ->
+    case take_optrr(Rest, [RR]) of
+        {undefined, Additional} -> {Acc, Additional};
+        {OptRR, Additional} -> {encode_optrr(Acc, OptRR), Additional}
+    end.
+
+%% RFC6891§6.1.1: the OPT RR "MAY be placed anywhere within the additional data section",
+-spec find_optrr(dns:additional()) -> dns:optrr() | undefined.
+find_optrr([#dns_optrr{} = OptRR | _]) -> OptRR;
+find_optrr([_ | Rest]) -> find_optrr(Rest);
+find_optrr([]) -> undefined.
+
+%% Lifts the OPT out, keeping the order of the records around it.
+-spec take_optrr(dns:additional(), [dns:optrr() | dns:rr(), ...]) ->
+    {dns:optrr() | undefined, dns:additional()}.
+take_optrr([#dns_optrr{} = OptRR | Rest], Acc) -> {OptRR, lists:reverse(Acc, Rest)};
+take_optrr([RR | Rest], Acc) -> take_optrr(Rest, [RR | Acc]);
+take_optrr([], Acc) -> {undefined, lists:reverse(Acc)}.
 
 -spec encode_message_axfr(dns:message(), number()) -> binary() | {binary(), dns:message()}.
 encode_message_axfr(#dns_message{} = Msg, MaxSize) ->
@@ -504,18 +531,30 @@ encode_message_rec_unbounded(
     encode_rrdata_append(Acc1, byte_size(Acc1) + 2, C, D, CompMap0).
 
 -spec ensure_optrr(dns:additional(), minimal | full) -> {0 | 1, binary()}.
-ensure_optrr([#dns_optrr{} = OptRR | _], full) ->
-    {1, encode_optrr(<<>>, OptRR)};
-ensure_optrr([#dns_optrr{} = OptRR | _], minimal) ->
-    {1, encode_optrr(<<>>, OptRR#dns_optrr{data = []})};
-ensure_optrr(_, _) ->
-    {0, <<>>}.
+ensure_optrr([#dns_optrr{} = OptRR | _], Mode) ->
+    {1, encode_optrr_mode(OptRR, Mode)};
+ensure_optrr([], _) ->
+    {0, <<>>};
+ensure_optrr(Additional, Mode) ->
+    case find_optrr(Additional) of
+        undefined -> {0, <<>>};
+        #dns_optrr{} = OptRR -> {1, encode_optrr_mode(OptRR, Mode)}
+    end.
+
+-spec encode_optrr_mode(dns:optrr(), minimal | full) -> binary().
+encode_optrr_mode(OptRR, full) -> encode_optrr(<<>>, OptRR);
+encode_optrr_mode(OptRR, minimal) -> encode_optrr(<<>>, OptRR#dns_optrr{data = []}).
 
 -spec preserve_optrr_size(dns:additional()) -> non_neg_integer().
+preserve_optrr_size([]) ->
+    0;
 preserve_optrr_size([#dns_optrr{} | _]) ->
     ?OPTRR_MIN_SIZE;
-preserve_optrr_size(_) ->
-    0.
+preserve_optrr_size(Additional) ->
+    case find_optrr(Additional) of
+        undefined -> 0;
+        #dns_optrr{} -> ?OPTRR_MIN_SIZE
+    end.
 
 -spec encode_optrr(binary(), dns:optrr()) -> binary().
 encode_optrr(Acc, #dns_optrr{
