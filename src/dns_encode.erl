@@ -1536,10 +1536,8 @@ encode_text(Strings) ->
 -spec do_encode_text([binary()], binary()) -> binary().
 do_encode_text([], Bin) ->
     Bin;
-do_encode_text([<<Head:255/binary, Tail/binary>> | Strings], Acc) ->
+do_encode_text([<<Head:255/binary, Tail/binary>> | Strings], Acc) when <<>> =/= Tail ->
     do_encode_text([Tail | Strings], <<Acc/binary, 255, Head/binary>>);
-do_encode_text([<<>> | Strings], Acc) ->
-    do_encode_text(Strings, Acc);
 do_encode_text([S | Strings], Acc) ->
     Size = byte_size(S),
     do_encode_text(Strings, <<Acc/binary, Size, S/binary>>).

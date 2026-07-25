@@ -42,6 +42,7 @@ groups() ->
         {txt_records, [parallel], [
             long_txt,
             long_txt_not_split,
+            txt_empty_character_strings_preserved,
             fail_txt_not_list_of_strings,
             truncated_txt,
             trailing_garbage_txt
@@ -603,6 +604,83 @@ long_txt_not_split(_) ->
     LongString = iolist_to_binary([LongStringOfA, LongStringOfB]),
     ReassembledString = iolist_to_binary(DecodedTxt),
     ?assertEqual(LongString, ReassembledString).
+
+%% RFC1035§3.3: a <character-string> is a length octet followed by that many
+%% bytes, so a zero-length string is <<0>> and is perfectly legal. The encoder
+%% skipped empty strings outright, which both lost data ([a, <<>>, b] came back
+%% as [a, b]) and, for a record whose only string was empty, produced a
+%% zero-length TXT RDATA that is not valid TXT at all.
+txt_empty_character_strings_preserved(_) ->
+    Roundtrip = fun(Strings) ->
+        Wire = dns_encode:encode_rrdata(?DNS_CLASS_IN, #dns_rrdata_txt{txt = Strings}),
+        {Wire, dns_decode:decode_rrdata(<<>>, ?DNS_CLASS_IN, ?DNS_TYPE_TXT, Wire)}
+    end,
+    %% A single empty string is one zero-length character-string on the wire
+    ?assertEqual({<<0>>, #dns_rrdata_txt{txt = [<<>>]}}, Roundtrip([<<>>])),
+    %% Empty strings between non-empty ones are kept, in order
+    ?assertEqual(
+        {<<1, $a, 0, 1, $b>>, #dns_rrdata_txt{txt = [<<"a">>, <<>>, <<"b">>]}},
+        Roundtrip([<<"a">>, <<>>, <<"b">>])
+    ),
+    ?assertEqual(
+        {<<0, 0, 1, $a>>, #dns_rrdata_txt{txt = [<<>>, <<>>, <<"a">>]}},
+        Roundtrip([<<>>, <<>>, <<"a">>])
+    ),
+    %% Splitting an oversized segment must not invent a trailing empty string:
+    %% an exact multiple of 255 stays as full segments only
+    Exact255 = binary:copy(<<$x>>, 255),
+    ?assertEqual(
+        #dns_rrdata_txt{txt = [Exact255]}, element(2, Roundtrip([Exact255]))
+    ),
+    Exact510 = binary:copy(<<$y>>, 510),
+    Half510 = binary:copy(<<$y>>, 255),
+    ?assertEqual(
+        #dns_rrdata_txt{txt = [Half510, Half510]},
+        element(2, Roundtrip([Exact510]))
+    ),
+    ?assertEqual(
+        [255, 255],
+        [byte_size(S) || S <- (element(2, Roundtrip([Exact510])))#dns_rrdata_txt.txt]
+    ),
+    %% A non-multiple still splits into 255 + remainder
+    ?assertEqual(
+        [255, 45],
+        [
+            byte_size(S)
+         || S <- (element(2, Roundtrip([binary:copy(<<$z>>, 300)])))#dns_rrdata_txt.txt
+        ]
+    ),
+    %% The other character-string records share the same encoder
+    SpfWire = dns_encode:encode_rrdata(
+        ?DNS_CLASS_IN, #dns_rrdata_spf{spf = [<<"a">>, <<>>]}
+    ),
+    ?assertEqual(<<1, $a, 0>>, SpfWire),
+    ?assertEqual(
+        #dns_rrdata_spf{spf = [<<"a">>, <<>>]},
+        dns_decode:decode_rrdata(<<>>, ?DNS_CLASS_IN, ?DNS_TYPE_SPF, SpfWire)
+    ),
+    %% ... including inside a full message
+    QName = <<"txt.example.org">>,
+    Msg = #dns_message{
+        qc = 1,
+        anc = 1,
+        questions = [#dns_query{name = QName, type = ?DNS_TYPE_TXT}],
+        answers = [
+            #dns_rr{
+                name = QName,
+                type = ?DNS_TYPE_TXT,
+                ttl = 0,
+                data = #dns_rrdata_txt{txt = [<<"v=spf1">>, <<>>, <<"-all">>]}
+            }
+        ]
+    },
+    Decoded = dns:decode_message(dns:encode_message(Msg)),
+    ?assertMatch(
+        #dns_message{
+            answers = [#dns_rr{data = #dns_rrdata_txt{txt = [<<"v=spf1">>, <<>>, <<"-all">>]}}]
+        },
+        Decoded
+    ).
 
 fail_txt_not_list_of_strings(_) ->
     QName = <<"txt.example.org">>,
