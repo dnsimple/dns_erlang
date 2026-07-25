@@ -499,8 +499,8 @@ decode_rrdata(MsgBin, Class, Type) ->
     decode_rrdata(MsgBin, Class, Type, MsgBin).
 
 -spec decode_rrdata(dns:message_bin(), dns:uint16(), dns:uint16(), binary()) -> dns:rrdata().
-decode_rrdata(_MsgBin, _Class, _Type, <<>>) ->
-    <<>>;
+decode_rrdata(_MsgBin, _Class, Type, <<>>) ->
+    empty_rrdata(Type);
 decode_rrdata(_MsgBin, Class, ?DNS_TYPE_A, <<A, B, C, D>>) when ?CLASS_IS_IN(Class) ->
     #dns_rrdata_a{ip = {A, B, C, D}};
 decode_rrdata(
@@ -983,6 +983,69 @@ decode_rrdata(_MsgBin, _Class, ?DNS_TYPE_TXT, Bin) ->
     #dns_rrdata_txt{txt = decode_text(Bin)};
 decode_rrdata(_MsgBin, _Class, _Type, Bin) ->
     Bin.
+
+%% RFC1035§3.2.1: RDLENGTH counts the octets of RDATA, enforce the RDLENGTH when it is known
+-spec empty_rrdata(dns:type()) -> binary().
+empty_rrdata(Type) ->
+    case requires_rrdata(Type) of
+        true -> error(empty_rrdata);
+        false -> <<>>
+    end.
+
+-spec requires_rrdata(dns:type()) -> boolean().
+requires_rrdata(?DNS_TYPE_A) -> true;
+requires_rrdata(?DNS_TYPE_AAAA) -> true;
+requires_rrdata(?DNS_TYPE_AFSDB) -> true;
+requires_rrdata(?DNS_TYPE_CAA) -> true;
+requires_rrdata(?DNS_TYPE_CDNSKEY) -> true;
+requires_rrdata(?DNS_TYPE_CDS) -> true;
+requires_rrdata(?DNS_TYPE_CERT) -> true;
+requires_rrdata(?DNS_TYPE_CNAME) -> true;
+requires_rrdata(?DNS_TYPE_CSYNC) -> true;
+requires_rrdata(?DNS_TYPE_DHCID) -> true;
+requires_rrdata(?DNS_TYPE_DLV) -> true;
+requires_rrdata(?DNS_TYPE_DNAME) -> true;
+requires_rrdata(?DNS_TYPE_DNSKEY) -> true;
+requires_rrdata(?DNS_TYPE_DS) -> true;
+requires_rrdata(?DNS_TYPE_DSYNC) -> true;
+requires_rrdata(?DNS_TYPE_EUI48) -> true;
+requires_rrdata(?DNS_TYPE_EUI64) -> true;
+requires_rrdata(?DNS_TYPE_HINFO) -> true;
+requires_rrdata(?DNS_TYPE_HTTPS) -> true;
+requires_rrdata(?DNS_TYPE_IPSECKEY) -> true;
+requires_rrdata(?DNS_TYPE_KEY) -> true;
+requires_rrdata(?DNS_TYPE_KX) -> true;
+requires_rrdata(?DNS_TYPE_LOC) -> true;
+requires_rrdata(?DNS_TYPE_MB) -> true;
+requires_rrdata(?DNS_TYPE_MG) -> true;
+requires_rrdata(?DNS_TYPE_MINFO) -> true;
+requires_rrdata(?DNS_TYPE_MR) -> true;
+requires_rrdata(?DNS_TYPE_MX) -> true;
+requires_rrdata(?DNS_TYPE_NAPTR) -> true;
+requires_rrdata(?DNS_TYPE_NS) -> true;
+requires_rrdata(?DNS_TYPE_NSEC) -> true;
+requires_rrdata(?DNS_TYPE_NSEC3) -> true;
+requires_rrdata(?DNS_TYPE_NSEC3PARAM) -> true;
+requires_rrdata(?DNS_TYPE_NXT) -> true;
+requires_rrdata(?DNS_TYPE_OPENPGPKEY) -> true;
+requires_rrdata(?DNS_TYPE_PTR) -> true;
+requires_rrdata(?DNS_TYPE_RESINFO) -> true;
+requires_rrdata(?DNS_TYPE_RP) -> true;
+requires_rrdata(?DNS_TYPE_RRSIG) -> true;
+requires_rrdata(?DNS_TYPE_RT) -> true;
+requires_rrdata(?DNS_TYPE_SMIMEA) -> true;
+requires_rrdata(?DNS_TYPE_SOA) -> true;
+requires_rrdata(?DNS_TYPE_SPF) -> true;
+requires_rrdata(?DNS_TYPE_SRV) -> true;
+requires_rrdata(?DNS_TYPE_SSHFP) -> true;
+requires_rrdata(?DNS_TYPE_SVCB) -> true;
+requires_rrdata(?DNS_TYPE_TLSA) -> true;
+requires_rrdata(?DNS_TYPE_TSIG) -> true;
+requires_rrdata(?DNS_TYPE_TXT) -> true;
+requires_rrdata(?DNS_TYPE_URI) -> true;
+requires_rrdata(?DNS_TYPE_WALLET) -> true;
+requires_rrdata(?DNS_TYPE_ZONEMD) -> true;
+requires_rrdata(_Type) -> false.
 
 %% RFC3403§4.1: the NAPTR REGEXP field is UTF-8
 -spec decode_naptr_regexp(binary()) -> binary().

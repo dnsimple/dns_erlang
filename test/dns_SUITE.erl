@@ -71,7 +71,8 @@ groups() ->
             decode_minfo_in_message,
             loc_wire_reference_point,
             loc_precision_range,
-            naptr_invalid_utf8_regexp_rejected
+            naptr_invalid_utf8_regexp_rejected,
+            empty_rdata_rejected_for_known_types
         ]},
         {svcb, [parallel], [
             decode_encode_svcb_params,
@@ -1221,6 +1222,83 @@ loc_wire_reference_point(_) ->
         end
      || {Label, Lat, Lon, ExpLat, ExpLon} <- Cases
     ].
+
+%% RFC1035§3.2.1: every type this library decodes has a mandatory fixed header or
+%% at least one <character-string>, so RDLENGTH = 0 is malformed. It used to
+%% decode to a bare <<>>, indistinguishable from an unknown type's opaque RDATA,
+%% so an A record carrying no address propagated as data = <<>> and re-encoded as
+%% the same malformed record.
+empty_rdata_rejected_for_known_types(_) ->
+    Known = [
+        ?DNS_TYPE_A,
+        ?DNS_TYPE_AAAA,
+        ?DNS_TYPE_CNAME,
+        ?DNS_TYPE_NS,
+        ?DNS_TYPE_PTR,
+        ?DNS_TYPE_SOA,
+        ?DNS_TYPE_MX,
+        ?DNS_TYPE_TXT,
+        ?DNS_TYPE_SPF,
+        ?DNS_TYPE_SRV,
+        ?DNS_TYPE_DNSKEY,
+        ?DNS_TYPE_DS,
+        ?DNS_TYPE_RRSIG,
+        ?DNS_TYPE_NSEC,
+        ?DNS_TYPE_NSEC3,
+        ?DNS_TYPE_CAA,
+        ?DNS_TYPE_SVCB,
+        ?DNS_TYPE_HTTPS,
+        ?DNS_TYPE_TLSA,
+        ?DNS_TYPE_LOC,
+        ?DNS_TYPE_NAPTR,
+        ?DNS_TYPE_HINFO,
+        ?DNS_TYPE_EUI48,
+        ?DNS_TYPE_ZONEMD,
+        ?DNS_TYPE_OPENPGPKEY,
+        ?DNS_TYPE_RESINFO,
+        ?DNS_TYPE_WALLET
+    ],
+    [
+        ?assertError(
+            empty_rrdata,
+            dns_decode:decode_rrdata(<<>>, ?DNS_CLASS_IN, Type, <<>>),
+            Type
+        )
+     || Type <- Known
+    ],
+    %% Inside a message this is a decode error rather than a silently empty record
+    Header =
+        <<16#abcd:16, 0:1, 0:4, 0:1, 0:1, 0:1, 0:1, 0:1, 0:1, 0:1, 0:4, 0:16, 1:16, 0:16, 0:16>>,
+    Answer = fun(Type) ->
+        <<3, $f, $o, $o, 0, Type:16, ?DNS_CLASS_IN:16, 300:32, 0:16>>
+    end,
+    [
+        ?assertMatch(
+            {formerr, _, _},
+            dns:decode_message(<<Header/binary, (Answer(Type))/binary>>),
+            Type
+        )
+     || Type <- Known
+    ],
+    %% Types this library does not decode keep the opaque path: RFC3597 unknown
+    %% types, and NULL (RFC1035§3.3.10), may legitimately carry zero octets
+    [
+        ?assertEqual(
+            <<>>,
+            dns_decode:decode_rrdata(<<>>, ?DNS_CLASS_IN, Type, <<>>),
+            Type
+        )
+     || Type <- [?DNS_TYPE_NULL, ?DNS_TYPE_WKS, 64000, 65280]
+    ],
+    ?assertMatch(
+        #dns_message{answers = [#dns_rr{type = ?DNS_TYPE_NULL, data = <<>>}]},
+        dns:decode_message(<<Header/binary, (Answer(?DNS_TYPE_NULL))/binary>>)
+    ),
+    %% Non-empty RDATA is unaffected
+    ?assertEqual(
+        #dns_rrdata_a{ip = {192, 0, 2, 1}},
+        dns_decode:decode_rrdata(<<>>, ?DNS_CLASS_IN, ?DNS_TYPE_A, <<192, 0, 2, 1>>)
+    ).
 
 %% RFC6891§6.1.1: an OPT RR's owner name MUST be root, and a message with more
 %% than one OPT RR MUST be answered with FORMERR. A non-root OPT used to fall
