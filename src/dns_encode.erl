@@ -40,6 +40,7 @@ encode(
         additional = Additional
     } = Msg
 ) ->
+    ok = assert_single_optrr(Additional),
     Head = encode_message_header(Msg),
     encode_sections(Head, #{}, [Questions, Answers, Authority, Additional]).
 
@@ -64,6 +65,7 @@ encode_append_section(Acc, CompMap, [Rec | Rest]) ->
     | {truncated, dns:message_bin(), dns:message()}
     | {truncated, dns:message_bin(), dns:tsig_mac(), dns:message()}.
 encode(#dns_message{id = MsgId, additional = Additional} = Msg, Opts) ->
+    ok = assert_single_optrr(Additional),
     EncodeFun = get_tc_mode_fun(Opts),
     MaxSize = get_max_size(Opts, Additional),
     case maps:get(tsig, Opts, undefined) of
@@ -284,6 +286,19 @@ append_optrr(Acc, [RR | Rest]) ->
     end.
 
 %% RFC6891§6.1.1: the OPT RR "MAY be placed anywhere within the additional data section",
+%% RFC6891§6.1.1: an OPT RR "MUST be the only OPT RR in that message"; the
+%% decoder rejects a second, so refuse to emit one. Stops after the first, so a
+%% section with no OPT or one OPT costs a clause or two.
+-spec assert_single_optrr(dns:additional()) -> ok.
+assert_single_optrr([#dns_optrr{} | Rest]) -> assert_no_optrr(Rest);
+assert_single_optrr([_RR | Rest]) -> assert_single_optrr(Rest);
+assert_single_optrr([]) -> ok.
+
+-spec assert_no_optrr(dns:additional()) -> ok.
+assert_no_optrr([#dns_optrr{} | _]) -> erlang:error(multiple_optrr);
+assert_no_optrr([_RR | Rest]) -> assert_no_optrr(Rest);
+assert_no_optrr([]) -> ok.
+
 -spec find_optrr(dns:additional()) -> dns:optrr() | undefined.
 find_optrr([#dns_optrr{} = OptRR | _]) -> OptRR;
 find_optrr([_ | Rest]) -> find_optrr(Rest);

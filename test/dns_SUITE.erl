@@ -65,6 +65,7 @@ groups() ->
             bad_optrr_too_large,
             optrr_must_be_root_named_and_singular,
             optrr_honoured_anywhere_in_additional,
+            encode_rejects_second_optrr,
             dnskey_dsa_alg_short_rdata_reencodes,
             dnskey_dsa_field_width_preserved,
             uri_decode_preserves_target,
@@ -1505,6 +1506,68 @@ dnskey_dsa_alg_short_rdata_reencodes(_) ->
         #dns_rrdata_dnskey{alg = ?DNS_ALG_DSA, public_key = [_, _, _, _]},
         dns_decode:decode_rrdata(<<>>, ?DNS_CLASS_IN, ?DNS_TYPE_DNSKEY, DsaWire)
     ).
+
+%% RFC6891§6.1.1: an OPT RR "MUST be the only OPT RR in that message". The
+%% decoder rejects a second one, but the encoder would happily emit two, so a
+%% caller could build a response no compliant peer -- nor this library -- accepts.
+encode_rejects_second_optrr(_) ->
+    ARecord = #dns_rr{
+        name = <<"ns.example.com">>,
+        type = ?DNS_TYPE_A,
+        class = ?DNS_CLASS_IN,
+        ttl = 300,
+        data = #dns_rrdata_a{ip = {192, 0, 2, 1}}
+    },
+    OptRR = #dns_optrr{udp_payload_size = 1232},
+    Msg = fun(Additional) ->
+        #dns_message{
+            id = 1,
+            qc = 1,
+            questions = [
+                #dns_query{name = <<"example.com">>, type = ?DNS_TYPE_A, class = ?DNS_CLASS_IN}
+            ],
+            adc = length(Additional),
+            additional = Additional
+        }
+    end,
+    %% Every encoding path refuses, not just the default one
+    Opts = [#{}, #{tc_mode => axfr}, #{tc_mode => llq_event}, #{max_size => 4096}],
+    [
+        begin
+            ?assertError(multiple_optrr, dns:encode_message(Msg(Additional)), Label),
+            [
+                ?assertError(multiple_optrr, dns:encode_message(Msg(Additional), O), {Label, O})
+             || O <- Opts
+            ]
+        end
+     || {Label, Additional} <- [
+            {"[OPT, OPT]", [OptRR, OptRR]},
+            {"[OPT, A, OPT]", [OptRR, ARecord, OptRR]},
+            {"[A, OPT, OPT]", [ARecord, OptRR, OptRR]}
+        ]
+    ],
+    %% One OPT, or none, still encodes on every path
+    [
+        begin
+            ?assert(is_binary(dns:encode_message(Msg(Additional))), Label),
+            %% every path yields either a message or a truncated one, never a raise
+            [
+                begin
+                    Encoded = dns:encode_message(Msg(Additional), O),
+                    ?assert(
+                        is_binary(Encoded) orelse truncated =:= element(1, Encoded), {Label, O}
+                    )
+                end
+             || O <- Opts
+            ]
+        end
+     || {Label, Additional} <- [
+            {"[]", []},
+            {"[OPT]", [OptRR]},
+            {"[A, OPT]", [ARecord, OptRR]},
+            {"[A, A]", [ARecord, ARecord]}
+        ]
+    ].
 
 %% RFC6891§6.1.1: the OPT RR "MAY be placed anywhere within the additional data
 %% section". The encoder matched it only at the head, so an OPT sitting anywhere
