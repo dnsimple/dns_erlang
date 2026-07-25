@@ -970,7 +970,9 @@ encode_rrdata_append(
     #dns_rrdata_kx{preference = Pref, exchange = Name},
     CompMap
 ) ->
-    {Wire, NewCompMap} = dns_domain:to_wire(CompMap, Pos + 2, Name),
+    %% Via encode_dname/3: encode_rrdata/2 passes no compmap, which only the
+    %% wrapper tolerates -- to_wire/3 crashed with badmap on every KX record.
+    {Wire, NewCompMap} = encode_dname(CompMap, Pos + 2, Name),
     {<<Acc/binary, (2 + byte_size(Wire)):16, Pref:16, Wire/binary>>, NewCompMap};
 encode_rrdata_append(
     Acc,

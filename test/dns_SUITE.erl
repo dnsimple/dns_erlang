@@ -22,7 +22,14 @@ groups() ->
             {group, svcb},
             {group, dname_utilities},
             {group, dname_compression},
-            {group, decode_query}
+            {group, decode_query},
+            {group, wire_properties}
+        ]},
+        {wire_properties, [parallel], [
+            prop_rrdata_wire_fidelity,
+            prop_rrdata_reencode_preserves_value,
+            prop_rrdata_reencode_idempotent,
+            prop_rrdata_encode_never_raises
         ]},
         {message_basic, [parallel], [
             message_empty,
@@ -3090,3 +3097,32 @@ encode_multiple_soa_records_compression(_) ->
 split_binary_into_chunks(Bin, Chunk) ->
     List = binary_to_list(Bin),
     [iolist_to_binary(lists:sublist(List, X, Chunk)) || X <- lists:seq(1, length(List), Chunk)].
+
+%% ============================================================================
+%% Wire-format properties (see dns_wire_prop)
+%% ============================================================================
+
+prop_rrdata_wire_fidelity(_) ->
+    run_prop(?FUNCTION_NAME, dns_wire_prop:prop_rrdata_wire_fidelity(), 5000).
+
+prop_rrdata_reencode_preserves_value(_) ->
+    run_prop(?FUNCTION_NAME, dns_wire_prop:prop_rrdata_reencode_preserves_value(), 5000).
+
+prop_rrdata_reencode_idempotent(_) ->
+    run_prop(?FUNCTION_NAME, dns_wire_prop:prop_rrdata_reencode_idempotent(), 5000).
+
+run_prop(PropName, Property, NumTests) ->
+    Opts = [
+        quiet,
+        long_result,
+        {start_size, 2},
+        {numtests, NumTests},
+        {numworkers, erlang:system_info(schedulers_online)}
+    ],
+    case proper:quickcheck(proper:conjunction([{PropName, Property}]), Opts) of
+        true -> ok;
+        Res -> ct:fail(Res)
+    end.
+
+prop_rrdata_encode_never_raises(_) ->
+    run_prop(?FUNCTION_NAME, dns_wire_prop:prop_rrdata_encode_never_raises(), 5000).

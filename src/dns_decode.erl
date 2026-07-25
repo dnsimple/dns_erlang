@@ -781,7 +781,11 @@ decode_rrdata(
     _Class,
     ?DNS_TYPE_LOC,
     <<0:8, SizeB:4, SizeE:4, HorizB:4, HorizE:4, VertB:4, VertE:4, LatPre:32, LonPre:32, AltPre:32>>
-) when SizeE < 10 andalso HorizE < 10 andalso VertE < 10 ->
+) when
+    %% RFC1876§2: both nibbles are 0..9; only the exponents used to be checked
+    SizeB < 10 andalso HorizB < 10 andalso VertB < 10 andalso
+        SizeE < 10 andalso HorizE < 10 andalso VertE < 10
+->
     #dns_rrdata_loc{
         size = SizeB * (round_pow(SizeE)),
         horiz = HorizB * (round_pow(HorizE)),
@@ -1117,15 +1121,21 @@ decode_loc_point(P) when is_integer(P) ->
 
 -spec decode_nsec_types(binary()) -> [non_neg_integer()].
 decode_nsec_types(Bin) ->
-    do_decode_nsec_types(Bin, []).
+    do_decode_nsec_types(Bin, -1, []).
 
--spec do_decode_nsec_types(binary(), [non_neg_integer()]) -> [non_neg_integer()].
-do_decode_nsec_types(<<>>, Types) ->
+%% RFC4034§4.1.2: window blocks come in increasing order; a repeat let the same
+%% type be counted twice, decoding to a types list with a duplicate in it.
+-spec do_decode_nsec_types(binary(), integer(), [non_neg_integer()]) -> [non_neg_integer()].
+do_decode_nsec_types(<<>>, _PrevWindow, Types) ->
     lists:reverse(Types);
-do_decode_nsec_types(<<WindowNum:8, BMPLength:8, BMP:BMPLength/binary, Rest/binary>>, Types) ->
+do_decode_nsec_types(
+    <<WindowNum:8, BMPLength:8, BMP:BMPLength/binary, Rest/binary>>, PrevWindow, Types
+) when PrevWindow < WindowNum ->
     BaseNo = WindowNum * 256,
     NewTypes = decode_bmp_bytes(BMP, BaseNo, Types),
-    do_decode_nsec_types(Rest, NewTypes).
+    do_decode_nsec_types(Rest, WindowNum, NewTypes);
+do_decode_nsec_types(<<_WindowNum:8, _BMPLength:8, _/binary>>, _PrevWindow, _Types) ->
+    error(bad_nsec_type_bitmap).
 
 -spec decode_bmp_bytes(binary(), non_neg_integer(), [non_neg_integer()]) ->
     [non_neg_integer()].

@@ -36,6 +36,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - URI targets were replaced by their normalized form when decoding, losing data and changing the canonical RDATA that RRSIGs cover (RFC 7553 §4.5)
 - A DNSKEY or CDNSKEY with a DSA algorithm but rdata too short to parse as one crashed on re-encode (RFC 2536 §2)
 - Re-encoding a DSA DNSKEY whose P began with a zero byte truncated G and Y, producing an undecodable record (RFC 2536 §2)
+- `encode_rrdata/2` crashed with `badmap` on every KX record, and with it the DNSSEC canonical form (RFC 2230)
+- A repeated or out-of-order NSEC/NSEC3/CSYNC type-bitmap window decoded to a types list containing duplicates (RFC 4034 §4.1.2)
+- LOC precision octets with a base nibble above nine were accepted instead of being left opaque (RFC 1876 §2)
 
 ## v5.0.13
 
