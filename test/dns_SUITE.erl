@@ -59,6 +59,7 @@ groups() ->
             optrr_must_be_root_named_and_singular,
             optrr_honoured_anywhere_in_additional,
             dnskey_dsa_alg_short_rdata_reencodes,
+            dnskey_dsa_field_width_preserved,
             uri_decode_preserves_target,
             uri_decode_invalid_error,
             decode_encode_rrdata_wire_samples,
@@ -1370,6 +1371,82 @@ optrr_must_be_root_named_and_singular(_) ->
         #dns_message{additional = [#dns_optrr{}, #dns_rr{type = ?DNS_TYPE_A}]},
         dns:decode_message(<<(Header(2))/binary, RootOpt/binary, PlainRR/binary>>)
     ).
+
+%% RFC2536§2 gives P, G and Y one shared width S = 64 + 8T, T in 0..8, with T on
+%% the wire but absent from the record, so encoding has to derive it. It derived
+%% it from P alone and did not round to that lattice, so a valid key whose P
+%% merely began with a zero byte re-encoded three bytes short with G and Y
+%% truncated -- a record no decoder could parse.
+dnskey_dsa_field_width_preserved(_) ->
+    Key = fun(T, PTop, GTop, YTop) ->
+        S = 64 + T * 8,
+        Fill = fun(Top, Byte) -> <<Top, (binary:copy(<<Byte>>, S - 1))/binary>> end,
+        Q = binary:copy(<<16#DD>>, 20),
+        <<256:16, 3:8, (?DNS_ALG_DSA):8, T, Q/binary, (Fill(PTop, 16#AA))/binary,
+            (Fill(GTop, 16#BB))/binary, (Fill(YTop, 16#CC))/binary>>
+    end,
+    Decode = fun(Wire) -> dns_decode:decode_rrdata(<<>>, ?DNS_CLASS_IN, ?DNS_TYPE_DNSKEY, Wire) end,
+    %% Whenever the widest field pins the width, the wire form is reproduced exactly
+    [
+        begin
+            Wire = Key(T, PTop, GTop, 16#CC),
+            Decoded = Decode(Wire),
+            ?assertMatch(#dns_rrdata_dnskey{public_key = [_, _, _, _]}, Decoded, {T, PTop}),
+            ?assertEqual(Wire, dns_encode:encode_rrdata(?DNS_CLASS_IN, Decoded), {T, PTop, GTop})
+        end
+     || {T, PTop, GTop} <- [
+            {0, 16#AA, 16#BB},
+            %% P starting with a zero byte was the corrupting case
+            {0, 16#00, 16#BB},
+            {1, 16#00, 16#BB},
+            {0, 16#00, 16#00},
+            {8, 16#00, 16#00}
+        ]
+    ],
+    %% When every field has leading zeros the original T cannot be recovered, since
+    %% the record does not carry it. The result must still be a valid, decodable
+    %% record with the same key values -- just at the minimal width.
+    Narrow = <<
+        256:16,
+        3:8,
+        (?DNS_ALG_DSA):8,
+        1,
+        (binary:copy(<<16#DD>>, 20))/binary,
+        %% T=1 means 72-byte fields, but each value fits 64 bytes
+        (binary:copy(<<0>>, 8))/binary,
+        (binary:copy(<<16#AA>>, 64))/binary,
+        (binary:copy(<<0>>, 8))/binary,
+        (binary:copy(<<16#BB>>, 64))/binary,
+        (binary:copy(<<0>>, 8))/binary,
+        (binary:copy(<<16#CC>>, 64))/binary
+    >>,
+    NarrowDecoded = Decode(Narrow),
+    Reencoded = dns_encode:encode_rrdata(?DNS_CLASS_IN, NarrowDecoded),
+    ?assertNotEqual(Narrow, Reencoded),
+    ?assertEqual(
+        NarrowDecoded#dns_rrdata_dnskey.public_key,
+        (Decode(Reencoded))#dns_rrdata_dnskey.public_key
+    ),
+    %% Values too wide for the field, or a Q past its fixed 20 bytes, are rejected
+    %% rather than silently truncated
+    Wide = fun(Field, Bytes) ->
+        Big = binary:decode_unsigned(binary:copy(<<16#FF>>, Bytes)),
+        Ok = binary:decode_unsigned(binary:copy(<<16#AA>>, 64)),
+        Q = binary:decode_unsigned(binary:copy(<<16#DD>>, 20)),
+        PK =
+            case Field of
+                p -> [Big, Q, Ok, Ok];
+                g -> [Ok, Q, Big, Ok];
+                y -> [Ok, Q, Ok, Big];
+                q -> [Ok, Big, Ok, Ok]
+            end,
+        #dns_rrdata_dnskey{flags = 256, protocol = 3, alg = ?DNS_ALG_DSA, public_key = PK}
+    end,
+    [
+        ?assertError(badarg, dns_encode:encode_rrdata(?DNS_CLASS_IN, Wide(F, 129)), F)
+     || F <- [p, g, y]
+    ],
+    ?assertError(badarg, dns_encode:encode_rrdata(?DNS_CLASS_IN, Wide(q, 21))).
 
 %% RFC2536§2 lays a DSA DNSKEY out as T, Q, P, G, Y, so rdata shorter than that
 %% cannot be parsed as one and decodes through the generic clause, leaving

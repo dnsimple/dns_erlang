@@ -1559,9 +1559,23 @@ encode_dsa_key(PKM) ->
         end
      || X <- PKM
     ],
-    M = byte_size(strip_leading_zeros(binary:encode_unsigned(P))),
-    T = (M - 64) div 8,
-    <<T, Q:20/unit:8, P:M/unit:8, G:M/unit:8, Y:M/unit:8>>.
+    %% RFC2536§2: P, G and Y share one width 64 + 8T; taking it from P alone
+    %% truncated a wider G or Y.
+    S = dsa_field_size(lists:max([unsigned_size(P), unsigned_size(G), unsigned_size(Y)])),
+    T = (S - 64) div 8,
+    QSize = unsigned_size(Q),
+    QSize =< 20 orelse erlang:error(badarg, [Q]),
+    <<T, Q:20/unit:8, P:S/unit:8, G:S/unit:8, Y:S/unit:8>>.
+
+-spec unsigned_size(non_neg_integer()) -> pos_integer().
+unsigned_size(I) ->
+    byte_size(strip_leading_zeros(binary:encode_unsigned(I))).
+
+%% Round up to the next 64 + 8T with T in 0..8; anything wider is unencodable
+-spec dsa_field_size(pos_integer()) -> 64..128.
+dsa_field_size(Bytes) when Bytes =< 64 -> 64;
+dsa_field_size(Bytes) when Bytes =< 128 -> 64 + 8 * ((Bytes - 64 + 7) div 8);
+dsa_field_size(Bytes) -> erlang:error(badarg, [Bytes]).
 
 %% Encodes a character-string as in RFC1035§3.3
 %%
