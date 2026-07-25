@@ -116,14 +116,16 @@ get_max_size(#{max_size := Value}, _) when
     not is_integer(Value) orelse Value < 512 orelse 65535 < Value
 ->
     erlang:error(badarg);
-get_max_size(_, [#dns_optrr{udp_payload_size = Value} | _]) when
-    not is_integer(Value) orelse Value < 512 orelse 65535 < Value
-->
-    erlang:error(badarg);
 get_max_size(#{max_size := Value}, _) ->
     Value;
+%% A payload size wider than the 16-bit OPT field cannot be encoded at all
+get_max_size(_, [#dns_optrr{udp_payload_size = Value} | _]) when
+    not is_integer(Value) orelse 65535 < Value
+->
+    erlang:error(badarg);
+%% RFC6891§6.2.3: "Values lower than 512 MUST be treated as equal to 512."
 get_max_size(_, [#dns_optrr{udp_payload_size = Value} | _]) ->
-    Value;
+    max(512, Value);
 get_max_size(_, _) ->
     512.
 

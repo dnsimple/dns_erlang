@@ -33,6 +33,7 @@ groups() ->
         {message_encoding, [parallel], [
             encode_message_max_size,
             encode_message_invalid_size,
+            encode_message_clamps_small_udp_payload_size,
             encode_optrr_kept_near_max_size,
             truncated_query_enforces_opt_record,
             encode_default_message_question_offset_correct,
@@ -228,6 +229,41 @@ encode_message_invalid_size(_) ->
         ?assertError(badarg, dns:encode_message(Msg, #{max_size => 413})),
         ?assertError(badarg, dns:encode_message(Msg, #{max_size => not_an_integer}))
     ].
+
+%% RFC6891§6.2.3: "Values lower than 512 MUST be treated as equal to 512." The
+%% value comes from the requestor's OPT RR, so a server that echoes a client's
+%% OPT back into its response was crashing on input it does not control -- 0 is
+%% what a client sends to mean "no larger than the minimum".
+encode_message_clamps_small_udp_payload_size(_) ->
+    Qs = [#dns_query{name = <<"example.com">>, type = ?DNS_TYPE_A}],
+    Msg = fun(UPS) ->
+        #dns_message{
+            id = 1,
+            qc = length(Qs),
+            questions = Qs,
+            adc = 1,
+            additional = [#dns_optrr{udp_payload_size = UPS}]
+        }
+    end,
+    [
+        begin
+            Bin = dns:encode_message(Msg(UPS), #{}),
+            ?assertMatch(#dns_message{}, dns:decode_message(Bin), UPS),
+            %% Clamped to the 512 floor, not to the advertised value
+            ?assert(byte_size(Bin) =< 512, UPS)
+        end
+     || UPS <- [0, 1, 411, 511, 512]
+    ],
+    %% Above the floor the advertised value is still honoured
+    ?assertMatch(#dns_message{}, dns:decode_message(dns:encode_message(Msg(4096), #{}))),
+    %% Wider than the 16-bit OPT field remains a badarg
+    ?assertError(badarg, dns:encode_message(Msg(65536), #{})),
+    ?assertError(badarg, dns:encode_message(Msg(not_an_integer), #{})),
+    %% An explicit max_size wins over whatever the peer advertised
+    ?assertMatch(
+        #dns_message{},
+        dns:decode_message(dns:encode_message(Msg(0), #{max_size => 4096}))
+    ).
 
 truncated_query_enforces_opt_record(_) ->
     QName = <<"txt.example.org">>,
