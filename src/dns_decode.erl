@@ -1071,15 +1071,23 @@ decode_dnameonly(MsgBin, Bin) ->
 %% Helper function to decode RSA keys for DNSKEY and CDNSKEY records
 -spec decode_rsa_key(binary(), binary()) -> {list(), dns:uint16()}.
 decode_rsa_key(PublicKey, Bin) ->
-    Key =
-        case PublicKey of
-            <<0, Len:16, Exp:Len/unit:8, ModBin/binary>> ->
-                [Exp, binary:decode_unsigned(ModBin)];
-            <<Len:8, Exp:Len/unit:8, ModBin/binary>> ->
-                [Exp, binary:decode_unsigned(ModBin)]
-        end,
     KeyTag = bin_to_key_tag(Bin),
-    {Key, KeyTag}.
+    case rsa_fields(PublicKey) of
+        {ExpBin, ModBin} ->
+            {[binary:decode_unsigned(ExpBin), binary:decode_unsigned(ModBin)], KeyTag};
+        not_canonical ->
+            {PublicKey, KeyTag}
+    end.
+
+%% RFC3110§2: exponent length in one octet, or zero then two octets.
+%% Real keys are canonical -- an RSA modulus has its top bit set, and 65537 starts 0x01.
+-spec rsa_fields(binary()) -> {binary(), binary()} | not_canonical.
+rsa_fields(<<0, Len:16, Exp:Len/binary, Mod/binary>>) when 255 < Len -> rsa_fields(Exp, Mod);
+rsa_fields(<<Len:8, Exp:Len/binary, Mod/binary>>) -> rsa_fields(Exp, Mod);
+rsa_fields(<<_/binary>>) -> not_canonical.
+
+rsa_fields(<<E, _/binary>> = Exp, <<M, _/binary>> = Mod) when 0 < E, 0 < M -> {Exp, Mod};
+rsa_fields(_Exp, _Mod) -> not_canonical.
 
 %% Helper function to decode DSA keys for DNSKEY and CDNSKEY records
 -spec decode_dsa_key(byte(), non_neg_integer(), binary(), binary()) -> {list(), dns:uint16()}.

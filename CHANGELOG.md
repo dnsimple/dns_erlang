@@ -40,6 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - A repeated or out-of-order NSEC/NSEC3/CSYNC type-bitmap window decoded to a types list containing duplicates (RFC 4034 §4.1.2)
 - LOC precision octets with a base nibble above nine were accepted instead of being left opaque (RFC 1876 §2)
 - `encode_message/1,2` would emit a message carrying two OPT RRs, which the decoder rejects (RFC 6891 §6.1.1)
+- A non-canonically encoded RSA DNSKEY/CDNSKEY public key changed shape when re-encoded, altering the canonical RDATA an RRSIG covers (RFC 3110 §2)
 
 ## v5.0.13
 

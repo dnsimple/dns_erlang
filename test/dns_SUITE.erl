@@ -68,6 +68,7 @@ groups() ->
             encode_rejects_second_optrr,
             dnskey_dsa_alg_short_rdata_reencodes,
             dnskey_dsa_field_width_preserved,
+            dnskey_rsa_non_canonical_kept_opaque,
             uri_decode_preserves_target,
             uri_decode_invalid_error,
             decode_encode_rrdata_wire_samples,
@@ -1379,6 +1380,56 @@ optrr_must_be_root_named_and_singular(_) ->
         #dns_message{additional = [#dns_optrr{}, #dns_rr{type = ?DNS_TYPE_A}]},
         dns:decode_message(<<(Header(2))/binary, RootOpt/binary, PlainRR/binary>>)
     ).
+
+%% RFC3110§2 encodes an RSA key as an exponent length, the exponent, then the
+%% modulus. Decoding turns those into the integer pair [E, M], which cannot hold a
+%% zero-length field, a leading zero, or the choice of exponent-length form -- and
+%% encoding strips leading zeros and always picks the short form below 256. Such a
+%% key is therefore kept opaque, so it re-encodes byte for byte; otherwise a
+%% DNSKEY would change shape on the way through, and with it the canonical RDATA
+%% an RRSIG covers.
+dnskey_rsa_non_canonical_kept_opaque(_) ->
+    Modulus = <<255, (binary:copy(<<16#AB>>, 127))/binary>>,
+    Canonical = [
+        %% exponent 65537 in the one-octet length form, modulus with its top bit set
+        {"e=65537, short form", <<256:16, 3:8, (?DNS_ALG_RSASHA256):8, 3, 1, 0, 1, Modulus/binary>>}
+    ],
+    NonCanonical = [
+        {"all-zero key", <<0:16, 0:8, (?DNS_ALG_RSASHA1):8, 0:(24 * 8)>>},
+        {"zero-length exponent", <<0:16, 3:8, (?DNS_ALG_RSASHA1):8, 0, 0, 0, 1, 2, 3>>},
+        {"leading-zero modulus", <<0:16, 3:8, (?DNS_ALG_RSASHA1):8, 1, 3, 0, 255, 255, 255>>},
+        {"leading-zero exponent", <<0:16, 3:8, (?DNS_ALG_RSASHA1):8, 2, 0, 3, 255, 255, 255>>},
+        %% the two-octet length form used for an exponent that fits one octet
+        {"long form, short exponent",
+            <<256:16, 3:8, (?DNS_ALG_RSASHA256):8, 0, 0, 3, 1, 0, 1, Modulus/binary>>}
+    ],
+    %% A canonically encoded key is parsed into [E, M] ...
+    [
+        begin
+            Decoded = dns_decode:decode_rrdata(<<>>, ?DNS_CLASS_IN, ?DNS_TYPE_DNSKEY, Rdata),
+            ?assertMatch(#dns_rrdata_dnskey{public_key = [_, _]}, Decoded, Label),
+            ?assertEqual(Rdata, dns_encode:encode_rrdata(?DNS_CLASS_IN, Decoded), Label)
+        end
+     || {Label, Rdata} <- Canonical
+    ],
+    %% ... anything else stays a binary, and either way the bytes are reproduced
+    [
+        begin
+            Decoded = dns_decode:decode_rrdata(<<>>, ?DNS_CLASS_IN, ?DNS_TYPE_DNSKEY, Rdata),
+            #dns_rrdata_dnskey{public_key = PublicKey} = Decoded,
+            ?assert(is_binary(PublicKey), Label),
+            ?assertEqual(Rdata, dns_encode:encode_rrdata(?DNS_CLASS_IN, Decoded), Label)
+        end
+     || {Label, Rdata} <- NonCanonical
+    ],
+    %% CDNSKEY shares the decoder, and so the behaviour
+    [
+        begin
+            Decoded = dns_decode:decode_rrdata(<<>>, ?DNS_CLASS_IN, ?DNS_TYPE_CDNSKEY, Rdata),
+            ?assertEqual(Rdata, dns_encode:encode_rrdata(?DNS_CLASS_IN, Decoded), Label)
+        end
+     || {Label, Rdata} <- Canonical ++ NonCanonical
+    ].
 
 %% RFC2536§2 gives P, G and Y one shared width S = 64 + 8T, T in 0..8, with T on
 %% the wire but absent from the record, so encoding has to derive it. It derived

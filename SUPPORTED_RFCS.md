@@ -14,6 +14,7 @@ functionality such as socket handling or query resolution.
 - **[RFC 2536](https://tools.ietf.org/html/rfc2536)**: DSA KEYs and SIGs in the Domain Name System (DNS)
 - **[RFC 2782](https://tools.ietf.org/html/rfc2782)**: A DNS RR for specifying the location of services (DNS SRV)
 - **[RFC 2845](https://tools.ietf.org/html/rfc2845)**: Secret Key Transaction Authentication for DNS (TSIG)
+- **[RFC 3110](https://tools.ietf.org/html/rfc3110)**: RSA/SHA-1 SIGs and RSA KEYs in the Domain Name System (DNS)
 - **[RFC 3403](https://tools.ietf.org/html/rfc3403)**: Dynamic Delegation Discovery System (DDDS) Part Three: The Domain Name System (DNS) Database
 - **[RFC 3596](https://tools.ietf.org/html/rfc3596)**: DNS Extensions to Support IP Version 6
 - **[RFC 3597](https://tools.ietf.org/html/rfc3597)**: Handling of Unknown DNS Resource Record (RR) Types
