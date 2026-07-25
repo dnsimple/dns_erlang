@@ -322,19 +322,27 @@ decode_message_additional(MsgBin, DataBin, Count) when
 
 -spec do_decode_message_additional(dns:message_bin(), binary(), integer(), dns:additional()) ->
     {dns:additional(), binary()} | {dns:decode_error(), [dns:optrr() | dns:rr()], binary()}.
-do_decode_message_additional(_MsgBin, DataBin, 0, RRs) ->
-    {lists:reverse(RRs), DataBin};
-do_decode_message_additional(_MsgBin, <<>>, _Count, RRs) ->
-    {truncated, lists:reverse(RRs), <<>>};
 do_decode_message_additional(MsgBin, DataBin, Count, RRs) ->
+    do_decode_message_additional(MsgBin, DataBin, Count, RRs, false).
+
+-spec do_decode_message_additional(
+    dns:message_bin(), binary(), integer(), dns:additional(), boolean()
+) ->
+    {dns:additional(), binary()} | {dns:decode_error(), [dns:optrr() | dns:rr()], binary()}.
+do_decode_message_additional(_MsgBin, DataBin, 0, RRs, _SeenOptRR) ->
+    {lists:reverse(RRs), DataBin};
+do_decode_message_additional(_MsgBin, <<>>, _Count, RRs, _SeenOptRR) ->
+    {truncated, lists:reverse(RRs), <<>>};
+do_decode_message_additional(MsgBin, DataBin, Count, RRs, SeenOptRR) ->
     %% The record parse is the `try` protected expression so a malformed rdata — e.g. a bad EDNS
     %% COOKIE (RFC 7873), which raises `bad_cookie` — surfaces as a decode-error tuple instead of
     %% escaping. The recursion stays in the `of` body to remain in tail position.
     try
         case dns_domain:from_wire(MsgBin, DataBin) of
-            {<<>>,
+            {Name,
                 <<?DNS_TYPE_OPT:16/unsigned, UPS:16/unsigned, ExtRcode:8, Version:8, DNSSEC:1,
                     _Z:15, EDataLen:16, EDataBin:EDataLen/binary, RemBin/binary>>} ->
+                ok = check_optrr(Name, SeenOptRR),
                 {
                     #dns_optrr{
                         udp_payload_size = UPS,
@@ -362,8 +370,10 @@ do_decode_message_additional(MsgBin, DataBin, Count, RRs) ->
                 truncated
         end
     of
+        {#dns_optrr{} = RR, Rest} ->
+            do_decode_message_additional(MsgBin, Rest, Count - 1, [RR | RRs], true);
         {RR, Rest} ->
-            do_decode_message_additional(MsgBin, Rest, Count - 1, [RR | RRs]);
+            do_decode_message_additional(MsgBin, Rest, Count - 1, [RR | RRs], SeenOptRR);
         truncated ->
             {truncated, lists:reverse(RRs), DataBin}
     catch
@@ -372,6 +382,12 @@ do_decode_message_additional(MsgBin, DataBin, Count, RRs) ->
         _:_ ->
             {formerr, lists:reverse(RRs), DataBin}
     end.
+
+%% RFC6891§6.1.1: an OPT RR's owner name MUST be root
+-spec check_optrr(dns:dname(), boolean()) -> ok.
+check_optrr(<<>>, false) -> ok;
+check_optrr(<<>>, true) -> error(multiple_optrr);
+check_optrr(_Name, _SeenOptRR) -> error(bad_optrr_name).
 
 -spec decode_message_body(dns:message_bin(), binary(), dns:uint16()) ->
     {[dns:rr()], binary()} | {dns:decode_error(), [dns:rr()], binary()}.

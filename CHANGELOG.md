@@ -30,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - `encode_message/2` with an unsupported `tsig` algorithm raised `case_clause` instead of `badarg`
 - An SVCB/HTTPS `alpn` id longer than 255 bytes silently truncated its length octet, producing undecodable wire data; it now raises `{svcb_invalid_alpn_id, _}`
 - SVCB/HTTPS `mandatory`, `ipv4hint` and `ipv6hint` values that are not a whole number of elements are rejected instead of silently dropping the remainder (RFC 9460 §7.4, §8)
+- An EDNS OPT RR with a non-root owner name, and a message carrying more than one OPT RR, now decode to `formerr` (RFC 6891 §6.1.1)
 
 ## v5.0.13
 

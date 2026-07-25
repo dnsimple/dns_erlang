@@ -56,6 +56,7 @@ groups() ->
             edns_badvers,
             optrr_too_large,
             bad_optrr_too_large,
+            optrr_must_be_root_named_and_singular,
             uri_decode_normalization,
             uri_decode_invalid_error,
             decode_encode_rrdata_wire_samples,
@@ -1221,6 +1222,47 @@ loc_wire_reference_point(_) ->
      || {Label, Lat, Lon, ExpLat, ExpLon} <- Cases
     ].
 
+%% RFC6891§6.1.1: an OPT RR's owner name MUST be root, and a message with more
+%% than one OPT RR MUST be answered with FORMERR. A non-root OPT used to fall
+%% through to the ordinary RR clause, which reinterpreted its fields: the UDP
+%% payload size was read as the class and the extended rcode, version and DO bit
+%% as the TTL, so the record decoded to something plausible but wrong.
+optrr_must_be_root_named_and_singular(_) ->
+    Header = fun(ADC) ->
+        <<16#1234:16, 0:1, 0:4, 0:1, 0:1, 0:1, 0:1, 0:1, 0:1, 0:1, 0:4, 0:16, 0:16, 0:16, ADC:16>>
+    end,
+    RootOpt = <<0, ?DNS_TYPE_OPT:16, 4096:16, 0:8, 0:8, 0:16, 0:16>>,
+    NamedOpt = <<1, $a, 0, ?DNS_TYPE_OPT:16, 4096:16, 0:8, 0:8, 0:16, 0:16>>,
+    %% A single root-named OPT is the normal case and still decodes
+    ?assertMatch(
+        #dns_message{additional = [#dns_optrr{udp_payload_size = 4096}]},
+        dns:decode_message(<<(Header(1))/binary, RootOpt/binary>>)
+    ),
+    %% A non-root owner name is a format error, not an ordinary RR of type 41
+    ?assertMatch(
+        {formerr, _, _},
+        dns:decode_message(<<(Header(1))/binary, NamedOpt/binary>>)
+    ),
+    %% More than one OPT RR is a format error
+    ?assertMatch(
+        {formerr, _, _},
+        dns:decode_message(<<(Header(2))/binary, RootOpt/binary, RootOpt/binary>>)
+    ),
+    %% ... including when the duplicate follows an ordinary additional record
+    PlainRR =
+        <<3, $f, $o, $o, 0, ?DNS_TYPE_A:16, ?DNS_CLASS_IN:16, 300:32, 4:16, 192, 0, 2, 1>>,
+    ?assertMatch(
+        {formerr, _, _},
+        dns:decode_message(
+            <<(Header(3))/binary, RootOpt/binary, PlainRR/binary, RootOpt/binary>>
+        )
+    ),
+    %% An OPT alongside unrelated additional records is still fine
+    ?assertMatch(
+        #dns_message{additional = [#dns_optrr{}, #dns_rr{type = ?DNS_TYPE_A}]},
+        dns:decode_message(<<(Header(2))/binary, RootOpt/binary, PlainRR/binary>>)
+    ).
+
 %% RFC3403§4.1: the NAPTR REGEXP field is UTF-8. unicode:characters_to_binary/2
 %% reports invalid input by returning an error tuple instead of raising, so the
 %% tuple was stored in the regexp field: decoding a hostile packet appeared to
@@ -1718,22 +1760,30 @@ encode_rec_list_accumulates_multiple_records(_) ->
         )
      || I <- lists:seq(1, 5)
     ],
-    %% Also test with multiple OPT records in additional section
-    %% This tests encode_message_d_opt which also uses encode_rec_list
-    OptRRs = [
-        #dns_optrr{
-            udp_payload_size = 512 + I,
-            data = [#dns_opt_nsid{data = <<"test", I:8>>}]
-        }
-     || I <- lists:seq(0, 2)
-    ],
+    %% Also test with multiple records in the additional section
+    %% This tests encode_message_d_opt which also uses encode_rec_list.
+    %% Only one OPT RR: RFC6891§6.1.1 allows at most one per message, so a
+    %% message carrying several no longer decodes (see
+    %% optrr_must_be_root_named_and_singular). The multi-record additional path
+    %% is still covered, by following the OPT with ordinary records.
+    AdditionalRRs =
+        [#dns_optrr{udp_payload_size = 512, data = [#dns_opt_nsid{data = <<"test">>}]}] ++
+            [
+                #dns_rr{
+                    name = QName,
+                    type = ?DNS_TYPE_A,
+                    ttl = 3600,
+                    data = #dns_rrdata_a{ip = {10, 0, 0, I}}
+                }
+             || I <- lists:seq(1, 2)
+            ],
     MsgWithOpt = Msg#dns_message{
         adc = 3,
-        additional = OptRRs
+        additional = AdditionalRRs
     },
     EncodedOpt = dns:encode_message(MsgWithOpt),
     DecodedOpt = dns:decode_message(EncodedOpt),
-    %% Verify all OPT records are present
+    %% Verify all additional records are present
     ?assertEqual(3, length(DecodedOpt#dns_message.additional)),
     %% Verify we can round-trip encode/decode
     ?assertEqual(Msg, Decoded),
