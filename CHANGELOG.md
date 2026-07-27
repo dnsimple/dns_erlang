@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## main
 
+## v5.0.16
+
+### Fixed
+
+- `decode_query/1` no longer rejects rfc1995 IXFR queries as `formerr` but as `notimp`.
+
 ## v5.0.15
 
 ### Fixed

@@ -59,15 +59,19 @@ decode_query(
     %% - OC bit check: each opcode has its own sensible combination of section counts
     %% - RCODE in queries is typically 0 (NOERROR) but most servers don't enforce this validation
     case {QR, TC, OC, QC, ANC, AUC, ADC} of
-        %% RFC 1035: Standard queries must have exactly 1 question, no answers, no authority.
+        %% RFC 1035: Standard queries must have exactly 1 question and no answers.
         %% RFC 9619: A DNS message with OPCODE = 0 MUST NOT include a QDCOUNT parameter whose value
         %% is greater than 1. It follows that the Question section of a DNS message with OPCODE = 0
         %% MUST NOT contain more than one question.
-        {0, 0, ?DNS_OPCODE_QUERY, 1, 0, 0, _} ->
+        %% rfc1995 §3: an IXFR query carries the client's current SOA in the authority section, so
+        %% one authority record is legitimate here. The qtype lives in the question section, which
+        %% this header guard has not read yet, so the bound is on the count rather than on IXFR
+        %% specifically -- one record is bounded work, which is all the guard is defending.
+        {0, 0, ?DNS_OPCODE_QUERY, 1, 0, AUC, _} when AUC =< 1 ->
             Msg0 = create_message_from_header(
                 Id, QR, OC, AA, TC, RD, RA, AD, CD, RC, QC, ANC, AUC, ADC
             ),
-            decode_body(MsgBin, Rest0, Msg0);
+            zone_transfer_notimp(decode_body(MsgBin, Rest0, Msg0));
         %% RFC 7873: Cookie-only queries may have QDCOUNT=0 when an OPT record with a COOKIE option
         %% is present in the additional section.
         {0, 0, ?DNS_OPCODE_QUERY, 0, 0, 0, ADC} when ADC > 0 ->
@@ -120,6 +124,43 @@ decode_query(
     end;
 decode_query(MsgBin) ->
     {formerr, undefined, MsgBin}.
+
+%% rfc5936 AXFR and rfc1995 IXFR are zone transfers, not queries: the response is a stream of
+%% messages over a held TCP connection, which a caller that gets one message back cannot produce.
+%% rfc1035 §4.1.1 defines NOTIMP as "the name server does not support the requested kind of query",
+%% which is exactly the case here. A server that does implement transfers decodes with `decode/1`
+%% and drives its own transfer loop, as it must anyway.
+%%
+%% This runs on the decoded message rather than ahead of it: the qtype lives in the question
+%% section, and reading it before `decode_body/3` would parse the questions twice on every query.
+-spec zone_transfer_notimp(Result) -> Result when
+    Result :: dns:message() | {dns:decode_error(), dns:message() | undefined, binary()}.
+zone_transfer_notimp(#dns_message{questions = [#dns_query{type = ?DNS_TYPE_AXFR}]} = Msg) ->
+    {notimp, notimp_from_query(Msg), <<>>};
+zone_transfer_notimp(#dns_message{questions = [#dns_query{type = ?DNS_TYPE_IXFR}]} = Msg) ->
+    {notimp, notimp_from_query(Msg), <<>>};
+zone_transfer_notimp(Result) ->
+    Result.
+
+%% Same shape as `create_notimp_message/7`: id, opcode, rd and cd carry over, every section is
+%% dropped -- an IXFR query arrives with the client's SOA in its authority section (rfc1995 §3),
+%% which must not be echoed back.
+-spec notimp_from_query(dns:message()) -> dns:message().
+notimp_from_query(#dns_message{} = Msg) ->
+    Msg#dns_message{
+        qr = true,
+        aa = false,
+        tc = false,
+        ra = false,
+        ad = false,
+        rc = ?DNS_RCODE_NOTIMP,
+        anc = 0,
+        answers = [],
+        auc = 0,
+        authority = [],
+        adc = 0,
+        additional = []
+    }.
 
 %% Helper function to create a minimal message struct for NOTIMP response
 %% Returns {notimp, Message, Binary} where Message contains fields needed

@@ -132,6 +132,7 @@ groups() ->
             decode_query_tc_bit_rejected,
             decode_query_ancount_rejected,
             decode_query_nscount_rejected,
+            decode_query_zone_transfer_notimp,
             decode_query_qdcount_invalid,
             decode_query_notify_allowed,
             decode_query_notify_invalid_counts,
@@ -2336,19 +2337,102 @@ decode_query_ancount_rejected(_) ->
     ?assertMatch({formerr, undefined, _}, dns:decode_query(ModifiedBin)).
 
 decode_query_nscount_rejected(_) ->
-    %% Query with NSCount=1 should be rejected
+    %% Query with NSCount>1 should be rejected. NSCount=1 is allowed through the header guard for
+    %% rfc1995 IXFR -- see decode_query_zone_transfer_notimp/1.
     QName = <<"example.com">>,
     Query = #dns_query{name = QName, type = ?DNS_TYPE_A},
     Msg = #dns_message{qc = 1, questions = [Query]},
     Encoded = dns:encode_message(Msg),
-    %% Modify header to set NSCount (AUC)=1
+    %% Modify header to set NSCount (AUC)=2
     <<Id:16, QR:1, OC:4, AA:1, TC:1, RD:1, RA:1, Z:1, AD:1, CD:1, RC:4, QC:16, ANC:16, _AUC:16,
         ADC:16, Rest/binary>> = Encoded,
     ModifiedHeader =
-        <<Id:16, QR:1, OC:4, AA:1, TC:1, RD:1, RA:1, Z:1, AD:1, CD:1, RC:4, QC:16, ANC:16, 1:16,
+        <<Id:16, QR:1, OC:4, AA:1, TC:1, RD:1, RA:1, Z:1, AD:1, CD:1, RC:4, QC:16, ANC:16, 2:16,
             ADC:16>>,
     ModifiedBin = <<ModifiedHeader/binary, Rest/binary>>,
     ?assertMatch({formerr, undefined, _}, dns:decode_query(ModifiedBin)).
+
+decode_query_zone_transfer_notimp(_) ->
+    %% A zone transfer is answered as a stream of messages, which a caller holding one decoded
+    %% message cannot produce, so decode_query/1 declines both rfc5936 AXFR and rfc1995 IXFR.
+    %% Reaching that answer for IXFR also exercises the header guard: rfc1995 §3 puts the client's
+    %% current SOA in the authority section, and NSCOUNT=1 was rejected as formerr before the qtype
+    %% could be read at all.
+    QName = <<"example.com">>,
+    Ixfr = #dns_query{name = QName, class = ?DNS_CLASS_IN, type = ?DNS_TYPE_IXFR},
+    Soa = #dns_rr{
+        name = QName,
+        class = ?DNS_CLASS_IN,
+        type = ?DNS_TYPE_SOA,
+        ttl = 0,
+        data = #dns_rrdata_soa{
+            mname = <<"ns1.example.com">>,
+            rname = <<"hostmaster.example.com">>,
+            serial = 2026072701,
+            refresh = 3600,
+            retry = 600,
+            expire = 604800,
+            minimum = 300
+        }
+    },
+    Msg = #dns_message{qc = 1, auc = 1, questions = [Ixfr], authority = [Soa]},
+    Result = dns:decode_query(dns:encode_message(Msg)),
+    ?assertMatch(
+        {notimp, #dns_message{oc = ?DNS_OPCODE_QUERY, rc = ?DNS_RCODE_NOTIMP, qr = true}, _},
+        Result
+    ),
+    {notimp, NotImpMsg, _} = Result,
+    %% The question is kept so a responder can log or route on it, every section is dropped -- the
+    %% client's own SOA must not come back at it, and the counts have to fall with the lists since
+    %% the encoder reads section lengths from the message fields.
+    ?assertEqual(1, NotImpMsg#dns_message.qc),
+    ?assertMatch(
+        [#dns_query{name = QName, type = ?DNS_TYPE_IXFR}], NotImpMsg#dns_message.questions
+    ),
+    ?assertEqual({0, [], 0, [], 0, []}, {
+        NotImpMsg#dns_message.anc,
+        NotImpMsg#dns_message.answers,
+        NotImpMsg#dns_message.auc,
+        NotImpMsg#dns_message.authority,
+        NotImpMsg#dns_message.adc,
+        NotImpMsg#dns_message.additional
+    }),
+    %% A secondary with no copy of the zone sends an all-zero SOA and an EDNS COOKIE alongside
+    Empty = Soa#dns_rr{
+        data = #dns_rrdata_soa{
+            mname = <<>>,
+            rname = <<>>,
+            serial = 0,
+            refresh = 0,
+            retry = 0,
+            expire = 0,
+            minimum = 0
+        }
+    },
+    Opt = #dns_optrr{
+        udp_payload_size = 1232,
+        dnssec = false,
+        data = [#dns_opt_cookie{client = <<16#9284d0b727d153ad:64>>}]
+    },
+    Msg2 = #dns_message{
+        qc = 1,
+        auc = 1,
+        adc = 1,
+        questions = [Ixfr],
+        authority = [Empty],
+        additional = [Opt]
+    },
+    ?assertMatch(
+        {notimp, #dns_message{rc = ?DNS_RCODE_NOTIMP}, _},
+        dns:decode_query(dns:encode_message(Msg2))
+    ),
+    %% AXFR carries no authority record, and is declined just the same
+    Axfr = #dns_query{name = QName, class = ?DNS_CLASS_IN, type = ?DNS_TYPE_AXFR},
+    Msg3 = #dns_message{qc = 1, questions = [Axfr]},
+    ?assertMatch(
+        {notimp, #dns_message{rc = ?DNS_RCODE_NOTIMP, qr = true}, _},
+        dns:decode_query(dns:encode_message(Msg3))
+    ).
 
 decode_query_qdcount_invalid(_) ->
     %% Query with QDCount=2 should be rejected
