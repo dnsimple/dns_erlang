@@ -35,7 +35,8 @@ groups() ->
             message_empty,
             message_query,
             message_other,
-            truncated_answer_rr_header
+            truncated_answer_rr_header,
+            decode_message_rfc2136_update
         ]},
         {message_encoding, [parallel], [
             encode_message_max_size,
@@ -134,7 +135,7 @@ groups() ->
             decode_query_qdcount_invalid,
             decode_query_notify_allowed,
             decode_query_notify_invalid_counts,
-            decode_query_update_allowed,
+            decode_query_update_notimp,
             decode_query_too_short,
             decode_query_iquery_notimp,
             decode_query_status_notimp,
@@ -2409,28 +2410,106 @@ decode_query_notify_invalid_counts(_) ->
     ModifiedBin = <<ModifiedHeader/binary, Rest/binary>>,
     ?assertMatch({formerr, undefined, _}, dns:decode_query(ModifiedBin)).
 
-decode_query_update_allowed(_) ->
-    %% UPDATE (opcode 5) should be allowed even with Answer/Authority records
-    QName = <<"example.com">>,
-    Query = #dns_query{name = QName, type = ?DNS_TYPE_SOA},
-    Answer = #dns_rr{
-        name = QName,
-        type = ?DNS_TYPE_A,
-        ttl = 3600,
-        data = #dns_rrdata_a{ip = {127, 0, 0, 1}}
-    },
-    Msg = #dns_message{
-        qc = 1,
-        anc = 1,
-        auc = 1,
-        oc = 5,
-        questions = [Query],
-        answers = [Answer],
-        authority = [Answer]
-    },
-    Encoded = dns:encode_message(Msg),
-    Decoded = dns:decode_query(Encoded),
-    ?assertMatch(#dns_message{oc = 5, anc = 1, auc = 1}, Decoded).
+decode_query_update_notimp(_) ->
+    %% UPDATE (opcode 5) is not a query, so `decode_query/1` refuses to serve it and returns
+    %% NOTIMP, which rfc2136 §3.1 permits for a server that does not implement UPDATE. Parsing
+    %% the message itself is `decode_message/1`'s job — see decode_message_rfc2136_update/1.
+    Bin = rfc2136_update_wire(),
+    Result = dns:decode_query(Bin),
+    ?assertMatch(
+        {notimp, #dns_message{oc = ?DNS_OPCODE_UPDATE, rc = ?DNS_RCODE_NOTIMP, qr = true}, _},
+        Result
+    ),
+    {notimp, NotImpMsg, _} = Result,
+    ?assertEqual(0, NotImpMsg#dns_message.anc),
+    ?assertEqual(0, NotImpMsg#dns_message.auc),
+    ?assertEqual(0, NotImpMsg#dns_message.adc),
+    %% The ZONE section (rfc2136 §2.3) is preserved so a responder can log/route on it
+    ?assertEqual(1, NotImpMsg#dns_message.qc),
+    ?assertMatch(
+        [#dns_query{name = <<"example.com">>, class = ?DNS_CLASS_IN, type = ?DNS_TYPE_SOA}],
+        NotImpMsg#dns_message.questions
+    ).
+
+decode_message_rfc2136_update(_) ->
+    %% Shaped after the dynamic-update datagrams a Windows DHCP client sends when registering
+    %% itself. rfc2136 §2.4/§2.5 encode prerequisites and RRset deletes with RDLENGTH=0, which
+    %% rfc1035 §3.2.1 would reject for these types; `decode_message/1` must accept them so that
+    %% a server implementing UPDATE can act on them.
+    Msg = dns:decode_message(rfc2136_update_wire()),
+    ?assertMatch(#dns_message{oc = ?DNS_OPCODE_UPDATE, qc = 1, anc = 1, auc = 6}, Msg),
+    Owner = <<"host1.example.com">>,
+    %% §2.4.5 "RRset does not exist" prerequisite: CLASS=NONE, RDLENGTH=0
+    ?assertMatch(
+        [#dns_rr{name = Owner, class = ?DNS_CLASS_NONE, type = ?DNS_TYPE_CNAME, data = <<>>}],
+        Msg#dns_message.answers
+    ),
+    ?assertMatch(
+        [
+            %% §2.5.2 "Delete an RRset": CLASS=ANY, RDLENGTH=0
+            #dns_rr{name = Owner, class = ?DNS_CLASS_ANY, type = ?DNS_TYPE_AAAA, data = <<>>},
+            #dns_rr{name = Owner, class = ?DNS_CLASS_ANY, type = ?DNS_TYPE_A, data = <<>>},
+            %% §2.5.1 "Add to an RRset": CLASS=IN, RDLENGTH>0
+            #dns_rr{
+                name = Owner,
+                class = ?DNS_CLASS_IN,
+                type = ?DNS_TYPE_AAAA,
+                ttl = 1200,
+                data = #dns_rrdata_aaaa{ip = {16#2001, 16#0db8, 0, 0, 0, 0, 0, 1}}
+            },
+            #dns_rr{
+                name = Owner,
+                class = ?DNS_CLASS_IN,
+                type = ?DNS_TYPE_A,
+                ttl = 1200,
+                data = #dns_rrdata_a{ip = {192, 0, 2, 1}}
+            },
+            #dns_rr{
+                name = Owner,
+                class = ?DNS_CLASS_IN,
+                type = ?DNS_TYPE_AAAA,
+                ttl = 1200,
+                data = #dns_rrdata_aaaa{ip = {16#2001, 16#0db8, 0, 0, 0, 0, 0, 2}}
+            },
+            #dns_rr{
+                name = Owner,
+                class = ?DNS_CLASS_IN,
+                type = ?DNS_TYPE_A,
+                ttl = 1200,
+                data = #dns_rrdata_a{ip = {192, 0, 2, 2}}
+            }
+        ],
+        Msg#dns_message.authority
+    ),
+    %% The zero-RDLENGTH records survive a re-encode
+    ?assertMatch(#dns_message{anc = 1, auc = 6}, dns:decode_message(dns:encode_message(Msg))).
+
+%% An rfc2136 UPDATE on the wire: ZONE example.com/IN/SOA, one §2.4.5 prerequisite and six
+%% update records against host1.example.com. Addresses are documentation ranges (rfc5737,
+%% rfc3849). The owner name is written out in full at offset 29 — just past the 12-byte header
+%% and the 17-byte ZONE section — so every later record refers back to it by compression pointer.
+rfc2136_update_wire() ->
+    Owner = <<5, "host1", 7, "example", 3, "com", 0>>,
+    Ptr = <<3:2, 29:14>>,
+    Zone = <<7, "example", 3, "com", 0, ?DNS_TYPE_SOA:16, ?DNS_CLASS_IN:16>>,
+    %% §2.4.5 "RRset does not exist": CLASS=NONE, RDLENGTH=0
+    Prereq = <<Owner/binary, ?DNS_TYPE_CNAME:16, ?DNS_CLASS_NONE:16, 0:32, 0:16>>,
+    %% §2.5.2 "Delete an RRset": CLASS=ANY, RDLENGTH=0
+    DelAaaa = <<Ptr/binary, ?DNS_TYPE_AAAA:16, ?DNS_CLASS_ANY:16, 0:32, 0:16>>,
+    DelA = <<Ptr/binary, ?DNS_TYPE_A:16, ?DNS_CLASS_ANY:16, 0:32, 0:16>>,
+    %% §2.5.1 "Add to an RRset": CLASS=IN, RDLENGTH>0
+    AddAaaa = fun(Low) ->
+        <<Ptr/binary, ?DNS_TYPE_AAAA:16, ?DNS_CLASS_IN:16, 1200:32, 16:16, 16#2001:16, 16#0db8:16,
+            0:16, 0:16, 0:16, 0:16, 0:16, Low:16>>
+    end,
+    AddA = fun(Low) ->
+        <<Ptr/binary, ?DNS_TYPE_A:16, ?DNS_CLASS_IN:16, 1200:32, 4:16, 192, 0, 2, Low>>
+    end,
+    Body =
+        <<Prereq/binary, DelAaaa/binary, DelA/binary, (AddAaaa(1))/binary, (AddA(1))/binary,
+            (AddAaaa(2))/binary, (AddA(2))/binary>>,
+    <<16#2a1b:16, 0:1, ?DNS_OPCODE_UPDATE:4, 0:1, 0:1, 0:1, 0:1, 0:1, 0:1, 0:1, 0:4, 1:16, 1:16,
+        6:16, 0:16, Zone/binary, Body/binary>>.
 
 decode_query_too_short(_) ->
     %% Binary shorter than 12 bytes should be rejected

@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## main
 
+## v5.0.15
+
+### Fixed
+
+- `decode_message/1` now decodes rfc2136 UPDATE messages, while `decode_query/1` does not anymore as it shouldn't have, returning `notimp`.
+
 ## v5.0.14
 
 ### Updated

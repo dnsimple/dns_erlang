@@ -89,24 +89,14 @@ decode_query(
         %% traffic) must be rejected rather than fall through the case and crash.
         {0, 0, ?DNS_OPCODE_NOTIFY, _, _, _, _} ->
             {formerr, undefined, MsgBin};
-        %% UPDATE (opcode 5) - rfc2136
-        %% Expected: QR=0, TC=0, QC=1 (ZONE section), ANC>=0 (PREREQ section),
-        %%   AUC>=0 (UPDATE section)
-        %% rfc2136 §2.3: UPDATE has ZONE section (question), PREREQ section (answer),
-        %%   UPDATE section (authority).
-        %% We allow any QC/ANC/AUC here as rfc2136 defines these sections for UPDATE.
-        %%   However, typical implementations expect QC=1 (ZONE section).
-        {0, 0, ?DNS_OPCODE_UPDATE, _, _, _, _} ->
-            Msg0 = create_message_from_header(
-                Id, QR, OC, AA, TC, RD, RA, AD, CD, RC, QC, ANC, AUC, ADC
-            ),
-            decode_body(MsgBin, Rest0, Msg0);
         %% IQUERY (opcode 1) - RFC 1035 (obsolete per rfc3425)
         %% STATUS (opcode 2) - RFC 1035 (Not commonly supported)
+        %% UPDATE (opcode 5) - rfc2136 (we don't serve it; §3.1 allows NOTIMP)
         %% DSO (opcode 6) - rfc8490 (we don't support it)
         {0, 0, _, _, _, _, _} when
             ?DNS_OPCODE_IQUERY =:= OC orelse
                 ?DNS_OPCODE_STATUS =:= OC orelse
+                ?DNS_OPCODE_UPDATE =:= OC orelse
                 ?DNS_OPCODE_DSO =:= OC
         ->
             create_notimp_message(MsgBin, Id, OC, RD, CD, QC, Rest0);
@@ -499,6 +489,12 @@ decode_rrdata(MsgBin, Class, Type) ->
     decode_rrdata(MsgBin, Class, Type, MsgBin).
 
 -spec decode_rrdata(dns:message_bin(), dns:uint16(), dns:uint16(), binary()) -> dns:rrdata().
+%% rfc2136 §2.4, §2.5: in an UPDATE's prerequisite and update sections an RR with CLASS ANY or
+%% NONE carries no RDATA, so RDLENGTH=0 is the intended encoding rather than a truncated record.
+decode_rrdata(_MsgBin, Class, _Type, <<>>) when
+    ?DNS_CLASS_ANY =:= Class orelse ?DNS_CLASS_NONE =:= Class
+->
+    <<>>;
 decode_rrdata(_MsgBin, _Class, Type, <<>>) ->
     empty_rrdata(Type);
 decode_rrdata(_MsgBin, Class, ?DNS_TYPE_A, <<A, B, C, D>>) when ?CLASS_IS_IN(Class) ->
