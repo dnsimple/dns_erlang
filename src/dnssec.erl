@@ -754,18 +754,7 @@ name_order(X, X) ->
 name_order(#dns_rr{name = X}, #dns_rr{name = X}) ->
     true;
 name_order(#dns_rr{name = A}, #dns_rr{name = B}) ->
-    LabelsA = lists:reverse(dns_domain:split(A)),
-    LabelsB = lists:reverse(dns_domain:split(B)),
-    name_order_labels(LabelsA, LabelsB).
-
-name_order_labels([X | A], [X | B]) ->
-    name_order_labels(A, B);
-name_order_labels([], [_ | _]) ->
-    true;
-name_order_labels([_ | _], []) ->
-    false;
-name_order_labels([X | _], [Y | _]) ->
-    X < Y.
+    lists:reverse(dns_domain:split(A)) =< lists:reverse(dns_domain:split(B)).
 
 -spec count_labels([binary()]) -> non_neg_integer().
 count_labels([~"*" | Labels]) ->

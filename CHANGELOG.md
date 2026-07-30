@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## main
 
+## v5.0.17
+
+### Fixed
+
+- `gen_nsec/1,3,4` no longer crashes when a zone carries one name spelled both as an FQDN and relatively (`example.com` and `example.com.`).
+
 ## v5.0.16
 
 ### Fixed

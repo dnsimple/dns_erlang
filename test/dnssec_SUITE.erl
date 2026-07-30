@@ -39,6 +39,7 @@ groups() ->
             gen_nsec3_badarg,
             gen_nsec3_validation,
             gen_nsec_name_order,
+            gen_nsec_name_order_fqdn_and_relative,
             pubkey_gen,
             verify_rrset,
             verify_rrsig_expiry,
@@ -203,6 +204,27 @@ gen_nsec_name_order(_Config) ->
     ?assertEqual(3, length(Generated)),
     NSECs = [RR || #dns_rr{type = ?DNS_TYPE_NSEC} = RR <- Generated],
     ?assertEqual(3, length(NSECs)).
+
+%% One name spelled both as an FQDN and relatively is two distinct binaries that split to the same
+%% labels, so it slips past name_order/2's equality clauses and into the label comparison.
+gen_nsec_name_order_fqdn_and_relative(_Config) ->
+    RRs = [
+        #dns_rr{
+            name = ~"a.example",
+            type = ?DNS_TYPE_A,
+            class = ?DNS_CLASS_IN,
+            ttl = 3600,
+            data = #dns_rrdata_a{ip = {1, 1, 1, 1}}
+        },
+        #dns_rr{
+            name = ~"a.example.",
+            type = ?DNS_TYPE_TXT,
+            class = ?DNS_CLASS_IN,
+            ttl = 3600,
+            data = #dns_rrdata_txt{txt = [~"v=1"]}
+        }
+    ],
+    ?assertEqual(2, length(dnssec:gen_nsec(~"example", RRs, 3600))).
 
 %% Simulates wire encoding/decoding to ensure the 'data' field
 %% matches the format expected by the test comparison.
