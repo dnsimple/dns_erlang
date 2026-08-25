@@ -7,6 +7,13 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## main
 
+## v5.0.18
+
+### Updated
+
+- Name compression is 1.1x-8.9x faster across the benchmark corpus depending on how much a message repeats its names. Both the relative and fully-qualified spelling of a repeated name take the same fast path.
+- `t:dns_domain:compmap/0` is now explicitly opaque. Build one with `dns_domain:new_compmap/0`.
+
 ## v5.0.17
 
 ### Fixed

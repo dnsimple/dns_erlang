@@ -77,6 +77,11 @@ groups() ->
             compression_encoding_invalid_pointer,
             compression_encoding_position_limit,
             compression_encoding_case_insensitive,
+            compression_encoding_escaped_never_aliases,
+            compression_encoding_escaped_tail_shared,
+            compression_encoding_repeated_name,
+            compression_encoding_trailing_dot_shared,
+            compression_encoding_trailing_dot_guards,
             compression_encoding_errors,
             compression_decoding_basic,
             compression_decoding_nested,
@@ -690,12 +695,11 @@ from_wire_errors(_) ->
 %% ============================================================================
 
 compression_encoding_basic(_) ->
-    CompMap = #{},
+    CompMap = dns_domain:new_compmap(),
     Pos = 0,
-    Name = <<"example.com">>,
+    Name = ~"example.com",
     {Wire1, CompMap1} = dns_domain:to_wire(CompMap, Pos, Name),
     ?assertEqual(<<7, "example", 3, "com", 0>>, Wire1),
-    ?assertNotEqual(undefined, maps:get([<<"example">>, <<"com">>], CompMap1, undefined)),
     %% Second encoding should use compression pointer
     Pos2 = byte_size(Wire1),
     {Wire2, _CompMap2} = dns_domain:to_wire(CompMap1, Pos2, Name),
@@ -743,34 +747,95 @@ compression_encoding_prior_only(_) ->
     ?assert(Ptr < Pos3).
 
 compression_encoding_invalid_pointer(_) ->
-    %% Test that invalid pointers (pointing to current/future position) are handled
-    Name = <<"example.com">>,
+    %% Test that invalid pointers (pointing to current/future position) are handled.
+    %% This is the one case that has to reach inside the (otherwise opaque) compression map: the
+    %% state it exercises cannot be reached by encoding, since offsets only ever move forwards.
+    Name = ~"example.com",
     %% Create a compression map with an invalid pointer (points to future position)
-    InvalidCompMap = #{[<<"example">>, <<"com">>] => 100},
+    InvalidCompMap = #{~"example.com" => 100},
     Pos2 = 50,
     %% Should remove invalid pointer and encode normally (100 >= 50, so invalid)
     {Wire, NewCompMap} = dns_domain:to_wire(InvalidCompMap, Pos2, Name),
     ?assertNotEqual(<<192, 100>>, Wire),
     ?assertEqual(<<7, "example", 3, "com", 0>>, Wire),
     %% Should have added new pointer at position 50
-    ?assertEqual(50, maps:get([<<"example">>, <<"com">>], NewCompMap)),
+    ?assertEqual(50, maps:get(~"example.com", NewCompMap)),
     %% Test pointer pointing to current position (also invalid, Ptr not < Pos)
-    CurrentPosCompMap = #{[<<"example">>, <<"com">>] => 50},
+    CurrentPosCompMap = #{~"example.com" => 50},
     {Wire2, NewCompMap2} = dns_domain:to_wire(CurrentPosCompMap, 50, Name),
     ?assertEqual(<<7, "example", 3, "com", 0>>, Wire2),
-    ?assertEqual(50, maps:get([<<"example">>, <<"com">>], NewCompMap2)),
-    HighPosCompMap = #{[<<"example">>, <<"com">>] => 16385},
+    ?assertEqual(50, maps:get(~"example.com", NewCompMap2)),
+    HighPosCompMap = #{~"example.com" => 16385},
     {Wire3, _} = dns_domain:to_wire(HighPosCompMap, 16384, Name),
     ?assertEqual(<<7, "example", 3, "com", 0>>, Wire3).
 
+%% A label containing an escaped dot must never share a compression key with a name that really has
+%% a label boundary there: `a\.b.example.com` is three labels, `a.b.example.com` is four, and a
+%% pointer from one to the other would put a wrong label sequence on the wire.
+compression_encoding_escaped_never_aliases(_) ->
+    Escaped = ~"a\\.b.example.com",
+    Plain = ~"a.b.example.com",
+    %% Escaped first, then plain
+    {W1, M1} = dns_domain:to_wire(#{}, 12, Escaped),
+    ?assertEqual(<<3, "a.b", 7, "example", 3, "com", 0>>, W1),
+    {W2, _} = dns_domain:to_wire(M1, 12 + byte_size(W1), Plain),
+    ?assertMatch(<<1, "a", 1, "b", _/binary>>, W2),
+    %% Plain first, then escaped
+    {W3, M3} = dns_domain:to_wire(#{}, 12, Plain),
+    ?assertEqual(<<1, "a", 1, "b", 7, "example", 3, "com", 0>>, W3),
+    {W4, _} = dns_domain:to_wire(M3, 12 + byte_size(W3), Escaped),
+    ?assertMatch(<<3, "a.b", _/binary>>, W4),
+    %% Both round-trip out of an assembled buffer
+    Buf = <<0:96, W3/binary, W4/binary>>,
+    <<_:96, T3/binary>> = Buf,
+    <<_:96, _:(byte_size(W3))/binary, T4/binary>> = Buf,
+    ?assertMatch({Plain, _}, dns_domain:from_wire(Buf, T3)),
+    ?assertMatch({Escaped, _}, dns_domain:from_wire(Buf, T4)).
+
+%% The unambiguous tail of an escaped name still shares keys with ordinary names, so `example.com`
+%% compresses against it in both directions.
+compression_encoding_escaped_tail_shared(_) ->
+    {W1, M1} = dns_domain:to_wire(#{}, 12, ~"a\\.b.example.com"),
+    Pos2 = 12 + byte_size(W1),
+    {W2, _} = dns_domain:to_wire(M1, Pos2, ~"example.com"),
+    %% "example.com" starts 4 bytes into the escaped name's wire form
+    ?assertEqual(<<3:2, (12 + 4):14>>, W2),
+    {W3, M3} = dns_domain:to_wire(#{}, 12, ~"example.com"),
+    {W4, _} = dns_domain:to_wire(M3, 12 + byte_size(W3), ~"a\\.b.example.com"),
+    ?assertEqual(<<3, "a.b", 3:2, 12:14>>, W4).
+
+%% A name already in the map answers with a bare pointer, whatever its spelling: exact repeat, and
+%% the same name under 0x20 case randomisation.
+compression_encoding_repeated_name(_) ->
+    Name = ~"www.example.com",
+    {W1, M1} = dns_domain:to_wire(#{}, 12, Name),
+    Pos2 = 12 + byte_size(W1),
+    ?assertEqual({<<3:2, 12:14>>, M1}, dns_domain:to_wire(M1, Pos2, Name)),
+    {W2, _} = dns_domain:to_wire(M1, Pos2, ~"WwW.eXaMpLe.CoM"),
+    ?assertEqual(<<3:2, 12:14>>, W2),
+    %% and a suffix of it
+    {W3, _} = dns_domain:to_wire(M1, Pos2, ~"ns1.example.com"),
+    ?assertEqual(<<3, "ns1", 3:2, (12 + 4):14>>, W3).
+
+%% The fully-qualified spelling and the relative one are the same name and must share one
+%% compression entry.
+compression_encoding_trailing_dot_shared(_) ->
+    {W1, M1} = dns_domain:to_wire(#{}, 12, ~"example.com"),
+    {W2, _} = dns_domain:to_wire(M1, 12 + byte_size(W1), ~"example.com."),
+    ?assertEqual(<<3:2, 12:14>>, W2),
+    {W3, M3} = dns_domain:to_wire(#{}, 12, ~"example.com."),
+    {W4, _} = dns_domain:to_wire(M3, 12 + byte_size(W3), ~"example.com"),
+    ?assertEqual(<<3:2, 12:14>>, W4).
+
 compression_encoding_position_limit(_) ->
-    %% Test compression map when position exceeds 2^14 - 1 (16383)
-    CompMap = #{},
-    Name = <<"example.com">>,
+    %% A pointer carries a 14-bit offset, so a name written at or past 2^14 cannot be pointed at.
+    %% Observable as the next occurrence being written out in full rather than compressed.
+    CompMap = dns_domain:new_compmap(),
+    Name = ~"example.com",
     {Wire, NewCompMap} = dns_domain:to_wire(CompMap, 16384, Name),
     ?assertEqual(<<7, "example", 3, "com", 0>>, Wire),
-    %% Should not add to compression map when position >= 2^14
-    ?assertEqual(undefined, maps:get([<<"example">>, <<"com">>], NewCompMap, undefined)).
+    {Wire2, _} = dns_domain:to_wire(NewCompMap, 16384 + byte_size(Wire), Name),
+    ?assertEqual(<<7, "example", 3, "com", 0>>, Wire2).
 
 compression_encoding_case_insensitive(_) ->
     %% Test that case-insensitive compression works (same name in different cases compresses to same pointer)
@@ -784,6 +849,19 @@ compression_encoding_case_insensitive(_) ->
     ?assertEqual(<<7, 101, 120, 97, 109, 112, 108, 101, 0>>, Wire0),
     ?assertEqual(<<192, 0>>, Wire1),
     ?assertEqual(Wire1, Wire2).
+
+%% The compression map is consulted for the trimmed spelling of a fully-qualified name, which is
+%% only sound while the trailing dot is a real terminator. These are the two ways it is not.
+compression_encoding_trailing_dot_guards(_) ->
+    %% A name whose last label is empty stays invalid, even with the trimmed spelling in the map
+    {_, M1} = dns_domain:to_wire(dns_domain:new_compmap(), 12, ~"example.com"),
+    ?assertError({invalid_dname, empty_label}, dns_domain:to_wire(M1, 200, ~"example.com..")),
+    %% A trailing dot behind a backslash is part of an escape: `foo\.` is the single label `foo.`
+    %% and must not be handed a pointer to `foo`
+    {_, M2} = dns_domain:to_wire(dns_domain:new_compmap(), 12, ~"foo"),
+    ?assertEqual(<<4, "foo.", 0>>, element(1, dns_domain:to_wire(M2, 200, ~"foo\\."))),
+    %% An escaped backslash before the dot leaves the dot a real terminator: label `foo\`
+    ?assertEqual(<<4, "foo\\", 0>>, element(1, dns_domain:to_wire(M2, 200, ~"foo\\\\."))).
 
 compression_encoding_errors(_) ->
     %% Test edge cases for to_wire/3 (compression version)

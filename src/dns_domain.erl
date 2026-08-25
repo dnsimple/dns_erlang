@@ -7,6 +7,7 @@ This module provides strictly reversible domain name operations for use in DNS
 message encoding and decoding.
 """.
 
+-export([new_compmap/0]).
 -export([split/1, join/1, join/2]).
 -export([from_wire/1, from_wire/2]).
 -export([to_wire/1, to_wire/3]).
@@ -26,8 +27,13 @@ message encoding and decoding.
 -doc "Wire format binary.".
 -type wire() :: binary().
 
--doc "Compression map: maps label sequences to positions.".
--type compmap() :: #{labels() => non_neg_integer()}.
+-doc """
+Compression map: opaque state threaded through a run of `to_wire/3` calls.
+
+Obtain one from `new_compmap/0`, thread it through `to_wire/3`. Its lifetime is one DNS message,
+offsets in it are relative to the start of the message being built.
+""".
+-opaque compmap() :: #{dname() | labels() => non_neg_integer()}.
 
 -export_type([compmap/0]).
 
@@ -302,6 +308,11 @@ do_unescape(<<$\\, C, Rest/binary>>, Acc) ->
 do_unescape(<<C, Rest/binary>>, Acc) ->
     do_unescape(Rest, <<Acc/binary, C>>).
 
+-doc "Returns an empty compression map, for the first `to_wire/3` call of a message.".
+-spec new_compmap() -> compmap().
+new_compmap() ->
+    #{}.
+
 -doc """
 Convert domain name to wire format.
 
@@ -322,7 +333,7 @@ Returns `<<0>>` for empty names or root.
 <<3,119,119,119,7,101,120,97,109,112,108,101,3,99,111,109,0>>
 2> dns_domain:to_wire(~"example.com").
 <<7,101,120,97,109,112,108,101,3,99,111,109,0>>
-3> dns_domain:to_wire(<<>>).
+3> dns_domain:to_wire(~"").
 <<0>>
 4> dns_domain:to_wire(~"example..com").
 ** exception error: {invalid_dname, empty_label}
@@ -342,7 +353,7 @@ Converts a domain name to wire format, using DNS name compression to reduce
 message size. Maintains a compression map tracking previously encoded names
 and emits compression pointers when a name (or suffix) has been seen before.
 
-`CompMap` is the compression map mapping label sequences to their positions.
+`CompMap` is the compression map mapping name suffixes to their positions.
 `Pos` is the current position in the message where encoding starts.
 Returns `{Wire, NewCompMap}` where `Wire` is the encoded name and `NewCompMap`
 is the updated compression map.
@@ -353,7 +364,7 @@ Use this when encoding DNS messages where multiple names may share suffixes
 ## Examples:
 
 ```erlang
-1> CompMap = #{}, Pos = 0.
+1> CompMap = dns_domain:new_compmap(), Pos = 0.
 2> {Wire1, CompMap1} = dns_domain:to_wire(CompMap, Pos, ~"example.com").
 {<<7,101,120,97,109,112,108,101,3,99,111,109,0>>, #{...}}
 3> Pos2 = byte_size(Wire1).
@@ -367,102 +378,172 @@ Use this when encoding DNS messages where multiple names may share suffixes
 """.
 -spec to_wire(compmap(), non_neg_integer(), dname()) -> {wire(), compmap()}.
 to_wire(CompMap, Pos, Name) when is_binary(Name) ->
-    {Labels, LowerLabels} = to_wire_prep(Name),
-    to_wire_labels_compressed(CompMap, Pos, Labels, LowerLabels, <<>>, []).
-
-%% Label preparation: returns {Labels, LowerLabels}, where both are the same term when the name
-%% needs no lowering (the common case). Note also that label offsets are case-invariant.
-%%
-%% to_lower/1 is a strict byte-for-byte map that never touches $. or $\\ and
-%% never produces them, so label offsets are case-invariant: the name never
-%% needs to be split twice. When the name contains no backslash, labels are
-%% sub-binaries produced by binary:split/3, a trailing dot is trimmed up
-%% front (with no backslash it cannot be an escaped dot) so no trailing
-%% empty part can occur, and mixed-case names lower the trimmed name once
-%% and split it again — guaranteed to yield the structure of the already
-%% validated Labels. Escaped names fall back to the copying do_split/2.
-to_wire_prep(Name) ->
-    {DotPat, BslashPat} = compiled_patterns(),
-    case binary:match(Name, BslashPat) of
-        nomatch ->
-            Trimmed = trim_dot(Name),
-            Labels = validate(binary:split(Trimmed, DotPat, [global])),
-            case has_upper(Trimmed) of
-                false ->
-                    {Labels, Labels};
-                true ->
-                    Lower = to_lower_chunk(Trimmed, <<>>),
-                    {Labels, binary:split(Lower, DotPat, [global])}
-            end;
-        _ ->
-            Labels = do_split(Name, <<>>),
-            case has_upper(Name) of
-                false -> {Labels, Labels};
-                true -> {Labels, [to_lower_chunk(L, <<>>) || L <- Labels]}
-            end
+    Key = memo_key(Name),
+    maybe
+        miss ?= memo(CompMap, Pos, Key),
+        %% An escaped name keeps its untrimmed spelling: do_split/2 resolves its escapes.
+        case classify(Name) of
+            escaped -> to_wire_escaped(CompMap, Pos, Name);
+            false -> to_wire_lc_write(CompMap, Pos, Key, <<>>, remember(Pos, Key, []));
+            true -> to_wire_mc(CompMap, Pos, Key, to_lower_chunk(Key, <<>>), <<>>, [])
+        end
     end.
 
-compiled_patterns() ->
-    case persistent_term:get({?MODULE, patterns}, undefined) of
-        undefined ->
-            Pats = {binary:compile_pattern(<<$.>>), binary:compile_pattern(<<$\\>>)},
-            persistent_term:put({?MODULE, patterns}, Pats),
-            Pats;
-        Pats ->
-            Pats
-    end.
-
-%% Drop one trailing dot (FQDN form) so binary:split cannot produce a trailing empty part.
-trim_dot(<<>>) ->
-    <<>>;
-trim_dot(Name) ->
-    Sz = byte_size(Name) - 1,
+%% Stored keys never carry the terminating dot, so a name is keyed on its trimmed spelling. That is
+%% also the name to encode: the trim is skipped only when the final dot may be escaped, and such a
+%% name always has a backslash, so it goes down the escaped path instead.
+memo_key(Name) ->
+    Sz = byte_size(Name),
     case Name of
-        <<Trimmed:Sz/binary, $.>> -> Trimmed;
-        _ -> Name
+        %% `foo\.` is the single label `foo.`, so that final dot is not a terminator.
+        <<_:(Sz - 2)/binary, $\\, $.>> ->
+            Name;
+        <<Trimmed:(Sz - 1)/binary, $.>> ->
+            Trimmed;
+        _ ->
+            Name
     end.
 
-%% Enforce do_split's semantics on the split parts, position-ordered: a leading empty label is
-%% tolerated (historical quirk: ".foo"), any other empty label raises empty_label, and labels are
-%% limited to 63 bytes.
-validate([<<>>]) ->
-    %% "" and "." both reduce to this
-    [];
-validate([First | Rest] = Parts) when byte_size(First) =< 63 ->
-    validate_rest(Rest),
-    Parts;
-validate([First | _]) ->
-    error({label_too_long, First}).
-
-validate_rest([]) ->
-    ok;
-validate_rest([<<>> | _]) ->
-    error({invalid_dname, empty_label});
-validate_rest([L | _]) when 63 < byte_size(L) ->
-    error({label_too_long, L});
-validate_rest([_ | Rest]) ->
-    validate_rest(Rest).
-
-to_wire_labels_compressed(_, _, [], [], Acc, _) when 255 < byte_size(Acc) ->
-    error(name_too_long);
-to_wire_labels_compressed(CompMap, _Pos, [], [], Acc, Pending) ->
-    {<<Acc/binary, 0>>, merge_pending(CompMap, Pending)};
-to_wire_labels_compressed(CompMap, Pos, [L | Ls], [_ | LwrLs] = LwrLabels, Acc, Pending) ->
+%% Answering here skips preparation entirely, which is the usual shape of a response:
+%% every RR of an rrset repeats its owner name.
+memo(CompMap, _Pos, <<>>) ->
+    %% "" and "." both reduce to the root, which is never a stored key
+    {<<0>>, CompMap};
+memo(CompMap, Pos, Key) ->
     case CompMap of
-        %% Compression pointer must point to prior occurrence
-        #{LwrLabels := Ptr} when is_integer(Ptr), Ptr < Pos ->
+        #{Key := Ptr} when is_integer(Ptr), Ptr < Pos -> {<<3:2, Ptr:14>>, CompMap};
+        _ -> miss
+    end.
+
+%% All-lowercase: the remaining name is both the wire source and the key.
+to_wire_lc(CompMap, Pos, Rest, Acc, Pending) ->
+    case CompMap of
+        #{Rest := Ptr} when is_integer(Ptr), Ptr < Pos ->
+            {<<Acc/binary, 3:2, Ptr:14>>, merge_pending(CompMap, Pending)};
+        _ ->
+            to_wire_lc_write(CompMap, Pos, Rest, Acc, remember(Pos, Rest, Pending))
+    end.
+
+to_wire_lc_write(CompMap, Pos, Rest, Acc, Pending) ->
+    case dot_at(Rest, 0) of
+        nomatch ->
+            {to_wire_last_label(Acc, Rest), merge_pending(CompMap, Pending)};
+        Len ->
+            63 < Len andalso error({label_too_long, binary:part(Rest, 0, Len)}),
+            Skip = Len + 1,
+            <<_:Skip/binary, Rest1/binary>> = Rest,
+            no_empty(Rest1),
+            %% The label goes straight from Rest into the accumulator, never built on its own.
+            to_wire_lc(CompMap, Pos + Skip, Rest1, <<Acc/binary, Len, Rest:Len/binary>>, Pending)
+    end.
+
+%% Mixed case (0x20-randomised names): LRest is the lowered name at the same offset as Rest, and
+%% only LRest is ever used as a key.
+to_wire_mc(CompMap, Pos, Rest, LRest, Acc, Pending) ->
+    case CompMap of
+        #{LRest := Ptr} when is_integer(Ptr), Ptr < Pos ->
+            {<<Acc/binary, 3:2, Ptr:14>>, merge_pending(CompMap, Pending)};
+        _ ->
+            to_wire_mc_write(CompMap, Pos, Rest, LRest, Acc, remember(Pos, LRest, Pending))
+    end.
+
+to_wire_mc_write(CompMap, Pos, Rest, LRest, Acc, Pending) ->
+    case dot_at(Rest, 0) of
+        nomatch ->
+            {to_wire_last_label(Acc, Rest), merge_pending(CompMap, Pending)};
+        Len ->
+            63 < Len andalso error({label_too_long, binary:part(Rest, 0, Len)}),
+            Skip = Len + 1,
+            <<_:Skip/binary, Rest1/binary>> = Rest,
+            no_empty(Rest1),
+            <<_:Skip/binary, LRest1/binary>> = LRest,
+            to_wire_mc(
+                CompMap,
+                Pos + Skip,
+                Rest1,
+                LRest1,
+                <<Acc/binary, Len, Rest:Len/binary>>,
+                Pending
+            )
+    end.
+
+to_wire_last_label(Acc, L) ->
+    Len = byte_size(L),
+    63 < Len andalso error({label_too_long, L}),
+    Acc1 = <<Acc/binary, Len, L/binary>>,
+    255 < byte_size(Acc1) andalso error(name_too_long),
+    <<Acc1/binary, 0>>.
+
+%% An empty label is legal only at the very start of a name (the ".foo" quirk), never here.
+no_empty(<<>>) ->
+    error({invalid_dname, empty_label});
+no_empty(<<$., _/binary>>) ->
+    error({invalid_dname, empty_label});
+no_empty(_) ->
+    ok.
+
+%% Escaped names, keyed conservatively. Joining labels with "." is injective only while no label
+%% contains a "." itself: `a\.b.example.com` would otherwise share a key with the four-label
+%% `a.b.example.com` and could be handed a pointer to the wrong label sequence. So a suffix keeps
+%% the list-of-labels key whenever one of its labels carries a "." or a "\", and takes the joined
+%% binary otherwise. The two key spaces never compare equal, so they cannot collide, while the
+%% unambiguous tail of an escaped name still shares keys with ordinary names.
+to_wire_escaped(CompMap, Pos, Name) ->
+    Labels = do_split(Name, <<>>),
+    Lower =
+        case has_upper(Name) of
+            false -> Labels;
+            true -> [to_lower_chunk(L, <<>>) || L <- Labels]
+        end,
+    to_wire_esc(CompMap, Pos, Labels, Lower, 0, last_special(Lower, 0, -1), <<>>, []).
+
+to_wire_esc(CompMap, _Pos, [], [], _Idx, _Last, Acc, Pending) ->
+    255 < byte_size(Acc) andalso error(name_too_long),
+    {<<Acc/binary, 0>>, merge_pending(CompMap, Pending)};
+to_wire_esc(CompMap, Pos, [L | Ls], [_ | LwrLs] = Lwr, Idx, Last, Acc, Pending) ->
+    Key =
+        case Last < Idx of
+            true -> join_dots(Lwr);
+            false -> Lwr
+        end,
+    case CompMap of
+        #{Key := Ptr} when is_integer(Ptr), Ptr < Pos ->
             {<<Acc/binary, 3:2, Ptr:14>>, merge_pending(CompMap, Pending)};
         _ ->
             Len = byte_size(L),
             63 < Len andalso error({label_too_long, L}),
-            NewPending =
-                case Pos < (1 bsl 14) of
-                    true -> [{LwrLabels, Pos} | Pending];
-                    false -> Pending
-                end,
-            NewAcc = <<Acc/binary, Len, L/binary>>,
-            to_wire_labels_compressed(CompMap, Pos + 1 + Len, Ls, LwrLs, NewAcc, NewPending)
+            to_wire_esc(
+                CompMap,
+                Pos + 1 + Len,
+                Ls,
+                LwrLs,
+                Idx + 1,
+                Last,
+                <<Acc/binary, Len, L/binary>>,
+                remember(Pos, Key, Pending)
+            )
     end.
+
+%% Index of the last label whose joined spelling would be ambiguous, or -1.
+last_special([], _Idx, Last) ->
+    Last;
+last_special([L | Ls], Idx, Last) ->
+    case has_special(L) of
+        false -> last_special(Ls, Idx + 1, Last);
+        true -> last_special(Ls, Idx + 1, Idx)
+    end.
+
+join_dots([L]) ->
+    L;
+join_dots([L | Ls]) ->
+    Rest = join_dots(Ls),
+    <<L/binary, $., Rest/binary>>.
+
+%% Compression pointers carry a 14-bit offset; nothing beyond that is storable.
+remember(Pos, Key, Pending) when Pos < (1 bsl 14) ->
+    [{Key, Pos} | Pending];
+remember(_Pos, _Key, Pending) ->
+    Pending.
 
 %% Suffix keys of the name being encoded can never be looked up while encoding that same name
 %% (suffixes strictly shrink), so this is observably identical while avoiding one map copy per label
@@ -487,9 +568,15 @@ merge_pending(CompMap, Pending) ->
 -define(DOTS32, (?ONES32 * $.)).
 -define(BSLS32, (?ONES32 * $\\)).
 
-%% Guard-legal test that a word contains neither '.' nor '\': W bxor (C *
-%% ones) has a zero byte iff W contains byte C, and (V - ones) band (bnot V)
-%% band highs =/= 0 iff V has a zero byte (exact, no false positives).
+%% Flag word for "does W contain byte C", C given pre-multiplied by ones: the zero-byte half of the
+%% CLEAN56 test, kept separate so the matching lane can be located and not just detected.
+-define(HASBYTE56(W, C),
+    (((((W) bxor (C)) - ?ONES56) band bnot ((W) bxor (C))) band ?HIGHS56)
+).
+
+%% Guard-legal test that a word contains neither '.' nor '\': W bxor (C * ones) has a zero byte iff
+%% W contains byte C, and (V - ones) band (bnot V) band highs =/= 0 iff V has a zero byte (exact, no
+%% false positives).
 -define(CLEAN56(W),
     (0 =:=
         ((((((W) bxor ?DOTS56) - ?ONES56) band bnot ((W) bxor ?DOTS56)) bor
@@ -739,6 +826,12 @@ to_upper(Data) when is_binary(Data) ->
         upper_byte/1,
         are_equal_ci/2,
         has_upper_word/1,
+        memo/3,
+        memo_key/1,
+        classify/1,
+        lowest_byte/1,
+        no_empty/1,
+        remember/3,
         keep_first/2
     ]}
 ).
@@ -763,6 +856,63 @@ upper_word56(W) ->
     W bxor (((GeA bxor GeZ1) band AsciiMask) bsr 2).
 
 %% SWAR scan for any byte in [$A, $Z], 7 bytes at a time.
+%% Offset of the first "." in Bin, or nomatch. Returns an immediate, allocates nothing, and never
+%% has to build the label it skipped over.
+-spec dot_at(binary(), non_neg_integer()) -> nomatch | non_neg_integer().
+dot_at(<<W:56/unsigned-little, Rest/binary>>, N) ->
+    case ?HASBYTE56(W, ?DOTS56) of
+        0 -> dot_at(Rest, N + 7);
+        Z -> N + lowest_byte(Z band -Z)
+    end;
+dot_at(<<$., _/binary>>, N) ->
+    N;
+dot_at(<<_, Rest/binary>>, N) ->
+    dot_at(Rest, N + 1);
+dot_at(<<>>, _N) ->
+    nomatch.
+
+%% Byte index of the single flagged lane. The lowest flagged byte is the first match, because
+%% borrows only ever propagate towards higher bytes.
+-spec lowest_byte(non_neg_integer()) -> 0..6.
+lowest_byte(16#80) -> 0;
+lowest_byte(16#8000) -> 1;
+lowest_byte(16#800000) -> 2;
+lowest_byte(16#80000000) -> 3;
+lowest_byte(16#8000000000) -> 4;
+lowest_byte(16#800000000000) -> 5;
+lowest_byte(16#80000000000000) -> 6.
+
+%% Which of the three encode paths a name takes, in one pass: `escaped` as soon as a backslash
+%% appears, otherwise whether any byte is upper case.
+-spec classify(dname()) -> escaped | boolean().
+classify(Name) ->
+    classify(Name, false).
+
+classify(<<W:56/unsigned-little, Rest/binary>>, Up) ->
+    case ?HASBYTE56(W, ?BSLS56) of
+        0 -> classify(Rest, Up orelse has_upper_word(W));
+        _ -> escaped
+    end;
+classify(<<$\\, _/binary>>, _Up) ->
+    escaped;
+classify(<<C, Rest/binary>>, Up) ->
+    classify(Rest, Up orelse ($A =< C andalso C =< $Z));
+classify(<<>>, Up) ->
+    Up.
+
+%% Does the label carry a byte that would make its joined spelling ambiguous?
+-spec has_special(binary()) -> boolean().
+has_special(<<W:56/unsigned-little, Rest/binary>>) ->
+    (not ?CLEAN56(W)) orelse has_special(Rest);
+has_special(<<$., _/binary>>) ->
+    true;
+has_special(<<$\\, _/binary>>) ->
+    true;
+has_special(<<_, Rest/binary>>) ->
+    has_special(Rest);
+has_special(<<>>) ->
+    false.
+
 -spec has_upper(binary()) -> boolean().
 has_upper(<<W:56/unsigned-little, Rest/binary>>) ->
     has_upper_word(W) orelse has_upper(Rest);

@@ -28,9 +28,6 @@
 
 -compile({inline, [encode_bool/1]}).
 
--type compmap() :: #{dns:labels() => non_neg_integer()}.
--export_type([compmap/0]).
-
 -spec encode(dns:message()) -> dns:message_bin().
 encode(
     #dns_message{
@@ -42,16 +39,17 @@ encode(
 ) ->
     ok = assert_single_optrr(Additional),
     Head = encode_message_header(Msg),
-    encode_sections(Head, #{}, [Questions, Answers, Authority, Additional]).
+    encode_sections(Head, dns_domain:new_compmap(), [Questions, Answers, Authority, Additional]).
 
--spec encode_sections(binary(), compmap(), [dns:records()]) -> binary().
+-spec encode_sections(binary(), dns_domain:compmap(), [dns:records()]) -> binary().
 encode_sections(Acc, _CompMap, []) ->
     Acc;
 encode_sections(Acc, CompMap, [Section | Rest]) ->
     {NewBin, NewCompMap} = encode_append_section(Acc, CompMap, Section),
     encode_sections(NewBin, NewCompMap, Rest).
 
--spec encode_append_section(binary(), compmap(), dns:records()) -> {binary(), compmap()}.
+-spec encode_append_section(binary(), dns_domain:compmap(), dns:records()) ->
+    {binary(), dns_domain:compmap()}.
 encode_append_section(Acc, CompMap, []) ->
     {Acc, CompMap};
 encode_append_section(Acc, CompMap, [Rec | Rest]) ->
@@ -160,7 +158,7 @@ encode_message_default(
     %% RFC6891 §7, the question section MUST always be present
     %% The 12-byte placeholder keeps positions message-relative so compression
     %% pointers are correct; the real header replaces it in one final assembly.
-    {AccQ, CompMap1} = encode_append_section(<<0:96>>, #{}, Questions),
+    {AccQ, CompMap1} = encode_append_section(<<0:96>>, dns_domain:new_compmap(), Questions),
     QSize = byte_size(AccQ) - ?HEADER_SIZE,
     SpaceLeft1 = SpaceLeft0 - QSize,
     case encode_message_d_req(Answers, Authority, CompMap1, byte_size(AccQ), SpaceLeft1, AccQ) of
@@ -250,9 +248,9 @@ build_header(
 %% Encodes answers, then authorities, for as long as there is space.
 %% Requires both sections to fit completely, as the shipped encoder does.
 -spec encode_message_d_req(
-    dns:answers(), dns:authority(), compmap(), pos_integer(), number(), binary()
+    dns:answers(), dns:authority(), dns_domain:compmap(), pos_integer(), number(), binary()
 ) ->
-    truncated | {binary(), compmap()}.
+    truncated | {binary(), dns_domain:compmap()}.
 encode_message_d_req(Answers, Authority, CompMap, Pos, SpaceLeft, Acc) ->
     case encode_message_rec_list(Answers, CompMap, Pos, SpaceLeft, Acc) of
         {CompMap1, Acc1, []} ->
@@ -266,8 +264,9 @@ encode_message_d_req(Answers, Authority, CompMap, Pos, SpaceLeft, Acc) ->
             truncated
     end.
 
--spec encode_message_d_opt(pos_integer(), number(), compmap(), dns:records(), binary()) ->
-    false | binary().
+-spec encode_message_d_opt(
+    pos_integer(), number(), dns_domain:compmap(), dns:records(), binary()
+) -> false | binary().
 encode_message_d_opt(Pos, SpaceLeft, CompMap, Recs, Acc) ->
     case encode_message_rec_list(Recs, CompMap, Pos, SpaceLeft, Acc) of
         {_, Acc1, []} -> Acc1;
@@ -314,9 +313,9 @@ take_optrr([], Acc) -> {undefined, lists:reverse(Acc)}.
 -spec encode_message_axfr(dns:message(), number()) -> binary() | {binary(), dns:message()}.
 encode_message_axfr(#dns_message{} = Msg, MaxSize) ->
     SpaceLeft = MaxSize - ?HEADER_SIZE,
-    encode_message_axfr(Msg, ?HEADER_SIZE, SpaceLeft, #{}, <<0:96>>).
+    encode_message_axfr(Msg, ?HEADER_SIZE, SpaceLeft, dns_domain:new_compmap(), <<0:96>>).
 
--spec encode_message_axfr(dns:message(), pos_integer(), number(), compmap(), binary()) ->
+-spec encode_message_axfr(dns:message(), pos_integer(), number(), dns_domain:compmap(), binary()) ->
     binary() | {binary(), dns:message()}.
 encode_message_axfr(Msg, Pos, SpaceLeft, CompMap, Acc) ->
     {Section, RecsLen, Recs} = encode_message_pop(Msg),
@@ -420,7 +419,7 @@ encode_message_llq(
     %% tail can still overflow MaxSize on their own, so encode as much of each as fits and flag
     %% truncation rather than failing to match an empty leftover list.
     {CompMap0, AccQ, LeftoverQ} =
-        encode_message_rec_list(Q, #{}, ?HEADER_SIZE, SpaceLeft, <<0:96>>),
+        encode_message_rec_list(Q, dns_domain:new_compmap(), ?HEADER_SIZE, SpaceLeft, <<0:96>>),
     Pos0 = byte_size(AccQ),
     SpaceLeft0 = SpaceLeft - (Pos0 - ?HEADER_SIZE),
     %% Size probe only: measures how much of the authority+additional tail fits,
@@ -454,8 +453,10 @@ encode_message_llq(
         _ -> {Bin, Msg#dns_message{anc = LeftoverAnC, answers = LeftoverAn}}
     end.
 
--spec encode_message_rec_list(dns:records(), compmap(), pos_integer(), number(), binary()) ->
-    {compmap(), binary(), dns:records()}.
+-spec encode_message_rec_list(
+    dns:records(), dns_domain:compmap(), pos_integer(), number(), binary()
+) ->
+    {dns_domain:compmap(), binary(), dns:records()}.
 encode_message_rec_list([Rec | Rest] = Recs, CompMap, Pos, SpaceLeft, Body) ->
     case encode_message_rec(Rec, CompMap, Pos, SpaceLeft, Body) of
         {NewBody, CompMap1} ->
@@ -475,11 +476,11 @@ encode_message_rec_list([], CompMap, _, _, Body) ->
 %% that term, so no extra copy is taken on the hot path.
 -spec encode_message_rec(
     dns:query() | dns:optrr() | dns:rr(),
-    compmap(),
+    dns_domain:compmap(),
     non_neg_integer(),
     number(),
     binary()
-) -> {binary(), compmap()} | not_appended.
+) -> {binary(), dns_domain:compmap()} | not_appended.
 encode_message_rec(#dns_query{name = N, type = T, class = C}, CompMap, Pos, MaxSize, Acc) ->
     {NameBin, CompMap0} = encode_dname(CompMap, Pos, N),
     RecSize = byte_size(NameBin) + 2 + 2,
@@ -523,8 +524,10 @@ encode_message_rec(
             not_appended
     end.
 
--spec encode_message_rec_unbounded(binary(), compmap(), dns:query() | dns:optrr() | dns:rr()) ->
-    {binary(), compmap()}.
+-spec encode_message_rec_unbounded(
+    binary(), dns_domain:compmap(), dns:query() | dns:optrr() | dns:rr()
+) ->
+    {binary(), dns_domain:compmap()}.
 encode_message_rec_unbounded(Acc, CompMap, #dns_query{name = N, type = T, class = C}) ->
     {Wire, CompMap0} = encode_dname(CompMap, byte_size(Acc), N),
     {<<Acc/binary, Wire/binary, T:16, C:16>>, CompMap0};
@@ -601,8 +604,9 @@ encode_rrdata(Class, Data) ->
 
 %% Compatibility wrapper over the appending encoder: Pos is the message
 %% position where the RDATA begins, as before.
--spec encode_rrdata(non_neg_integer(), dns:class(), dns:rrdata(), undefined | compmap()) ->
-    {binary(), undefined | compmap()}.
+-spec encode_rrdata(
+    non_neg_integer(), dns:class(), dns:rrdata(), undefined | dns_domain:compmap()
+) -> {binary(), undefined | dns_domain:compmap()}.
 encode_rrdata(Pos, Class, Data, CompMap) ->
     {WithLen, CompMap1} = encode_rrdata_append(<<>>, Pos, Class, Data, CompMap),
     <<_:16, Bin/binary>> = WithLen,
@@ -613,9 +617,9 @@ encode_rrdata(Pos, Class, Data, CompMap) ->
 %% intermediate rdata binary. RdataPos is the message position where the
 %% RDATA begins (i.e. after the RDLENGTH field).
 -spec encode_rrdata_append(
-    binary(), non_neg_integer(), dns:class(), dns:rrdata(), undefined | compmap()
+    binary(), non_neg_integer(), dns:class(), dns:rrdata(), undefined | dns_domain:compmap()
 ) ->
-    {binary(), undefined | compmap()}.
+    {binary(), undefined | dns_domain:compmap()}.
 encode_rrdata_append(Acc, _Pos, Class, #dns_rrdata_a{ip = {A, B, C, D}}, CompMap) when
     ?CLASS_IS_IN(Class)
 ->
@@ -1367,14 +1371,16 @@ encode_rrdata_append(Acc, _Pos, _Class, #dns_rrdata_txt{txt = Strings}, CompMap)
 encode_rrdata_append(Acc, _Pos, _Class, Bin, CompMap) when is_binary(Bin) ->
     {<<Acc/binary, (byte_size(Bin)):16, Bin/binary>>, CompMap}.
 
--spec append_dname_rdata(binary(), non_neg_integer(), dns:dname(), undefined | compmap()) ->
-    {binary(), undefined | compmap()}.
+-spec append_dname_rdata(
+    binary(), non_neg_integer(), dns:dname(), undefined | dns_domain:compmap()
+) ->
+    {binary(), undefined | dns_domain:compmap()}.
 append_dname_rdata(Acc, Pos, Name, CompMap) ->
     {NameBin, CompMap1} = encode_dname(CompMap, Pos, Name),
     {<<Acc/binary, (byte_size(NameBin)):16, NameBin/binary>>, CompMap1}.
 
--spec append_text_rdata(binary(), [binary()], undefined | compmap()) ->
-    {binary(), undefined | compmap()}.
+-spec append_text_rdata(binary(), [binary()], undefined | dns_domain:compmap()) ->
+    {binary(), undefined | dns_domain:compmap()}.
 append_text_rdata(Acc, Strings, CompMap) ->
     TextBin = encode_text(Strings),
     {<<Acc/binary, (byte_size(TextBin)):16, TextBin/binary>>, CompMap}.
@@ -1532,8 +1538,8 @@ do_encode_optrrdata(#dns_opt_unknown{id = Id, bin = Data}) when
 ->
     {Id, Data}.
 
--spec encode_dname(undefined | compmap(), non_neg_integer(), dns:dname()) ->
-    {dns:dname(), undefined | compmap()}.
+-spec encode_dname(undefined | dns_domain:compmap(), non_neg_integer(), dns:dname()) ->
+    {dns:dname(), undefined | dns_domain:compmap()}.
 encode_dname(undefined, _Pos, Name) ->
     {dns_domain:to_wire(Name), undefined};
 encode_dname(CompMap, Pos, Name) ->
