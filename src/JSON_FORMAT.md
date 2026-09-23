@@ -1552,7 +1552,7 @@ as defined in [RFC 9460](https://datatracker.ietf.org/doc/html/rfc9460).
 - `port` (`integer()`): Port number (0-65535)
 - `ipv4hint` (`[string()]`): List of IPv4 addresses as strings (e.g., `["192.168.1.1", "192.168.1.2"]`)
 - `ipv6hint` (`[string()]`): List of IPv6 addresses as strings (e.g., `["2001:db8::1"]`)
-- `ech` (`binary()`): Encrypted ClientHello (ECH) configuration as decoded binary
+- `ech` (`binary()`): Encrypted ClientHello (ECH) configuration, the ECHConfigList in base64 as in the zone file presentation format
 - `keyNNNN` (`binary()` | `null`): Unknown parameters where `NNNN` is the parameter key number (0-65535). In JSON the key is the string `"key"` followed by the decimal number (e.g. `"key65001"`). The value is either a binary (as string) or `null` for no-value parameters.
 
 **Example:**
@@ -1567,12 +1567,13 @@ as defined in [RFC 9460](https://datatracker.ietf.org/doc/html/rfc9460).
         "port": 443,
         "ipv4hint": ["192.168.1.1", "192.168.1.2"],
         "ipv6hint": ["2001:db8::1"],
-        "ech": "ech-config-data",
+        "ech": "AEL+DQA+BQAgACB24M9r/v3twUiV0u1ZFL2XM+hVDrtfz2BEsbS3hJ9CQwAEAAEAAQAPZWNoLmV4YW1wbGUuY29tAAA=",
         "key65001": "custom-param-value",
         "key65002": null
     }
 }
 ```
 
-**Note:** All parameter values are in their decoded/native format (not base64-encoded).
-Binary values like ALPN identifiers and ECH config are provided as raw binaries, not base64 strings.
+**Note:** Parameter values are in their decoded/native format, with one exception: `ech`
+is base64-encoded. An ECHConfigList is arbitrary octets, which a JSON string cannot carry.
+ALPN identifiers are provided as plain strings.

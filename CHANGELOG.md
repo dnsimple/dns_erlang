@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## main
 
+## v5.0.19
+
+### Fixed
+
+- The SVCB/HTTPS `ech` parameter is base64 in JSON, both ways. `from_json/1` took the string as the raw ECHConfigList, so a base64 value was served as its own characters, and `to_json/1` crashed on any real ECHConfigList because it is not valid UTF-8.
+
 ## v5.0.18
 
 ### Updated

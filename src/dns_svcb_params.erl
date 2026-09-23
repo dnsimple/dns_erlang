@@ -140,7 +140,7 @@ parse_svcb_params_from_json([{Key, Value} | Rest], Acc) ->
             ?DNS_SVCB_PARAM_PORT when is_integer(Value) ->
                 Acc#{ParamKey => Value};
             ?DNS_SVCB_PARAM_ECH when is_binary(Value) ->
-                Acc#{ParamKey => Value};
+                Acc#{ParamKey => decode_ech_from_json(Value)};
             ?DNS_SVCB_PARAM_IPV4HINT when is_list(Value) ->
                 IPs = [parse_ipv4_for_json(IP) || IP <- Value],
                 Acc#{ParamKey => IPs};
@@ -458,7 +458,7 @@ encode_value_to_json(?DNS_SVCB_PARAM_PORT, Value) when is_integer(Value) ->
 encode_value_to_json(?DNS_SVCB_PARAM_IPV4HINT, Value) when is_list(Value) ->
     [list_to_binary(inet:ntoa(V)) || V <- Value];
 encode_value_to_json(?DNS_SVCB_PARAM_ECH, Value) when is_binary(Value) ->
-    Value;
+    base64:encode(Value);
 encode_value_to_json(?DNS_SVCB_PARAM_IPV6HINT, Value) when is_list(Value) ->
     [list_to_binary(inet:ntoa(V)) || V <- Value];
 encode_value_to_json(Key, none) when is_integer(Key) ->
@@ -471,6 +471,17 @@ encode_value_to_json(Key, Value) ->
 %% ============================================================================
 %% Helpers
 %% ============================================================================
+
+%% An ECHConfigList is arbitrary octets, which a JSON string cannot carry, so
+%% JSON holds it in base64, as the zone file presentation format does.
+-spec decode_ech_from_json(binary()) -> binary() | no_return().
+decode_ech_from_json(Value) ->
+    case safe_base64_decode(Value) of
+        error ->
+            error({svcb_param_invalid_value, ?DNS_SVCB_PARAM_ECH, Value});
+        ECHConfig ->
+            ECHConfig
+    end.
 
 -spec safe_base64_decode(string() | binary()) -> binary() | error.
 safe_base64_decode(Value) ->

@@ -25,6 +25,8 @@ groups() ->
             test_svcb_params_numeric_keys_0_to_6_equivalent_to_named,
             test_svcb_params_numeric_key_invalid_value_rejected,
             test_svcb_params_to_json_invalid_key_rejected,
+            test_svcb_ech_json_base64,
+            test_svcb_ech_json_invalid_base64_rejected,
             test_dnskey_formats,
             test_nsec3_salt,
             test_ipseckey_gateway,
@@ -655,7 +657,7 @@ test_svcb_params(_Config) ->
                     ?DNS_SVCB_PARAM_NO_DEFAULT_ALPN => none,
                     ?DNS_SVCB_PARAM_PORT => 443,
                     ?DNS_SVCB_PARAM_IPV4HINT => [{192, 168, 1, 1}, {192, 168, 1, 2}],
-                    ?DNS_SVCB_PARAM_ECH => ~"ech-config-data",
+                    ?DNS_SVCB_PARAM_ECH => ech_config_list(),
                     ?DNS_SVCB_PARAM_IPV6HINT => [
                         {16#2001, 16#0db8, 16#85a3, 0, 0, 16#8a2e, 16#0370, 16#7334}
                     ]
@@ -799,7 +801,7 @@ test_svcb_params_numeric_keys_0_to_6_equivalent_to_named(_Config) ->
         ~"key2" => null,
         ~"key3" => 443,
         ~"key4" => [~"192.0.2.1"],
-        ~"key5" => ~"ech-data",
+        ~"key5" => base64:encode(ech_config_list()),
         ~"key6" => [~"2001:db8::1"]
     },
     Params = dns_svcb_params:from_json(JsonParams),
@@ -811,7 +813,7 @@ test_svcb_params_numeric_keys_0_to_6_equivalent_to_named(_Config) ->
     ?assertEqual(none, maps:get(?DNS_SVCB_PARAM_NO_DEFAULT_ALPN, Params)),
     ?assertEqual(443, maps:get(?DNS_SVCB_PARAM_PORT, Params)),
     ?assertEqual([{192, 0, 2, 1}], maps:get(?DNS_SVCB_PARAM_IPV4HINT, Params)),
-    ?assertEqual(~"ech-data", maps:get(?DNS_SVCB_PARAM_ECH, Params)),
+    ?assertEqual(ech_config_list(), maps:get(?DNS_SVCB_PARAM_ECH, Params)),
     ?assertEqual(
         [{16#2001, 16#0db8, 0, 0, 0, 0, 0, 1}],
         maps:get(?DNS_SVCB_PARAM_IPV6HINT, Params)
@@ -823,6 +825,46 @@ test_svcb_params_numeric_keys_0_to_6_equivalent_to_named(_Config) ->
         maps:get(?DNS_SVCB_PARAM_MANDATORY, Params), maps:get(?DNS_SVCB_PARAM_MANDATORY, Params2)
     ),
     ?assertEqual(maps:get(?DNS_SVCB_PARAM_PORT, Params), maps:get(?DNS_SVCB_PARAM_PORT, Params2)).
+
+%% An ECHConfigList is arbitrary octets, so JSON carries it in base64, as the
+%% zone file presentation format does. Taken raw, the base64 characters
+%% themselves ended up on the wire as the ECHConfigList.
+test_svcb_ech_json_base64(_Config) ->
+    ECH = ech_config_list(),
+    JsonMap = #{
+        ~"name" => ~"example.com",
+        ~"type" => ~"HTTPS",
+        ~"ttl" => 3600,
+        ~"data" => #{
+            ~"svc_priority" => 1,
+            ~"target_name" => ~"target.example.com",
+            ~"svc_params" => #{~"alpn" => [~"h2"], ~"ech" => base64:encode(ECH)}
+        }
+    },
+    RR = dns_json:from_map(JsonMap),
+    #dns_rr{data = #dns_rrdata_https{svc_params = #{?DNS_SVCB_PARAM_ECH := FromJson}}} = RR,
+    ?assertEqual(ECH, FromJson),
+    %% The same value in a zone file decodes to the same octets
+    Zone =
+        <<"example.com. 3600 IN HTTPS 1 target.example.com. alpn=h2 ech=\"",
+            (base64:encode(ECH))/binary, "\"\n">>,
+    {ok, [#dns_rr{data = #dns_rrdata_https{svc_params = FromZone}}]} =
+        dns_zone:parse_string(Zone, #{origin => ~"example.com."}),
+    ?assertEqual(ECH, maps:get(?DNS_SVCB_PARAM_ECH, FromZone)),
+    %% Through JSON text, not only the map: raw octets such as 16#fe are not
+    %% valid UTF-8 and would not encode at all
+    Text = iolist_to_binary(json:encode(dns_json:to_map(RR))),
+    ?assertEqual(RR, dns_json:from_map(json:decode(Text))).
+
+test_svcb_ech_json_invalid_base64_rejected(_Config) ->
+    ?assertError(
+        {svcb_param_invalid_value, ?DNS_SVCB_PARAM_ECH, _},
+        dns_svcb_params:from_json(#{~"ech" => ~"not base64!"})
+    ),
+    ?assertError(
+        {svcb_param_invalid_value, ?DNS_SVCB_PARAM_ECH, _},
+        dns_svcb_params:from_json(#{~"key5" => ~"not base64!"})
+    ).
 
 %% key0-key6 with invalid value type are rejected (same as named)
 test_svcb_params_numeric_key_invalid_value_rejected(_Config) ->
@@ -1360,6 +1402,13 @@ test_edge_cases(_Config) ->
     %% Record roundtrip: to_map -> from_map yields same record
     ?assertEqual(SVCBRR, dns_json:from_map(dns_json:to_map(SVCBRR))),
     ?assertEqual(HTTPSRR, dns_json:from_map(dns_json:to_map(HTTPSRR))).
+
+%% A real ECHConfigList (public_name ech.example.com), as `openssl ech` writes
+%% it. Starts 00 42 fe 0d, so it is not valid UTF-8.
+ech_config_list() ->
+    base64:decode(
+        ~"AEL+DQA+BQAgACB24M9r/v3twUiV0u1ZFL2XM+hVDrtfz2BEsbS3hJ9CQwAEAAEAAQAPZWNoLmV4YW1wbGUuY29tAAA="
+    ).
 
 assert_transcode(Record) when is_tuple(Record) ->
     Map = dns_json:to_map(Record),
