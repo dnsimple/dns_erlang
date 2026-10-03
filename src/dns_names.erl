@@ -567,7 +567,7 @@ name_svcb_param(Bin) when is_binary(Bin) ->
                 KeyInt when KeyInt >= 7, KeyInt =< 65535 -> KeyInt;
                 _ -> undefined
             catch
-                _:_ -> undefined
+                error:badarg -> undefined
             end;
         _ ->
             undefined

@@ -488,7 +488,7 @@ safe_base64_decode(Value) ->
     try
         base64:decode(Value)
     catch
-        _:_ ->
+        error:_ ->
             error
     end.
 

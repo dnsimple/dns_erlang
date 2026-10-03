@@ -655,7 +655,7 @@ parse_loc_rfc1876_presentation(RData) ->
                             alt = Alt
                         }}
                     catch
-                        _:_ -> error
+                        error:_ -> error
                     end;
                 _ ->
                     error
@@ -1112,7 +1112,7 @@ build_rdata("CERT", RData, Ctx) ->
                         try
                             base64:decode(CertData)
                         catch
-                            _:_ ->
+                            error:_ ->
                                 ensure_binary(CertData)
                         end
                 end,
@@ -1128,7 +1128,7 @@ build_rdata("DHCID", RData, Ctx) ->
                 Data = base64:decode(Base64Data),
                 {ok, #dns_rrdata_dhcid{data = Data}}
             catch
-                _:_ ->
+                error:_ ->
                     {error, make_rdata_error(~"DHCID", RData, Ctx)}
             end;
         _ ->
@@ -1143,7 +1143,7 @@ build_rdata("OPENPGPKEY", RData, Ctx) ->
                 Data = base64:decode(Base64Data),
                 {ok, #dns_rrdata_openpgpkey{data = Data}}
             catch
-                _:_ ->
+                error:_ ->
                     {error, make_rdata_error(~"OPENPGPKEY", RData, Ctx)}
             end;
         _ ->
@@ -1390,7 +1390,7 @@ build_rdata("DNSKEY", RData, Ctx) ->
                             keytag = KeyTag
                         }}
                     catch
-                        _:_ ->
+                        error:_ ->
                             {error, make_rdata_error(~"DNSKEY", RData, Ctx)}
                     end;
                 error ->
@@ -1421,7 +1421,7 @@ build_rdata("CDNSKEY", RData, Ctx) ->
                             keytag = KeyTag
                         }}
                     catch
-                        _:_ ->
+                        error:_ ->
                             {error, make_rdata_error(~"CDNSKEY", RData, Ctx)}
                     end;
                 error ->
@@ -1457,7 +1457,7 @@ build_rdata("KEY", RData, Ctx) ->
                     public_key = PublicKey
                 }}
             catch
-                _:_ ->
+                error:_ ->
                     {error, make_rdata_error(~"KEY", RData, Ctx)}
             end;
         [{int, Flags}, {int, Protocol}, {int, Alg}, {domain, PublicKeyB64}] when
@@ -1482,7 +1482,7 @@ build_rdata("KEY", RData, Ctx) ->
                     public_key = PublicKey
                 }}
             catch
-                _:_ ->
+                error:_ ->
                     {error, make_rdata_error(~"KEY", RData, Ctx)}
             end;
         _ ->
@@ -1595,7 +1595,7 @@ build_rdata("RRSIG", RData, Ctx) ->
                             signature = Signature
                         }}
                     catch
-                        _:_ ->
+                        error:_ ->
                             {error, make_rdata_error(~"RRSIG", RData, Ctx)}
                     end;
                 error ->
@@ -1702,13 +1702,13 @@ build_rdata("NSEC3", RData, Ctx) ->
                         try
                             base32:decode(list_to_binary(HashB32), [hex])
                         catch
-                            _:_ -> <<>>
+                            error:_ -> <<>>
                         end;
                     {domain, HashB32} when is_list(HashB32) ->
                         try
                             base32:decode(list_to_binary(HashB32), [hex])
                         catch
-                            _:_ -> <<>>
+                            error:_ -> <<>>
                         end;
                     _ ->
                         <<>>
@@ -1973,7 +1973,7 @@ extract_strings(RData) when is_list(RData) ->
         Strings = [list_to_binary(S) || {string, S} <- RData, is_list(S)],
         {ok, Strings}
     catch
-        _:_ -> {error, invalid_strings}
+        error:badarg -> {error, invalid_strings}
     end.
 
 %% Resolve a name relative to the origin
