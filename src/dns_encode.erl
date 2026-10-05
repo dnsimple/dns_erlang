@@ -709,8 +709,10 @@ encode_rrdata_append(
         <<Acc/binary, (4 + byte_size(Digest)):16, KeyTag:16, Alg:8, DigestType:8, Digest/binary>>,
         CompMap
     };
-encode_rrdata_append(Acc, Pos, _Class, #dns_rrdata_dname{dname = Name}, CompMap) ->
-    append_dname_rdata(Acc, Pos, Name, CompMap);
+encode_rrdata_append(Acc, _Pos, _Class, #dns_rrdata_dname{dname = Name}, CompMap) ->
+    %% RFC6672§2.5: the target MUST NOT be compressed
+    NameBin = dns_domain:to_wire(Name),
+    {<<Acc/binary, (byte_size(NameBin)):16, NameBin/binary>>, CompMap};
 encode_rrdata_append(
     Acc,
     _Pos,
@@ -984,15 +986,14 @@ encode_rrdata_append(
     };
 encode_rrdata_append(
     Acc,
-    Pos,
+    _Pos,
     _Class,
     #dns_rrdata_kx{preference = Pref, exchange = Name},
     CompMap
 ) ->
-    %% Via encode_dname/3: encode_rrdata/2 passes no compmap, which only the
-    %% wrapper tolerates -- to_wire/3 crashed with badmap on every KX record.
-    {Wire, NewCompMap} = encode_dname(CompMap, Pos + 2, Name),
-    {<<Acc/binary, (2 + byte_size(Wire)):16, Pref:16, Wire/binary>>, NewCompMap};
+    %% RFC3597§4: KX is not one of RFC 1035's types, so its name is not compressed
+    Wire = dns_domain:to_wire(Name),
+    {<<Acc/binary, (2 + byte_size(Wire)):16, Pref:16, Wire/binary>>, CompMap};
 encode_rrdata_append(
     Acc,
     _Pos,
@@ -1200,17 +1201,19 @@ encode_rrdata_append(
     };
 encode_rrdata_append(
     Acc,
-    Pos,
+    _Pos,
     _Class,
     #dns_rrdata_nxt{dname = NxtDName, types = Types},
     CompMap
 ) ->
-    {NextDNameBin, NewCompMap} = encode_dname(CompMap, Pos, NxtDName),
+    %% RFC3597§4: NXT is not one of RFC 1035's types, so its name is not
+    %% compressed, which RFC 2535 §5.2 had allowed
+    NextDNameBin = dns_domain:to_wire(NxtDName),
     BMP = encode_nxt_bmp(Types),
     {
         <<Acc/binary, (byte_size(NextDNameBin) + byte_size(BMP)):16, NextDNameBin/binary,
             BMP/binary>>,
-        NewCompMap
+        CompMap
     };
 encode_rrdata_append(Acc, Pos, _Class, #dns_rrdata_ptr{dname = Name}, CompMap) ->
     append_dname_rdata(Acc, Pos, Name, CompMap);
@@ -1247,13 +1250,14 @@ encode_rrdata_append(
     };
 encode_rrdata_append(
     Acc,
-    Pos,
+    _Pos,
     _Class,
     #dns_rrdata_rt{preference = Pref, host = Name},
     CompMap
 ) ->
-    {Wire, NewCompMap} = encode_dname(CompMap, Pos + 2, Name),
-    {<<Acc/binary, (2 + byte_size(Wire)):16, Pref:16, Wire/binary>>, NewCompMap};
+    %% RFC3597§4: RT is not one of RFC 1035's types, so its name is not compressed
+    Wire = dns_domain:to_wire(Name),
+    {<<Acc/binary, (2 + byte_size(Wire)):16, Pref:16, Wire/binary>>, CompMap};
 encode_rrdata_append(
     Acc,
     Pos,
