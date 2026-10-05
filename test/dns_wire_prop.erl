@@ -268,6 +268,7 @@ decodable_type() ->
         ?DNS_TYPE_EUI64,
         ?DNS_TYPE_HHIT,
         ?DNS_TYPE_HINFO,
+        ?DNS_TYPE_HIP,
         ?DNS_TYPE_HTTPS,
         ?DNS_TYPE_IPSECKEY,
         ?DNS_TYPE_KEY,
@@ -383,6 +384,11 @@ rrdata() ->
         ?LET(D, bin(1, 40), #dns_rrdata_hhit{data = D}),
         ?LET(D, bin(1, 40), #dns_rrdata_brid{data = D}),
         ?LET({C, O}, {bin(0, 20), bin(0, 20)}, #dns_rrdata_hinfo{cpu = C, os = O}),
+        ?LET(
+            {A, H, K, S},
+            {u8(), bin(1, 20), bin(1, 40), ?LET(N, integer(0, 3), vector(N, dname()))},
+            #dns_rrdata_hip{alg = A, hit = H, public_key = K, rendezvous_servers = S}
+        ),
         ?LET({P, T}, {u16(), dname()}, #dns_rrdata_https{
             svc_priority = P,
             target_name = T,
@@ -622,6 +628,7 @@ type_of(#dns_rrdata_eui48{}) -> ?DNS_TYPE_EUI48;
 type_of(#dns_rrdata_eui64{}) -> ?DNS_TYPE_EUI64;
 type_of(#dns_rrdata_hhit{}) -> ?DNS_TYPE_HHIT;
 type_of(#dns_rrdata_hinfo{}) -> ?DNS_TYPE_HINFO;
+type_of(#dns_rrdata_hip{}) -> ?DNS_TYPE_HIP;
 type_of(#dns_rrdata_https{}) -> ?DNS_TYPE_HTTPS;
 type_of(#dns_rrdata_ipseckey{}) -> ?DNS_TYPE_IPSECKEY;
 type_of(#dns_rrdata_key{}) -> ?DNS_TYPE_KEY;

@@ -665,11 +665,13 @@ encoding_description(direct, FieldName, TypeStr) ->
     HasDname = nomatch =/= string:find(TypeStrLower, "dname"),
     HasBinary = nomatch =/= string:find(TypeStrLower, "binary"),
     HasSvcbParams = nomatch =/= string:find(TypeStrLower, "svcb_svc_params"),
+    IsList = nomatch =/= string:prefix(TypeStr, "["),
     case FieldName of
         ip ->
             ~"IP address as string";
         svc_params when HasSvcbParams ->
             ~"Map of SVCB service parameters (see [SVCB Service Parameters below](#svcb-service-parameters))";
+        _ when HasDname andalso IsList -> ~"List of domain names (dname format)";
         _ when HasDname orelse HasBinary -> ~"Binary data (dname format)";
         _ ->
             ~"Direct value"
@@ -835,6 +837,8 @@ example_value_map() ->
         locator64 => ~"\"20010DB811401000\"",
         fqdn => ~"\"l64-subnet1.example.com.\"",
         relay_type => ~"1",
+        hit => ~"\"200100107B1A74DF365639CC39F1D578\"",
+        rendezvous_servers => ~"[\"rvs.example.com.\"]",
         relay => ~"\"203.0.113.15\"",
         target => ~"\"target.example.com.\"",
         target_name => ~"\"target.example.com.\"",

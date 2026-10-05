@@ -583,6 +583,31 @@ Non-RR records (message, query, OPT records) use a two-level nested map format:
 
 **Note:** This format is used within the `data` field of `dns_rr` records.
 
+### HIP (dns_rrdata_hip) [RFC8005](https://datatracker.ietf.org/doc/html/rfc8005)
+
+**Format:** RRDATA fields (used within `dns_rr.data`)
+
+**Fields:**
+
+- `alg` (`t:dns:uint8/0`): Direct value
+- `hit` (`t:binary/0`): Base16 (hex)-encoded binary
+- `public_key` (`t:binary/0`): Base64-encoded public key
+- `rendezvous_servers` ([`t:dns:dname/0`]): List of domain names (dname format)
+
+**Example:**
+
+```json
+{
+    "alg": 0,
+    "hit": "200100107B1A74DF365639CC39F1D578",
+    "public_key": "base64-encoded-data",
+    "rendezvous_servers": ["rvs.example.com."]
+}
+```
+
+
+**Note:** This format is used within the `data` field of `dns_rr` records.
+
 ### HTTPS (dns_rrdata_https)
 
 **Format:** RRDATA fields (used within `dns_rr.data`)

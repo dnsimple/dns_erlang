@@ -125,7 +125,8 @@ simple_valid_rr() ->
             ?DNS_TYPE_LP,
             ?DNS_TYPE_AMTRELAY,
             ?DNS_TYPE_HHIT,
-            ?DNS_TYPE_BRID
+            ?DNS_TYPE_BRID,
+            ?DNS_TYPE_HIP
         ]),
         ?LET(
             {Name, Class, TTL, Data},
@@ -467,9 +468,23 @@ rdata(Type) ->
                 {range(0, 65535), dns_prop_generator:simple_dname()},
                 #dns_rrdata_lp{preference = Pref, fqdn = FQDN}
             );
-        %% The CBOR array and map heads lead the base64 with a letter. The lexer reads
-        %% a word of digits as a number, or one like "1d2h" as a TTL, so base64 data
-        %% that came out that way would not parse, a limitation of the zone parser.
+        %% The lexer reads a word of digits as a number, or one like "1d2h" as a TTL,
+        %% a limitation of the zone parser, so hex and base64 data that came out that
+        %% way would not parse. A HIT is drawn with a hex letter in it, and the key and
+        %% the CBOR array and map heads lead their base64 with a letter.
+        ?DNS_TYPE_HIP ->
+            ?LET(
+                {Alg, HIT, PublicKey, Servers},
+                {
+                    range(0, 255),
+                    ?SUCHTHAT(H, binary(16), has_hex_letter(H)),
+                    ?LET(Key, binary(), <<3, 1, 0, 1, Key/binary>>),
+                    list(dns_prop_generator:simple_dname())
+                },
+                #dns_rrdata_hip{
+                    alg = Alg, hit = HIT, public_key = PublicKey, rendezvous_servers = Servers
+                }
+            );
         ?DNS_TYPE_HHIT ->
             ?LET(Data, binary(), #dns_rrdata_hhit{data = <<16#83, Data/binary>>});
         ?DNS_TYPE_BRID ->
@@ -596,6 +611,7 @@ valid_zone_string() ->
                                     ?DNS_TYPE_AMTRELAY -> "AMTRELAY";
                                     ?DNS_TYPE_HHIT -> "HHIT";
                                     ?DNS_TYPE_BRID -> "BRID";
+                                    ?DNS_TYPE_HIP -> "HIP";
                                     _ -> "A"
                                 end,
                             RDataStr = format_rdata(Type, Data),
@@ -685,8 +701,23 @@ format_rdata(?DNS_TYPE_HHIT, #dns_rrdata_hhit{data = Data}) ->
     format_base64_pieces(Data);
 format_rdata(?DNS_TYPE_BRID, #dns_rrdata_brid{data = Data}) ->
     format_base64_pieces(Data);
+format_rdata(?DNS_TYPE_HIP, #dns_rrdata_hip{
+    alg = Alg, hit = HIT, public_key = PublicKey, rendezvous_servers = Servers
+}) ->
+    %% Lower-case hex, the spelling the parser must also accept
+    lists:flatten(
+        io_lib:format("( ~B ~s ~s ~s )", [
+            Alg,
+            string:lowercase(binary_to_list(binary:encode_hex(HIT))),
+            base64:encode(PublicKey),
+            lists:join(" ", [binary_to_list(S) || S <- Servers])
+        ])
+    );
 format_rdata(_Type, _Data) ->
     "192.0.2.1".
+
+has_hex_letter(Bin) ->
+    nomatch =/= re:run(binary:encode_hex(Bin), "[A-F]").
 
 %% RFC 9886 §5.1.1: base64 split into whitespace-separated pieces in parentheses.
 %% The lexer reads a word of digits as a number, or one like "1d2h" as a TTL, so the
@@ -746,6 +777,8 @@ normalize_rdata_dnames(#dns_rrdata_srv{target = T} = R) ->
     R#dns_rrdata_srv{target = dns_domain:to_lower(T)};
 normalize_rdata_dnames(#dns_rrdata_lp{fqdn = FQDN} = R) ->
     R#dns_rrdata_lp{fqdn = dns_domain:to_lower(FQDN)};
+normalize_rdata_dnames(#dns_rrdata_hip{rendezvous_servers = Servers} = R) ->
+    R#dns_rrdata_hip{rendezvous_servers = [dns_domain:to_lower(S) || S <- Servers]};
 normalize_rdata_dnames(#dns_rrdata_amtrelay{relay_type = 3, relay = Relay} = R) ->
     R#dns_rrdata_amtrelay{relay = dns_domain:to_lower(Relay)};
 normalize_rdata_dnames(#dns_rrdata_nxt{dname = DName, types = Types} = R) ->

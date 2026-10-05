@@ -150,6 +150,7 @@ dns_type() ->
         ?DNS_TYPE_AMTRELAY,
         ?DNS_TYPE_HHIT,
         ?DNS_TYPE_BRID,
+        ?DNS_TYPE_HIP,
         ?DNS_TYPE_ZONEMD,
         ?DNS_TYPE_CSYNC,
         ?DNS_TYPE_DSYNC,

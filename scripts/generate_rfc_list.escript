@@ -63,6 +63,7 @@
     ~"7043" => ~"Resource Records for EUI-48 and EUI-64 Addresses in the DNS",
     ~"8777" => ~"DNS Reverse IP Automatic Multicast Tunneling (AMT) Discovery",
     ~"9886" => ~"DRIP Entity Tags (DETs) in the Domain Name System",
+    ~"8005" => ~"Host Identity Protocol (HIP) Domain Name System (DNS) Extension",
     ~"8162" => ~"Using Secure DNS to Associate Certificates with Domain Names for S/MIME",
     ~"9606" => ~"DNS Resolver Information",
     ~"7929" => ~"DNS-Based Authentication of Named Entities (DANE) Bindings for OpenPGP",

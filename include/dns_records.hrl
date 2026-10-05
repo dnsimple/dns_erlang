@@ -148,6 +148,14 @@
     os :: binary()
 }).
 
+%% HIP record for a Host Identity Protocol host's identity. See RFC 8005: §5.
+-record(dns_rrdata_hip, {
+    alg :: dns:uint8(),
+    hit :: binary(),
+    public_key :: binary(),
+    rendezvous_servers :: [dns:dname()]
+}).
+
 %% IPSECKEY record for storing IPsec keying material. See RFC 4025: §2.
 -record(dns_rrdata_ipseckey, {
     precedence :: dns:uint8(),

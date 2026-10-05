@@ -1020,6 +1020,21 @@ build_rdata("HINFO", RData, Ctx) ->
         _ ->
             {error, make_semantic_error({invalid_rdata, 'HINFO', RData}, Ctx)}
     end;
+build_rdata("HIP", RData, Ctx) ->
+    %% HIP format: pk-algorithm hit(hex) public-key(base64) [rendezvous-server ...], the
+    %% HIT and the key each one word (RFC 8005 §6)
+    maybe
+        [{int, Alg}, {_, HITHex}, {_, PublicKeyB64} | ServerTokens] ?= RData,
+        true ?= is_integer(Alg) andalso is_list(HITHex) andalso is_list(PublicKeyB64),
+        {ok, HIT} ?= hex_to_binary(HITHex),
+        {ok, PublicKey} ?= parse_base64_pieces([{string, PublicKeyB64}]),
+        {ok, Servers} ?= parse_domain_names(ServerTokens, Ctx),
+        {ok, #dns_rrdata_hip{
+            alg = Alg, hit = HIT, public_key = PublicKey, rendezvous_servers = Servers
+        }}
+    else
+        _ -> {error, make_rdata_error(~"HIP", RData, Ctx)}
+    end;
 build_rdata("MINFO", RData, Ctx) ->
     case RData of
         [{domain, RMailbx}, {domain, EmailBx}] when is_list(RMailbx), is_list(EmailBx) ->
@@ -2355,6 +2370,8 @@ type_to_number("AMTRELAY") ->
     ?DNS_TYPE_AMTRELAY;
 type_to_number("HHIT") ->
     ?DNS_TYPE_HHIT;
+type_to_number("HIP") ->
+    ?DNS_TYPE_HIP;
 type_to_number("BRID") ->
     ?DNS_TYPE_BRID;
 %% RFC 3597 §5: a type without a mnemonic, in RDATA such as an RRSIG's type covered
@@ -2552,6 +2569,16 @@ is_ilnp64_group([_ | _] = Group) when length(Group) =< 4 ->
     );
 is_ilnp64_group(_) ->
     false.
+
+%% Domain names, each resolved against the origin
+-spec parse_domain_names([rdata()], parse_ctx()) -> {ok, [dns:dname()]} | error.
+parse_domain_names(Tokens, Ctx) ->
+    case [Name || {domain, Name} <- Tokens] of
+        Names when length(Names) =:= length(Tokens) ->
+            {ok, [resolve_name(Name, Ctx#parse_ctx.origin) || Name <- Names]};
+        _ ->
+            error
+    end.
 
 %% RFC 9886 §5.1.1, §5.2.1: base64 that "may be divided into any number of
 %% white-space-separated substrings", which are concatenated

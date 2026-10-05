@@ -786,6 +786,20 @@ decode_rrdata(_MsgBin, _Class, ?DNS_TYPE_ZONEMD, <<Serial:32, Scheme:8, Alg:8, H
 decode_rrdata(_MsgBin, _Class, ?DNS_TYPE_HINFO, Bin) ->
     [CPU, OS] = decode_text(Bin),
     #dns_rrdata_hinfo{cpu = CPU, os = OS};
+%% RFC8005§5: the HIT and the public key are REQUIRED, so with either empty the
+%% RDATA stays opaque, as BIND refuses it
+decode_rrdata(
+    MsgBin,
+    _Class,
+    ?DNS_TYPE_HIP,
+    <<HITLen, Alg, PKLen:16, HIT:HITLen/binary, PublicKey:PKLen/binary, Servers/binary>>
+) when 0 < HITLen andalso 0 < PKLen ->
+    #dns_rrdata_hip{
+        alg = Alg,
+        hit = HIT,
+        public_key = PublicKey,
+        rendezvous_servers = decode_dnames(MsgBin, Servers)
+    };
 decode_rrdata(
     _MsgBin,
     _Class,
@@ -1104,6 +1118,7 @@ requires_rrdata(?DNS_TYPE_EUI48) -> true;
 requires_rrdata(?DNS_TYPE_EUI64) -> true;
 requires_rrdata(?DNS_TYPE_HHIT) -> true;
 requires_rrdata(?DNS_TYPE_HINFO) -> true;
+requires_rrdata(?DNS_TYPE_HIP) -> true;
 requires_rrdata(?DNS_TYPE_HTTPS) -> true;
 requires_rrdata(?DNS_TYPE_IPSECKEY) -> true;
 requires_rrdata(?DNS_TYPE_KEY) -> true;
@@ -1151,6 +1166,14 @@ decode_naptr_regexp(RawRegexp) ->
         Regexp when is_binary(Regexp) -> Regexp;
         _ -> error(bad_naptr_regexp)
     end.
+
+%% RFC8005§5.6: names one after the other, to the end of the RDATA
+-spec decode_dnames(dns:message_bin(), binary()) -> [dns:dname()].
+decode_dnames(_MsgBin, <<>>) ->
+    [];
+decode_dnames(MsgBin, Bin) ->
+    {DName, Rest} = dns_domain:from_wire(MsgBin, Bin),
+    [DName | decode_dnames(MsgBin, Rest)].
 
 -spec decode_dnameonly(dns:message_bin(), nonempty_binary()) -> binary().
 decode_dnameonly(MsgBin, Bin) ->

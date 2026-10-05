@@ -135,6 +135,11 @@ fits(#dns_rrdata_eui64{address = Address}) ->
 %% RFC9886§5.1: the HHIT data is CBOR, and RDATA of zero length would not decode
 fits(#dns_rrdata_hhit{data = Data}) ->
     ?IS_NONEMPTY_BIN(Data);
+%% RFC8005§5: the HIT and the public key are REQUIRED, and the HIT's length is
+%% written in 8 bits
+fits(#dns_rrdata_hip{alg = Alg, hit = HIT, public_key = PublicKey, rendezvous_servers = Servers}) ->
+    ?IS_UINT(8, Alg) andalso ?IS_NONEMPTY_BIN(HIT) andalso ?IS_UINT(8, byte_size(HIT)) andalso
+        ?IS_NONEMPTY_BIN(PublicKey) andalso is_list(Servers);
 %% RFC1035§3.3.2: CPU and OS are one <character-string> each, and the encoder
 %% splits a longer one into several, leaving more than two
 fits(#dns_rrdata_hinfo{cpu = CPU, os = OS}) ->

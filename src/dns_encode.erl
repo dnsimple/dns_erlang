@@ -955,6 +955,26 @@ encode_rrdata_append(
     Acc,
     _Pos,
     _Class,
+    #dns_rrdata_hip{alg = Alg, hit = HIT, public_key = PublicKey, rendezvous_servers = Servers},
+    CompMap
+) when
+    byte_size(HIT) =< 255
+->
+    %% RFC8005§5: the HIT length is 8 bits, so a longer HIT is refused rather than
+    %% written with its length wrapped. The rendezvous servers' names MUST NOT be
+    %% compressed (§5.6).
+    ServersBin = <<<<(dns_domain:to_wire(Server))/binary>> || Server <- Servers>>,
+    HITLen = byte_size(HIT),
+    PKLen = byte_size(PublicKey),
+    {
+        <<Acc/binary, (4 + HITLen + PKLen + byte_size(ServersBin)):16, HITLen, Alg, PKLen:16,
+            HIT/binary, PublicKey/binary, ServersBin/binary>>,
+        CompMap
+    };
+encode_rrdata_append(
+    Acc,
+    _Pos,
+    _Class,
     #dns_rrdata_ipseckey{
         precedence = Precedence,
         alg = Algorithm,

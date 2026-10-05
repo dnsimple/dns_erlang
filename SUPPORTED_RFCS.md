@@ -42,6 +42,7 @@ functionality such as socket handling or query resolution.
 - **[RFC 7871](https://tools.ietf.org/html/rfc7871)**: Client Subnet in DNS Queries
 - **[RFC 7873](https://tools.ietf.org/html/rfc7873)**: Domain Name System (DNS) Cookies
 - **[RFC 7929](https://tools.ietf.org/html/rfc7929)**: DNS-Based Authentication of Named Entities (DANE) Bindings for OpenPGP
+- **[RFC 8005](https://tools.ietf.org/html/rfc8005)**: Host Identity Protocol (HIP) Domain Name System (DNS) Extension
 - **[RFC 8080](https://tools.ietf.org/html/rfc8080)**: Ed25519 and Ed448 for DNSSEC
 - **[RFC 8162](https://tools.ietf.org/html/rfc8162)**: Using Secure DNS to Associate Certificates with Domain Names for S/MIME
 - **[RFC 8764](https://tools.ietf.org/html/rfc8764)**: DNS Long-Lived Queries (LLQ)

@@ -98,6 +98,7 @@ groups() ->
             encode_ilnp_records,
             encode_amtrelay_record,
             encode_drip_records,
+            encode_hip_record,
             encode_zonemd_record,
             encode_csync_record,
             encode_dsync_record,
@@ -328,6 +329,8 @@ groups() ->
             parse_amtrelay_records_roundtrip,
             parse_drip_records,
             parse_drip_records_roundtrip,
+            parse_hip_record,
+            parse_hip_records_roundtrip,
             parse_ds_record,
             parse_dnskey_record,
             parse_key_record,
@@ -569,6 +572,7 @@ groups() ->
             parse_invalid_amtrelay_rdata,
             parse_invalid_amtrelay_relay,
             parse_invalid_drip_rdata,
+            parse_invalid_hip_rdata,
             parse_invalid_ds_rdata,
             parse_invalid_ds_hex,
             parse_invalid_rrsig_times,
@@ -1810,6 +1814,59 @@ parse_drip_records_roundtrip(_Config) ->
         ],
         [RR#dns_rr.data || RR <- Records]
     ),
+    Encoded = iolist_to_binary(dns_zone:encode_string(Records, #{origin => ~"example.com."})),
+    {ok, Reparsed} = dns_zone:parse_string(Encoded),
+    ?assertEqual(lists:sort(Records), lists:sort(Reparsed)).
+
+parse_hip_record(_Config) ->
+    %% RFC 8005 §7: no rendezvous server, one, and two, one of them relative. The RFC
+    %% wraps the public key to fit the page; in a zone file it is one word.
+    Zone =
+        ~"""
+    $ORIGIN example.com.
+    www.example.com. IN HIP ( 2 200100107B1A74DF365639CC39F1D578
+        AwEAAbdxyhNuSutc5EMzxTs9LBPCIkOFH8cIvM4p9+LrV4e19WzK00+CI6zBCQTdtWsuxKbWIy87UOoJTwkUs7lBu+Upr1gsNrut79ryra+bSRGQb1slImA8YVJyuIDsj7kwzG7jnERNqnWxZ48AWkskmdHaVDP4BcelrTI3rMXdXF5D )
+    www.example.com. IN HIP ( 2 200100107B1A74DF365639CC39F1D578
+        AwEAAbdxyhNuSutc5EMzxTs9LBPCIkOFH8cIvM4p9+LrV4e19WzK00+CI6zBCQTdtWsuxKbWIy87UOoJTwkUs7lBu+Upr1gsNrut79ryra+bSRGQb1slImA8YVJyuIDsj7kwzG7jnERNqnWxZ48AWkskmdHaVDP4BcelrTI3rMXdXF5D
+        rvs.example.com. )
+    www.example.com. IN HIP ( 2 200100107B1A74DF365639CC39F1D578
+        AwEAAbdxyhNuSutc5EMzxTs9LBPCIkOFH8cIvM4p9+LrV4e19WzK00+CI6zBCQTdtWsuxKbWIy87UOoJTwkUs7lBu+Upr1gsNrut79ryra+bSRGQb1slImA8YVJyuIDsj7kwzG7jnERNqnWxZ48AWkskmdHaVDP4BcelrTI3rMXdXF5D
+        rvs1.example.com.
+        rvs2 )
+
+    """,
+    {ok, RRs} = dns_zone:parse_string(Zone),
+    Hip = #dns_rrdata_hip{
+        alg = 2,
+        hit = <<16#200100107B1A74DF365639CC39F1D578:128>>,
+        public_key = base64:decode(
+            <<"AwEAAbdxyhNuSutc5EMzxTs9LBPCIkOFH8cIvM4p9+LrV4e19WzK00+CI6zBCQTdtWsuxKbWIy87UOoJTwkUs7lBu+Upr1gsNrut79ryra+bSRGQb1slImA8YVJyuIDsj7kwzG7jnERNqnWxZ48AWkskmdHaVDP4BcelrTI3rMXdXF5D">>
+        ),
+        rendezvous_servers = []
+    },
+    ?assertEqual(
+        [
+            Hip,
+            Hip#dns_rrdata_hip{rendezvous_servers = [~"rvs.example.com."]},
+            Hip#dns_rrdata_hip{rendezvous_servers = [~"rvs1.example.com.", ~"rvs2.example.com."]}
+        ],
+        [RR#dns_rr.data || RR <- RRs]
+    ),
+    ?assertEqual([?DNS_TYPE_HIP], lists:usort([RR#dns_rr.type || RR <- RRs])),
+    ?assertEqual(132, byte_size(Hip#dns_rrdata_hip.public_key)).
+
+parse_hip_records_roundtrip(_Config) ->
+    %% Lower-case hex, and any class, survive encode and re-parse. A HIT of decimal
+    %% digits only, such as "01", would lex as a number and lose its leading zero.
+    Zone =
+        ~"""
+    $ORIGIN example.com.
+    www 3600 IN HIP 2 200100107b1a74df365639cc39f1d578 AwEAAQ==
+    www 3600 IN HIP ( 3 0a AwEAAQ== rvs1 rvs2.example.org. )
+    www 3600 CH HIP 2 ff AQ==
+
+    """,
+    {ok, Records} = dns_zone:parse_string(Zone),
     Encoded = iolist_to_binary(dns_zone:encode_string(Records, #{origin => ~"example.com."})),
     {ok, Reparsed} = dns_zone:parse_string(Encoded),
     ?assertEqual(lists:sort(Records), lists:sort(Reparsed)).
@@ -3270,6 +3327,32 @@ parse_invalid_drip_rdata(_Config) ->
             {~"BRID oQ*A", semantic},
             {~"HHIT \"\"", semantic},
             {~"BRID 10 0 1 203.0.113.15", semantic}
+        ]
+    ].
+
+parse_invalid_hip_rdata(_Config) ->
+    %% RFC 8005 §6: an algorithm, a hex HIT and a base64 key are required, and the
+    %% rendezvous servers are domain names. Each case breaks one field of the record
+    %% that parses first. The HIT has a hex letter, as one of digits only lexes as a
+    %% number and would be refused for that alone. A server spelled as an address is
+    %% a name, as it is for NS, so the bad server is one whose label is too long.
+    LongLabel = binary:copy(~"a", 64),
+    Parse = fun(Value) ->
+        dns_zone:parse_string(<<"www.example.com. 3600 IN ", Value/binary, "\n">>)
+    end,
+    ?assertMatch({ok, [_]}, Parse(~"HIP 2 200100107B1A AwEAAQ== rvs.example.com.")),
+    [
+        ?assertMatch({error, #{type := Type}}, Parse(Value), Value)
+     || {Value, Type} <- [
+            {~"HIP", parser},
+            {~"HIP 2", semantic},
+            {~"HIP 2 200100107B1A74DF365639CC39F1D578", semantic},
+            {~"HIP 2 200100107B1 AwEAAQ== rvs.example.com.", semantic},
+            {~"HIP 2 200100107B1X AwEAAQ== rvs.example.com.", semantic},
+            {~"HIP 2 200100107B1A AwEAAQ= rvs.example.com.", semantic},
+            {<<"HIP 2 200100107B1A AwEAAQ== ", LongLabel/binary, ".example.com.">>, semantic},
+            {~"HIP 2 200100107B1A AwEAAQ== \"rvs.example.com.\"", semantic},
+            {~"HIP 256 200100107B1A AwEAAQ== rvs.example.com.", semantic}
         ]
     ].
 
@@ -5009,6 +5092,31 @@ encode_drip_records(_Config) ->
         ~"oQAA",
         iolist_to_binary(
             dns_zone:encode_rdata(?DNS_TYPE_BRID, #dns_rrdata_brid{data = <<16#a1, 0, 0>>})
+        )
+    ).
+
+encode_hip_record(_Config) ->
+    %% RFC 8005 §6: pk-algorithm, the HIT in hex, the key in base64, then the servers
+    Hip = #dns_rrdata_hip{
+        alg = 2,
+        hit = <<16#200100107B1A74DF365639CC39F1D578:128>>,
+        public_key = <<3, 1, 0, 1>>,
+        rendezvous_servers = []
+    },
+    ?assertEqual(
+        ~"2 200100107B1A74DF365639CC39F1D578 AwEAAQ==",
+        iolist_to_binary(dns_zone:encode_rdata(?DNS_TYPE_HIP, Hip))
+    ),
+    ?assertEqual(
+        ~"2 200100107B1A74DF365639CC39F1D578 AwEAAQ== rvs1 rvs2.example.org.",
+        iolist_to_binary(
+            dns_zone:encode_rdata(
+                ?DNS_TYPE_HIP,
+                Hip#dns_rrdata_hip{
+                    rendezvous_servers = [~"RVS1.example.com.", ~"rvs2.example.org."]
+                },
+                #{origin => ~"example.com."}
+            )
         )
     ).
 

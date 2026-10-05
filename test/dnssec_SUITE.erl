@@ -512,6 +512,9 @@ canonical_rrdata_form_test(_Config) ->
                 discovery_optional = false,
                 relay_type = 3,
                 relay = ~"Relay.EXAMPLE"
+            },
+            #dns_rrdata_hip{
+                alg = 2, hit = <<1:128>>, public_key = <<1>>, rendezvous_servers = [~"RVS.Example"]
             }
         ]
     ],

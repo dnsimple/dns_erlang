@@ -524,6 +524,19 @@ encode_rdata(
 ) ->
     encode_quoted_strings([CPU, OS], Separator);
 encode_rdata(
+    ?DNS_TYPE_HIP,
+    #dns_rrdata_hip{alg = Alg, hit = HIT, public_key = PublicKey, rendezvous_servers = Servers},
+    Origin,
+    RelativeNames,
+    Separator
+) ->
+    %% RFC 8005 §6: the HIT in hex and the key in base64, each without whitespace
+    ServerStrs = [encode_dname(dns_domain:to_lower(S), Origin, RelativeNames) || S <- Servers],
+    join_rdata_fields(
+        [integer_to_binary(Alg), binary:encode_hex(HIT), base64:encode(PublicKey) | ServerStrs],
+        Separator
+    );
+encode_rdata(
     ?DNS_TYPE_RP,
     #dns_rrdata_rp{
         mbox = Mbox,

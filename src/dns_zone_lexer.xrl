@@ -183,6 +183,7 @@ RTYPE_IPSECKEY = IPSECKEY
 RTYPE_ZONEMD   = ZONEMD
 RTYPE_AMTRELAY = AMTRELAY
 RTYPE_HHIT     = HHIT
+RTYPE_HIP      = HIP
 RTYPE_BRID     = BRID
 RTYPE_ALIAS    = ALIAS
 
@@ -272,6 +273,7 @@ Rules.
 {RTYPE_CAA}        : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_CDS}        : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_KEY}        : {token, {rtype, TokenLine, TokenChars}}.
+{RTYPE_HIP}        : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_LOC}        : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_NXT}        : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_DLV}        : {token, {rtype, TokenLine, TokenChars}}.

@@ -97,7 +97,11 @@ groups() ->
             amtrelay_relay_not_compressed,
             amtrelay_undefined_relay_type_kept_opaque,
             amtrelay_bad_relay_name_formerr,
-            drip_data_carried_as_is
+            drip_data_carried_as_is,
+            hip_wire_known_answer,
+            hip_hit_too_long_refused,
+            hip_rendezvous_servers_not_compressed,
+            hip_without_hit_or_key_kept_opaque
         ]},
         {svcb, [parallel], [
             decode_encode_svcb_params,
@@ -1138,6 +1142,15 @@ decode_encode_rrdata(_) ->
         }},
         {?DNS_TYPE_HHIT, #dns_rrdata_hhit{data = <<16#83, 18, 16#60, 16#40>>}},
         {?DNS_TYPE_BRID, #dns_rrdata_brid{data = <<16#a1, 0, 0>>}},
+        {?DNS_TYPE_HIP, #dns_rrdata_hip{
+            alg = 2, hit = <<1:128>>, public_key = <<3, 1, 0, 1, 2>>, rendezvous_servers = []
+        }},
+        {?DNS_TYPE_HIP, #dns_rrdata_hip{
+            alg = 3,
+            hit = <<1:128>>,
+            public_key = <<4, 5>>,
+            rendezvous_servers = [<<"rvs1.example.com">>, <<"rvs2.example.com">>]
+        }},
         {?DNS_TYPE_AMTRELAY, #dns_rrdata_amtrelay{
             precedence = 10, discovery_optional = false, relay_type = 1, relay = {203, 0, 113, 15}
         }},
@@ -1307,6 +1320,7 @@ empty_rdata_rejected_for_known_types(_) ->
         ?DNS_TYPE_EUI64,
         ?DNS_TYPE_HHIT,
         ?DNS_TYPE_HINFO,
+        ?DNS_TYPE_HIP,
         ?DNS_TYPE_HTTPS,
         ?DNS_TYPE_IPSECKEY,
         ?DNS_TYPE_KEY,
@@ -1346,7 +1360,7 @@ empty_rdata_rejected_for_known_types(_) ->
         ?DNS_TYPE_WALLET,
         ?DNS_TYPE_ZONEMD
     ],
-    ?assertEqual(59, length(Known)),
+    ?assertEqual(60, length(Known)),
     [
         ?assertError(
             empty_rrdata,
@@ -2077,6 +2091,81 @@ drip_data_carried_as_is(_) ->
             {?DNS_TYPE_BRID, #dns_rrdata_brid{data = Data}}
         ],
         Class <- [?DNS_CLASS_IN, ?DNS_CLASS_CH, ?DNS_CLASS_HS]
+    ].
+
+%% RFC8005§5, §7: the example HIP with two rendezvous servers, in any class. The
+%% HIT length comes first, then the algorithm, then the 16-bit key length.
+hip_wire_known_answer(_) ->
+    HIT = <<16#200100107B1A74DF365639CC39F1D578:128>>,
+    PublicKey = base64:decode(
+        <<"AwEAAbdxyhNuSutc5EMzxTs9LBPCIkOFH8cIvM4p9+LrV4e19WzK00+CI6zBCQTdtWsuxKbWIy87UOoJTwkUs7lBu+Upr1gsNrut79ryra+bSRGQb1slImA8YVJyuIDsj7kwzG7jnERNqnWxZ48AWkskmdHaVDP4BcelrTI3rMXdXF5D">>
+    ),
+    Data = #dns_rrdata_hip{
+        alg = 2,
+        hit = HIT,
+        public_key = PublicKey,
+        rendezvous_servers = [<<"rvs1.example.com">>, <<"rvs2.example.com">>]
+    },
+    Wire =
+        <<16, 2, 132:16, HIT/binary, PublicKey/binary, 4, "rvs1", 7, "example", 3, "com", 0, 4,
+            "rvs2", 7, "example", 3, "com", 0>>,
+    [
+        begin
+            ?assertEqual(Wire, dns_encode:encode_rrdata(Class, Data), Class),
+            ?assertEqual(Data, dns_decode:decode_rrdata(Wire, Class, ?DNS_TYPE_HIP, Wire), Class)
+        end
+     || Class <- [?DNS_CLASS_IN, ?DNS_CLASS_CH, ?DNS_CLASS_HS]
+    ].
+
+%% RFC8005§5: the HIT length is 8 bits. A HIT of 256 bytes is refused, rather than
+%% written with a length of 0 that this decoder keeps opaque and others reject.
+hip_hit_too_long_refused(_) ->
+    Max = #dns_rrdata_hip{
+        alg = 2, hit = binary:copy(<<1>>, 255), public_key = <<9>>, rendezvous_servers = []
+    },
+    <<255, 2, 1:16, _:255/binary, 9>> = dns_encode:encode_rrdata(?DNS_CLASS_IN, Max),
+    TooLong = Max#dns_rrdata_hip{hit = binary:copy(<<1>>, 256)},
+    ?assertError(function_clause, dns_encode:encode_rrdata(?DNS_CLASS_IN, TooLong)).
+
+%% RFC8005§5.6: the rendezvous servers' names "MUST NOT be compressed", even when
+%% they share a suffix with a name already in the message
+hip_rendezvous_servers_not_compressed(_) ->
+    Owner = <<"www.example.com">>,
+    Servers = [<<"rvs1.example.com">>, <<"rvs2.example.com">>],
+    Msg = #dns_message{
+        qr = true,
+        qc = 1,
+        anc = 1,
+        questions = [#dns_query{name = Owner, type = ?DNS_TYPE_HIP}],
+        answers = [
+            #dns_rr{
+                name = Owner,
+                type = ?DNS_TYPE_HIP,
+                ttl = 3600,
+                data = #dns_rrdata_hip{
+                    alg = 2, hit = <<1:128>>, public_key = <<1, 2, 3>>, rendezvous_servers = Servers
+                }
+            }
+        ]
+    },
+    Encoded = dns:encode_message(Msg),
+    ServersWire = iolist_to_binary([dns_domain:to_wire(S) || S <- Servers]),
+    ?assertMatch({_, _}, binary:match(Encoded, <<1, 2, 3, ServersWire/binary>>)),
+    ?assertEqual(Msg, dns:decode_message(Encoded)).
+
+%% RFC8005§5: the HIT and the public key are REQUIRED, so a HIP RDATA with either
+%% empty, or with lengths past its end, stays opaque, as BIND refuses it
+hip_without_hit_or_key_kept_opaque(_) ->
+    [
+        ?assertEqual(Wire, dns_decode:decode_rrdata(Wire, ?DNS_CLASS_IN, ?DNS_TYPE_HIP, Wire))
+     || Wire <- [
+            <<0, 2, 1:16, 7>>,
+            <<1, 2, 0:16, 7>>,
+            <<0, 2, 0:16>>,
+            <<2, 2, 1:16, 7, 7>>,
+            <<1, 2, 2:16, 7, 7>>,
+            <<1, 2>>
+        ]
     ].
 
 %% RFC3403§4.1: the NAPTR REGEXP field is UTF-8. unicode:characters_to_binary/2

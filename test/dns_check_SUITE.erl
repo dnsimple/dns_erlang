@@ -23,6 +23,7 @@ groups() ->
             ilnp_64_bit_values_must_be_8_bytes,
             amtrelay_relay_must_match_its_type,
             drip_data_must_not_be_empty,
+            hip_hit_and_key_must_fit,
             svcb_params_must_fit,
             rr_header_must_fit,
             rr_class_must_suit_rrdata,
@@ -235,6 +236,11 @@ rrdata_integers_must_fit(_) ->
             },
             #dns_rrdata_amtrelay.precedence,
             8
+        },
+        {
+            #dns_rrdata_hip{alg = 1, hit = <<1>>, public_key = <<1>>, rendezvous_servers = []},
+            #dns_rrdata_hip.alg,
+            8
         }
     ],
     [
@@ -445,6 +451,10 @@ rrdata_names_must_fit(_) ->
             },
             #dns_rrdata_cname{dname = N},
             #dns_rrdata_dname{dname = N},
+            #dns_rrdata_hip{alg = 1, hit = <<1>>, public_key = <<1>>, rendezvous_servers = [N]},
+            #dns_rrdata_hip{
+                alg = 1, hit = <<1>>, public_key = <<1>>, rendezvous_servers = [<<"example">>, N]
+            },
             #dns_rrdata_dsync{rrtype = 1, scheme = 1, port = 1, target = N},
             #dns_rrdata_ipseckey{precedence = 1, alg = 1, gateway = N, public_key = <<1>>},
             #dns_rrdata_kx{preference = 1, exchange = N},
@@ -569,6 +579,29 @@ drip_data_must_not_be_empty(_) ->
             #dns_rrdata_brid{data = undefined}
         ]
     ].
+
+%% RFC8005§5: the HIT and the public key are REQUIRED, and the HIT's length is
+%% one octet, so a HIT of 256 bytes would go out with a length of 0
+hip_hit_and_key_must_fit(_) ->
+    Hip = fun(HIT, PublicKey, Servers) ->
+        #dns_rrdata_hip{alg = 2, hit = HIT, public_key = PublicKey, rendezvous_servers = Servers}
+    end,
+    Fits = [
+        Hip(<<1>>, <<1>>, []),
+        Hip(binary:copy(<<1>>, 255), <<1>>, [<<"rvs.example">>]),
+        Hip(<<1:128>>, binary:copy(<<1>>, 1000), [<<"rvs1.example">>, <<"rvs2.example">>])
+    ],
+    DoNotFit = [
+        Hip(<<>>, <<1>>, []),
+        Hip(binary:copy(<<1>>, 256), <<1>>, []),
+        Hip(<<1>>, <<>>, []),
+        Hip(<<1>>, <<1>>, <<"rvs.example">>),
+        Hip(<<1>>, <<1>>, undefined),
+        Hip(undefined, <<1>>, []),
+        Hip(<<1>>, binary:copy(<<1>>, 65532), [])
+    ],
+    [?assert(dns_check:rrdata(D), D) || D <- Fits],
+    [?assertNot(dns_check:rrdata(D), D) || D <- DoNotFit].
 
 %% RFC2181§8: a TTL is 31 bits, since one with the top bit set is read as zero.
 %% Type and class are 16 bits, and the owner name has to be one the wire can hold.

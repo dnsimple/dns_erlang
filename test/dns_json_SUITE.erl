@@ -34,6 +34,7 @@ groups() ->
             test_ilnp_records,
             test_amtrelay_records,
             test_drip_records,
+            test_hip_record,
             test_error_cases,
             test_edge_cases
         ]}
@@ -1316,6 +1317,61 @@ test_drip_records(_Config) ->
             {Type, Data}
         )
      || Type <- [~"HHIT", ~"BRID"], Data <- [#{~"data" => <<>>}, #{}]
+    ].
+
+test_hip_record(_Config) ->
+    %% RFC 8005: the HIT is hex and the public key base64, as in zone files
+    Hip = #dns_rr{
+        name = ~"www.example.com",
+        type = ?DNS_TYPE_HIP,
+        ttl = 3600,
+        data = #dns_rrdata_hip{
+            alg = 2,
+            hit = <<16#200100107B1A74DF365639CC39F1D578:128>>,
+            public_key = <<3, 1, 0, 1>>,
+            rendezvous_servers = [~"rvs1.example.com", ~"rvs2.example.com"]
+        }
+    },
+    ?assertMatch(
+        #{
+            ~"data" := #{
+                ~"alg" := 2,
+                ~"hit" := ~"200100107B1A74DF365639CC39F1D578",
+                ~"public_key" := ~"AwEAAQ==",
+                ~"rendezvous_servers" := [~"rvs1.example.com", ~"rvs2.example.com"]
+            }
+        },
+        assert_transcode(Hip)
+    ),
+    assert_transcode(Hip#dns_rr{data = (Hip#dns_rr.data)#dns_rrdata_hip{rendezvous_servers = []}}),
+    %% An empty HIT or key, servers that are not a list of names, or an algorithm past
+    %% 8 bits, is refused on load
+    Map = fun(Data) ->
+        #{
+            ~"name" => ~"www.example.com",
+            ~"type" => ~"HIP",
+            ~"ttl" => 3600,
+            ~"data" => maps:merge(
+                #{
+                    ~"alg" => 2,
+                    ~"hit" => ~"20010010",
+                    ~"public_key" => ~"AwEAAQ==",
+                    ~"rendezvous_servers" => []
+                },
+                Data
+            )
+        }
+    end,
+    ?assertMatch(#dns_rr{}, dns_json:from_map(Map(#{}))),
+    [
+        ?assertError({invalid_record, _}, dns_json:from_map(Map(Data)), Data)
+     || Data <- [
+            #{~"hit" => <<>>},
+            #{~"public_key" => <<>>},
+            #{~"rendezvous_servers" => ~"rvs.example.com"},
+            #{~"rendezvous_servers" => [1]},
+            #{~"alg" => 256}
+        ]
     ].
 
 test_error_cases(_Config) ->
