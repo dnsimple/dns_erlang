@@ -291,6 +291,7 @@ decodable_type() ->
         ?DNS_TYPE_NXT,
         ?DNS_TYPE_OPENPGPKEY,
         ?DNS_TYPE_PTR,
+        ?DNS_TYPE_PX,
         ?DNS_TYPE_RESINFO,
         ?DNS_TYPE_RP,
         ?DNS_TYPE_RRSIG,
@@ -474,6 +475,11 @@ rrdata() ->
         ?LET({N, T}, {dname(), nxt_types()}, #dns_rrdata_nxt{dname = N, types = T}),
         ?LET(B, bin(1, 20), #dns_rrdata_openpgpkey{data = B}),
         ?LET(N, dname(), #dns_rrdata_ptr{dname = N}),
+        ?LET(
+            {P, M, X}, {u16(), dname(), dname()}, #dns_rrdata_px{
+                preference = P, map822 = M, mapx400 = X
+            }
+        ),
         ?LET(S, charstrings(), #dns_rrdata_resinfo{data = S}),
         ?LET({M, T}, {dname(), dname()}, #dns_rrdata_rp{mbox = M, txt = T}),
         ?LET(
@@ -667,6 +673,7 @@ type_of(#dns_rrdata_nsec3param{}) -> ?DNS_TYPE_NSEC3PARAM;
 type_of(#dns_rrdata_nxt{}) -> ?DNS_TYPE_NXT;
 type_of(#dns_rrdata_openpgpkey{}) -> ?DNS_TYPE_OPENPGPKEY;
 type_of(#dns_rrdata_ptr{}) -> ?DNS_TYPE_PTR;
+type_of(#dns_rrdata_px{}) -> ?DNS_TYPE_PX;
 type_of(#dns_rrdata_resinfo{}) -> ?DNS_TYPE_RESINFO;
 type_of(#dns_rrdata_rp{}) -> ?DNS_TYPE_RP;
 type_of(#dns_rrdata_rrsig{}) -> ?DNS_TYPE_RRSIG;

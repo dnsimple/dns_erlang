@@ -65,6 +65,8 @@
     ~"9886" => ~"DRIP Entity Tags (DETs) in the Domain Name System",
     ~"8005" => ~"Host Identity Protocol (HIP) Domain Name System (DNS) Extension",
     ~"2931" => ~"DNS Request and Transaction Signatures ( SIG(0)s )",
+    ~"2163" =>
+        ~"Using the Internet DNS to Distribute MIXER Conformant Global Address Mapping (MCGAM)",
     ~"8162" => ~"Using Secure DNS to Associate Certificates with Domain Names for S/MIME",
     ~"9606" => ~"DNS Resolver Information",
     ~"7929" => ~"DNS-Based Authentication of Named Entities (DANE) Bindings for OpenPGP",

@@ -698,7 +698,11 @@ canonical_rrdata_form(#dns_rrdata_rp{mbox = Mbox, txt = Txt} = Data) ->
     };
 canonical_rrdata_form(#dns_rrdata_rrsig{signers_name = SignersName} = Data) ->
     Data#dns_rrdata_rrsig{signers_name = dns_domain:to_lower(SignersName)};
-%% RFC4034§6.2: SIG is one of the types whose RDATA names are lowercased
+%% RFC4034§6.2: PX and SIG are among the types whose RDATA names are lowercased
+canonical_rrdata_form(#dns_rrdata_px{map822 = Map822, mapx400 = MapX400} = Data) ->
+    Data#dns_rrdata_px{
+        map822 = dns_domain:to_lower(Map822), mapx400 = dns_domain:to_lower(MapX400)
+    };
 canonical_rrdata_form(#dns_rrdata_sig{signers_name = SignersName} = Data) ->
     Data#dns_rrdata_sig{signers_name = dns_domain:to_lower(SignersName)};
 canonical_rrdata_form(#dns_rrdata_rt{host = Host} = Data) ->

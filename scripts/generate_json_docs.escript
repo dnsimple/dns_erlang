@@ -835,6 +835,8 @@ example_value_map() ->
         locator32 => ~"\"10.1.2.0\"",
         node_id => ~"\"00144FFFFF20EE64\"",
         locator64 => ~"\"20010DB811401000\"",
+        map822 => ~"\"net2.it.\"",
+        mapx400 => ~"\"PRMD-net2.ADMD-p400.C-it.\"",
         fqdn => ~"\"l64-subnet1.example.com.\"",
         relay_type => ~"1",
         hit => ~"\"200100107B1A74DF365639CC39F1D578\"",

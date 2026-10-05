@@ -1026,6 +1026,12 @@ decode_rrdata(
         signers_name = SigName,
         signature = Sig
     };
+%% RFC2163§4: PX is defined for class IN
+decode_rrdata(MsgBin, Class, ?DNS_TYPE_PX, <<Pref:16, Bin/binary>>) when ?CLASS_IS_IN(Class) ->
+    {Map822, MapX400Bin} = dns_domain:from_wire(MsgBin, Bin),
+    #dns_rrdata_px{
+        preference = Pref, map822 = Map822, mapx400 = decode_dnameonly(MsgBin, MapX400Bin)
+    };
 %% RFC2535§4.1: the RDATA RRSIG took over field for field, so it is read as RRSIG's
 %% and retagged, the record having RRSIG's fields in the same order
 decode_rrdata(MsgBin, Class, ?DNS_TYPE_SIG, Bin) ->
@@ -1148,6 +1154,7 @@ requires_rrdata(?DNS_TYPE_NSEC3PARAM) -> true;
 requires_rrdata(?DNS_TYPE_NXT) -> true;
 requires_rrdata(?DNS_TYPE_OPENPGPKEY) -> true;
 requires_rrdata(?DNS_TYPE_PTR) -> true;
+requires_rrdata(?DNS_TYPE_PX) -> true;
 requires_rrdata(?DNS_TYPE_RESINFO) -> true;
 requires_rrdata(?DNS_TYPE_RP) -> true;
 requires_rrdata(?DNS_TYPE_RRSIG) -> true;

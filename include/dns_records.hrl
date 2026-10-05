@@ -353,6 +353,13 @@
     signature = <<>> :: binary()
 }).
 
+%% PX record for mapping between Internet and X.400 mail addresses. See RFC 2163: §4.
+-record(dns_rrdata_px, {
+    preference :: dns:uint16(),
+    map822 :: dns:dname(),
+    mapx400 :: dns:dname()
+}).
+
 %% RT record for route through. See RFC 1183: §3.3.
 -record(dns_rrdata_rt, {
     preference :: dns:uint16(),

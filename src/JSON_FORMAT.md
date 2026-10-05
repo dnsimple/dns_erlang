@@ -1102,6 +1102,29 @@ Non-RR records (message, query, OPT records) use a two-level nested map format:
 
 **Note:** This format is used within the `data` field of `dns_rr` records.
 
+### PX (dns_rrdata_px) [RFC2163](https://datatracker.ietf.org/doc/html/rfc2163)
+
+**Format:** RRDATA fields (used within `dns_rr.data`)
+
+**Fields:**
+
+- `preference` (`t:dns:uint16/0`): Direct value
+- `map822` (`t:dns:dname/0`): Binary data (dname format)
+- `mapx400` (`t:dns:dname/0`): Binary data (dname format)
+
+**Example:**
+
+```json
+{
+    "preference": 0,
+    "map822": "net2.it.",
+    "mapx400": "PRMD-net2.ADMD-p400.C-it."
+}
+```
+
+
+**Note:** This format is used within the `data` field of `dns_rr` records.
+
 ### RESINFO (dns_rrdata_resinfo) [RFC9606](https://datatracker.ietf.org/doc/html/rfc9606)
 
 **Format:** RRDATA fields (used within `dns_rr.data`)

@@ -518,7 +518,13 @@ canonical_rrdata_form_test(_Config) ->
             }
         ]
     ],
-    %% RFC4034§6.2: SIG is on the list, so its signer's name is lowercased
+    %% RFC4034§6.2: PX and SIG are on the list, so their names are lowercased
+    ?assertEqual(
+        #dns_rrdata_px{preference = 10, map822 = ~"net2.it", mapx400 = ~"prmd-net2.c-it"},
+        dnssec:canonical_rrdata_form(
+            #dns_rrdata_px{preference = 10, map822 = ~"NET2.it", mapx400 = ~"PRMD-net2.C-it"}
+        )
+    ),
     Sig = #dns_rrdata_sig{
         type_covered = ?DNS_TYPE_A,
         alg = ?DNS_ALG_RSASHA1,

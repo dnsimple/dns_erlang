@@ -126,7 +126,8 @@ simple_valid_rr() ->
             ?DNS_TYPE_AMTRELAY,
             ?DNS_TYPE_HHIT,
             ?DNS_TYPE_BRID,
-            ?DNS_TYPE_HIP
+            ?DNS_TYPE_HIP,
+            ?DNS_TYPE_PX
         ]),
         ?LET(
             {Name, Class, TTL, Data},
@@ -485,6 +486,16 @@ rdata(Type) ->
                     alg = Alg, hit = HIT, public_key = PublicKey, rendezvous_servers = Servers
                 }
             );
+        ?DNS_TYPE_PX ->
+            ?LET(
+                {Pref, Map822, MapX400},
+                {
+                    range(0, 65535),
+                    dns_prop_generator:simple_dname(),
+                    dns_prop_generator:simple_dname()
+                },
+                #dns_rrdata_px{preference = Pref, map822 = Map822, mapx400 = MapX400}
+            );
         ?DNS_TYPE_HHIT ->
             ?LET(Data, binary(), #dns_rrdata_hhit{data = <<16#83, Data/binary>>});
         ?DNS_TYPE_BRID ->
@@ -612,6 +623,7 @@ valid_zone_string() ->
                                     ?DNS_TYPE_HHIT -> "HHIT";
                                     ?DNS_TYPE_BRID -> "BRID";
                                     ?DNS_TYPE_HIP -> "HIP";
+                                    ?DNS_TYPE_PX -> "PX";
                                     _ -> "A"
                                 end,
                             RDataStr = format_rdata(Type, Data),
@@ -713,6 +725,10 @@ format_rdata(?DNS_TYPE_HIP, #dns_rrdata_hip{
             lists:join(" ", [binary_to_list(S) || S <- Servers])
         ])
     );
+format_rdata(?DNS_TYPE_PX, #dns_rrdata_px{preference = Pref, map822 = Map822, mapx400 = MapX400}) ->
+    lists:flatten(
+        io_lib:format("~B ~s ~s", [Pref, binary_to_list(Map822), binary_to_list(MapX400)])
+    );
 format_rdata(_Type, _Data) ->
     "192.0.2.1".
 
@@ -777,6 +793,8 @@ normalize_rdata_dnames(#dns_rrdata_srv{target = T} = R) ->
     R#dns_rrdata_srv{target = dns_domain:to_lower(T)};
 normalize_rdata_dnames(#dns_rrdata_lp{fqdn = FQDN} = R) ->
     R#dns_rrdata_lp{fqdn = dns_domain:to_lower(FQDN)};
+normalize_rdata_dnames(#dns_rrdata_px{map822 = Map822, mapx400 = MapX400} = R) ->
+    R#dns_rrdata_px{map822 = dns_domain:to_lower(Map822), mapx400 = dns_domain:to_lower(MapX400)};
 normalize_rdata_dnames(#dns_rrdata_hip{rendezvous_servers = Servers} = R) ->
     R#dns_rrdata_hip{rendezvous_servers = [dns_domain:to_lower(S) || S <- Servers]};
 normalize_rdata_dnames(#dns_rrdata_amtrelay{relay_type = 3, relay = Relay} = R) ->

@@ -1075,6 +1075,18 @@ build_rdata("RT", RData, Ctx) ->
         _ ->
             {error, make_semantic_error({invalid_rdata, 'RT', RData}, Ctx)}
     end;
+build_rdata("PX", RData, Ctx) ->
+    %% PX format: preference map822 mapx400 (RFC 2163 §4)
+    case RData of
+        [{int, Preference}, {domain, Map822}, {domain, MapX400}] when is_integer(Preference) ->
+            {ok, #dns_rrdata_px{
+                preference = Preference,
+                map822 = resolve_name(Map822, Ctx#parse_ctx.origin),
+                mapx400 = resolve_name(MapX400, Ctx#parse_ctx.origin)
+            }};
+        _ ->
+            {error, make_rdata_error(~"PX", RData, Ctx)}
+    end;
 build_rdata("KX", RData, Ctx) ->
     case RData of
         [{int, Preference}, {domain, Exchange}] when
@@ -2381,6 +2393,8 @@ type_to_number("HIP") ->
     ?DNS_TYPE_HIP;
 type_to_number("SIG") ->
     ?DNS_TYPE_SIG;
+type_to_number("PX") ->
+    ?DNS_TYPE_PX;
 type_to_number("BRID") ->
     ?DNS_TYPE_BRID;
 %% RFC 3597 §5: a type without a mnemonic, in RDATA such as an RRSIG's type covered

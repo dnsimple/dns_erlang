@@ -589,6 +589,21 @@ encode_rdata(
     ExchangeStr = encode_dname(dns_domain:to_lower(Exchange), Origin, RelativeNames),
     join_rdata_fields([PrefBin, ExchangeStr], Separator);
 encode_rdata(
+    ?DNS_TYPE_PX,
+    #dns_rrdata_px{preference = Preference, map822 = Map822, mapx400 = MapX400},
+    Origin,
+    RelativeNames,
+    Separator
+) ->
+    join_rdata_fields(
+        [
+            integer_to_binary(Preference),
+            encode_dname(dns_domain:to_lower(Map822), Origin, RelativeNames),
+            encode_dname(dns_domain:to_lower(MapX400), Origin, RelativeNames)
+        ],
+        Separator
+    );
+encode_rdata(
     ?DNS_TYPE_DNAME,
     #dns_rrdata_dname{dname = DName},
     Origin,

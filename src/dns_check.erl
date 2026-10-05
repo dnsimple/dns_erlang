@@ -185,6 +185,8 @@ fits(#dns_rrdata_nsec3param{
 }) ->
     ?IS_UINT(8, HashAlg) andalso ?IS_UINT(8, Flags) andalso ?IS_UINT(16, Iterations) andalso
         byte_size(Salt) =< ?MAX_STRING;
+fits(#dns_rrdata_px{preference = Pref}) ->
+    ?IS_UINT(16, Pref);
 fits(#dns_rrdata_rrsig{
     type_covered = TypeCovered,
     alg = Alg,

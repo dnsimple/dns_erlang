@@ -259,7 +259,8 @@ rrdata_integers_must_fit(_) ->
         {Sig, #dns_rrdata_sig.original_ttl, 32},
         {Sig, #dns_rrdata_sig.expiration, 32},
         {Sig, #dns_rrdata_sig.inception, 32},
-        {Sig, #dns_rrdata_sig.keytag, 16}
+        {Sig, #dns_rrdata_sig.keytag, 16},
+        {#dns_rrdata_px{preference = 1, map822 = N, mapx400 = N}, #dns_rrdata_px.preference, 16}
     ],
     [
         begin
@@ -495,6 +496,8 @@ rrdata_names_must_fit(_) ->
             #dns_rrdata_nsec{next_dname = N, types = []},
             #dns_rrdata_nxt{dname = N, types = []},
             #dns_rrdata_ptr{dname = N},
+            #dns_rrdata_px{preference = 1, map822 = N, mapx400 = <<"example">>},
+            #dns_rrdata_px{preference = 1, map822 = <<"example">>, mapx400 = N},
             #dns_rrdata_rp{mbox = N, txt = <<"example">>},
             #dns_rrdata_rp{mbox = <<"example">>, txt = N},
             #dns_rrdata_rrsig{

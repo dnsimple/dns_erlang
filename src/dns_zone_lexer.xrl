@@ -185,6 +185,7 @@ RTYPE_AMTRELAY = AMTRELAY
 RTYPE_HHIT     = HHIT
 RTYPE_HIP      = HIP
 RTYPE_SIG      = SIG
+RTYPE_PX       = PX
 RTYPE_BRID     = BRID
 RTYPE_ALIAS    = ALIAS
 
@@ -294,6 +295,7 @@ Rules.
 {RTYPE_MG}         : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_MR}         : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_LP}         : {token, {rtype, TokenLine, TokenChars}}.
+{RTYPE_PX}         : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_A}          : {token, {rtype, TokenLine, TokenChars}}.
 
 % Quoted strings

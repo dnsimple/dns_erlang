@@ -152,6 +152,7 @@ dns_type() ->
         ?DNS_TYPE_BRID,
         ?DNS_TYPE_HIP,
         ?DNS_TYPE_SIG,
+        ?DNS_TYPE_PX,
         ?DNS_TYPE_ZONEMD,
         ?DNS_TYPE_CSYNC,
         ?DNS_TYPE_DSYNC,
@@ -173,7 +174,7 @@ dns_class() ->
     ]).
 
 %% A class the encoder writes RDATA of this type in: A, AAAA, EUI48, EUI64, DHCID,
-%% OPENPGPKEY and WALLET only in IN
+%% OPENPGPKEY, WALLET and PX only in IN
 dns_class(Type) when
     Type =:= ?DNS_TYPE_A;
     Type =:= ?DNS_TYPE_AAAA;
@@ -181,7 +182,8 @@ dns_class(Type) when
     Type =:= ?DNS_TYPE_EUI64;
     Type =:= ?DNS_TYPE_DHCID;
     Type =:= ?DNS_TYPE_OPENPGPKEY;
-    Type =:= ?DNS_TYPE_WALLET
+    Type =:= ?DNS_TYPE_WALLET;
+    Type =:= ?DNS_TYPE_PX
 ->
     ?DNS_CLASS_IN;
 dns_class(_Type) ->

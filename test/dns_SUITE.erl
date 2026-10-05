@@ -104,7 +104,9 @@ groups() ->
             hip_without_hit_or_key_kept_opaque,
             sig_wire_known_answer,
             sig_read_and_written_as_rrsig,
-            sig0_ends_the_additional_section
+            sig0_ends_the_additional_section,
+            px_wire_known_answer,
+            px_bound_to_class_in
         ]},
         {svcb, [parallel], [
             decode_encode_svcb_params,
@@ -1148,6 +1150,9 @@ decode_encode_rrdata(_) ->
         {?DNS_TYPE_HIP, #dns_rrdata_hip{
             alg = 2, hit = <<1:128>>, public_key = <<3, 1, 0, 1, 2>>, rendezvous_servers = []
         }},
+        {?DNS_TYPE_PX, #dns_rrdata_px{
+            preference = 10, map822 = <<"net2.it">>, mapx400 = <<"PRMD-net2.ADMD-p400.C-it">>
+        }},
         {?DNS_TYPE_SIG, #dns_rrdata_sig{
             type_covered = ?DNS_TYPE_A,
             alg = ?DNS_ALG_RSASHA1,
@@ -1357,6 +1362,7 @@ empty_rdata_rejected_for_known_types(_) ->
         ?DNS_TYPE_NXT,
         ?DNS_TYPE_OPENPGPKEY,
         ?DNS_TYPE_PTR,
+        ?DNS_TYPE_PX,
         ?DNS_TYPE_RESINFO,
         ?DNS_TYPE_RP,
         ?DNS_TYPE_RRSIG,
@@ -1375,7 +1381,7 @@ empty_rdata_rejected_for_known_types(_) ->
         ?DNS_TYPE_WALLET,
         ?DNS_TYPE_ZONEMD
     ],
-    ?assertEqual(61, length(Known)),
+    ?assertEqual(62, length(Known)),
     [
         ?assertError(
             empty_rrdata,
@@ -2255,6 +2261,40 @@ sig0_ends_the_additional_section(_) ->
         binary:match(Encoded, <<12345:16, (dns_domain:to_wire(<<"host.example.com">>))/binary>>)
     ),
     ?assertEqual(Msg, dns:decode_message(Encoded)).
+
+%% RFC2163§4.1: an example PX, as the preference and two names. RFC3597§4 keeps
+%% PX's names uncompressed, as it is not one of RFC 1035's types, even where they
+%% repeat the owner.
+px_wire_known_answer(_) ->
+    Data = #dns_rrdata_px{
+        preference = 10, map822 = <<"ab.net2.it">>, mapx400 = <<"O-ab.PRMD-net2.ADMDb.C-it">>
+    },
+    Wire =
+        <<10:16, 2, "ab", 4, "net2", 2, "it", 0, 4, "O-ab", 9, "PRMD-net2", 5, "ADMDb", 4, "C-it",
+            0>>,
+    ?assertEqual(Wire, dns_encode:encode_rrdata(?DNS_CLASS_IN, Data)),
+    ?assertEqual(Data, dns_decode:decode_rrdata(Wire, ?DNS_CLASS_IN, ?DNS_TYPE_PX, Wire)),
+    Msg = #dns_message{
+        qr = true,
+        qc = 1,
+        anc = 1,
+        questions = [#dns_query{name = <<"ab.net2.it">>, type = ?DNS_TYPE_PX}],
+        answers = [#dns_rr{name = <<"ab.net2.it">>, type = ?DNS_TYPE_PX, ttl = 60, data = Data}]
+    },
+    Encoded = dns:encode_message(Msg),
+    ?assertMatch({_, _}, binary:match(Encoded, Wire)),
+    ?assertEqual(Msg, dns:decode_message(Encoded)).
+
+%% RFC2163§4: PX is defined for class IN, so elsewhere its RDATA stays opaque, as
+%% an A record's does
+px_bound_to_class_in(_) ->
+    Data = #dns_rrdata_px{preference = 10, map822 = <<"net2.it">>, mapx400 = <<"C-it">>},
+    Wire = dns_encode:encode_rrdata(?DNS_CLASS_IN, Data),
+    ?assertEqual(Data, dns_decode:decode_rrdata(Wire, ?DNS_CLASS_NONE, ?DNS_TYPE_PX, Wire)),
+    [
+        ?assertEqual(Wire, dns_decode:decode_rrdata(Wire, Class, ?DNS_TYPE_PX, Wire), Class)
+     || Class <- [?DNS_CLASS_CH, ?DNS_CLASS_HS]
+    ].
 
 %% RFC3403§4.1: the NAPTR REGEXP field is UTF-8. unicode:characters_to_binary/2
 %% reports invalid input by returning an error tuple instead of raising, so the

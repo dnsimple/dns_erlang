@@ -100,6 +100,7 @@ groups() ->
             encode_drip_records,
             encode_hip_record,
             encode_sig_record,
+            encode_px_record,
             encode_zonemd_record,
             encode_csync_record,
             encode_dsync_record,
@@ -333,6 +334,7 @@ groups() ->
             parse_hip_record,
             parse_hip_records_roundtrip,
             parse_sig_record,
+            parse_px_record,
             parse_ds_record,
             parse_dnskey_record,
             parse_key_record,
@@ -576,6 +578,7 @@ groups() ->
             parse_invalid_drip_rdata,
             parse_invalid_hip_rdata,
             parse_invalid_sig_rdata,
+            parse_invalid_px_rdata,
             parse_invalid_ds_rdata,
             parse_invalid_ds_hex,
             parse_invalid_rrsig_times,
@@ -1909,6 +1912,45 @@ parse_sig_record(_Config) ->
         dns_zone:encode_string([Dates, Seconds], #{origin => ~"example.com."})
     ),
     ?assertEqual({ok, [Dates, Seconds]}, dns_zone:parse_string(Encoded)).
+
+parse_px_record(_Config) ->
+    %% RFC 2163 §4.1: a wildcard and an exact match, and a relative name
+    Zone =
+        ~"""
+    $ORIGIN net2.it.
+    *.net2.it.   IN  PX  10   net2.it.  PRMD-net2.ADMD-p400.C-it.
+    ab.net2.it.  IN  PX  10   ab.net2.it.  O-ab.PRMD-net2.ADMDb.C-it.
+    ab IN PX 20 ab O-ab.PRMD-net2.ADMDb.C-it.
+
+    """,
+    {ok, RRs} = dns_zone:parse_string(Zone),
+    ?assertEqual(
+        [
+            {~"*.net2.it.", #dns_rrdata_px{
+                preference = 10, map822 = ~"net2.it.", mapx400 = ~"PRMD-net2.ADMD-p400.C-it."
+            }},
+            {~"ab.net2.it.", #dns_rrdata_px{
+                preference = 10, map822 = ~"ab.net2.it.", mapx400 = ~"O-ab.PRMD-net2.ADMDb.C-it."
+            }},
+            {~"ab.net2.it.", #dns_rrdata_px{
+                preference = 20, map822 = ~"ab.net2.it.", mapx400 = ~"O-ab.PRMD-net2.ADMDb.C-it."
+            }}
+        ],
+        [{RR#dns_rr.name, RR#dns_rr.data} || RR <- RRs]
+    ),
+    ?assertEqual([?DNS_TYPE_PX], lists:usort([RR#dns_rr.type || RR <- RRs])),
+    Encoded = iolist_to_binary(dns_zone:encode_string(RRs, #{origin => ~"net2.it."})),
+    {ok, Reparsed} = dns_zone:parse_string(Encoded),
+    %% The zone encoder writes RDATA names lowercased
+    Lowered = [
+        RR#dns_rr{
+            data = PX#dns_rrdata_px{
+                map822 = dns_domain:to_lower(Map822), mapx400 = dns_domain:to_lower(MapX400)
+            }
+        }
+     || #dns_rr{data = #dns_rrdata_px{map822 = Map822, mapx400 = MapX400} = PX} = RR <- RRs
+    ],
+    ?assertEqual(lists:sort(Lowered), lists:sort(Reparsed)).
 
 parse_ds_record(_Config) ->
     %% DS (Delegation Signer) for DNSSEC (RFC 4034)
@@ -3416,6 +3458,24 @@ parse_invalid_sig_rdata(_Config) ->
             ~"host.example.com. 3600 IN SIG A 256 2 3600 1613604280 1611185080 2642 example.com. AAECAw==\n"
         )
     ).
+
+parse_invalid_px_rdata(_Config) ->
+    %% RFC 2163 §4: a preference and two domain names
+    [
+        ?assertMatch(
+            {error, #{type := Type}},
+            dns_zone:parse_string(<<"net2.it. 3600 IN ", Value/binary, "\n">>),
+            Value
+        )
+     || {Value, Type} <- [
+            {~"PX", parser},
+            {~"PX 10 net2.it.", semantic},
+            {~"PX net2.it. PRMD-net2.ADMD-p400.C-it.", semantic},
+            {~"PX 10 net2.it. PRMD-net2.ADMD-p400.C-it. extra.", semantic},
+            {~"PX 10 net2.it. \"C-it\"", semantic},
+            {~"PX 65536 net2.it. PRMD-net2.ADMD-p400.C-it.", semantic}
+        ]
+    ].
 
 test_format_error(_Config) ->
     %% Test formatting of error details
@@ -5199,6 +5259,20 @@ encode_sig_record(_Config) ->
     ?assertEqual(
         ~"A 5 2 3600 1613604280 1611185080 2642 example.com. AAECAw==",
         iolist_to_binary(dns_zone:encode_rdata(?DNS_TYPE_SIG, Sig))
+    ).
+
+encode_px_record(_Config) ->
+    %% RFC 2163 §4: preference map822 mapx400
+    Px = #dns_rrdata_px{
+        preference = 10, map822 = ~"Net2.IT.", mapx400 = ~"PRMD-net2.ADMD-p400.C-it."
+    },
+    ?assertEqual(
+        ~"10 net2.it. prmd-net2.admd-p400.c-it.",
+        iolist_to_binary(dns_zone:encode_rdata(?DNS_TYPE_PX, Px))
+    ),
+    ?assertEqual(
+        ~"10 @ prmd-net2.admd-p400.c-it.",
+        iolist_to_binary(dns_zone:encode_rdata(?DNS_TYPE_PX, Px, #{origin => ~"net2.it."}))
     ).
 
 encode_zonemd_record(_Config) ->

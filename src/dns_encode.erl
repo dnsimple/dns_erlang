@@ -1345,6 +1345,19 @@ encode_rrdata_append(
             Sig/binary>>,
         CompMap
     };
+encode_rrdata_append(
+    Acc, _Pos, Class, #dns_rrdata_px{preference = Pref, map822 = Map822, mapx400 = MapX400}, CompMap
+) when
+    ?CLASS_IS_IN(Class)
+->
+    %% RFC3597§4: PX is not one of RFC 1035's types, so its names are not compressed
+    Map822Bin = dns_domain:to_wire(Map822),
+    MapX400Bin = dns_domain:to_wire(MapX400),
+    {
+        <<Acc/binary, (2 + byte_size(Map822Bin) + byte_size(MapX400Bin)):16, Pref:16,
+            Map822Bin/binary, MapX400Bin/binary>>,
+        CompMap
+    };
 %% RFC2535§4.1: the RDATA RRSIG took over field for field, so it is written as
 %% RRSIG's, its name uncompressed as SIG is not one of RFC 1035's types (RFC3597§4)
 encode_rrdata_append(Acc, Pos, Class, #dns_rrdata_sig{} = Sig, CompMap) ->

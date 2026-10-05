@@ -249,6 +249,7 @@ restrictions on the length. Labels must be 63 characters or less.
     | #dns_rrdata_dsync{}
     | #dns_rrdata_openpgpkey{}
     | #dns_rrdata_ptr{}
+    | #dns_rrdata_px{}
     | #dns_rrdata_rp{}
     | #dns_rrdata_rrsig{}
     | #dns_rrdata_rt{}

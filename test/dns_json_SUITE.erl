@@ -36,6 +36,7 @@ groups() ->
             test_drip_records,
             test_hip_record,
             test_sig_record,
+            test_px_record,
             test_error_cases,
             test_edge_cases
         ]}
@@ -1419,6 +1420,40 @@ test_sig_record(_Config) ->
             #{~"alg" => 256},
             #{~"expiration" => 1 bsl 32},
             #{~"signers_name" => binary:copy(~"a", 64)}
+        ]
+    ].
+
+test_px_record(_Config) ->
+    %% RFC 2163: a preference and two names
+    Px = #dns_rr{
+        name = ~"*.net2.it",
+        type = ?DNS_TYPE_PX,
+        ttl = 3600,
+        data = #dns_rrdata_px{
+            preference = 10, map822 = ~"net2.it", mapx400 = ~"PRMD-net2.ADMD-p400.C-it"
+        }
+    },
+    ?assertMatch(
+        #{
+            ~"data" := #{
+                ~"preference" := 10,
+                ~"map822" := ~"net2.it",
+                ~"mapx400" := ~"PRMD-net2.ADMD-p400.C-it"
+            }
+        },
+        assert_transcode(Px)
+    ),
+    Map = dns_json:to_map(Px),
+    [
+        ?assertError(
+            {invalid_record, _},
+            dns_json:from_map(Map#{~"data" := maps:merge(maps:get(~"data", Map), Data)}),
+            Data
+        )
+     || Data <- [
+            #{~"preference" => 65536},
+            #{~"map822" => binary:copy(~"a", 64)},
+            #{~"mapx400" => 1}
         ]
     ].
 
