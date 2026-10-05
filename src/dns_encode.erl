@@ -1345,6 +1345,10 @@ encode_rrdata_append(
             Sig/binary>>,
         CompMap
     };
+%% RFC2535§4.1: the RDATA RRSIG took over field for field, so it is written as
+%% RRSIG's, its name uncompressed as SIG is not one of RFC 1035's types (RFC3597§4)
+encode_rrdata_append(Acc, Pos, Class, #dns_rrdata_sig{} = Sig, CompMap) ->
+    encode_rrdata_append(Acc, Pos, Class, setelement(1, Sig, dns_rrdata_rrsig), CompMap);
 encode_rrdata_append(
     Acc,
     _Pos,

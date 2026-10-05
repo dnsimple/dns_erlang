@@ -252,6 +252,7 @@ restrictions on the length. Labels must be 63 characters or less.
     | #dns_rrdata_rp{}
     | #dns_rrdata_rrsig{}
     | #dns_rrdata_rt{}
+    | #dns_rrdata_sig{}
     | #dns_rrdata_soa{}
     | #dns_rrdata_spf{}
     | #dns_rrdata_srv{}

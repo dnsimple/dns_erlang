@@ -99,6 +99,7 @@ groups() ->
             encode_amtrelay_record,
             encode_drip_records,
             encode_hip_record,
+            encode_sig_record,
             encode_zonemd_record,
             encode_csync_record,
             encode_dsync_record,
@@ -331,6 +332,7 @@ groups() ->
             parse_drip_records_roundtrip,
             parse_hip_record,
             parse_hip_records_roundtrip,
+            parse_sig_record,
             parse_ds_record,
             parse_dnskey_record,
             parse_key_record,
@@ -573,6 +575,7 @@ groups() ->
             parse_invalid_amtrelay_relay,
             parse_invalid_drip_rdata,
             parse_invalid_hip_rdata,
+            parse_invalid_sig_rdata,
             parse_invalid_ds_rdata,
             parse_invalid_ds_hex,
             parse_invalid_rrsig_times,
@@ -1870,6 +1873,42 @@ parse_hip_records_roundtrip(_Config) ->
     Encoded = iolist_to_binary(dns_zone:encode_string(Records, #{origin => ~"example.com."})),
     {ok, Reparsed} = dns_zone:parse_string(Encoded),
     ?assertEqual(lists:sort(Records), lists:sort(Reparsed)).
+
+parse_sig_record(_Config) ->
+    %% RFC 2535 §7.2: as RRSIG, times as YYYYMMDDHHMMSS or seconds, the signature
+    %% base64 in any number of pieces
+    Zone =
+        ~"""
+    $ORIGIN example.com.
+    host 3600 IN SIG A 5 2 3600 20210217232440 20210120232440 2642 example.com. (
+        AAEC
+        Aw== )
+    host 3600 IN SIG MX 1 2 3600 1613604280 1611185080 2642 @ AAECAw==
+
+    """,
+    {ok, [Dates, Seconds]} = dns_zone:parse_string(Zone),
+    Sig = #dns_rrdata_sig{
+        type_covered = ?DNS_TYPE_A,
+        alg = 5,
+        labels = 2,
+        original_ttl = 3600,
+        expiration = 1613604280,
+        inception = 1611185080,
+        keytag = 2642,
+        signers_name = ~"example.com.",
+        signature = <<0, 1, 2, 3>>
+    },
+    ?assertEqual({~"host.example.com.", ?DNS_TYPE_SIG, Sig}, {
+        Dates#dns_rr.name, Dates#dns_rr.type, Dates#dns_rr.data
+    }),
+    ?assertEqual(
+        Sig#dns_rrdata_sig{type_covered = ?DNS_TYPE_MX, alg = 1}, Seconds#dns_rr.data
+    ),
+    %% Encode and re-parse
+    Encoded = iolist_to_binary(
+        dns_zone:encode_string([Dates, Seconds], #{origin => ~"example.com."})
+    ),
+    ?assertEqual({ok, [Dates, Seconds]}, dns_zone:parse_string(Encoded)).
 
 parse_ds_record(_Config) ->
     %% DS (Delegation Signer) for DNSSEC (RFC 4034)
@@ -3356,6 +3395,28 @@ parse_invalid_hip_rdata(_Config) ->
         ]
     ].
 
+parse_invalid_sig_rdata(_Config) ->
+    %% A field missing, a date that is not one, or a signature that is not base64
+    [
+        ?assertMatch(
+            {error, #{type := semantic, message := <<"Invalid SIG record", _/binary>>}},
+            dns_zone:parse_string(<<"host.example.com. 3600 IN SIG ", Value/binary, "\n">>),
+            Value
+        )
+     || Value <- [
+            ~"A 5 2 3600 1613604280 1611185080 2642 example.com.",
+            ~"A 5 2 3600 1613604280 2642 example.com. AAECAw==",
+            ~"A 5 2 3600 20211317000000 1611185080 2642 example.com. AAECAw==",
+            ~"A 5 2 3600 1613604280 1611185080 2642 example.com. AAECAw="
+        ]
+    ],
+    ?assertMatch(
+        {error, #{type := semantic}},
+        dns_zone:parse_string(
+            ~"host.example.com. 3600 IN SIG A 256 2 3600 1613604280 1611185080 2642 example.com. AAECAw==\n"
+        )
+    ).
+
 test_format_error(_Config) ->
     %% Test formatting of error details
     Zone = ~"example.com. 3600 IN SSHFP 2 1\n",
@@ -4088,13 +4149,14 @@ parse_rfc3597_invalid_format(_Config) ->
     ?assert(maps:is_key(type, Error)).
 
 %% RFC 3597 §5: a type without a mnemonic is written TYPE### in RDATA too, as the
-%% encoder writes it in an RRSIG's type covered and in a type bitmap, such as the
-%% NSEC over BIND's TYPE65534 signing records
+%% encoder writes it in an RRSIG's or a SIG's type covered and in a type bitmap,
+%% such as the NSEC over BIND's TYPE65534 signing records
 parse_rfc3597_generic_type_in_rdata(_Config) ->
     Zone =
         ~"""
     $ORIGIN example.com.
     a 60 IN RRSIG TYPE65534 13 2 60 20260101000000 20250101000000 12345 example.com. AQ==
+    a 60 IN SIG TYPE0 13 0 0 20260101000000 20250101000000 12345 example.com. AQ==
     a 60 IN NSEC b.example.com. A RRSIG NSEC TYPE65534
     a 60 IN CSYNC 66 3 A TYPE65534
 
@@ -4103,6 +4165,7 @@ parse_rfc3597_generic_type_in_rdata(_Config) ->
     ?assertMatch(
         [
             #dns_rr{data = #dns_rrdata_rrsig{type_covered = 65534}},
+            #dns_rr{data = #dns_rrdata_sig{type_covered = 0}},
             #dns_rr{
                 data = #dns_rrdata_nsec{
                     types = [?DNS_TYPE_A, ?DNS_TYPE_RRSIG, ?DNS_TYPE_NSEC, 65534]
@@ -5118,6 +5181,24 @@ encode_hip_record(_Config) ->
                 #{origin => ~"example.com."}
             )
         )
+    ).
+
+encode_sig_record(_Config) ->
+    %% RFC 2535 §7.2: as RRSIG
+    Sig = #dns_rrdata_sig{
+        type_covered = ?DNS_TYPE_A,
+        alg = 5,
+        labels = 2,
+        original_ttl = 3600,
+        expiration = 1613604280,
+        inception = 1611185080,
+        keytag = 2642,
+        signers_name = ~"Example.COM.",
+        signature = <<0, 1, 2, 3>>
+    },
+    ?assertEqual(
+        ~"A 5 2 3600 1613604280 1611185080 2642 example.com. AAECAw==",
+        iolist_to_binary(dns_zone:encode_rdata(?DNS_TYPE_SIG, Sig))
     ).
 
 encode_zonemd_record(_Config) ->

@@ -295,6 +295,7 @@ decodable_type() ->
         ?DNS_TYPE_RP,
         ?DNS_TYPE_RRSIG,
         ?DNS_TYPE_RT,
+        ?DNS_TYPE_SIG,
         ?DNS_TYPE_SMIMEA,
         ?DNS_TYPE_SOA,
         ?DNS_TYPE_SPF,
@@ -492,6 +493,21 @@ rrdata() ->
         ),
         ?LET({P, H}, {u16(), dname()}, #dns_rrdata_rt{preference = P, host = H}),
         ?LET(
+            {Tc, A, L, Ot, Ex, In, K, Sn, Sg},
+            {u16(), u8(), u8(), u32(), u32(), u32(), u16(), dname(), bin(0, 20)},
+            #dns_rrdata_sig{
+                type_covered = Tc,
+                alg = A,
+                labels = L,
+                original_ttl = Ot,
+                expiration = Ex,
+                inception = In,
+                keytag = K,
+                signers_name = Sn,
+                signature = Sg
+            }
+        ),
+        ?LET(
             {U, S, M, C},
             {u8(), u8(), u8(), bin(1, 20)},
             #dns_rrdata_smimea{usage = U, selector = S, matching_type = M, certificate = C}
@@ -655,6 +671,7 @@ type_of(#dns_rrdata_resinfo{}) -> ?DNS_TYPE_RESINFO;
 type_of(#dns_rrdata_rp{}) -> ?DNS_TYPE_RP;
 type_of(#dns_rrdata_rrsig{}) -> ?DNS_TYPE_RRSIG;
 type_of(#dns_rrdata_rt{}) -> ?DNS_TYPE_RT;
+type_of(#dns_rrdata_sig{}) -> ?DNS_TYPE_SIG;
 type_of(#dns_rrdata_smimea{}) -> ?DNS_TYPE_SMIMEA;
 type_of(#dns_rrdata_soa{}) -> ?DNS_TYPE_SOA;
 type_of(#dns_rrdata_spf{}) -> ?DNS_TYPE_SPF;

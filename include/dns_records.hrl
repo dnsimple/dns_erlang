@@ -338,6 +338,21 @@
     signature = <<>> :: binary()
 }).
 
+%% SIG record for a signature. RRSIG replaced it in zones, and as SIG(0) (RFC 2931)
+%% it signs a whole message, with type_covered 0. Its fields are RRSIG's in the same
+%% order, as the codecs read and write it as one retagged. See RFC 2535: §4.1.
+-record(dns_rrdata_sig, {
+    type_covered :: dns:uint16(),
+    alg :: dns:uint8(),
+    labels :: dns:uint8(),
+    original_ttl :: dns:uint32(),
+    expiration :: dns:uint32(),
+    inception :: dns:uint32(),
+    keytag :: dns:uint16(),
+    signers_name :: dns:dname(),
+    signature = <<>> :: binary()
+}).
+
 %% RT record for route through. See RFC 1183: §3.3.
 -record(dns_rrdata_rt, {
     preference :: dns:uint16(),

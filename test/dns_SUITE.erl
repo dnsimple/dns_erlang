@@ -101,7 +101,10 @@ groups() ->
             hip_wire_known_answer,
             hip_hit_too_long_refused,
             hip_rendezvous_servers_not_compressed,
-            hip_without_hit_or_key_kept_opaque
+            hip_without_hit_or_key_kept_opaque,
+            sig_wire_known_answer,
+            sig_read_and_written_as_rrsig,
+            sig0_ends_the_additional_section
         ]},
         {svcb, [parallel], [
             decode_encode_svcb_params,
@@ -1145,6 +1148,17 @@ decode_encode_rrdata(_) ->
         {?DNS_TYPE_HIP, #dns_rrdata_hip{
             alg = 2, hit = <<1:128>>, public_key = <<3, 1, 0, 1, 2>>, rendezvous_servers = []
         }},
+        {?DNS_TYPE_SIG, #dns_rrdata_sig{
+            type_covered = ?DNS_TYPE_A,
+            alg = ?DNS_ALG_RSASHA1,
+            labels = 2,
+            original_ttl = 3600,
+            expiration = 1700000000,
+            inception = 1690000000,
+            keytag = 2642,
+            signers_name = <<"example.com">>,
+            signature = <<1, 2, 3, 4>>
+        }},
         {?DNS_TYPE_HIP, #dns_rrdata_hip{
             alg = 3,
             hit = <<1:128>>,
@@ -1347,6 +1361,7 @@ empty_rdata_rejected_for_known_types(_) ->
         ?DNS_TYPE_RP,
         ?DNS_TYPE_RRSIG,
         ?DNS_TYPE_RT,
+        ?DNS_TYPE_SIG,
         ?DNS_TYPE_SMIMEA,
         ?DNS_TYPE_SOA,
         ?DNS_TYPE_SPF,
@@ -1360,7 +1375,7 @@ empty_rdata_rejected_for_known_types(_) ->
         ?DNS_TYPE_WALLET,
         ?DNS_TYPE_ZONEMD
     ],
-    ?assertEqual(60, length(Known)),
+    ?assertEqual(61, length(Known)),
     [
         ?assertError(
             empty_rrdata,
@@ -2167,6 +2182,79 @@ hip_without_hit_or_key_kept_opaque(_) ->
             <<1, 2>>
         ]
     ].
+
+%% RFC2535§4.1: the RDATA RRSIG took over, field by field, with the signer's name
+%% uncompressed
+sig_wire_known_answer(_) ->
+    Data = #dns_rrdata_sig{
+        type_covered = ?DNS_TYPE_A,
+        alg = ?DNS_ALG_RSASHA1,
+        labels = 2,
+        original_ttl = 3600,
+        expiration = 16#65B5F180,
+        inception = 16#65A3B000,
+        keytag = 2642,
+        signers_name = <<"example.com">>,
+        signature = <<1, 2, 3, 4>>
+    },
+    Wire =
+        <<?DNS_TYPE_A:16, ?DNS_ALG_RSASHA1, 2, 3600:32, 16#65B5F180:32, 16#65A3B000:32, 2642:16, 7,
+            "example", 3, "com", 0, 1, 2, 3, 4>>,
+    ?assertEqual(Wire, dns_encode:encode_rrdata(?DNS_CLASS_IN, Data)),
+    ?assertEqual(Data, dns_decode:decode_rrdata(Wire, ?DNS_CLASS_IN, ?DNS_TYPE_SIG, Wire)).
+
+%% SIG is read and written as an RRSIG retagged, which needs its record to have
+%% RRSIG's fields in the same order, with the same defaults, and so stays opaque
+%% wherever RRSIG does
+sig_read_and_written_as_rrsig(_) ->
+    ?assertEqual(record_info(fields, dns_rrdata_rrsig), record_info(fields, dns_rrdata_sig)),
+    ?assertEqual(setelement(1, #dns_rrdata_rrsig{}, dns_rrdata_sig), #dns_rrdata_sig{}),
+    Short = <<?DNS_TYPE_A:16, 5, 2, 3600:32>>,
+    ?assertEqual(Short, dns_decode:decode_rrdata(Short, ?DNS_CLASS_IN, ?DNS_TYPE_RRSIG, Short)),
+    ?assertEqual(Short, dns_decode:decode_rrdata(Short, ?DNS_CLASS_IN, ?DNS_TYPE_SIG, Short)).
+
+%% RFC2931§3: a SIG(0) covers type 0 and goes last in the additional section, with
+%% the root as owner, class ANY and TTL 0. It is a SIG like any other on the wire,
+%% and RFC3597§4 keeps its signer's name, which shares a suffix with the question,
+%% uncompressed.
+sig0_ends_the_additional_section(_) ->
+    Sig0 = #dns_rr{
+        name = <<>>,
+        type = ?DNS_TYPE_SIG,
+        class = ?DNS_CLASS_ANY,
+        ttl = 0,
+        data = #dns_rrdata_sig{
+            type_covered = 0,
+            alg = ?DNS_ALG_ED25519,
+            labels = 0,
+            original_ttl = 0,
+            expiration = 1700000300,
+            inception = 1700000000,
+            keytag = 12345,
+            signers_name = <<"host.example.com">>,
+            signature = binary:copy(<<7>>, 64)
+        }
+    },
+    Msg = #dns_message{
+        qc = 1,
+        adc = 2,
+        questions = [#dns_query{name = <<"www.example.com">>, type = ?DNS_TYPE_A}],
+        additional = [
+            #dns_rr{
+                name = <<"www.example.com">>,
+                type = ?DNS_TYPE_A,
+                ttl = 60,
+                data = #dns_rrdata_a{ip = {192, 0, 2, 1}}
+            },
+            Sig0
+        ]
+    },
+    Encoded = dns:encode_message(Msg),
+    ?assertMatch(
+        {_, _},
+        binary:match(Encoded, <<12345:16, (dns_domain:to_wire(<<"host.example.com">>))/binary>>)
+    ),
+    ?assertEqual(Msg, dns:decode_message(Encoded)).
 
 %% RFC3403§4.1: the NAPTR REGEXP field is UTF-8. unicode:characters_to_binary/2
 %% reports invalid input by returning an error tuple instead of raising, so the

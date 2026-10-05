@@ -172,6 +172,7 @@ record_type_from_key(?DNS_TYPE_PTR_BSTR) -> dns_rrdata_ptr;
 record_type_from_key(?DNS_TYPE_RP_BSTR) -> dns_rrdata_rp;
 record_type_from_key(?DNS_TYPE_RRSIG_BSTR) -> dns_rrdata_rrsig;
 record_type_from_key(?DNS_TYPE_RT_BSTR) -> dns_rrdata_rt;
+record_type_from_key(?DNS_TYPE_SIG_BSTR) -> dns_rrdata_sig;
 record_type_from_key(?DNS_TYPE_SOA_BSTR) -> dns_rrdata_soa;
 record_type_from_key(?DNS_TYPE_SPF_BSTR) -> dns_rrdata_spf;
 record_type_from_key(?DNS_TYPE_SRV_BSTR) -> dns_rrdata_srv;
@@ -312,6 +313,7 @@ record_fields(dns_rrdata_lp) -> record_info(fields, dns_rrdata_lp);
 record_fields(dns_rrdata_ns) -> record_info(fields, dns_rrdata_ns);
 record_fields(dns_rrdata_ptr) -> record_info(fields, dns_rrdata_ptr);
 record_fields(dns_rrdata_rrsig) -> record_info(fields, dns_rrdata_rrsig);
+record_fields(dns_rrdata_sig) -> record_info(fields, dns_rrdata_sig);
 record_fields(dns_rrdata_soa) -> record_info(fields, dns_rrdata_soa);
 record_fields(dns_rrdata_srv) -> record_info(fields, dns_rrdata_srv);
 record_fields(dns_rrdata_txt) -> record_info(fields, dns_rrdata_txt);
@@ -413,6 +415,7 @@ to_map_value(dns_rrdata_ipseckey, public_key, Value) when is_binary(Value) -> ba
 to_map_value(dns_rrdata_hip, hit, Value) when is_binary(Value) -> binary:encode_hex(Value);
 to_map_value(dns_rrdata_hip, public_key, Value) when is_binary(Value) -> base64:encode(Value);
 to_map_value(dns_rrdata_rrsig, signature, Value) when is_binary(Value) -> base64:encode(Value);
+to_map_value(dns_rrdata_sig, signature, Value) when is_binary(Value) -> base64:encode(Value);
 to_map_value(dns_rrdata_tlsa, certificate, Value) when is_binary(Value) -> binary:encode_hex(Value);
 to_map_value(dns_rrdata_smimea, certificate, Value) when is_binary(Value) ->
     binary:encode_hex(Value);
@@ -510,6 +513,8 @@ decode_field(dns_rrdata_hip, hit, Value) ->
 decode_field(dns_rrdata_hip, public_key, Value) ->
     base64:decode(Value);
 decode_field(dns_rrdata_rrsig, signature, Value) ->
+    base64:decode(Value);
+decode_field(dns_rrdata_sig, signature, Value) ->
     base64:decode(Value);
 decode_field(dns_rrdata_tlsa, certificate, Value) ->
     binary:decode_hex(Value);

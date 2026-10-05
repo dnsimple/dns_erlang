@@ -1026,6 +1026,13 @@ decode_rrdata(
         signers_name = SigName,
         signature = Sig
     };
+%% RFC2535§4.1: the RDATA RRSIG took over field for field, so it is read as RRSIG's
+%% and retagged, the record having RRSIG's fields in the same order
+decode_rrdata(MsgBin, Class, ?DNS_TYPE_SIG, Bin) ->
+    case decode_rrdata(MsgBin, Class, ?DNS_TYPE_RRSIG, Bin) of
+        #dns_rrdata_rrsig{} = RRSig -> setelement(1, RRSig, dns_rrdata_sig);
+        Opaque -> Opaque
+    end;
 decode_rrdata(MsgBin, _Class, ?DNS_TYPE_RT, <<Pref:16, Bin/binary>>) ->
     #dns_rrdata_rt{preference = Pref, host = decode_dnameonly(MsgBin, Bin)};
 decode_rrdata(MsgBin, _Class, ?DNS_TYPE_SOA, Bin) ->
@@ -1145,6 +1152,7 @@ requires_rrdata(?DNS_TYPE_RESINFO) -> true;
 requires_rrdata(?DNS_TYPE_RP) -> true;
 requires_rrdata(?DNS_TYPE_RRSIG) -> true;
 requires_rrdata(?DNS_TYPE_RT) -> true;
+requires_rrdata(?DNS_TYPE_SIG) -> true;
 requires_rrdata(?DNS_TYPE_SMIMEA) -> true;
 requires_rrdata(?DNS_TYPE_SOA) -> true;
 requires_rrdata(?DNS_TYPE_SPF) -> true;

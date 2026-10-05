@@ -35,6 +35,7 @@ groups() ->
             test_amtrelay_records,
             test_drip_records,
             test_hip_record,
+            test_sig_record,
             test_error_cases,
             test_edge_cases
         ]}
@@ -1371,6 +1372,53 @@ test_hip_record(_Config) ->
             #{~"rendezvous_servers" => ~"rvs.example.com"},
             #{~"rendezvous_servers" => [1]},
             #{~"alg" => 256}
+        ]
+    ].
+
+test_sig_record(_Config) ->
+    %% RFC 2535 §4.1, RFC 2931: as RRSIG, the signature in base64, here a SIG(0)
+    Sig0 = #dns_rr{
+        name = <<>>,
+        type = ?DNS_TYPE_SIG,
+        class = ?DNS_CLASS_ANY,
+        ttl = 0,
+        data = #dns_rrdata_sig{
+            type_covered = 0,
+            alg = ?DNS_ALG_ED25519,
+            labels = 0,
+            original_ttl = 0,
+            expiration = 1700000300,
+            inception = 1700000000,
+            keytag = 12345,
+            signers_name = ~"host.example.com",
+            signature = <<0, 1, 2, 3>>
+        }
+    },
+    ?assertMatch(
+        #{
+            ~"type" := ~"SIG",
+            ~"class" := ~"ANY",
+            ~"data" := #{
+                ~"type_covered" := 0,
+                ~"keytag" := 12345,
+                ~"signers_name" := ~"host.example.com",
+                ~"signature" := ~"AAECAw=="
+            }
+        },
+        assert_transcode(Sig0)
+    ),
+    Map = dns_json:to_map(Sig0),
+    [
+        ?assertError(
+            {invalid_record, _},
+            dns_json:from_map(Map#{~"data" := maps:merge(maps:get(~"data", Map), Data)}),
+            Data
+        )
+     || Data <- [
+            #{~"type_covered" => 65536},
+            #{~"alg" => 256},
+            #{~"expiration" => 1 bsl 32},
+            #{~"signers_name" => binary:copy(~"a", 64)}
         ]
     ].
 

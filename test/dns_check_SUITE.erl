@@ -67,6 +67,17 @@ rrdata_integers_must_fit(_) ->
         signers_name = N,
         signature = <<1>>
     },
+    Sig = #dns_rrdata_sig{
+        type_covered = 0,
+        alg = 15,
+        labels = 0,
+        original_ttl = 0,
+        expiration = 1,
+        inception = 1,
+        keytag = 1,
+        signers_name = N,
+        signature = <<1>>
+    },
     Soa = #dns_rrdata_soa{
         mname = N, rname = N, serial = 1, refresh = 1, retry = 1, expire = 1, minimum = 1
     },
@@ -241,7 +252,14 @@ rrdata_integers_must_fit(_) ->
             #dns_rrdata_hip{alg = 1, hit = <<1>>, public_key = <<1>>, rendezvous_servers = []},
             #dns_rrdata_hip.alg,
             8
-        }
+        },
+        {Sig, #dns_rrdata_sig.type_covered, 16},
+        {Sig, #dns_rrdata_sig.alg, 8},
+        {Sig, #dns_rrdata_sig.labels, 8},
+        {Sig, #dns_rrdata_sig.original_ttl, 32},
+        {Sig, #dns_rrdata_sig.expiration, 32},
+        {Sig, #dns_rrdata_sig.inception, 32},
+        {Sig, #dns_rrdata_sig.keytag, 16}
     ],
     [
         begin
@@ -491,6 +509,17 @@ rrdata_names_must_fit(_) ->
                 signature = <<1>>
             },
             #dns_rrdata_rt{preference = 1, host = N},
+            #dns_rrdata_sig{
+                type_covered = 0,
+                alg = 15,
+                labels = 0,
+                original_ttl = 0,
+                expiration = 1,
+                inception = 1,
+                keytag = 1,
+                signers_name = N,
+                signature = <<1>>
+            },
             #dns_rrdata_soa{
                 mname = N,
                 rname = <<"example">>,

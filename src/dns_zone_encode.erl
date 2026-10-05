@@ -722,6 +722,10 @@ encode_rdata(
         ],
         Separator
     );
+encode_rdata(?DNS_TYPE_SIG, #dns_rrdata_sig{} = Sig, Origin, RelativeNames, Separator) ->
+    %% RFC 2535 §7.2: as RRSIG's, which took it over field for field
+    RRSig = setelement(1, Sig, dns_rrdata_rrsig),
+    encode_rdata(?DNS_TYPE_RRSIG, RRSig, Origin, RelativeNames, Separator);
 encode_rdata(
     ?DNS_TYPE_NSEC,
     #dns_rrdata_nsec{

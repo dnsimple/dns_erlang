@@ -518,6 +518,21 @@ canonical_rrdata_form_test(_Config) ->
             }
         ]
     ],
+    %% RFC4034§6.2: SIG is on the list, so its signer's name is lowercased
+    Sig = #dns_rrdata_sig{
+        type_covered = ?DNS_TYPE_A,
+        alg = ?DNS_ALG_RSASHA1,
+        labels = 2,
+        original_ttl = 3600,
+        expiration = 1,
+        inception = 1,
+        keytag = 1,
+        signers_name = ~"Example.COM",
+        signature = <<1>>
+    },
+    ?assertEqual(
+        Sig#dns_rrdata_sig{signers_name = ~"example.com"}, dnssec:canonical_rrdata_form(Sig)
+    ),
     %% Passthrough for unknown type
     ?assertEqual(~"binary", dnssec:canonical_rrdata_form(~"binary")).
 

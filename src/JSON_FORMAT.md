@@ -1198,6 +1198,41 @@ Non-RR records (message, query, OPT records) use a two-level nested map format:
 
 **Note:** This format is used within the `data` field of `dns_rr` records.
 
+### SIG (dns_rrdata_sig) [RFC2535](https://datatracker.ietf.org/doc/html/rfc2535)
+
+**Format:** RRDATA fields (used within `dns_rr.data`)
+
+**Fields:**
+
+- `type_covered` (`t:dns:uint16/0`): Direct value
+- `alg` (`t:dns:uint8/0`): Direct value
+- `labels` (`t:dns:uint8/0`): Direct value
+- `original_ttl` (`t:dns:uint32/0`): Direct value
+- `expiration` (`t:dns:uint32/0`): Direct value
+- `inception` (`t:dns:uint32/0`): Direct value
+- `keytag` (`t:dns:uint16/0`): Direct value
+- `signers_name` (`t:dns:dname/0`): Binary data (dname format)
+- `signature` (`t:binary/0`): Base64-encoded signature
+
+**Example:**
+
+```json
+{
+    "type_covered": "value",
+    "alg": 0,
+    "labels": "value",
+    "original_ttl": "value",
+    "expiration": "value",
+    "inception": "value",
+    "keytag": 0,
+    "signers_name": "value",
+    "signature": "base64-encoded-data"
+}
+```
+
+
+**Note:** This format is used within the `data` field of `dns_rr` records.
+
 ### SMIMEA (dns_rrdata_smimea) [RFC8162](https://datatracker.ietf.org/doc/html/rfc8162)
 
 **Format:** RRDATA fields (used within `dns_rr.data`)

@@ -1749,6 +1749,13 @@ build_rdata("RRSIG", RData, Ctx) ->
         _ ->
             {error, make_rdata_error(~"RRSIG", RData, Ctx)}
     end;
+build_rdata("SIG", RData, Ctx) ->
+    %% SIG format: as RRSIG's, which took it over field for field (RFC 2535 §7.2,
+    %% RFC 4034 §3.2), the record having RRSIG's fields in the same order
+    case build_rdata("RRSIG", RData, Ctx) of
+        {ok, RRSig} -> {ok, setelement(1, RRSig, dns_rrdata_sig)};
+        {error, _} -> {error, make_rdata_error(~"SIG", RData, Ctx)}
+    end;
 build_rdata("NSEC", RData, Ctx) ->
     %% NSEC format: next_dname type1 type2 type3 ...
     %% RFC 4034 - DNSSEC authenticated denial of existence
@@ -2372,6 +2379,8 @@ type_to_number("HHIT") ->
     ?DNS_TYPE_HHIT;
 type_to_number("HIP") ->
     ?DNS_TYPE_HIP;
+type_to_number("SIG") ->
+    ?DNS_TYPE_SIG;
 type_to_number("BRID") ->
     ?DNS_TYPE_BRID;
 %% RFC 3597 §5: a type without a mnemonic, in RDATA such as an RRSIG's type covered
