@@ -124,7 +124,7 @@ simple_valid_rr() ->
             {Name, Class, TTL, Data},
             {
                 dns_prop_generator:simple_dname(),
-                dns_prop_generator:dns_class(),
+                dns_prop_generator:dns_class(Type),
                 range(0, 2147483647),
                 rdata(Type)
             },
@@ -146,7 +146,7 @@ complex_valid_rr() ->
             {Name, Class, TTL, Data},
             {
                 dns_prop_generator:simple_dname(),
-                dns_prop_generator:dns_class(),
+                dns_prop_generator:dns_class(Type),
                 range(0, 2147483647),
                 rdata(Type)
             },

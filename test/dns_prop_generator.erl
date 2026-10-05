@@ -163,6 +163,21 @@ dns_class() ->
         ?DNS_CLASS_CS
     ]).
 
+%% A class the encoder writes RDATA of this type in: A, AAAA, EUI48, EUI64, DHCID,
+%% OPENPGPKEY and WALLET only in IN
+dns_class(Type) when
+    Type =:= ?DNS_TYPE_A;
+    Type =:= ?DNS_TYPE_AAAA;
+    Type =:= ?DNS_TYPE_EUI48;
+    Type =:= ?DNS_TYPE_EUI64;
+    Type =:= ?DNS_TYPE_DHCID;
+    Type =:= ?DNS_TYPE_OPENPGPKEY;
+    Type =:= ?DNS_TYPE_WALLET
+->
+    ?DNS_CLASS_IN;
+dns_class(_Type) ->
+    dns_class().
+
 %% Generate a domain name from a list of labels (without trailing dot)
 dname_from_labels(Labels) ->
     lists:foldl(

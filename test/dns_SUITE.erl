@@ -29,7 +29,8 @@ groups() ->
             prop_rrdata_wire_fidelity,
             prop_rrdata_reencode_preserves_value,
             prop_rrdata_reencode_idempotent,
-            prop_rrdata_encode_never_raises
+            prop_rrdata_encode_never_raises,
+            prop_check_accepts_rrdata
         ]},
         {message_basic, [parallel], [
             message_empty,
@@ -3403,3 +3404,6 @@ run_prop(PropName, Property, NumTests) ->
 
 prop_rrdata_encode_never_raises(_) ->
     run_prop(?FUNCTION_NAME, dns_wire_prop:prop_rrdata_encode_never_raises(), 5000).
+
+prop_check_accepts_rrdata(_) ->
+    run_prop(?FUNCTION_NAME, dns_wire_prop:prop_check_accepts_rrdata(), 5000).

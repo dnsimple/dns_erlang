@@ -8,6 +8,7 @@ functionality such as socket handling or query resolution.
 - **[RFC 1035](https://tools.ietf.org/html/rfc1035)**: Domain Names - Implementation and Specification
 - **[RFC 1183](https://tools.ietf.org/html/rfc1183)**: New DNS RR Definitions
 - **[RFC 1876](https://tools.ietf.org/html/rfc1876)**: A Means for Expressing Location Information in the Domain Name System
+- **[RFC 2181](https://tools.ietf.org/html/rfc2181)**: Clarifications to the DNS Specification
 - **[RFC 2230](https://tools.ietf.org/html/rfc2230)**: Key Exchange Delegation Record for the DNS
 - **[RFC 2308](https://tools.ietf.org/html/rfc2308)**: Negative Caching of DNS Queries (DNS NCACHE)
 - **[RFC 2535](https://tools.ietf.org/html/rfc2535)**: Domain Name System Security Extensions

@@ -550,6 +550,7 @@ groups() ->
             parse_invalid_ds_rdata,
             parse_invalid_ds_hex,
             parse_invalid_rrsig_times,
+            parse_values_that_do_not_fit_rejected,
             parse_invalid_dnskey_rdata,
             parse_invalid_dnskey_base64,
             parse_invalid_zonemd_rdata,
@@ -1435,6 +1436,50 @@ parse_invalid_rrsig_times(_Config) ->
             ~"123456789012"
         ]
     ].
+
+parse_values_that_do_not_fit_rejected(_Config) ->
+    %% RDATA the wire encoder refuses is refused when the zone is read: the parser
+    %% took any integer, and the encoder wrote preference 65536 as 0
+    Fits = [
+        ~"MX 65535 mail.example.com.",
+        ~"MX 1 mail.example.com.",
+        ~"SRV 0 0 65535 target.example.com.",
+        ~"SOA ns.example.com. admin.example.com. 4294967295 1 1 1 1",
+        ~"CAA 255 issue \"ca.example.net\"",
+        ~"URI 65535 1 \"https://example.com/\""
+    ],
+    DoNotFit = [
+        ~"MX 65536 mail.example.com.",
+        ~"SRV 0 0 65536 target.example.com.",
+        ~"SOA ns.example.com. admin.example.com. 4294967296 1 1 1 1",
+        ~"CAA 256 issue \"ca.example.net\"",
+        ~"URI 65536 1 \"https://example.com/\"",
+        ~"NSEC3PARAM 1 0 65536 -",
+        ~"TLSA 256 1 1 ABCD"
+    ],
+    Zone = fun(RData) -> <<"example.com. 3600 IN ", RData/binary, "\n">> end,
+    Long = binary:copy(~"a", 64),
+    [?assertMatch({ok, [_]}, dns_zone:parse_string(Zone(R)), R) || R <- Fits],
+    %% RFC2181§8: a TTL is 31 bits; RFC1035§2.3.4: a label is 63 octets or less
+    ?assertMatch({ok, [_]}, dns_zone:parse_string(~"example.com. 2147483647 IN A 192.0.2.1\n")),
+    %% A TXT record can be in CH, as the encoder writes it in any class, but an A
+    %% record cannot, as it writes A only in IN
+    ?assertMatch({ok, [_]}, dns_zone:parse_string(~"version.bind. 0 CH TXT \"9.20\"\n")),
+    [
+        ?assertMatch({error, #{type := semantic}}, dns_zone:parse_string(Z), Z)
+     || Z <- [
+            ~"example.com. 2147483648 IN A 192.0.2.1\n",
+            ~"example.com. 3600 CH A 192.0.2.1\n",
+            <<"example.com. 3600 IN MX 10 mail.", Long/binary, ".\n">>,
+            <<"example.com. 3600 IN CNAME ", Long/binary, ".example.com.\n">>
+        ]
+    ],
+    [
+        ?assertMatch({error, #{type := semantic}}, dns_zone:parse_string(Zone(R)), R)
+     || R <- DoNotFit
+    ],
+    {error, #{message := Message}} = dns_zone:parse_string(Zone(~"MX 65536 mail.example.com.")),
+    ?assertEqual(~"Invalid MX record: a value does not fit its field", Message).
 
 rrsig_with_times(Expiration, Inception) ->
     <<"uri.arpa. 3600 IN RRSIG SOA 8 2 3600 ", Expiration/binary, " ", Inception/binary,
@@ -2466,19 +2511,19 @@ test_format_error_with_file(Config) ->
 
 parse_class_ch(_Config) ->
     %% Test CHAOS class
-    Zone = ~"example.com. 3600 CH A 192.0.2.1\n",
+    Zone = ~"example.com. 3600 CH TXT \"a\"\n",
     {ok, [RR]} = dns_zone:parse_string(Zone, #{origin => ~"example.com."}),
     ?assertEqual(?DNS_CLASS_CH, RR#dns_rr.class).
 
 parse_class_hs(_Config) ->
     %% Test HESIOD class
-    Zone = ~"example.com. 3600 HS A 192.0.2.1\n",
+    Zone = ~"example.com. 3600 HS TXT \"a\"\n",
     {ok, [RR]} = dns_zone:parse_string(Zone, #{origin => ~"example.com."}),
     ?assertEqual(?DNS_CLASS_HS, RR#dns_rr.class).
 
 parse_class_cs(_Config) ->
     %% Test CSNET class
-    Zone = ~"example.com. 3600 CS A 192.0.2.1\n",
+    Zone = ~"example.com. 3600 CS TXT \"a\"\n",
     {ok, [RR]} = dns_zone:parse_string(Zone, #{origin => ~"example.com."}),
     ?assertEqual(?DNS_CLASS_CS, RR#dns_rr.class).
 
@@ -2858,7 +2903,7 @@ parse_default_ttl_directive(_Config) ->
 
 parse_default_class_option(_Config) ->
     %% Test default_class option
-    Zone = ~"example.com. 3600 A 192.0.2.1\n",
+    Zone = ~"example.com. 3600 TXT \"a\"\n",
     {ok, [RR]} = dns_zone:parse_string(Zone, #{
         origin => ~"example.com.",
         default_class => ?DNS_CLASS_CH
@@ -3022,7 +3067,7 @@ parse_unknown_class_fallback(_Config) ->
     %% Test line 766: class_to_number(_) default clause
     %% This is harder to test since the parser validates classes
     %% but we can verify behavior with valid but uncommon classes
-    Zone = ~"example.com. 3600 CH A 192.0.2.1\n",
+    Zone = ~"example.com. 3600 CH TXT \"a\"\n",
     {ok, [RR]} = dns_zone:parse_string(Zone, #{origin => ~"example.com."}),
     ?assertEqual(?DNS_CLASS_CH, RR#dns_rr.class).
 
@@ -3146,7 +3191,7 @@ parse_owner_undefined_uses_last(_Config) ->
 
 parse_generic_class(_Config) ->
     %% Test generic class parsing (CLASS### format)
-    Zone = ~"example.com. 3600 CLASS255 A 192.0.2.1\n",
+    Zone = ~"example.com. 3600 CLASS255 TXT \"a\"\n",
     {ok, [RR]} = dns_zone:parse_string(Zone, #{}),
     ?assertEqual(255, RR#dns_rr.class).
 
@@ -3172,7 +3217,7 @@ parse_ensure_ttl_non_integer(_Config) ->
 
 parse_ensure_entry_class_generic(_Config) ->
     %% Test ensure_entry_class with generic_class tuple
-    Zone = ~"example.com. 3600 CLASS255 A 192.0.2.1\n",
+    Zone = ~"example.com. 3600 CLASS255 TXT \"a\"\n",
     {ok, [RR]} = dns_zone:parse_string(Zone, #{}),
     ?assertEqual(255, RR#dns_rr.class).
 
@@ -3196,13 +3241,13 @@ parse_extract_strings_error(_Config) ->
 
 parse_resolved_class_generic(_Config) ->
     %% Test resolved_class with generic_class
-    Zone = ~"example.com. 3600 CLASS255 A 192.0.2.1\n",
+    Zone = ~"example.com. 3600 CLASS255 TXT \"a\"\n",
     {ok, [RR]} = dns_zone:parse_string(Zone, #{}),
     ?assertEqual(255, RR#dns_rr.class).
 
 parse_resolved_class_undefined(_Config) ->
     %% Test resolved_class with undefined (uses default)
-    Zone = ~"example.com. 3600 A 192.0.2.1\n",
+    Zone = ~"example.com. 3600 TXT \"a\"\n",
     {ok, [RR]} = dns_zone:parse_string(Zone, #{default_class => ?DNS_CLASS_CH}),
     ?assertEqual(?DNS_CLASS_CH, RR#dns_rr.class).
 
