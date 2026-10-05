@@ -3,6 +3,8 @@
 
 % 4KB, a good default
 -define(CHUNK_SIZE, 4096).
+%% calendar:datetime_to_gregorian_seconds({{1970, 1, 1}, {0, 0, 0}})
+-define(UNIX_EPOCH_GREGORIAN_SECONDS, 62_167_219_200).
 
 -include_lib("dns_erlang/include/dns.hrl").
 
@@ -1588,8 +1590,8 @@ build_rdata("RRSIG", RData, Ctx) ->
                             alg = Alg,
                             labels = Labels,
                             original_ttl = OriginalTTL,
-                            expiration = Expiration,
-                            inception = Inception,
+                            expiration = rrsig_time(Expiration),
+                            inception = rrsig_time(Inception),
                             keytag = KeyTag,
                             signers_name = SignersNameBin,
                             signature = Signature
@@ -1958,6 +1960,36 @@ calculate_keytag_sum(<<A:8>>, Acc) ->
     Acc + (A bsl 8);
 calculate_keytag_sum(<<>>, Acc) ->
     Acc.
+
+%% RFC4034§3.2: a signature time is written either as seconds since the epoch or
+%% as a UTC date YYYYMMDDHHmmSS. The date is always 14 digits and a 32-bit number
+%% never more than 10, which tells them apart. RFC4034§3.1.5: the wire field holds
+%% the seconds modulo 2^32, compared with serial number arithmetic, so a date
+%% after 2106 wraps as it does in BIND. BIND also takes second 60, a leap second,
+%% as the first second of the next minute; calendar refuses it, so the seconds of
+%% the day are added up here.
+-spec rrsig_time(non_neg_integer()) -> dns:uint32().
+rrsig_time(Seconds) when Seconds =< 16#FFFFFFFF ->
+    Seconds;
+rrsig_time(Date) when 10_000_000_000_000 =< Date, Date < 100_000_000_000_000 ->
+    Year = Date div 10_000_000_000,
+    Month = Date div 100_000_000 rem 100,
+    Day = Date div 1_000_000 rem 100,
+    H = Date div 10_000 rem 100,
+    M = Date div 100 rem 100,
+    S = Date rem 100,
+    YMD = {Year, Month, Day},
+    case
+        1970 =< Year andalso calendar:valid_date(YMD) andalso H < 24 andalso M < 60 andalso S =< 60
+    of
+        true ->
+            Gregorian = calendar:date_to_gregorian_days(YMD) * 86400 + H * 3600 + M * 60 + S,
+            (Gregorian - ?UNIX_EPOCH_GREGORIAN_SECONDS) rem (1 bsl 32);
+        false ->
+            erlang:error(badarg, [Date])
+    end;
+rrsig_time(Time) ->
+    erlang:error(badarg, [Time]).
 
 %% Extract a single domain name from RDATA
 -spec extract_domain([rdata()]) -> {ok, string()} | {error, term()}.

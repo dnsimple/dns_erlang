@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## main
 
+### Fixed
+
+- Zone files: RRSIG expiration and inception times written as `YYYYMMDDHHmmSS` (RFC 4034 §3.2), as signed zones usually spell them, are now read as UTC dates. They were kept as the 14-digit number, and encoding wrote its low 32 bits, so the signature times on the wire were wrong. Invalid dates and values that fit neither form are rejected.
+
 ## v5.0.19
 
 ### Fixed
