@@ -33,6 +33,7 @@ groups() ->
             test_records_that_do_not_fit_rejected,
             test_ilnp_records,
             test_amtrelay_records,
+            test_drip_records,
             test_error_cases,
             test_edge_cases
         ]}
@@ -1291,6 +1292,31 @@ test_amtrelay_records(_Config) ->
         #dns_rr{data = #dns_rrdata_amtrelay{relay = ~"203.0.113.15"}},
         dns_json:from_map(Map(#{~"relay_type" => 3}))
     ).
+
+test_drip_records(_Config) ->
+    %% RFC 9886: the HHIT and BRID CBOR data is base64, as OPENPGPKEY's data is
+    Rr = fun(Type, Data) ->
+        #dns_rr{name = ~"det.example", type = Type, ttl = 3600, data = Data}
+    end,
+    ?assertMatch(
+        #{~"type" := ~"HHIT", ~"data" := #{~"data" := ~"gxJgQA=="}},
+        assert_transcode(Rr(?DNS_TYPE_HHIT, #dns_rrdata_hhit{data = <<16#83, 18, 16#60, 16#40>>}))
+    ),
+    ?assertMatch(
+        #{~"type" := ~"BRID", ~"data" := #{~"data" := ~"oQAA"}},
+        assert_transcode(Rr(?DNS_TYPE_BRID, #dns_rrdata_brid{data = <<16#a1, 0, 0>>}))
+    ),
+    %% No data at all is refused on load, since it would not decode
+    [
+        ?assertError(
+            {invalid_record, _},
+            dns_json:from_map(#{
+                ~"name" => ~"det.example", ~"type" => Type, ~"ttl" => 3600, ~"data" => Data
+            }),
+            {Type, Data}
+        )
+     || Type <- [~"HHIT", ~"BRID"], Data <- [#{~"data" => <<>>}, #{}]
+    ].
 
 test_error_cases(_Config) ->
     %% Test invalid map format (empty map)

@@ -123,7 +123,9 @@ simple_valid_rr() ->
             ?DNS_TYPE_L32,
             ?DNS_TYPE_L64,
             ?DNS_TYPE_LP,
-            ?DNS_TYPE_AMTRELAY
+            ?DNS_TYPE_AMTRELAY,
+            ?DNS_TYPE_HHIT,
+            ?DNS_TYPE_BRID
         ]),
         ?LET(
             {Name, Class, TTL, Data},
@@ -465,6 +467,13 @@ rdata(Type) ->
                 {range(0, 65535), dns_prop_generator:simple_dname()},
                 #dns_rrdata_lp{preference = Pref, fqdn = FQDN}
             );
+        %% The CBOR array and map heads lead the base64 with a letter. The lexer reads
+        %% a word of digits as a number, or one like "1d2h" as a TTL, so base64 data
+        %% that came out that way would not parse, a limitation of the zone parser.
+        ?DNS_TYPE_HHIT ->
+            ?LET(Data, binary(), #dns_rrdata_hhit{data = <<16#83, Data/binary>>});
+        ?DNS_TYPE_BRID ->
+            ?LET(Data, binary(), #dns_rrdata_brid{data = <<16#a3, Data/binary>>});
         ?DNS_TYPE_AMTRELAY ->
             ?LET(
                 {Precedence, D, {RelayType, Relay}},
@@ -585,6 +594,8 @@ valid_zone_string() ->
                                     ?DNS_TYPE_L64 -> "L64";
                                     ?DNS_TYPE_LP -> "LP";
                                     ?DNS_TYPE_AMTRELAY -> "AMTRELAY";
+                                    ?DNS_TYPE_HHIT -> "HHIT";
+                                    ?DNS_TYPE_BRID -> "BRID";
                                     _ -> "A"
                                 end,
                             RDataStr = format_rdata(Type, Data),
@@ -670,8 +681,33 @@ format_rdata(?DNS_TYPE_AMTRELAY, #dns_rrdata_amtrelay{
             false -> 0
         end,
     lists:flatten(io_lib:format("~B ~B ~B ~s", [Precedence, DBit, RelayType, RelayStr]));
+format_rdata(?DNS_TYPE_HHIT, #dns_rrdata_hhit{data = Data}) ->
+    format_base64_pieces(Data);
+format_rdata(?DNS_TYPE_BRID, #dns_rrdata_brid{data = Data}) ->
+    format_base64_pieces(Data);
 format_rdata(_Type, _Data) ->
     "192.0.2.1".
+
+%% RFC 9886 §5.1.1: base64 split into whitespace-separated pieces in parentheses.
+%% The lexer reads a word of digits as a number, or one like "1d2h" as a TTL, so the
+%% split falls, nearest the middle, before a letter, as the first piece starts with
+%% one; with no letter to split before, the base64 stays whole.
+format_base64_pieces(Data) ->
+    Base64 = binary_to_list(base64:encode(Data)),
+    Middle = length(Base64) div 2,
+    Splits = [N || N <- lists:seq(1, length(Base64) - 1), is_letter(lists:nth(N + 1, Base64))],
+    Pieces =
+        case lists:sort([{abs(N - Middle), N} || N <- Splits]) of
+            [] ->
+                Base64;
+            [{_, N} | _] ->
+                {First, Rest} = lists:split(N, Base64),
+                [First, "\n    ", Rest]
+        end,
+    lists:flatten(["( ", Pieces, " )"]).
+
+is_letter(C) ->
+    (C >= $a andalso C =< $z) orelse (C >= $A andalso C =< $Z).
 
 %% Leading zeros dropped and upper case, the spellings the parser must also accept
 format_ilnp64(Pref, <<A:16, B:16, C:16, D:16>>) ->

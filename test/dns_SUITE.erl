@@ -96,7 +96,8 @@ groups() ->
             amtrelay_class_independent,
             amtrelay_relay_not_compressed,
             amtrelay_undefined_relay_type_kept_opaque,
-            amtrelay_bad_relay_name_formerr
+            amtrelay_bad_relay_name_formerr,
+            drip_data_carried_as_is
         ]},
         {svcb, [parallel], [
             decode_encode_svcb_params,
@@ -1135,6 +1136,8 @@ decode_encode_rrdata(_) ->
         {?DNS_TYPE_AMTRELAY, #dns_rrdata_amtrelay{
             precedence = 0, discovery_optional = false, relay_type = 0, relay = <<>>
         }},
+        {?DNS_TYPE_HHIT, #dns_rrdata_hhit{data = <<16#83, 18, 16#60, 16#40>>}},
+        {?DNS_TYPE_BRID, #dns_rrdata_brid{data = <<16#a1, 0, 0>>}},
         {?DNS_TYPE_AMTRELAY, #dns_rrdata_amtrelay{
             precedence = 10, discovery_optional = false, relay_type = 1, relay = {203, 0, 113, 15}
         }},
@@ -1287,6 +1290,7 @@ empty_rdata_rejected_for_known_types(_) ->
         ?DNS_TYPE_AAAA,
         ?DNS_TYPE_AFSDB,
         ?DNS_TYPE_AMTRELAY,
+        ?DNS_TYPE_BRID,
         ?DNS_TYPE_CAA,
         ?DNS_TYPE_CDNSKEY,
         ?DNS_TYPE_CDS,
@@ -1301,6 +1305,7 @@ empty_rdata_rejected_for_known_types(_) ->
         ?DNS_TYPE_DSYNC,
         ?DNS_TYPE_EUI48,
         ?DNS_TYPE_EUI64,
+        ?DNS_TYPE_HHIT,
         ?DNS_TYPE_HINFO,
         ?DNS_TYPE_HTTPS,
         ?DNS_TYPE_IPSECKEY,
@@ -1341,7 +1346,7 @@ empty_rdata_rejected_for_known_types(_) ->
         ?DNS_TYPE_WALLET,
         ?DNS_TYPE_ZONEMD
     ],
-    ?assertEqual(57, length(Known)),
+    ?assertEqual(59, length(Known)),
     [
         ?assertError(
             empty_rrdata,
@@ -2055,6 +2060,23 @@ amtrelay_bad_relay_name_formerr(_) ->
             RData
         )
      || RData <- [<<10, 3>>, <<10, 3, 3, "ab">>, <<10, 3, 0, 1>>]
+    ].
+
+%% RFC9886§5.1, §5.2: the HHIT and BRID RDATA is the CBOR data and nothing else,
+%% whatever its contents and in any class, as BIND has these types
+drip_data_carried_as_is(_) ->
+    Data = <<16#83, 18, 16#69, "3ff8 000a", 16#41, 0>>,
+    [
+        begin
+            Wire = dns_encode:encode_rrdata(Class, Record),
+            ?assertEqual(Data, Wire, {Type, Class}),
+            ?assertEqual(Record, dns_decode:decode_rrdata(Wire, Class, Type, Wire), {Type, Class})
+        end
+     || {Type, Record} <- [
+            {?DNS_TYPE_HHIT, #dns_rrdata_hhit{data = Data}},
+            {?DNS_TYPE_BRID, #dns_rrdata_brid{data = Data}}
+        ],
+        Class <- [?DNS_CLASS_IN, ?DNS_CLASS_CH, ?DNS_CLASS_HS]
     ].
 
 %% RFC3403§4.1: the NAPTR REGEXP field is UTF-8. unicode:characters_to_binary/2

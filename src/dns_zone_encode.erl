@@ -847,6 +847,10 @@ encode_rdata(
     ?DNS_TYPE_OPENPGPKEY, #dns_rrdata_openpgpkey{data = Data}, _Origin, _RelativeNames, _Separator
 ) ->
     base64:encode(Data);
+encode_rdata(?DNS_TYPE_HHIT, #dns_rrdata_hhit{data = Data}, _Origin, _RelativeNames, _Separator) ->
+    base64:encode(Data);
+encode_rdata(?DNS_TYPE_BRID, #dns_rrdata_brid{data = Data}, _Origin, _RelativeNames, _Separator) ->
+    base64:encode(Data);
 encode_rdata(
     ?DNS_TYPE_WALLET, #dns_rrdata_wallet{data = Strings}, _Origin, _RelativeNames, Separator
 ) ->

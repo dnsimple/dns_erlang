@@ -600,6 +600,12 @@ decode_rrdata(_MsgBin, Class, ?DNS_TYPE_DHCID, Bin) when ?CLASS_IS_IN(Class) ->
     #dns_rrdata_dhcid{data = Bin};
 decode_rrdata(_MsgBin, Class, ?DNS_TYPE_OPENPGPKEY, Bin) when ?CLASS_IS_IN(Class) ->
     #dns_rrdata_openpgpkey{data = Bin};
+%% RFC9886§5.1, §5.2: HHIT and BRID hold CBOR, which is carried as it is, and they
+%% are not bound to a class
+decode_rrdata(_MsgBin, _Class, ?DNS_TYPE_HHIT, Bin) ->
+    #dns_rrdata_hhit{data = Bin};
+decode_rrdata(_MsgBin, _Class, ?DNS_TYPE_BRID, Bin) ->
+    #dns_rrdata_brid{data = Bin};
 decode_rrdata(
     _MsgBin,
     _Class,
@@ -1081,6 +1087,7 @@ requires_rrdata(?DNS_TYPE_A) -> true;
 requires_rrdata(?DNS_TYPE_AAAA) -> true;
 requires_rrdata(?DNS_TYPE_AFSDB) -> true;
 requires_rrdata(?DNS_TYPE_AMTRELAY) -> true;
+requires_rrdata(?DNS_TYPE_BRID) -> true;
 requires_rrdata(?DNS_TYPE_CAA) -> true;
 requires_rrdata(?DNS_TYPE_CDNSKEY) -> true;
 requires_rrdata(?DNS_TYPE_CDS) -> true;
@@ -1095,6 +1102,7 @@ requires_rrdata(?DNS_TYPE_DS) -> true;
 requires_rrdata(?DNS_TYPE_DSYNC) -> true;
 requires_rrdata(?DNS_TYPE_EUI48) -> true;
 requires_rrdata(?DNS_TYPE_EUI64) -> true;
+requires_rrdata(?DNS_TYPE_HHIT) -> true;
 requires_rrdata(?DNS_TYPE_HINFO) -> true;
 requires_rrdata(?DNS_TYPE_HTTPS) -> true;
 requires_rrdata(?DNS_TYPE_IPSECKEY) -> true;

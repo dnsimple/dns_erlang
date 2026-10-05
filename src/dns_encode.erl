@@ -729,6 +729,10 @@ encode_rrdata_append(Acc, _Pos, ?DNS_CLASS_IN, #dns_rrdata_dhcid{data = Bin}, Co
     {<<Acc/binary, (byte_size(Bin)):16, Bin/binary>>, CompMap};
 encode_rrdata_append(Acc, _Pos, ?DNS_CLASS_IN, #dns_rrdata_openpgpkey{data = Bin}, CompMap) ->
     {<<Acc/binary, (byte_size(Bin)):16, Bin/binary>>, CompMap};
+encode_rrdata_append(Acc, _Pos, _Class, #dns_rrdata_hhit{data = Bin}, CompMap) ->
+    {<<Acc/binary, (byte_size(Bin)):16, Bin/binary>>, CompMap};
+encode_rrdata_append(Acc, _Pos, _Class, #dns_rrdata_brid{data = Bin}, CompMap) ->
+    {<<Acc/binary, (byte_size(Bin)):16, Bin/binary>>, CompMap};
 encode_rrdata_append(
     Acc,
     _Pos,

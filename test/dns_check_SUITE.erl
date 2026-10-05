@@ -22,6 +22,7 @@ groups() ->
             rrdata_names_must_fit,
             ilnp_64_bit_values_must_be_8_bytes,
             amtrelay_relay_must_match_its_type,
+            drip_data_must_not_be_empty,
             svcb_params_must_fit,
             rr_header_must_fit,
             rr_class_must_suit_rrdata,
@@ -550,6 +551,24 @@ amtrelay_relay_must_match_its_type(_) ->
     ],
     [?assert(dns_check:rrdata(D), D) || D <- Fits],
     [?assertNot(dns_check:rrdata(D), D) || D <- DoNotFit].
+
+%% RFC9886§5.1, §5.2: HHIT and BRID hold CBOR with mandatory fields, and the
+%% decoder refuses RDATA of zero length for every type it knows, so an empty one
+%% would go out and not come back.
+drip_data_must_not_be_empty(_) ->
+    [
+        ?assert(dns_check:rrdata(D), D)
+     || D <- [#dns_rrdata_hhit{data = <<0>>}, #dns_rrdata_brid{data = <<0>>}]
+    ],
+    [
+        ?assertNot(dns_check:rrdata(D), D)
+     || D <- [
+            #dns_rrdata_hhit{data = <<>>},
+            #dns_rrdata_brid{data = <<>>},
+            #dns_rrdata_hhit{data = [<<0>>]},
+            #dns_rrdata_brid{data = undefined}
+        ]
+    ].
 
 %% RFC2181§8: a TTL is 31 bits, since one with the top bit set is read as zero.
 %% Type and class are 16 bits, and the owner name has to be one the wire can hold.

@@ -13,6 +13,7 @@
 -export([header/1, rr/1, rrdata/1, rrdata/2, query/1, optrr/1, opt/1]).
 
 -define(IS_UINT(Bits, X), (is_integer(X) andalso 0 =< X andalso X < (1 bsl Bits))).
+-define(IS_NONEMPTY_BIN(X), (is_binary(X) andalso <<>> =/= X)).
 %% RFC1035§3.2.1: RDLENGTH is 16 bits, as is every length written inside RDATA,
 %% so an RDATA that fits RDLENGTH also fits each of those
 -define(MAX_RDLENGTH, 16#FFFF).
@@ -106,6 +107,9 @@ fits(#dns_rrdata_amtrelay{
     precedence = Precedence, discovery_optional = D, relay_type = RelayType, relay = Relay
 }) ->
     ?IS_UINT(8, Precedence) andalso is_boolean(D) andalso relay_fits(RelayType, Relay);
+%% RFC9886§5.2: the BRID data is CBOR, and RDATA of zero length would not decode
+fits(#dns_rrdata_brid{data = Data}) ->
+    ?IS_NONEMPTY_BIN(Data);
 fits(#dns_rrdata_caa{flags = Flags, tag = Tag}) ->
     ?IS_UINT(8, Flags) andalso byte_size(Tag) =< ?MAX_STRING;
 fits(#dns_rrdata_cdnskey{flags = Flags, protocol = Protocol, alg = Alg}) ->
@@ -128,6 +132,9 @@ fits(#dns_rrdata_eui48{address = Address}) ->
     6 =:= byte_size(Address);
 fits(#dns_rrdata_eui64{address = Address}) ->
     8 =:= byte_size(Address);
+%% RFC9886§5.1: the HHIT data is CBOR, and RDATA of zero length would not decode
+fits(#dns_rrdata_hhit{data = Data}) ->
+    ?IS_NONEMPTY_BIN(Data);
 %% RFC1035§3.3.2: CPU and OS are one <character-string> each, and the encoder
 %% splits a longer one into several, leaving more than two
 fits(#dns_rrdata_hinfo{cpu = CPU, os = OS}) ->

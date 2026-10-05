@@ -465,6 +465,13 @@ rdata_error_message(~"AMTRELAY", _RData) ->
             Example: 12.100.51.198.in-addr.arpa. 3600 IN AMTRELAY 10 0 1 203.0.113.15
         """
     };
+rdata_error_message(TypeName, _RData) when TypeName =:= ~"HHIT"; TypeName =:= ~"BRID" ->
+    {
+        <<"Invalid ", TypeName/binary, " record: data must be valid base64">>,
+        <<TypeName/binary,
+            " requires: base64 CBOR data, which may be split into several pieces\n"
+            "    Example: example.com. 3600 IN ", TypeName/binary, " ( gxJpM2ZmOCAw MDBhWQEY... )">>
+    };
 rdata_error_message(TypeName, _RData) ->
     {<<"Invalid ", TypeName/binary, " record: malformed RDATA">>, undefined}.
 
@@ -1186,6 +1193,18 @@ build_rdata("OPENPGPKEY", RData, Ctx) ->
             end;
         _ ->
             {error, make_rdata_error(~"OPENPGPKEY", RData, Ctx)}
+    end;
+build_rdata("HHIT", RData, Ctx) ->
+    %% HHIT format: CBOR data in base64 (RFC 9886 §5.1.1)
+    case parse_base64_pieces(RData) of
+        {ok, Data} -> {ok, #dns_rrdata_hhit{data = Data}};
+        error -> {error, make_rdata_error(~"HHIT", RData, Ctx)}
+    end;
+build_rdata("BRID", RData, Ctx) ->
+    %% BRID format: CBOR data in base64 (RFC 9886 §5.2.1)
+    case parse_base64_pieces(RData) of
+        {ok, Data} -> {ok, #dns_rrdata_brid{data = Data}};
+        error -> {error, make_rdata_error(~"BRID", RData, Ctx)}
     end;
 build_rdata("URI", RData, Ctx) ->
     %% URI format: priority weight target
@@ -2334,6 +2353,10 @@ type_to_number("ZONEMD") ->
     ?DNS_TYPE_ZONEMD;
 type_to_number("AMTRELAY") ->
     ?DNS_TYPE_AMTRELAY;
+type_to_number("HHIT") ->
+    ?DNS_TYPE_HHIT;
+type_to_number("BRID") ->
+    ?DNS_TYPE_BRID;
 %% RFC 3597 §5: a type without a mnemonic, in RDATA such as an RRSIG's type covered
 type_to_number("TYPE" ++ _ = TypeStr) ->
     type_to_number({generic_type, TypeStr});
@@ -2529,6 +2552,19 @@ is_ilnp64_group([_ | _] = Group) when length(Group) =< 4 ->
     );
 is_ilnp64_group(_) ->
     false.
+
+%% RFC 9886 §5.1.1, §5.2.1: base64 that "may be divided into any number of
+%% white-space-separated substrings", which are concatenated
+-spec parse_base64_pieces([rdata()]) -> {ok, binary()} | error.
+parse_base64_pieces(RData) ->
+    maybe
+        {ok, Base64} ?= concat_rdata_string_parts(RData),
+        try
+            {ok, base64:decode(Base64)}
+        catch
+            error:_ -> error
+        end
+    end.
 
 %% Convert hexadecimal string to binary using OTP 26+ binary:decode_hex/1
 -spec hex_to_binary(binary() | string()) -> {ok, binary()} | {error, term()}.

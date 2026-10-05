@@ -97,6 +97,7 @@ groups() ->
             encode_eui64_record,
             encode_ilnp_records,
             encode_amtrelay_record,
+            encode_drip_records,
             encode_zonemd_record,
             encode_csync_record,
             encode_dsync_record,
@@ -325,6 +326,8 @@ groups() ->
             parse_ilnp_records_roundtrip,
             parse_amtrelay_record,
             parse_amtrelay_records_roundtrip,
+            parse_drip_records,
+            parse_drip_records_roundtrip,
             parse_ds_record,
             parse_dnskey_record,
             parse_key_record,
@@ -565,6 +568,7 @@ groups() ->
             parse_invalid_ilnp_preference,
             parse_invalid_amtrelay_rdata,
             parse_invalid_amtrelay_relay,
+            parse_invalid_drip_rdata,
             parse_invalid_ds_rdata,
             parse_invalid_ds_hex,
             parse_invalid_rrsig_times,
@@ -1716,6 +1720,97 @@ parse_amtrelay_records_roundtrip(_Config) ->
             origin => ~"100.51.198.in-addr.arpa.", relative_names => false
         })
     ),
+    {ok, Reparsed} = dns_zone:parse_string(Encoded),
+    ?assertEqual(lists:sort(Records), lists:sort(Reparsed)).
+
+parse_drip_records(_Config) ->
+    %% RFC 9886 Appendix A.2.2, Figure 18: base64 split over several lines. The BRID
+    %% data is the one erratum 8823 corrects to match the CDDL of §5.2.2.
+    Zone =
+        ~"""
+    $ORIGIN 5.0.a.0.0.0.e.f.f.3.0.0.1.0.0.2.ip6.example.com.
+    2.b.6.c.b.4.a.9.9.6.4.2.8.0.3.1 IN HHIT (
+        gxJpM2ZmOCAwMDBhWQEYMIIBFDCBx6AD
+        AgECAgFUMAUGAytlcDArMSkwJwYDVQQD
+        DCAyMDAxMDAzZmZlMDAwYTA1MjYwZWQ0
+        Mzc2YjI1NmUyODAeFw0yNTA0MDkyMTEz
+        MDBaFw0yNTA0MDkyMjEzMDBaMAAwKjAF
+        BgMrZXADIQDJLi+dl+iWD5tfFlT4sJA5
+        +drcW88GHqxPDOp56Oh3+qM7MDkwNwYD
+        VR0RAQH/BC0wK4cQIAEAP/4ACgUTCCRp
+        mkvGsoYXaHR0cHM6Ly9oZGEuZXhhbXBs
+        ZS5jb20wBQYDK2VwA0EA0DbcdngC7/BB
+        /aLjZmLieo0ZFCDbd/KIxAy+3X2KtT4J
+        todVxRMPAkN6o008gacbNfTG8p9npEcD
+        eYhesl2jBQ==
+    )
+    2.b.6.c.b.4.a.9.9.6.4.2.8.0.3.1 IN BRID (
+        owAAAYGCBFEBIAEAP/4ACgUTCCRpmkvG
+        sgKEggVYiQH63vZnCu32ZyABAD/+AAAF
+        XmChVx6RoLeZkNWwS3KhgGbUCStSx9SZ
+        T7fBa9fowfRA/6jQT/HhPyABAD/+AAAF
+        XmChVx6RoLe8L2bUmC69e3tbajjDE+6Z
+        pPUg/dNA3d9A/byGkidIiWxLCrxQI2Ob
+        Zp3ul1O+bYSp84lA08oKW9FmbipM7kUM
+        ggVYiQGX4PZnp+72ZyABAD/+AAoFZhXu
+        RdQnCaDOaB424RQa61YNbna8eWt7fLRU
+        5GPMsfEt4wo4AQGAPyABAD/+AAAFXmCh
+        Vx6RoLfv3q+mLRB3ya5TmjY8+3CzdoDZ
+        T9RZ+XpN5hDiA6JyyxBJvUewxLzPNhTX
+        Qp8vED71XAE82tMmt3fB4zbzWNQLggVY
+        iQEK4fZnGu/2ZyABAD/+AAoFJg7UN2sl
+        biiCM/2utQaLwUhZ0ROg7fz43AeBTj3S
+        dl5rW4LgTQcFlyABAD/+AAoFZhXuRdQn
+        CaCI8gq4iQsQMgFkzhz5pRy9NjCkqbB7
+        4ok83qsAR/Sv0a8+NQmIsfR2swCDgGTv
+        BXH1OTPliyyWaGkFgR5zG00MggVYiQHc
+        4vZn7PD2ZyABAD/+AAoFEwgkaZpLxrLJ
+        Li+dl+iWD5tfFlT4sJA5+drcW88GHqxP
+        DOp56Oh3+iABAD/+AAoFJg7UN2slbiiA
+        59zyNOKZguZM47IVmhTHaM47C0HWOepQ
+        mvpthrAyg+tHcyUoYEZaxXPXJc2pRRGg
+        Kph3Cxh7rW93mLpgmqcB
+    )
+
+    """,
+    {ok, [Hhit, Brid]} = dns_zone:parse_string(Zone),
+    ?assertEqual(?DNS_TYPE_HHIT, Hhit#dns_rr.type),
+    ?assertEqual(?DNS_TYPE_BRID, Brid#dns_rr.type),
+    %% Figure 19: an array of the entity type 18, the HID abbreviation "3ff8 000a"
+    %% and the 280-byte DER certificate of Figure 20
+    #dns_rrdata_hhit{data = HhitData} = Hhit#dns_rr.data,
+    ?assertMatch(
+        <<16#83, 18, 16#69, "3ff8 000a", 16#59, 280:16, 16#30, 16#82, 16#01, 16#14, _:276/binary>>,
+        HhitData
+    ),
+    %% Figure 21 as erratum 8822 corrects it: a map of three entries, uas_type 0
+    %% first, then uas_ids, a list of [id_type, uas_id] pairs
+    #dns_rrdata_brid{data = BridData} = Brid#dns_rr.data,
+    ?assertEqual(591, byte_size(BridData)),
+    ?assertMatch(
+        <<16#a3, 0, 0, 1, 16#81, 16#82, 4, 16#51, 1, 16#2001003ffe000a05:64, _/binary>>, BridData
+    ).
+
+parse_drip_records_roundtrip(_Config) ->
+    %% One base64 word or several, quoted or not, in any class, survive encode and
+    %% re-parse
+    Zone =
+        ~"""
+    det.example.com. 3600 IN HHIT gxJgQA==
+    det.example.com. 3600 IN BRID ( oQ AA )
+    det.example.com. 3600 CH HHIT "gxJp" "M2ZmOCAwMDBh"
+
+    """,
+    {ok, Records} = dns_zone:parse_string(Zone),
+    ?assertEqual(
+        [
+            #dns_rrdata_hhit{data = <<16#83, 18, 16#60, 16#40>>},
+            #dns_rrdata_brid{data = <<16#a1, 0, 0>>},
+            #dns_rrdata_hhit{data = <<16#83, 18, 16#69, "3ff8 000a">>}
+        ],
+        [RR#dns_rr.data || RR <- Records]
+    ),
+    Encoded = iolist_to_binary(dns_zone:encode_string(Records, #{origin => ~"example.com."})),
     {ok, Reparsed} = dns_zone:parse_string(Encoded),
     ?assertEqual(lists:sort(Records), lists:sort(Reparsed)).
 
@@ -3157,6 +3252,24 @@ parse_invalid_amtrelay_relay(_Config) ->
             ~"4 relay.example.com.",
             ~"127 .",
             ~"128 ."
+        ]
+    ].
+
+parse_invalid_drip_rdata(_Config) ->
+    %% RFC 9886 §5.1.1, §5.2.1: the data is base64, and there must be some
+    [
+        ?assertMatch(
+            {error, #{type := Type}},
+            dns_zone:parse_string(<<"det.example.com. 3600 IN ", Value/binary, "\n">>),
+            Value
+        )
+     || {Value, Type} <- [
+            {~"HHIT", parser},
+            {~"BRID", parser},
+            {~"HHIT gxJgQA=", semantic},
+            {~"BRID oQ*A", semantic},
+            {~"HHIT \"\"", semantic},
+            {~"BRID 10 0 1 203.0.113.15", semantic}
         ]
     ].
 
@@ -4881,6 +4994,23 @@ encode_amtrelay_record(_Config) ->
     },
     Line = iolist_to_binary(dns_zone:encode_rr(RR, #{origin => ~"100.51.198.in-addr.arpa."})),
     ?assertNotEqual(nomatch, string:find(Line, ~"IN AMTRELAY 10 0 3 relay")).
+
+encode_drip_records(_Config) ->
+    %% RFC 9886 §5.1.1, §5.2.1: a single logical base64 string
+    ?assertEqual(
+        ~"gxJgQA==",
+        iolist_to_binary(
+            dns_zone:encode_rdata(?DNS_TYPE_HHIT, #dns_rrdata_hhit{
+                data = <<16#83, 18, 16#60, 16#40>>
+            })
+        )
+    ),
+    ?assertEqual(
+        ~"oQAA",
+        iolist_to_binary(
+            dns_zone:encode_rdata(?DNS_TYPE_BRID, #dns_rrdata_brid{data = <<16#a1, 0, 0>>})
+        )
+    ).
 
 encode_zonemd_record(_Config) ->
     RR = #dns_rr{

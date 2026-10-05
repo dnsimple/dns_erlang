@@ -210,6 +210,7 @@ restrictions on the length. Labels must be 63 characters or less.
     | #dns_rrdata_aaaa{}
     | #dns_rrdata_afsdb{}
     | #dns_rrdata_amtrelay{}
+    | #dns_rrdata_brid{}
     | #dns_rrdata_caa{}
     | #dns_rrdata_cdnskey{}
     | #dns_rrdata_cds{}
@@ -222,6 +223,7 @@ restrictions on the length. Labels must be 63 characters or less.
     | #dns_rrdata_eui64{}
     | #dns_rrdata_dnskey{}
     | #dns_rrdata_ds{}
+    | #dns_rrdata_hhit{}
     | #dns_rrdata_hinfo{}
     | #dns_rrdata_ipseckey{}
     | #dns_rrdata_key{}

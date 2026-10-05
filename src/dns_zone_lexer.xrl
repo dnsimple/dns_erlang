@@ -182,6 +182,8 @@ RTYPE_DLV      = DLV
 RTYPE_IPSECKEY = IPSECKEY
 RTYPE_ZONEMD   = ZONEMD
 RTYPE_AMTRELAY = AMTRELAY
+RTYPE_HHIT     = HHIT
+RTYPE_BRID     = BRID
 RTYPE_ALIAS    = ALIAS
 
 % Quoted strings for TXT records, etc.
@@ -258,6 +260,8 @@ Rules.
 {RTYPE_EUI64}      : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_AAAA}       : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_TLSA}       : {token, {rtype, TokenLine, TokenChars}}.
+{RTYPE_HHIT}       : {token, {rtype, TokenLine, TokenChars}}.
+{RTYPE_BRID}       : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_NSEC}       : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_SVCB}       : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_CERT}       : {token, {rtype, TokenLine, TokenChars}}.

@@ -246,6 +246,16 @@
     target :: dns:dname()
 }).
 
+%% HHIT record for DRIP Entity Tag registration data, as CBOR. See RFC 9886: §5.1.
+-record(dns_rrdata_hhit, {
+    data :: binary()
+}).
+
+%% BRID record for static UAS Broadcast Remote ID data, as CBOR. See RFC 9886: §5.2.
+-record(dns_rrdata_brid, {
+    data :: binary()
+}).
+
 %% NSEC3 record for DNSSEC authenticated denial of existence. See RFC 5155: §4.2.
 -record(dns_rrdata_nsec3, {
     hash_alg :: dns:uint8(),

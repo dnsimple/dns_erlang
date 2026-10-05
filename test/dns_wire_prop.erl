@@ -251,6 +251,7 @@ decodable_type() ->
         ?DNS_TYPE_AAAA,
         ?DNS_TYPE_AFSDB,
         ?DNS_TYPE_AMTRELAY,
+        ?DNS_TYPE_BRID,
         ?DNS_TYPE_CAA,
         ?DNS_TYPE_CDNSKEY,
         ?DNS_TYPE_CDS,
@@ -265,6 +266,7 @@ decodable_type() ->
         ?DNS_TYPE_DSYNC,
         ?DNS_TYPE_EUI48,
         ?DNS_TYPE_EUI64,
+        ?DNS_TYPE_HHIT,
         ?DNS_TYPE_HINFO,
         ?DNS_TYPE_HTTPS,
         ?DNS_TYPE_IPSECKEY,
@@ -378,6 +380,8 @@ rrdata() ->
         ),
         ?LET(B, bin(6, 6), #dns_rrdata_eui48{address = B}),
         ?LET(B, bin(8, 8), #dns_rrdata_eui64{address = B}),
+        ?LET(D, bin(1, 40), #dns_rrdata_hhit{data = D}),
+        ?LET(D, bin(1, 40), #dns_rrdata_brid{data = D}),
         ?LET({C, O}, {bin(0, 20), bin(0, 20)}, #dns_rrdata_hinfo{cpu = C, os = O}),
         ?LET({P, T}, {u16(), dname()}, #dns_rrdata_https{
             svc_priority = P,
@@ -601,6 +605,7 @@ type_of(#dns_rrdata_a{}) -> ?DNS_TYPE_A;
 type_of(#dns_rrdata_aaaa{}) -> ?DNS_TYPE_AAAA;
 type_of(#dns_rrdata_afsdb{}) -> ?DNS_TYPE_AFSDB;
 type_of(#dns_rrdata_amtrelay{}) -> ?DNS_TYPE_AMTRELAY;
+type_of(#dns_rrdata_brid{}) -> ?DNS_TYPE_BRID;
 type_of(#dns_rrdata_caa{}) -> ?DNS_TYPE_CAA;
 type_of(#dns_rrdata_cdnskey{}) -> ?DNS_TYPE_CDNSKEY;
 type_of(#dns_rrdata_cds{}) -> ?DNS_TYPE_CDS;
@@ -615,6 +620,7 @@ type_of(#dns_rrdata_ds{}) -> ?DNS_TYPE_DS;
 type_of(#dns_rrdata_dsync{}) -> ?DNS_TYPE_DSYNC;
 type_of(#dns_rrdata_eui48{}) -> ?DNS_TYPE_EUI48;
 type_of(#dns_rrdata_eui64{}) -> ?DNS_TYPE_EUI64;
+type_of(#dns_rrdata_hhit{}) -> ?DNS_TYPE_HHIT;
 type_of(#dns_rrdata_hinfo{}) -> ?DNS_TYPE_HINFO;
 type_of(#dns_rrdata_https{}) -> ?DNS_TYPE_HTTPS;
 type_of(#dns_rrdata_ipseckey{}) -> ?DNS_TYPE_IPSECKEY;

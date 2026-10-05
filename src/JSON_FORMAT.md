@@ -204,6 +204,25 @@ Non-RR records (message, query, OPT records) use a two-level nested map format:
 
 **Note:** This format is used within the `data` field of `dns_rr` records.
 
+### BRID (dns_rrdata_brid) [RFC9886](https://datatracker.ietf.org/doc/html/rfc9886)
+
+**Format:** RRDATA fields (used within `dns_rr.data`)
+
+**Fields:**
+
+- `data` (`t:binary/0`): Base64-encoded data
+
+**Example:**
+
+```json
+{
+    "data": "base64-encoded-data"
+}
+```
+
+
+**Note:** This format is used within the `data` field of `dns_rr` records.
+
 ### CAA (dns_rrdata_caa) [RFC6844](https://datatracker.ietf.org/doc/html/rfc6844)
 
 **Format:** RRDATA fields (used within `dns_rr.data`)
@@ -518,6 +537,25 @@ Non-RR records (message, query, OPT records) use a two-level nested map format:
 ```json
 {
     "address": "base16-encoded-data"
+}
+```
+
+
+**Note:** This format is used within the `data` field of `dns_rr` records.
+
+### HHIT (dns_rrdata_hhit) [RFC9886](https://datatracker.ietf.org/doc/html/rfc9886)
+
+**Format:** RRDATA fields (used within `dns_rr.data`)
+
+**Fields:**
+
+- `data` (`t:binary/0`): Base64-encoded data
+
+**Example:**
+
+```json
+{
+    "data": "base64-encoded-data"
 }
 ```
 
