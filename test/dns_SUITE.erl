@@ -91,7 +91,12 @@ groups() ->
             ilnp_class_independent,
             ilnp_wrong_size_refused,
             lp_fqdn_not_compressed,
-            rdata_names_compressed_only_for_rfc1035_types
+            rdata_names_compressed_only_for_rfc1035_types,
+            amtrelay_wire_known_answers,
+            amtrelay_class_independent,
+            amtrelay_relay_not_compressed,
+            amtrelay_undefined_relay_type_kept_opaque,
+            amtrelay_bad_relay_name_formerr
         ]},
         {svcb, [parallel], [
             decode_encode_svcb_params,
@@ -1127,6 +1132,24 @@ decode_encode_rrdata(_) ->
             preference = 10, locator64 = <<16#2001:16, 16#0db8:16, 16#1140:16, 16#1000:16>>
         }},
         {?DNS_TYPE_LP, #dns_rrdata_lp{preference = 10, fqdn = <<"l64-subnet1.example.com">>}},
+        {?DNS_TYPE_AMTRELAY, #dns_rrdata_amtrelay{
+            precedence = 0, discovery_optional = false, relay_type = 0, relay = <<>>
+        }},
+        {?DNS_TYPE_AMTRELAY, #dns_rrdata_amtrelay{
+            precedence = 10, discovery_optional = false, relay_type = 1, relay = {203, 0, 113, 15}
+        }},
+        {?DNS_TYPE_AMTRELAY, #dns_rrdata_amtrelay{
+            precedence = 10,
+            discovery_optional = true,
+            relay_type = 2,
+            relay = {16#2001, 16#db8, 0, 0, 0, 0, 0, 16#15}
+        }},
+        {?DNS_TYPE_AMTRELAY, #dns_rrdata_amtrelay{
+            precedence = 128,
+            discovery_optional = true,
+            relay_type = 3,
+            relay = <<"amtrelays.example.com">>
+        }},
         %% Bitmap windows whose first present type is a multiple of 256
         %% (URI = 256, CAA = 257; TA = 32768, DLV = 32769): regression for the
         %% off-by-one that encoded [256, 257] as the bitmap for {256, 258}
@@ -1263,6 +1286,7 @@ empty_rdata_rejected_for_known_types(_) ->
         ?DNS_TYPE_A,
         ?DNS_TYPE_AAAA,
         ?DNS_TYPE_AFSDB,
+        ?DNS_TYPE_AMTRELAY,
         ?DNS_TYPE_CAA,
         ?DNS_TYPE_CDNSKEY,
         ?DNS_TYPE_CDS,
@@ -1317,7 +1341,7 @@ empty_rdata_rejected_for_known_types(_) ->
         ?DNS_TYPE_WALLET,
         ?DNS_TYPE_ZONEMD
     ],
-    ?assertEqual(56, length(Known)),
+    ?assertEqual(57, length(Known)),
     [
         ?assertError(
             empty_rrdata,
@@ -1897,6 +1921,141 @@ rdata_names_compressed_only_for_rfc1035_types(_) ->
             Encode(?DNS_TYPE_MX, #dns_rrdata_mx{preference = 10, exchange = Name}), NameWire
         )
     ).
+%% RFC8777§4.3.2: the examples' RFC 3597 forms, as corrected by erratum 6218: the
+%% published IPv6 relay read 2001:db8::15 as decimal, and the domain name lacked
+%% its root label.
+amtrelay_wire_known_answers(_) ->
+    Cases = [
+        {
+            #dns_rrdata_amtrelay{
+                precedence = 10,
+                discovery_optional = false,
+                relay_type = 1,
+                relay = {203, 0, 113, 15}
+            },
+            <<16#0a, 16#01, 16#cb, 16#00, 16#71, 16#0f>>
+        },
+        {
+            #dns_rrdata_amtrelay{
+                precedence = 10,
+                discovery_optional = false,
+                relay_type = 2,
+                relay = {16#2001, 16#db8, 0, 0, 0, 0, 0, 16#15}
+            },
+            <<16#0a, 16#02, 16#20010db8000000000000000000000015:128>>
+        },
+        {
+            #dns_rrdata_amtrelay{
+                precedence = 128,
+                discovery_optional = true,
+                relay_type = 3,
+                relay = <<"amtrelays.example.com">>
+            },
+            <<16#80, 16#83, 9, "amtrelays", 7, "example", 3, "com", 0>>
+        },
+        %% §4.2.4: relay type 0 has an empty relay
+        {
+            #dns_rrdata_amtrelay{
+                precedence = 255, discovery_optional = true, relay_type = 0, relay = <<>>
+            },
+            <<16#ff, 16#80>>
+        }
+    ],
+    [
+        begin
+            ?assertEqual(Wire, dns_encode:encode_rrdata(?DNS_CLASS_IN, Data)),
+            ?assertEqual(
+                Data, dns_decode:decode_rrdata(Wire, ?DNS_CLASS_IN, ?DNS_TYPE_AMTRELAY, Wire)
+            )
+        end
+     || {Data, Wire} <- Cases
+    ].
+
+%% RFC8777§4.1: "The AMTRELAY RR is class independent", so unlike A and AAAA its
+%% addresses decode in any class
+amtrelay_class_independent(_) ->
+    Cases = [
+        #dns_rrdata_amtrelay{
+            precedence = 1, discovery_optional = false, relay_type = 1, relay = {192, 0, 2, 1}
+        },
+        #dns_rrdata_amtrelay{
+            precedence = 1,
+            discovery_optional = false,
+            relay_type = 2,
+            relay = {16#2001, 16#db8, 0, 0, 0, 0, 0, 1}
+        },
+        #dns_rrdata_amtrelay{
+            precedence = 1, discovery_optional = false, relay_type = 3, relay = <<"relay.example">>
+        }
+    ],
+    [
+        begin
+            Wire = dns_encode:encode_rrdata(Class, Data),
+            ?assertEqual(
+                Data, dns_decode:decode_rrdata(Wire, Class, ?DNS_TYPE_AMTRELAY, Wire), Class
+            )
+        end
+     || Data <- Cases, Class <- [?DNS_CLASS_IN, ?DNS_CLASS_CH, ?DNS_CLASS_HS]
+    ].
+
+%% RFC8777§4.2.3: the relay's domain name "MUST NOT be compressed", even when it
+%% shares a suffix with a name already in the message
+amtrelay_relay_not_compressed(_) ->
+    Owner = <<"12.100.51.198.in-addr.arpa">>,
+    Relay = <<"relay.51.198.in-addr.arpa">>,
+    Msg = #dns_message{
+        qr = true,
+        qc = 1,
+        anc = 1,
+        questions = [#dns_query{name = Owner, type = ?DNS_TYPE_AMTRELAY}],
+        answers = [
+            #dns_rr{
+                name = Owner,
+                type = ?DNS_TYPE_AMTRELAY,
+                ttl = 3600,
+                data = #dns_rrdata_amtrelay{
+                    precedence = 10, discovery_optional = false, relay_type = 3, relay = Relay
+                }
+            }
+        ]
+    },
+    Encoded = dns:encode_message(Msg),
+    ?assertMatch({_, _}, binary:match(Encoded, <<10, 3, (dns_domain:to_wire(Relay))/binary>>)),
+    ?assertEqual(Msg, dns:decode_message(Encoded)).
+
+%% RFC8777§4.2.3: relay types past 3 are undefined, and a receiver "SHOULD NOT"
+%% use them, so their RDATA stays opaque, as does a relay of the wrong length for
+%% its type
+amtrelay_undefined_relay_type_kept_opaque(_) ->
+    [
+        ?assertEqual(Wire, dns_decode:decode_rrdata(Wire, ?DNS_CLASS_IN, ?DNS_TYPE_AMTRELAY, Wire))
+     || Wire <- [
+            <<10, 4, 1, 2, 3, 4>>,
+            <<10, 16#ff, 1, 2>>,
+            <<10, 0, 0>>,
+            <<10, 1, 203, 0, 113>>,
+            <<10, 1, 203, 0, 113, 15, 0>>,
+            <<10, 2, 16#20010db8:32>>,
+            <<10>>
+        ]
+    ].
+
+%% RFC8777§4.2.4: a type 3 relay is a domain name, so one that is missing, cut short
+%% or followed by more bytes makes the message a FORMERR, as a bad name in any other
+%% RDATA does, rather than stay opaque as a relay of the wrong length for types 0-2
+amtrelay_bad_relay_name_formerr(_) ->
+    Owner = dns_domain:to_wire(<<"x.example">>),
+    [
+        ?assertMatch(
+            {formerr, _, _},
+            dns:decode_message(
+                <<1:16, 16#8400:16, 0:16, 1:16, 0:16, 0:16, Owner/binary, ?DNS_TYPE_AMTRELAY:16,
+                    ?DNS_CLASS_IN:16, 60:32, (byte_size(RData)):16, RData/binary>>
+            ),
+            RData
+        )
+     || RData <- [<<10, 3>>, <<10, 3, 3, "ab">>, <<10, 3, 0, 1>>]
+    ].
 
 %% RFC3403§4.1: the NAPTR REGEXP field is UTF-8. unicode:characters_to_binary/2
 %% reports invalid input by returning an error tuple instead of raising, so the

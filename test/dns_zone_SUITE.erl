@@ -96,6 +96,7 @@ groups() ->
             encode_eui48_record,
             encode_eui64_record,
             encode_ilnp_records,
+            encode_amtrelay_record,
             encode_zonemd_record,
             encode_csync_record,
             encode_dsync_record,
@@ -322,6 +323,8 @@ groups() ->
             parse_l64_record,
             parse_lp_record,
             parse_ilnp_records_roundtrip,
+            parse_amtrelay_record,
+            parse_amtrelay_records_roundtrip,
             parse_ds_record,
             parse_dnskey_record,
             parse_key_record,
@@ -560,6 +563,8 @@ groups() ->
             parse_invalid_ilnp64_compressed,
             parse_invalid_l32_locator,
             parse_invalid_ilnp_preference,
+            parse_invalid_amtrelay_rdata,
+            parse_invalid_amtrelay_relay,
             parse_invalid_ds_rdata,
             parse_invalid_ds_hex,
             parse_invalid_rrsig_times,
@@ -1631,6 +1636,86 @@ parse_ilnp_records_roundtrip(_Config) ->
     """,
     {ok, Records} = dns_zone:parse_string(Zone),
     Encoded = iolist_to_binary(dns_zone:encode_string(Records, #{origin => ~"example.com."})),
+    {ok, Reparsed} = dns_zone:parse_string(Encoded),
+    ?assertEqual(lists:sort(Records), lists:sort(Reparsed)).
+
+parse_amtrelay_record(_Config) ->
+    %% AMTRELAY for an AMT relay (RFC 8777 §4.3.2), and relay type 0, whose relay is
+    %% ".". The RFC's owner is "12", which this parser reads as a TTL, so the owner
+    %% is spelled in full.
+    Zone =
+        ~"""
+    $ORIGIN 100.51.198.in-addr.arpa.
+    12.100.51.198.in-addr.arpa. IN AMTRELAY  10 0 1 203.0.113.15
+    12.100.51.198.in-addr.arpa. IN AMTRELAY  10 0 2 2001:db8::15
+    12.100.51.198.in-addr.arpa. IN AMTRELAY 128 1 3 amtrelays.example.com.
+    12.100.51.198.in-addr.arpa. IN AMTRELAY 20 0 3 relay
+    12.100.51.198.in-addr.arpa. IN AMTRELAY 255 0 0 .
+
+    """,
+    {ok, RRs} = dns_zone:parse_string(Zone),
+    ?assertEqual(
+        [{~"12.100.51.198.in-addr.arpa.", ?DNS_TYPE_AMTRELAY}],
+        lists:usort([{RR#dns_rr.name, RR#dns_rr.type} || RR <- RRs])
+    ),
+    ?assertEqual(
+        [
+            #dns_rrdata_amtrelay{
+                precedence = 10,
+                discovery_optional = false,
+                relay_type = 1,
+                relay = {203, 0, 113, 15}
+            },
+            #dns_rrdata_amtrelay{
+                precedence = 10,
+                discovery_optional = false,
+                relay_type = 2,
+                relay = {16#2001, 16#db8, 0, 0, 0, 0, 0, 16#15}
+            },
+            #dns_rrdata_amtrelay{
+                precedence = 128,
+                discovery_optional = true,
+                relay_type = 3,
+                relay = ~"amtrelays.example.com."
+            },
+            #dns_rrdata_amtrelay{
+                precedence = 20,
+                discovery_optional = false,
+                relay_type = 3,
+                relay = ~"relay.100.51.198.in-addr.arpa."
+            },
+            #dns_rrdata_amtrelay{
+                precedence = 255, discovery_optional = false, relay_type = 0, relay = <<>>
+            }
+        ],
+        [RR#dns_rr.data || RR <- RRs]
+    ),
+    %% A type 3 relay is a domain name even when it reads like an address, as in BIND
+    {ok, [Numeric]} = dns_zone:parse_string(
+        ~"example.com. 3600 IN AMTRELAY 10 0 3 203.0.113.15.\n"
+    ),
+    ?assertMatch(#dns_rrdata_amtrelay{relay = ~"203.0.113.15."}, Numeric#dns_rr.data).
+
+parse_amtrelay_records_roundtrip(_Config) ->
+    %% Every relay type survives encode and re-parse, in any class (RFC 8777 §4.1).
+    %% Names are written in full, as a relative owner "12" would read back as a TTL.
+    Zone =
+        ~"""
+    $ORIGIN 100.51.198.in-addr.arpa.
+    12.100.51.198.in-addr.arpa. 3600 IN AMTRELAY 10 0 1 203.0.113.15
+    12.100.51.198.in-addr.arpa. 3600 IN AMTRELAY 10 1 2 2001:db8::15
+    12.100.51.198.in-addr.arpa. 3600 IN AMTRELAY 128 1 3 amtrelays.example.com.
+    12.100.51.198.in-addr.arpa. 3600 IN AMTRELAY 30 0 3 relay
+    12.100.51.198.in-addr.arpa. 3600 IN AMTRELAY 0 0 0 .
+    13.100.51.198.in-addr.arpa. 3600 CH AMTRELAY 5 1 1 192.0.2.1
+
+    """,
+    {ok, Records} = dns_zone:parse_string(Zone),
+    Encoded = iolist_to_binary(
+        dns_zone:encode_string(Records, #{
+            origin => ~"100.51.198.in-addr.arpa.", relative_names => false
+        })
+    ),
     {ok, Reparsed} = dns_zone:parse_string(Encoded),
     ?assertEqual(lists:sort(Records), lists:sort(Reparsed)).
 
@@ -3030,6 +3115,48 @@ parse_invalid_ilnp_preference(_Config) ->
             ~"L32 65536 10.1.2.0",
             ~"L64 65536 2001:0db8:1140:1000",
             ~"LP 65536 l64-subnet1.example.com."
+        ]
+    ].
+
+parse_invalid_amtrelay_rdata(_Config) ->
+    %% A missing field, or a D-bit other than 0 or 1 (RFC 8777 §4.2.2)
+    [
+        ?assertMatch(
+            {error, #{type := Type}},
+            dns_zone:parse_string(<<"example.com. 3600 IN AMTRELAY", Value/binary, "\n">>),
+            Value
+        )
+     || {Value, Type} <- [
+            {~"", parser},
+            {~" 10 0 1", semantic},
+            {~" 10 1 203.0.113.15", semantic},
+            {~" 10 0 1 203.0.113.15 192.0.2.1", semantic},
+            {~" 10 2 1 203.0.113.15", semantic},
+            {~" 256 0 1 203.0.113.15", semantic}
+        ]
+    ].
+
+parse_invalid_amtrelay_relay(_Config) ->
+    %% RFC 8777 §4.3.1: the relay must be what its type announces, "." for type 0,
+    %% and the relay types past 3 have no presentation format
+    [
+        ?assertMatch(
+            {error, #{type := semantic, suggestion := _}},
+            dns_zone:parse_string(<<"example.com. 3600 IN AMTRELAY 10 0 ", Value/binary, "\n">>),
+            Value
+        )
+     || Value <- [
+            ~"0 relay.example.com.",
+            ~"0 203.0.113.15",
+            ~"1 2001:db8::15",
+            ~"1 relay.example.com.",
+            ~"1 203.0.113.256",
+            ~"1 203.0.113",
+            ~"2 203.0.113.15",
+            ~"2 relay.example.com.",
+            ~"4 relay.example.com.",
+            ~"127 .",
+            ~"128 ."
         ]
     ].
 
@@ -4696,6 +4823,64 @@ encode_ilnp_records(_Config) ->
     },
     Line = iolist_to_binary(dns_zone:encode_rr(RR, #{origin => ~"example.com."})),
     ?assertNotEqual(nomatch, string:find(Line, ~"IN LP 10 l64-subnet1")).
+
+encode_amtrelay_record(_Config) ->
+    %% RFC 8777 §4.3.1: precedence D-bit relay-type relay, with "." for no relay
+    Cases = [
+        {
+            #dns_rrdata_amtrelay{
+                precedence = 10,
+                discovery_optional = false,
+                relay_type = 1,
+                relay = {203, 0, 113, 15}
+            },
+            ~"10 0 1 203.0.113.15"
+        },
+        {
+            #dns_rrdata_amtrelay{
+                precedence = 10,
+                discovery_optional = false,
+                relay_type = 2,
+                relay = {16#2001, 16#db8, 0, 0, 0, 0, 0, 16#15}
+            },
+            ~"10 0 2 2001:db8::15"
+        },
+        {
+            #dns_rrdata_amtrelay{
+                precedence = 128,
+                discovery_optional = true,
+                relay_type = 3,
+                relay = ~"AMTRelays.Example.com."
+            },
+            ~"128 1 3 amtrelays.example.com."
+        },
+        {
+            #dns_rrdata_amtrelay{
+                precedence = 0, discovery_optional = true, relay_type = 0, relay = <<>>
+            },
+            ~"0 1 0 ."
+        }
+    ],
+    [
+        ?assertEqual(
+            Expected, iolist_to_binary(dns_zone:encode_rdata(?DNS_TYPE_AMTRELAY, Data)), Expected
+        )
+     || {Data, Expected} <- Cases
+    ],
+    RR = #dns_rr{
+        name = ~"12.100.51.198.in-addr.arpa.",
+        type = ?DNS_TYPE_AMTRELAY,
+        class = ?DNS_CLASS_IN,
+        ttl = 3600,
+        data = #dns_rrdata_amtrelay{
+            precedence = 10,
+            discovery_optional = false,
+            relay_type = 3,
+            relay = ~"relay.100.51.198.in-addr.arpa."
+        }
+    },
+    Line = iolist_to_binary(dns_zone:encode_rr(RR, #{origin => ~"100.51.198.in-addr.arpa."})),
+    ?assertNotEqual(nomatch, string:find(Line, ~"IN AMTRELAY 10 0 3 relay")).
 
 encode_zonemd_record(_Config) ->
     RR = #dns_rr{

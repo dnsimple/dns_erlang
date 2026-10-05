@@ -45,6 +45,7 @@ functionality such as socket handling or query resolution.
 - **[RFC 8080](https://tools.ietf.org/html/rfc8080)**: Ed25519 and Ed448 for DNSSEC
 - **[RFC 8162](https://tools.ietf.org/html/rfc8162)**: Using Secure DNS to Associate Certificates with Domain Names for S/MIME
 - **[RFC 8764](https://tools.ietf.org/html/rfc8764)**: DNS Long-Lived Queries (LLQ)
+- **[RFC 8777](https://tools.ietf.org/html/rfc8777)**: DNS Reverse IP Automatic Multicast Tunneling (AMT) Discovery
 - **[RFC 8914](https://tools.ietf.org/html/rfc8914)**: Extended DNS Errors
 - **[RFC 8976](https://tools.ietf.org/html/rfc8976)**: Message Digest for DNS Zones
 - **[RFC 9077](https://tools.ietf.org/html/rfc9077)**: NSEC and NSEC3 TTL Values

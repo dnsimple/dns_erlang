@@ -654,6 +654,8 @@ encoding_description(base16, FieldName, _TypeStr) ->
     <<"Base16 (hex)-encoded", Suffix/binary>>;
 encoding_description(base32, _FieldName, _TypeStr) ->
     ~"Base32-encoded binary (NSEC3 hash)";
+encoding_description(ip_string, relay, _TypeStr) ->
+    ~"IP address as string for relay types 1 and 2, domain name for type 3, empty string for type 0";
 encoding_description(ip_string, _FieldName, _TypeStr) ->
     ~"IP address as string";
 encoding_description(binary, _FieldName, _TypeStr) ->
@@ -832,6 +834,8 @@ example_value_map() ->
         node_id => ~"\"00144FFFFF20EE64\"",
         locator64 => ~"\"20010DB811401000\"",
         fqdn => ~"\"l64-subnet1.example.com.\"",
+        relay_type => ~"1",
+        relay => ~"\"203.0.113.15\"",
         target => ~"\"target.example.com.\"",
         target_name => ~"\"target.example.com.\"",
         mname => ~"\"ns1.example.com.\"",
@@ -842,7 +846,7 @@ example_value_map() ->
 
 -spec boolean_fields() -> [field_name()].
 boolean_fields() ->
-    [qr, aa, tc, rd, ra, ad, cd, opt_out, oc].
+    [qr, aa, tc, rd, ra, ad, cd, opt_out, oc, discovery_optional].
 
 -spec list_fields() -> [field_name()].
 list_fields() ->

@@ -650,6 +650,58 @@ encode_rrdata_append(
 ) ->
     HostnameBin = dns_domain:to_wire(Hostname),
     {<<Acc/binary, (2 + byte_size(HostnameBin)):16, Subtype:16, HostnameBin/binary>>, CompMap};
+%% RFC8777§4.1: AMTRELAY is class independent
+encode_rrdata_append(
+    Acc,
+    _Pos,
+    _Class,
+    #dns_rrdata_amtrelay{precedence = Precedence, discovery_optional = D, relay_type = 0},
+    CompMap
+) ->
+    {<<Acc/binary, 2:16, Precedence, (encode_bool(D)):1, 0:7>>, CompMap};
+encode_rrdata_append(
+    Acc,
+    _Pos,
+    _Class,
+    #dns_rrdata_amtrelay{
+        precedence = Precedence, discovery_optional = D, relay_type = 1, relay = {A, B, C, E}
+    },
+    CompMap
+) ->
+    {<<Acc/binary, 6:16, Precedence, (encode_bool(D)):1, 1:7, A, B, C, E>>, CompMap};
+encode_rrdata_append(
+    Acc,
+    _Pos,
+    _Class,
+    #dns_rrdata_amtrelay{
+        precedence = Precedence,
+        discovery_optional = D,
+        relay_type = 2,
+        relay = {A, B, C, E, F, G, H, I}
+    },
+    CompMap
+) ->
+    {
+        <<Acc/binary, 18:16, Precedence, (encode_bool(D)):1, 2:7, A:16, B:16, C:16, E:16, F:16,
+            G:16, H:16, I:16>>,
+        CompMap
+    };
+encode_rrdata_append(
+    Acc,
+    _Pos,
+    _Class,
+    #dns_rrdata_amtrelay{
+        precedence = Precedence, discovery_optional = D, relay_type = 3, relay = Relay
+    },
+    CompMap
+) ->
+    %% RFC8777§4.2.3: the domain name MUST NOT be compressed
+    RelayBin = dns_domain:to_wire(Relay),
+    {
+        <<Acc/binary, (2 + byte_size(RelayBin)):16, Precedence, (encode_bool(D)):1, 3:7,
+            RelayBin/binary>>,
+        CompMap
+    };
 encode_rrdata_append(
     Acc, _Pos, _Class, #dns_rrdata_caa{flags = Flags, tag = Tag, value = Value}, CompMap
 ) ->

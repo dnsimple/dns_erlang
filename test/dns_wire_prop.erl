@@ -250,6 +250,7 @@ decodable_type() ->
         ?DNS_TYPE_A,
         ?DNS_TYPE_AAAA,
         ?DNS_TYPE_AFSDB,
+        ?DNS_TYPE_AMTRELAY,
         ?DNS_TYPE_CAA,
         ?DNS_TYPE_CDNSKEY,
         ?DNS_TYPE_CDS,
@@ -405,6 +406,11 @@ rrdata() ->
         ?LET({P, L}, {u16(), ip4()}, #dns_rrdata_l32{preference = P, locator32 = L}),
         ?LET({P, L}, {u16(), bin(8, 8)}, #dns_rrdata_l64{preference = P, locator64 = L}),
         ?LET({P, F}, {u16(), dname()}, #dns_rrdata_lp{preference = P, fqdn = F}),
+        ?LET(
+            {P, D, {T, R}},
+            {u8(), boolean(), oneof([{0, <<>>}, {1, ip4()}, {2, ip6()}, {3, dname()}])},
+            #dns_rrdata_amtrelay{precedence = P, discovery_optional = D, relay_type = T, relay = R}
+        ),
         ?LET(
             {Sz, H, V, La, Lo, Al},
             {
@@ -594,6 +600,7 @@ uri() ->
 type_of(#dns_rrdata_a{}) -> ?DNS_TYPE_A;
 type_of(#dns_rrdata_aaaa{}) -> ?DNS_TYPE_AAAA;
 type_of(#dns_rrdata_afsdb{}) -> ?DNS_TYPE_AFSDB;
+type_of(#dns_rrdata_amtrelay{}) -> ?DNS_TYPE_AMTRELAY;
 type_of(#dns_rrdata_caa{}) -> ?DNS_TYPE_CAA;
 type_of(#dns_rrdata_cdnskey{}) -> ?DNS_TYPE_CDNSKEY;
 type_of(#dns_rrdata_cds{}) -> ?DNS_TYPE_CDS;

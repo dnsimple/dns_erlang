@@ -1042,6 +1042,33 @@ encode_rdata(
     PublicKeyHex = binary:encode_hex(PublicKey),
     join_rdata_fields([PrecedenceBin, AlgBin, GatewayStr, PublicKeyHex], Separator);
 encode_rdata(
+    ?DNS_TYPE_AMTRELAY,
+    #dns_rrdata_amtrelay{
+        precedence = Precedence,
+        discovery_optional = DiscoveryOptional,
+        relay_type = RelayType,
+        relay = Relay
+    },
+    Origin,
+    RelativeNames,
+    Separator
+) ->
+    %% RFC 8777 §4.3.1: the relay is "." when there is none
+    RelayStr =
+        case RelayType of
+            0 -> ~".";
+            3 -> encode_dname(dns_domain:to_lower(Relay), Origin, RelativeNames);
+            _ -> "" ++ _ = inet:ntoa(Relay)
+        end,
+    DBin =
+        case DiscoveryOptional of
+            true -> ~"1";
+            false -> ~"0"
+        end,
+    join_rdata_fields(
+        [integer_to_binary(Precedence), DBin, integer_to_binary(RelayType), RelayStr], Separator
+    );
+encode_rdata(
     ?DNS_TYPE_KEY,
     #dns_rrdata_key{
         type = Type,

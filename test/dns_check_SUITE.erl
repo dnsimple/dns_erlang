@@ -21,6 +21,7 @@ groups() ->
             rrdata_type_numbers_must_fit,
             rrdata_names_must_fit,
             ilnp_64_bit_values_must_be_8_bytes,
+            amtrelay_relay_must_match_its_type,
             svcb_params_must_fit,
             rr_header_must_fit,
             rr_class_must_suit_rrdata,
@@ -226,7 +227,14 @@ rrdata_integers_must_fit(_) ->
         {#dns_rrdata_nid{preference = 1, node_id = <<1:64>>}, #dns_rrdata_nid.preference, 16},
         {#dns_rrdata_l32{preference = 1, locator32 = {1, 2, 3, 4}}, #dns_rrdata_l32.preference, 16},
         {#dns_rrdata_l64{preference = 1, locator64 = <<1:64>>}, #dns_rrdata_l64.preference, 16},
-        {#dns_rrdata_lp{preference = 1, fqdn = N}, #dns_rrdata_lp.preference, 16}
+        {#dns_rrdata_lp{preference = 1, fqdn = N}, #dns_rrdata_lp.preference, 16},
+        {
+            #dns_rrdata_amtrelay{
+                precedence = 1, discovery_optional = false, relay_type = 3, relay = N
+            },
+            #dns_rrdata_amtrelay.precedence,
+            8
+        }
     ],
     [
         begin
@@ -244,12 +252,19 @@ rrdata_addresses_must_fit(_) ->
     Ipseckey = fun(Gateway) ->
         #dns_rrdata_ipseckey{precedence = 1, alg = 1, gateway = Gateway, public_key = <<1>>}
     end,
+    Amtrelay = fun(RelayType, Relay) ->
+        #dns_rrdata_amtrelay{
+            precedence = 1, discovery_optional = false, relay_type = RelayType, relay = Relay
+        }
+    end,
     Fits = [
         #dns_rrdata_a{ip = {255, 255, 255, 255}},
         #dns_rrdata_aaaa{ip = {65535, 0, 0, 0, 0, 0, 0, 65535}},
         Ipseckey({255, 0, 0, 255}),
         Ipseckey({65535, 0, 0, 0, 0, 0, 0, 65535}),
-        #dns_rrdata_l32{preference = 1, locator32 = {255, 255, 255, 255}}
+        #dns_rrdata_l32{preference = 1, locator32 = {255, 255, 255, 255}},
+        Amtrelay(1, {255, 255, 255, 255}),
+        Amtrelay(2, {65535, 0, 0, 0, 0, 0, 0, 65535})
     ],
     DoNotFit = [
         #dns_rrdata_a{ip = {256, 0, 0, 0}},
@@ -258,7 +273,9 @@ rrdata_addresses_must_fit(_) ->
         #dns_rrdata_aaaa{ip = {0, 0, 0, 0, 0, 0, 0, -1}},
         Ipseckey({256, 0, 0, 1}),
         Ipseckey({0, 0, 0, 0, 0, 0, 0, 65536}),
-        #dns_rrdata_l32{preference = 1, locator32 = {256, 0, 0, 0}}
+        #dns_rrdata_l32{preference = 1, locator32 = {256, 0, 0, 0}},
+        Amtrelay(1, {256, 0, 0, 0}),
+        Amtrelay(2, {0, 0, 0, 0, 0, 0, 0, 65536})
     ],
     [?assert(dns_check:rrdata(D), D) || D <- Fits],
     [?assertNot(dns_check:rrdata(D), D) || D <- DoNotFit].
@@ -422,6 +439,9 @@ rrdata_names_must_fit(_) ->
     Records = fun(N) ->
         [
             #dns_rrdata_afsdb{subtype = 1, hostname = N},
+            #dns_rrdata_amtrelay{
+                precedence = 1, discovery_optional = false, relay_type = 3, relay = N
+            },
             #dns_rrdata_cname{dname = N},
             #dns_rrdata_dname{dname = N},
             #dns_rrdata_dsync{rrtype = 1, scheme = 1, port = 1, target = N},
@@ -501,6 +521,35 @@ ilnp_64_bit_values_must_be_8_bytes(_) ->
     end,
     [?assert(dns_check:rrdata(D), D) || D <- Records(<<1:64>>)],
     [?assertNot(dns_check:rrdata(D), D) || V <- [<<1:56>>, <<1:72>>, <<>>], D <- Records(V)].
+
+%% RFC8777§4.2.3, §4.2.4: the relay type says what the relay holds, and the encoder
+%% writes the relay by its type: a type 0 record carries no relay at all, so one
+%% that holds a name would lose it, and only types 0 to 3 are defined.
+amtrelay_relay_must_match_its_type(_) ->
+    Amtrelay = fun(RelayType, Relay) ->
+        #dns_rrdata_amtrelay{
+            precedence = 1, discovery_optional = true, relay_type = RelayType, relay = Relay
+        }
+    end,
+    V4 = {192, 0, 2, 1},
+    V6 = {16#2001, 16#db8, 0, 0, 0, 0, 0, 1},
+    Name = <<"relay.example">>,
+    Fits = [Amtrelay(0, <<>>), Amtrelay(1, V4), Amtrelay(2, V6), Amtrelay(3, Name)],
+    DoNotFit = [
+        Amtrelay(0, Name),
+        Amtrelay(0, V4),
+        Amtrelay(1, V6),
+        Amtrelay(1, Name),
+        Amtrelay(2, V4),
+        Amtrelay(2, Name),
+        Amtrelay(3, V4),
+        Amtrelay(3, V6),
+        Amtrelay(4, <<>>),
+        Amtrelay(-1, <<>>),
+        (Amtrelay(0, <<>>))#dns_rrdata_amtrelay{discovery_optional = 1}
+    ],
+    [?assert(dns_check:rrdata(D), D) || D <- Fits],
+    [?assertNot(dns_check:rrdata(D), D) || D <- DoNotFit].
 
 %% RFC2181§8: a TTL is 31 bits, since one with the top bit set is read as zero.
 %% Type and class are 16 bits, and the owner name has to be one the wire can hold.

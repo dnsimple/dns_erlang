@@ -32,6 +32,7 @@ groups() ->
             test_ipseckey_gateway,
             test_records_that_do_not_fit_rejected,
             test_ilnp_records,
+            test_amtrelay_records,
             test_error_cases,
             test_edge_cases
         ]}
@@ -1219,6 +1220,77 @@ test_ilnp_records(_Config) ->
             Rr(~"LP", #{~"preference" => 65536, ~"fqdn" => ~"l64-subnet1.example.com"})
         ]
     ].
+
+test_amtrelay_records(_Config) ->
+    %% RFC 8777: the relay is an address string for relay types 1 and 2, a name for
+    %% type 3, and empty for type 0
+    Rr = fun(RelayType, Relay) ->
+        #dns_rr{
+            name = ~"12.100.51.198.in-addr.arpa",
+            type = ?DNS_TYPE_AMTRELAY,
+            ttl = 3600,
+            data = #dns_rrdata_amtrelay{
+                precedence = 10, discovery_optional = true, relay_type = RelayType, relay = Relay
+            }
+        }
+    end,
+    [
+        ?assertMatch(
+            #{
+                ~"data" := #{
+                    ~"precedence" := 10,
+                    ~"discovery_optional" := true,
+                    ~"relay_type" := RelayType,
+                    ~"relay" := Json
+                }
+            },
+            assert_transcode(Rr(RelayType, Relay)),
+            RelayType
+        )
+     || {RelayType, Relay, Json} <- [
+            {0, <<>>, <<>>},
+            {1, {203, 0, 113, 15}, ~"203.0.113.15"},
+            {2, {16#2001, 16#db8, 0, 0, 0, 0, 0, 16#15}, ~"2001:db8::15"},
+            {3, ~"amtrelays.example.com", ~"amtrelays.example.com"}
+        ]
+    ],
+    %% A relay that is not what its type announces, an undefined relay type, a
+    %% D-bit that is not a boolean or a precedence past 8 bits is refused on load
+    Map = fun(Data) ->
+        #{
+            ~"name" => ~"12.100.51.198.in-addr.arpa",
+            ~"type" => ~"AMTRELAY",
+            ~"ttl" => 3600,
+            ~"data" => maps:merge(
+                #{
+                    ~"precedence" => 10,
+                    ~"discovery_optional" => false,
+                    ~"relay_type" => 1,
+                    ~"relay" => ~"203.0.113.15"
+                },
+                Data
+            )
+        }
+    end,
+    ?assertMatch(#dns_rr{}, dns_json:from_map(Map(#{}))),
+    [
+        ?assertError({invalid_record, _}, dns_json:from_map(Map(Data)), Data)
+     || Data <- [
+            #{~"relay_type" => 2},
+            #{~"relay_type" => 0},
+            #{~"relay" => ~"relay.example.com"},
+            #{~"relay" => ~"203.0.113"},
+            #{~"relay_type" => 0, ~"relay" => ~"."},
+            #{~"relay_type" => 4, ~"relay" => <<>>},
+            #{~"discovery_optional" => 1},
+            #{~"precedence" => 256}
+        ]
+    ],
+    %% A type 3 relay is a name even when it reads like an address
+    ?assertMatch(
+        #dns_rr{data = #dns_rrdata_amtrelay{relay = ~"203.0.113.15"}},
+        dns_json:from_map(Map(#{~"relay_type" => 3}))
+    ).
 
 test_error_cases(_Config) ->
     %% Test invalid map format (empty map)

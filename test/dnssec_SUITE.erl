@@ -506,7 +506,13 @@ canonical_rrdata_form_test(_Config) ->
             #dns_rrdata_nsec{next_dname = ~"NEXT.EXAMPLE", types = []},
             #dns_rrdata_svcb{svc_priority = 1, target_name = ~"SVCB.EXAMPLE", svc_params = #{}},
             #dns_rrdata_https{svc_priority = 1, target_name = ~"HTTPS.EXAMPLE", svc_params = #{}},
-            #dns_rrdata_lp{preference = 10, fqdn = ~"LP.EXAMPLE"}
+            #dns_rrdata_lp{preference = 10, fqdn = ~"LP.EXAMPLE"},
+            #dns_rrdata_amtrelay{
+                precedence = 10,
+                discovery_optional = false,
+                relay_type = 3,
+                relay = ~"Relay.EXAMPLE"
+            }
         ]
     ],
     %% Passthrough for unknown type

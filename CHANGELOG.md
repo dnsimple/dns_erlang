@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - Add support for the ILNP records NID (Type 104), L32 (Type 105), L64 (Type 106) and LP (Type 107) — [RFC 6742](https://datatracker.ietf.org/doc/rfc6742/). They encode and decode on the wire in any class, parse from and encode to zone files, and transcode to JSON. LP's FQDN is never compressed on the wire and keeps its case in DNSSEC canonical form.
+- Add support for the AMTRELAY record (Type 260) — [RFC 8777](https://datatracker.ietf.org/doc/rfc8777/). It encodes and decodes on the wire in any class, parses from and encodes to zone files, and transcodes to JSON. Relay types 0 (no relay), 1 (IPv4), 2 (IPv6) and 3 (domain name) get a record; an undefined relay type stays opaque RDATA. The relay's domain name is never compressed on the wire and keeps its case in DNSSEC canonical form.
 
 ## v5.0.21
 

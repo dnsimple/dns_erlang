@@ -102,6 +102,10 @@ fits(#dns_rrdata_aaaa{ip = IP}) ->
     inet:is_ipv6_address(IP);
 fits(#dns_rrdata_afsdb{subtype = Subtype}) ->
     ?IS_UINT(16, Subtype);
+fits(#dns_rrdata_amtrelay{
+    precedence = Precedence, discovery_optional = D, relay_type = RelayType, relay = Relay
+}) ->
+    ?IS_UINT(8, Precedence) andalso is_boolean(D) andalso relay_fits(RelayType, Relay);
 fits(#dns_rrdata_caa{flags = Flags, tag = Tag}) ->
     ?IS_UINT(8, Flags) andalso byte_size(Tag) =< ?MAX_STRING;
 fits(#dns_rrdata_cdnskey{flags = Flags, protocol = Protocol, alg = Alg}) ->
@@ -248,6 +252,15 @@ types_fit(Types) ->
 gateway_fits({_, _, _, _} = IP) -> inet:is_ipv4_address(IP);
 gateway_fits({_, _, _, _, _, _, _, _} = IP) -> inet:is_ipv6_address(IP);
 gateway_fits(Name) -> is_binary(Name).
+
+%% RFC8777§4.2.4: the relay is empty, an IPv4 or IPv6 address, or a domain name, as
+%% its type announces. The encoder writes no relay for type 0, whatever the field
+%% holds, so a type 0 relay must be empty.
+-spec relay_fits(dynamic(), dynamic()) -> boolean().
+relay_fits(0, Relay) -> Relay =:= <<>>;
+relay_fits(1, Relay) -> inet:is_ipv4_address(Relay);
+relay_fits(2, Relay) -> inet:is_ipv6_address(Relay);
+relay_fits(RelayType, Relay) -> RelayType =:= 3 andalso is_binary(Relay).
 
 %% RFC9460§2.2: keys, ports and mandatory keys are 16 bits and hints are
 %% addresses. The encoder skips a hint that is not an address tuple.

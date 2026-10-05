@@ -179,6 +179,31 @@ Non-RR records (message, query, OPT records) use a two-level nested map format:
 
 **Note:** This format is used within the `data` field of `dns_rr` records.
 
+### AMTRELAY (dns_rrdata_amtrelay) [RFC8777](https://datatracker.ietf.org/doc/html/rfc8777)
+
+**Format:** RRDATA fields (used within `dns_rr.data`)
+
+**Fields:**
+
+- `precedence` (`t:dns:uint8/0`): Direct value
+- `discovery_optional` (`t:boolean/0`): Direct value
+- `relay_type` (`0..3`): Direct value
+- `relay` (`<<>>` | `t:inet:ip4_address/0` | `t:inet:ip6_address/0` | `t:dns:dname/0`): IP address as string for relay types 1 and 2, domain name for type 3, empty string for type 0
+
+**Example:**
+
+```json
+{
+    "precedence": 0,
+    "discovery_optional": false,
+    "relay_type": 1,
+    "relay": "203.0.113.15"
+}
+```
+
+
+**Note:** This format is used within the `data` field of `dns_rr` records.
+
 ### CAA (dns_rrdata_caa) [RFC6844](https://datatracker.ietf.org/doc/html/rfc6844)
 
 **Format:** RRDATA fields (used within `dns_rr.data`)

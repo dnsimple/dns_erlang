@@ -147,6 +147,7 @@ dns_type() ->
         ?DNS_TYPE_L32,
         ?DNS_TYPE_L64,
         ?DNS_TYPE_LP,
+        ?DNS_TYPE_AMTRELAY,
         ?DNS_TYPE_ZONEMD,
         ?DNS_TYPE_CSYNC,
         ?DNS_TYPE_DSYNC,

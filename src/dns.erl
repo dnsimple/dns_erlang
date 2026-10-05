@@ -209,6 +209,7 @@ restrictions on the length. Labels must be 63 characters or less.
     | #dns_rrdata_a{}
     | #dns_rrdata_aaaa{}
     | #dns_rrdata_afsdb{}
+    | #dns_rrdata_amtrelay{}
     | #dns_rrdata_caa{}
     | #dns_rrdata_cdnskey{}
     | #dns_rrdata_cds{}

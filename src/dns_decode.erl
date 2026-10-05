@@ -557,6 +557,38 @@ decode_rrdata(MsgBin, _Class, ?DNS_TYPE_AFSDB, <<Subtype:16, Bin/binary>>) ->
         subtype = Subtype,
         hostname = decode_dnameonly(MsgBin, Bin)
     };
+%% RFC8777§4.1: AMTRELAY is class independent. §4.2.3: a relay type past 3 is
+%% undefined, so its RDATA stays opaque, as an unknown type's does.
+decode_rrdata(_MsgBin, _Class, ?DNS_TYPE_AMTRELAY, <<Precedence, D:1, 0:7>>) ->
+    #dns_rrdata_amtrelay{
+        precedence = Precedence, discovery_optional = decode_bool(D), relay_type = 0, relay = <<>>
+    };
+decode_rrdata(_MsgBin, _Class, ?DNS_TYPE_AMTRELAY, <<Precedence, D:1, 1:7, A, B, C, E>>) ->
+    #dns_rrdata_amtrelay{
+        precedence = Precedence,
+        discovery_optional = decode_bool(D),
+        relay_type = 1,
+        relay = {A, B, C, E}
+    };
+decode_rrdata(
+    _MsgBin,
+    _Class,
+    ?DNS_TYPE_AMTRELAY,
+    <<Precedence, D:1, 2:7, A:16, B:16, C:16, E:16, F:16, G:16, H:16, I:16>>
+) ->
+    #dns_rrdata_amtrelay{
+        precedence = Precedence,
+        discovery_optional = decode_bool(D),
+        relay_type = 2,
+        relay = {A, B, C, E, F, G, H, I}
+    };
+decode_rrdata(MsgBin, _Class, ?DNS_TYPE_AMTRELAY, <<Precedence, D:1, 3:7, Bin/binary>>) ->
+    #dns_rrdata_amtrelay{
+        precedence = Precedence,
+        discovery_optional = decode_bool(D),
+        relay_type = 3,
+        relay = decode_dnameonly(MsgBin, Bin)
+    };
 decode_rrdata(_MsgBin, _Class, ?DNS_TYPE_CAA, <<Flags:8, Len:8, Bin/binary>>) ->
     <<Tag:Len/binary, Value/binary>> = Bin,
     #dns_rrdata_caa{flags = Flags, tag = Tag, value = Value};
@@ -1048,6 +1080,7 @@ empty_rrdata(Type) ->
 requires_rrdata(?DNS_TYPE_A) -> true;
 requires_rrdata(?DNS_TYPE_AAAA) -> true;
 requires_rrdata(?DNS_TYPE_AFSDB) -> true;
+requires_rrdata(?DNS_TYPE_AMTRELAY) -> true;
 requires_rrdata(?DNS_TYPE_CAA) -> true;
 requires_rrdata(?DNS_TYPE_CDNSKEY) -> true;
 requires_rrdata(?DNS_TYPE_CDS) -> true;

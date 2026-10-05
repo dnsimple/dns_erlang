@@ -414,6 +414,17 @@
     target :: binary()
 }).
 
+%% AMTRELAY record for an Automatic Multicast Tunneling relay. The relay is `<<>>`
+%% for relay type 0 (no relay), an address for types 1 (IPv4) and 2 (IPv6), and a
+%% domain name for type 3; other types are not decoded into this record.
+%% See RFC 8777: §4.2.
+-record(dns_rrdata_amtrelay, {
+    precedence :: dns:uint8(),
+    discovery_optional :: boolean(),
+    relay_type :: 0..3,
+    relay :: <<>> | inet:ip4_address() | inet:ip6_address() | dns:dname()
+}).
+
 %% RESINFO record for resource information. See RFC 9606
 -record(dns_rrdata_resinfo, {
     data :: [binary()]

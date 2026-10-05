@@ -122,7 +122,8 @@ simple_valid_rr() ->
             ?DNS_TYPE_NID,
             ?DNS_TYPE_L32,
             ?DNS_TYPE_L64,
-            ?DNS_TYPE_LP
+            ?DNS_TYPE_LP,
+            ?DNS_TYPE_AMTRELAY
         ]),
         ?LET(
             {Name, Class, TTL, Data},
@@ -464,6 +465,35 @@ rdata(Type) ->
                 {range(0, 65535), dns_prop_generator:simple_dname()},
                 #dns_rrdata_lp{preference = Pref, fqdn = FQDN}
             );
+        ?DNS_TYPE_AMTRELAY ->
+            ?LET(
+                {Precedence, D, {RelayType, Relay}},
+                {
+                    range(0, 255),
+                    boolean(),
+                    oneof([
+                        {0, <<>>},
+                        {1, {range(0, 255), range(0, 255), range(0, 255), range(0, 255)}},
+                        {2, {
+                            range(0, 65535),
+                            range(0, 65535),
+                            range(0, 65535),
+                            range(0, 65535),
+                            range(0, 65535),
+                            range(0, 65535),
+                            range(0, 65535),
+                            range(0, 65535)
+                        }},
+                        {3, dns_prop_generator:simple_dname()}
+                    ])
+                },
+                #dns_rrdata_amtrelay{
+                    precedence = Precedence,
+                    discovery_optional = D,
+                    relay_type = RelayType,
+                    relay = Relay
+                }
+            );
         ?DNS_TYPE_IPSECKEY ->
             ?LET(
                 {Precedence, Alg, Gateway, PublicKey},
@@ -554,6 +584,7 @@ valid_zone_string() ->
                                     ?DNS_TYPE_L32 -> "L32";
                                     ?DNS_TYPE_L64 -> "L64";
                                     ?DNS_TYPE_LP -> "LP";
+                                    ?DNS_TYPE_AMTRELAY -> "AMTRELAY";
                                     _ -> "A"
                                 end,
                             RDataStr = format_rdata(Type, Data),
@@ -623,6 +654,22 @@ format_rdata(?DNS_TYPE_L64, #dns_rrdata_l64{preference = Pref, locator64 = Locat
     format_ilnp64(Pref, Locator64);
 format_rdata(?DNS_TYPE_LP, #dns_rrdata_lp{preference = Pref, fqdn = FQDN}) ->
     lists:flatten(io_lib:format("~B ~s", [Pref, binary_to_list(FQDN)]));
+format_rdata(?DNS_TYPE_AMTRELAY, #dns_rrdata_amtrelay{
+    precedence = Precedence, discovery_optional = D, relay_type = RelayType, relay = Relay
+}) ->
+    RelayStr =
+        case Relay of
+            <<>> -> ".";
+            Name when is_binary(Name) -> binary_to_list(Name);
+            {_, _, _, _, _, _, _, _} -> format_rdata(?DNS_TYPE_AAAA, #dns_rrdata_aaaa{ip = Relay});
+            {_, _, _, _} -> format_rdata(?DNS_TYPE_A, #dns_rrdata_a{ip = Relay})
+        end,
+    DBit =
+        case D of
+            true -> 1;
+            false -> 0
+        end,
+    lists:flatten(io_lib:format("~B ~B ~B ~s", [Precedence, DBit, RelayType, RelayStr]));
 format_rdata(_Type, _Data) ->
     "192.0.2.1".
 
@@ -663,6 +710,8 @@ normalize_rdata_dnames(#dns_rrdata_srv{target = T} = R) ->
     R#dns_rrdata_srv{target = dns_domain:to_lower(T)};
 normalize_rdata_dnames(#dns_rrdata_lp{fqdn = FQDN} = R) ->
     R#dns_rrdata_lp{fqdn = dns_domain:to_lower(FQDN)};
+normalize_rdata_dnames(#dns_rrdata_amtrelay{relay_type = 3, relay = Relay} = R) ->
+    R#dns_rrdata_amtrelay{relay = dns_domain:to_lower(Relay)};
 normalize_rdata_dnames(#dns_rrdata_nxt{dname = DName, types = Types} = R) ->
     R#dns_rrdata_nxt{dname = dns_domain:to_lower(DName), types = Types};
 normalize_rdata_dnames(#dns_rrdata_tsig{alg = Alg} = R) ->

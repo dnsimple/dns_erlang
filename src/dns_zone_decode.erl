@@ -455,6 +455,16 @@ rdata_error_message(TypeName, _RData) when TypeName =:= ~"NID"; TypeName =:= ~"L
             "without the \"::\" shorthand\n"
             "    Example: example.com. 3600 IN ", TypeName/binary, " 10 0014:4fff:ff20:ee64">>
     };
+rdata_error_message(~"AMTRELAY", _RData) ->
+    {
+        ~"Invalid AMTRELAY record: expected a precedence, a D-bit, a relay type and a relay",
+        ~"""
+        AMTRELAY requires: precedence (0-255), D-bit (0 or 1), relay type and relay, the relay
+        being "." for type 0, an IPv4 address for type 1, an IPv6 address for type 2 and a
+        domain name for type 3
+            Example: 12.100.51.198.in-addr.arpa. 3600 IN AMTRELAY 10 0 1 203.0.113.15
+        """
+    };
 rdata_error_message(TypeName, _RData) ->
     {<<"Invalid ", TypeName/binary, " record: malformed RDATA">>, undefined}.
 
@@ -1336,6 +1346,26 @@ build_rdata("LP", RData, Ctx) ->
             }};
         _ ->
             {error, make_rdata_error(~"LP", RData, Ctx)}
+    end;
+build_rdata("AMTRELAY", RData, Ctx) ->
+    %% AMTRELAY format: precedence D-bit relay-type relay (RFC 8777 §4.3.1)
+    case RData of
+        [{int, Precedence}, {int, D}, {int, RelayType}, RelayToken] when
+            is_integer(Precedence) andalso (D =:= 0 orelse D =:= 1) andalso is_integer(RelayType)
+        ->
+            case parse_amtrelay_relay(RelayType, RelayToken, Ctx) of
+                {ok, Relay} ->
+                    {ok, #dns_rrdata_amtrelay{
+                        precedence = Precedence,
+                        discovery_optional = D =:= 1,
+                        relay_type = RelayType,
+                        relay = Relay
+                    }};
+                error ->
+                    {error, make_rdata_error(~"AMTRELAY", RData, Ctx)}
+            end;
+        _ ->
+            {error, make_rdata_error(~"AMTRELAY", RData, Ctx)}
     end;
 build_rdata("DS", RData, Ctx) ->
     %% DS format: keytag algorithm digest-type digest(hex string)
@@ -2302,6 +2332,8 @@ type_to_number("IPSECKEY") ->
     ?DNS_TYPE_IPSECKEY;
 type_to_number("ZONEMD") ->
     ?DNS_TYPE_ZONEMD;
+type_to_number("AMTRELAY") ->
+    ?DNS_TYPE_AMTRELAY;
 %% RFC 3597 §5: a type without a mnemonic, in RDATA such as an RRSIG's type covered
 type_to_number("TYPE" ++ _ = TypeStr) ->
     type_to_number({generic_type, TypeStr});
@@ -2510,6 +2542,28 @@ hex_to_binary(HexBin) when is_binary(HexBin) ->
         error:badarg ->
             {error, {invalid_hex_data, HexBin}}
     end.
+
+%% RFC 8777 §4.3.1: the relay is "." for relay type 0, an IPv4 or IPv6 address for
+%% types 1 and 2, and a domain name for type 3. The relay types past 3 have no
+%% presentation format; the RFC 3597 generic form still carries them.
+-spec parse_amtrelay_relay(integer(), rdata(), parse_ctx()) ->
+    {ok, <<>> | inet:ip_address() | dns:dname()} | error.
+parse_amtrelay_relay(0, {domain, "."}, _Ctx) ->
+    {ok, <<>>};
+parse_amtrelay_relay(1, {Kind, IP}, _Ctx) when Kind =:= ipv4; Kind =:= domain ->
+    case parse_ipv4(IP) of
+        {ok, Relay} -> {ok, Relay};
+        {error, _} -> error
+    end;
+parse_amtrelay_relay(2, {Kind, IP}, _Ctx) when Kind =:= ipv6; Kind =:= domain ->
+    case parse_ipv6(IP) of
+        {ok, Relay} -> {ok, Relay};
+        {error, _} -> error
+    end;
+parse_amtrelay_relay(3, {domain, Name}, Ctx) ->
+    {ok, resolve_name(Name, Ctx#parse_ctx.origin)};
+parse_amtrelay_relay(_RelayType, _RelayToken, _Ctx) ->
+    error.
 
 %% Parse IPSECKEY gateway field (can be IPv4, IPv6, domain name, or "." for none)
 -spec parse_ipseckey_gateway(rdata(), parse_ctx()) -> inet:ip_address() | dns:dname() | <<>>.

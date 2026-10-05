@@ -130,6 +130,7 @@ record_type_from_key(~"OPT_UNKNOWN") -> dns_opt_unknown;
 record_type_from_key(?DNS_TYPE_A_BSTR) -> dns_rrdata_a;
 record_type_from_key(?DNS_TYPE_AAAA_BSTR) -> dns_rrdata_aaaa;
 record_type_from_key(?DNS_TYPE_AFSDB_BSTR) -> dns_rrdata_afsdb;
+record_type_from_key(?DNS_TYPE_AMTRELAY_BSTR) -> dns_rrdata_amtrelay;
 record_type_from_key(?DNS_TYPE_CAA_BSTR) -> dns_rrdata_caa;
 record_type_from_key(?DNS_TYPE_CERT_BSTR) -> dns_rrdata_cert;
 record_type_from_key(?DNS_TYPE_CNAME_BSTR) -> dns_rrdata_cname;
@@ -256,8 +257,25 @@ from_map_rrdata(Type, DataMap) ->
                 from_map_field(Tag, Field, maps:get(field_name(Tag, Field), DataMap, undefined))
              || Field <- Fields
             ],
-            list_to_tuple([Tag | Values])
+            from_map_siblings(list_to_tuple([Tag | Values]))
     end.
+
+%% A field whose decoding depends on another field of the record, which
+%% from_map_field/3 does not see, is decoded here once the record is built.
+%%
+%% RFC8777§4.2.4: an AMTRELAY relay is an address for relay types 1 and 2 and a
+%% domain name for type 3, even one that reads like an address, as it does in a
+%% zone file; dns_check refuses a relay that does not match its type.
+-spec from_map_siblings(tuple()) -> tuple().
+from_map_siblings(#dns_rrdata_amtrelay{relay_type = RelayType, relay = Relay} = Data) when
+    (RelayType =:= 1 orelse RelayType =:= 2) andalso is_binary(Relay)
+->
+    case inet:parse_strict_address(binary_to_list(Relay)) of
+        {ok, IP} -> Data#dns_rrdata_amtrelay{relay = IP};
+        {error, _} -> Data
+    end;
+from_map_siblings(Data) ->
+    Data.
 
 %% Convert DNS type to RRDATA record tag
 -spec type_to_rrdata_tag(dns:type()) -> atom() | no_return().
@@ -272,6 +290,7 @@ record_fields(dns_query) -> record_info(fields, dns_query);
 record_fields(dns_rr) -> record_info(fields, dns_rr);
 record_fields(dns_rrdata_a) -> record_info(fields, dns_rrdata_a);
 record_fields(dns_rrdata_afsdb) -> record_info(fields, dns_rrdata_afsdb);
+record_fields(dns_rrdata_amtrelay) -> record_info(fields, dns_rrdata_amtrelay);
 record_fields(dns_rrdata_aaaa) -> record_info(fields, dns_rrdata_aaaa);
 record_fields(dns_rrdata_caa) -> record_info(fields, dns_rrdata_caa);
 record_fields(dns_rrdata_cname) -> record_info(fields, dns_rrdata_cname);
@@ -352,6 +371,7 @@ to_map_value(Tag, Field, Value) when
     is_tuple(Value) andalso
         ({Tag, Field} =:= {dns_rrdata_a, ip} orelse {Tag, Field} =:= {dns_rrdata_aaaa, ip} orelse
             {Tag, Field} =:= {dns_rrdata_l32, locator32} orelse
+            {Tag, Field} =:= {dns_rrdata_amtrelay, relay} orelse
             {Tag, Field} =:= {dns_rrdata_ipseckey, gateway})
 ->
     list_to_binary(inet:ntoa(Value));

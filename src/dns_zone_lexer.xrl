@@ -181,6 +181,7 @@ RTYPE_HTTPS    = HTTPS
 RTYPE_DLV      = DLV
 RTYPE_IPSECKEY = IPSECKEY
 RTYPE_ZONEMD   = ZONEMD
+RTYPE_AMTRELAY = AMTRELAY
 RTYPE_ALIAS    = ALIAS
 
 % Quoted strings for TXT records, etc.
@@ -232,6 +233,7 @@ Rules.
 {RTYPE_NSEC3PARAM} : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_OPENPGPKEY} : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_IPSECKEY}   : {token, {rtype, TokenLine, TokenChars}}.
+{RTYPE_AMTRELAY}   : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_CDNSKEY}    : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_DNSKEY}     : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_SMIMEA}     : {token, {rtype, TokenLine, TokenChars}}.
