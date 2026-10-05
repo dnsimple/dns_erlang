@@ -656,16 +656,16 @@ canonical_rrdata_bin(#dns_rr{class = Class, data = Data0}) ->
 
 -doc "Converts a resource record data record to DNSSEC canonical form.".
 -spec canonical_rrdata_form(dns:rrdata()) -> dns:rrdata().
+%% RFC4034§6.2: the names in the RDATA of the types listed there are lowercased.
+%% RFC3597§7 closes that list to the types published before it, so later types,
+%% such as DSYNC, IPSECKEY, SVCB and HTTPS, keep the case of their names, and
+%% RFC6840§5.1 takes NSEC off it.
 canonical_rrdata_form(#dns_rrdata_afsdb{hostname = Hostname} = Data) ->
     Data#dns_rrdata_afsdb{hostname = dns_domain:to_lower(Hostname)};
 canonical_rrdata_form(#dns_rrdata_cname{dname = DName} = Data) ->
     Data#dns_rrdata_cname{dname = dns_domain:to_lower(DName)};
 canonical_rrdata_form(#dns_rrdata_dname{dname = DName} = Data) ->
     Data#dns_rrdata_dname{dname = dns_domain:to_lower(DName)};
-canonical_rrdata_form(#dns_rrdata_dsync{target = Target} = Data) ->
-    Data#dns_rrdata_dsync{target = dns_domain:to_lower(Target)};
-canonical_rrdata_form(#dns_rrdata_ipseckey{gateway = Gateway} = Data) when is_binary(Gateway) ->
-    Data#dns_rrdata_ipseckey{gateway = dns_domain:to_lower(Gateway)};
 canonical_rrdata_form(#dns_rrdata_kx{exchange = Exchange} = Data) ->
     Data#dns_rrdata_kx{exchange = dns_domain:to_lower(Exchange)};
 canonical_rrdata_form(#dns_rrdata_mb{madname = MaDname} = Data) ->
@@ -685,8 +685,6 @@ canonical_rrdata_form(#dns_rrdata_naptr{replacement = Replacement} = Data) ->
     Data#dns_rrdata_naptr{replacement = dns_domain:to_lower(Replacement)};
 canonical_rrdata_form(#dns_rrdata_ns{dname = DName} = Data) ->
     Data#dns_rrdata_ns{dname = dns_domain:to_lower(DName)};
-canonical_rrdata_form(#dns_rrdata_nsec{next_dname = NextDname} = Data) ->
-    Data#dns_rrdata_nsec{next_dname = dns_domain:to_lower(NextDname)};
 canonical_rrdata_form(#dns_rrdata_nxt{dname = DName} = Data) ->
     Data#dns_rrdata_nxt{dname = dns_domain:to_lower(DName)};
 canonical_rrdata_form(#dns_rrdata_ptr{dname = DName} = Data) ->
@@ -707,10 +705,6 @@ canonical_rrdata_form(#dns_rrdata_soa{mname = Mname, rname = Rname} = Data) ->
     };
 canonical_rrdata_form(#dns_rrdata_srv{target = Target} = Data) ->
     Data#dns_rrdata_srv{target = dns_domain:to_lower(Target)};
-canonical_rrdata_form(#dns_rrdata_svcb{target_name = TargetName} = Data) ->
-    Data#dns_rrdata_svcb{target_name = dns_domain:to_lower(TargetName)};
-canonical_rrdata_form(#dns_rrdata_https{target_name = TargetName} = Data) ->
-    Data#dns_rrdata_https{target_name = dns_domain:to_lower(TargetName)};
 canonical_rrdata_form(X) ->
     X.
 

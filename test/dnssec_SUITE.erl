@@ -47,6 +47,7 @@ groups() ->
             add_keytag_to_cdnskey_test,
             keytag_known_answers,
             canonical_rrdata_form_test,
+            canonical_form_matches_bind,
             ih_custom_hash_test,
             dsa_sign_verify_test,
             ecdsa_sign_verify_test,
@@ -394,33 +395,6 @@ canonical_rrdata_form_test(_Config) ->
         dnssec:canonical_rrdata_form(#dns_rrdata_dname{dname = ~"DNAME.EXAMPLE"})
     ),
     ?assertMatch(
-        #dns_rrdata_dsync{target = ~"target.example"},
-        dnssec:canonical_rrdata_form(#dns_rrdata_dsync{
-            rrtype = 1,
-            scheme = 0,
-            port = 443,
-            target = ~"TARGET.EXAMPLE"
-        })
-    ),
-    ?assertMatch(
-        #dns_rrdata_ipseckey{gateway = ~"gateway.example"},
-        dnssec:canonical_rrdata_form(#dns_rrdata_ipseckey{
-            precedence = 10,
-            alg = 0,
-            gateway = ~"GATEWAY.EXAMPLE",
-            public_key = <<>>
-        })
-    ),
-    ?assertMatch(
-        #dns_rrdata_ipseckey{gateway = {1, 2, 3, 4}},
-        dnssec:canonical_rrdata_form(#dns_rrdata_ipseckey{
-            precedence = 10,
-            alg = 1,
-            gateway = {1, 2, 3, 4},
-            public_key = <<>>
-        })
-    ),
-    ?assertMatch(
         #dns_rrdata_kx{exchange = ~"kx.example", preference = 10},
         dnssec:canonical_rrdata_form(#dns_rrdata_kx{preference = 10, exchange = ~"KX.EXAMPLE"})
     ),
@@ -467,10 +441,6 @@ canonical_rrdata_form_test(_Config) ->
     ?assertMatch(
         #dns_rrdata_ns{dname = ~"ns.example"},
         dnssec:canonical_rrdata_form(#dns_rrdata_ns{dname = ~"NS.EXAMPLE"})
-    ),
-    ?assertMatch(
-        #dns_rrdata_nsec{next_dname = ~"next.example", types = []},
-        dnssec:canonical_rrdata_form(#dns_rrdata_nsec{next_dname = ~"NEXT.EXAMPLE", types = []})
     ),
     ?assertMatch(
         #dns_rrdata_nxt{dname = ~"nxt.example", types = []},
@@ -520,24 +490,113 @@ canonical_rrdata_form_test(_Config) ->
             priority = 0, weight = 0, port = 0, target = ~"SRV.EXAMPLE"
         })
     ),
-    ?assertMatch(
-        #dns_rrdata_svcb{target_name = ~"svcb.example", svc_priority = 1},
-        dnssec:canonical_rrdata_form(#dns_rrdata_svcb{
-            svc_priority = 1,
-            target_name = ~"SVCB.EXAMPLE",
-            svc_params = #{}
-        })
-    ),
-    ?assertMatch(
-        #dns_rrdata_https{target_name = ~"https.example", svc_priority = 1},
-        dnssec:canonical_rrdata_form(#dns_rrdata_https{
-            svc_priority = 1,
-            target_name = ~"HTTPS.EXAMPLE",
-            svc_params = #{}
-        })
-    ),
+    %% RFC3597§7, RFC4034§6.2: types defined after the list keep the case of their
+    %% RDATA names in canonical form, and RFC6840§5.1 takes NSEC off the list
+    [
+        ?assertEqual(Data, dnssec:canonical_rrdata_form(Data))
+     || Data <- [
+            #dns_rrdata_dsync{rrtype = 1, scheme = 0, port = 443, target = ~"TARGET.EXAMPLE"},
+            #dns_rrdata_ipseckey{
+                precedence = 10, alg = 0, gateway = ~"GATEWAY.EXAMPLE", public_key = <<>>
+            },
+            #dns_rrdata_ipseckey{
+                precedence = 10, alg = 1, gateway = {1, 2, 3, 4}, public_key = <<>>
+            },
+            #dns_rrdata_nsec{next_dname = ~"NEXT.EXAMPLE", types = []},
+            #dns_rrdata_svcb{svc_priority = 1, target_name = ~"SVCB.EXAMPLE", svc_params = #{}},
+            #dns_rrdata_https{svc_priority = 1, target_name = ~"HTTPS.EXAMPLE", svc_params = #{}}
+        ]
+    ],
     %% Passthrough for unknown type
     ?assertEqual(~"binary", dnssec:canonical_rrdata_form(~"binary")).
+
+%% Signatures BIND 9.20's dnssec-signzone made with an Ed25519 key over records
+%% whose RDATA names are mixed case. RFC3597§7 and RFC6840§5.1 keep that case in
+%% canonical form for these types, so each signature verifies and, Ed25519 being
+%% deterministic, signing the record again gives the same signature. Lowercasing
+%% the names failed both ways: BIND's signatures did not verify here, and BIND's
+%% dnssec-verify refused the signatures made here.
+canonical_form_matches_bind(_Config) ->
+    PrivateKey = base64:decode(~"6OjVqw6yokJES96M8iQmufPniuPAUpSpAsfB2hQPSp0="),
+    DNSKey = #dns_rr{
+        name = ~"example.test",
+        type = ?DNS_TYPE_DNSKEY,
+        ttl = 3600,
+        data = #dns_rrdata_dnskey{
+            flags = 256,
+            protocol = 3,
+            alg = ?DNS_ALG_ED25519,
+            public_key = base64:decode(~"VXEsoU69+/ogdTfuDFJteyXjQM3WniI/Jc11+fLq4Dg="),
+            keytag = 29059
+        }
+    },
+    RR = fun(Name, Type, TTL, Data) ->
+        #dns_rr{name = Name, type = Type, ttl = TTL, data = Data}
+    end,
+    Cases = [
+        {
+            RR(~"www.example.test", ?DNS_TYPE_HTTPS, 3600, #dns_rrdata_https{
+                svc_priority = 1, target_name = ~"Svc.Example.Test", svc_params = #{}
+            }),
+            ~"RE6RL2LW1of41k02UJEzpaMgC0vYnsuH/BmTFWdRD2n3wDkqLzeR+YPSD7WZYATcM4jQqlQe2wvUVQAbbsxnBA=="
+        },
+        {
+            RR(~"svc.example.test", ?DNS_TYPE_SVCB, 3600, #dns_rrdata_svcb{
+                svc_priority = 1, target_name = ~"Pool.Example.Test", svc_params = #{}
+            }),
+            ~"2PnKixZDSwGYi8WXgBSE069yjdzio0WibFl5FFTd8rGfOusdLjbcwPf4EO7qF5sfuJmmxZ36Y379w0NjVSFgCQ=="
+        },
+        {
+            RR(~"gw.example.test", ?DNS_TYPE_IPSECKEY, 3600, #dns_rrdata_ipseckey{
+                precedence = 10,
+                alg = 2,
+                gateway = ~"Gateway.Example.Test",
+                public_key = base64:decode(~"AQNRU3mG7TVTO2BkR47usntb102uFJtugbo6BSGvgqt4AQ==")
+            }),
+            ~"q5q2f82buUGEIiK/ZgmLnPkRXbo69YnukAI/B3AN1DUTkRrHtjDLpDYz54Dh178pUOuC4WR4ydAsil865YuvCQ=="
+        },
+        {
+            RR(~"_dsync.example.test", ?DNS_TYPE_DSYNC, 3600, #dns_rrdata_dsync{
+                rrtype = ?DNS_TYPE_CDS, scheme = 1, port = 5359, target = ~"Notify.Example.Test"
+            }),
+            ~"dANBkdGSRCWilD5Hn99KsxoMIyAxBfOZb7Zb3sU8gl0aHfQvKTVWMZo8+W67y9VGoOZan5yeRTlo2VFzGPxZCQ=="
+        },
+        {
+            RR(~"svc.example.test", ?DNS_TYPE_NSEC, 300, #dns_rrdata_nsec{
+                next_dname = ~"Upper.example.test",
+                types = [?DNS_TYPE_RRSIG, ?DNS_TYPE_NSEC, ?DNS_TYPE_SVCB]
+            }),
+            ~"f8WrRhx2nabRer0MaMS0OmaQnqkyQMind0T0deG7Y7N3VuKEFkpdBUkV7Ep60fCA9TRTVEkuSkJj6wkqtQ57AA=="
+        }
+    ],
+    %% 2026-10-01 to 2026-11-01
+    {Inception, Expiration} = {1790812800, 1793491200},
+    [
+        begin
+            Signature = base64:decode(Sig),
+            [#dns_rr{data = #dns_rrdata_rrsig{signature = Signed}} = RRSig] = dnssec:sign_rr(
+                [Data],
+                ~"example.test",
+                29059,
+                ?DNS_ALG_ED25519,
+                PrivateKey,
+                #{inception => Inception, expiration => Expiration}
+            ),
+            ?assertEqual(Signature, Signed, Type),
+            ?assert(
+                dnssec:verify_rrsig(
+                    RRSig#dns_rr{
+                        data = (RRSig#dns_rr.data)#dns_rrdata_rrsig{signature = Signature}
+                    },
+                    [Data],
+                    [DNSKey],
+                    #{now => Inception + 1}
+                ),
+                Type
+            )
+        end
+     || {#dns_rr{type = Type} = Data, Sig} <- Cases
+    ].
 
 ih_custom_hash_test(_Config) ->
     %% ih/4 with custom hash function (not default SHA1)
