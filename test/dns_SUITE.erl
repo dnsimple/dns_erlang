@@ -85,7 +85,8 @@ groups() ->
             loc_wire_reference_point,
             loc_precision_range,
             naptr_invalid_utf8_regexp_rejected,
-            empty_rdata_rejected_for_known_types
+            empty_rdata_rejected_for_known_types,
+            rdata_names_compressed_only_for_rfc1035_types
         ]},
         {svcb, [parallel], [
             decode_encode_svcb_params,
@@ -1735,6 +1736,46 @@ optrr_honoured_anywhere_in_additional(_) ->
     %% Without an OPT nothing is reordered, and no space is reserved
     ?assertEqual([rr, tsig], Shape([ARR, TSIG])),
     ?assertNot(HasOpt(Encode([ARR], #{max_size => 512}))).
+
+%% RFC3597§4: "servers MUST NOT compress domain names embedded in the RDATA of
+%% types that are class-specific or not well-known", the well-known ones being
+%% RFC 1035's, and RFC6672§2.5 says so of DNAME's target. A receiver that does not
+%% know such a type cannot follow a pointer in it, and corrupts the name when it
+%% passes the RDATA on. The names here share a suffix with the owner, which
+%% compression would have pointed at; MX, an RFC 1035 type, still compresses.
+rdata_names_compressed_only_for_rfc1035_types(_) ->
+    Owner = <<"host.example.com">>,
+    Name = <<"target.example.com">>,
+    NameWire = dns_domain:to_wire(Name),
+    Encode = fun(Type, Data) ->
+        Msg = #dns_message{
+            qr = true,
+            qc = 1,
+            anc = 1,
+            questions = [#dns_query{name = Owner, type = Type}],
+            answers = [#dns_rr{name = Owner, type = Type, ttl = 60, data = Data}]
+        },
+        Encoded = dns:encode_message(Msg),
+        ?assertEqual(Msg, dns:decode_message(Encoded), Type),
+        Encoded
+    end,
+    [
+        ?assertMatch(
+            {_, _}, binary:match(Encode(Type, Data), <<Prefix/binary, NameWire/binary>>), Type
+        )
+     || {Type, Data, Prefix} <- [
+            {?DNS_TYPE_DNAME, #dns_rrdata_dname{dname = Name}, <<>>},
+            {?DNS_TYPE_KX, #dns_rrdata_kx{preference = 10, exchange = Name}, <<10:16>>},
+            {?DNS_TYPE_RT, #dns_rrdata_rt{preference = 10, host = Name}, <<10:16>>},
+            {?DNS_TYPE_NXT, #dns_rrdata_nxt{dname = Name, types = [?DNS_TYPE_A]}, <<>>}
+        ]
+    ],
+    ?assertEqual(
+        nomatch,
+        binary:match(
+            Encode(?DNS_TYPE_MX, #dns_rrdata_mx{preference = 10, exchange = Name}), NameWire
+        )
+    ).
 
 %% RFC3403§4.1: the NAPTR REGEXP field is UTF-8. unicode:characters_to_binary/2
 %% reports invalid input by returning an error tuple instead of raising, so the
