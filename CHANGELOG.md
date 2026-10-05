@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Zone files: RRSIG expiration and inception times written as `YYYYMMDDHHmmSS` (RFC 4034 §3.2), as signed zones usually spell them, are now read as UTC dates. They were kept as the 14-digit number, and encoding wrote its low 32 bits, so the signature times on the wire were wrong. Invalid dates and values that fit neither form are rejected.
+- `dns_json:from_map/1` and the zone file parser now refuse, when they load it, a record the wire cannot carry as written, raising `{invalid_record, Record}` and returning a semantic error respectively. The encoder trusts its input and writes each field with bit syntax, which silently cuts an integer too wide for its field (MX preference 70000 went out as 4464, -1 as 65535) and writes a binary of the wrong size as it is. The checks cover every fixed-width RDATA field, addresses, LOC coordinates, 8-bit lengths (CAA tags, NSEC3 salts and hashes, HINFO strings), NSEC type numbers, SVCB params (a hint that is not an address was silently dropped), names (a last label over 63 bytes was written with an invalid length byte), RDATA over 65535 bytes, the RR header (type and class are 16 bits, and the TTL 31 bits as RFC 2181 §8 has it), and, in JSON, queries, the OPT pseudo-RR and its options. EUI48 and EUI64 addresses of the wrong length in JSON are among what this catches; they used to load and then fail every response carrying them.
 
 ## v5.0.19
 

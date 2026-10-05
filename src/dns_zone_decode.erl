@@ -562,20 +562,38 @@ build_rr(Owner, TTL, Class, Type, RData, Ctx) ->
     ResolvedTTL = resolved_ttl(TTL, Ctx),
     ResolvedClass = resolved_class(Class, Ctx),
     TypeNum = type_to_number(Type),
-    case build_rdata(Type, RData, Ctx) of
-        {ok, RDataRecord} ->
-            RR = #dns_rr{
-                name = ResolvedOwner,
-                type = TypeNum,
-                class = ResolvedClass,
-                ttl = ResolvedTTL,
-                data = RDataRecord
-            },
-            NewCtx = Ctx#parse_ctx{last_owner = ResolvedOwner},
-            {ok, RR, NewCtx};
-        {error, Reason} ->
-            {error, Reason}
+    maybe
+        {ok, RDataRecord} ?= build_rdata(Type, RData, Ctx),
+        RR = #dns_rr{
+            name = ResolvedOwner,
+            type = TypeNum,
+            class = ResolvedClass,
+            ttl = ResolvedTTL,
+            data = RDataRecord
+        },
+        ok ?= check_rr(Type, RData, RR, Ctx),
+        {ok, RR, Ctx#parse_ctx{last_owner = ResolvedOwner}}
     end.
+
+%% The encoder writes what it is given, keeping checks off the query path, so a
+%% record is checked here, when the zone is read: a value too wide for its field
+%% would otherwise go out silently wrong, or fail each response that carries it.
+-spec check_rr(string() | {generic_type, string()}, [rdata()], dns:rr(), parse_ctx()) ->
+    ok | {error, error_detail()}.
+check_rr(Type, RData, RR, Ctx) ->
+    case dns_check:rr(RR) of
+        true ->
+            ok;
+        false ->
+            TypeName = list_to_binary(type_string(Type)),
+            Message = <<"Invalid ", TypeName/binary, " record: a value does not fit its field">>,
+            {error,
+                make_error(semantic, Message, {invalid_record, TypeName, RData}, undefined, Ctx)}
+    end.
+
+-spec type_string(string() | {generic_type, string()}) -> string().
+type_string({generic_type, TypeStr}) -> TypeStr;
+type_string(TypeStr) -> TypeStr.
 
 %% Resolve owner name
 resolved_owner(undefined, Ctx) ->

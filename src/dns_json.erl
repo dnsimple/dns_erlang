@@ -63,13 +63,16 @@ from_map(
         end,
     %% Convert the data map to RRDATA record
     Data = from_map_rrdata(Type, DataMap),
-    #dns_rr{
-        name = Name,
-        type = Type,
-        class = Class,
-        ttl = Ttl,
-        data = Data
-    };
+    checked(
+        fun dns_check:rr/1,
+        #dns_rr{
+            name = Name,
+            type = Type,
+            class = Class,
+            ttl = Ttl,
+            data = Data
+        }
+    );
 from_map(Map) when is_map(Map), 1 =:= map_size(Map) ->
     [{Key, DataMap}] = maps:to_list(Map),
     Tag = record_type_from_key(Key),
@@ -81,9 +84,26 @@ from_map(Map) when is_map(Map), 1 =:= map_size(Map) ->
         from_map_field(Tag, Field, maps:get(atom_to_binary(Field), DataMap, undefined))
      || Field <- Fields
     ],
-    list_to_tuple([Tag | Values]);
+    check_record(list_to_tuple([Tag | Values]));
 from_map(Map) ->
     erlang:error({invalid_map_format, Map}).
+
+%% The encoder writes what it is given, keeping checks off the query path, so a
+%% record is checked here, when it is loaded: a value too wide for its field would
+%% otherwise go out silently wrong, or fail each response that carries it.
+-spec check_record(tuple()) -> tuple().
+check_record(#dns_rr{} = RR) -> checked(fun dns_check:rr/1, RR);
+check_record(#dns_query{} = Query) -> checked(fun dns_check:query/1, Query);
+check_record(#dns_optrr{} = OptRR) -> checked(fun dns_check:optrr/1, OptRR);
+check_record(#dns_message{} = Message) -> Message;
+check_record(Opt) -> checked(fun dns_check:opt/1, Opt).
+
+-spec checked(fun((tuple()) -> boolean()), tuple()) -> tuple().
+checked(Check, Record) ->
+    case Check(Record) of
+        true -> Record;
+        false -> erlang:error({invalid_record, Record})
+    end.
 
 %% Helper to map record type atom to JSON key name
 %% Other records use descriptive names (message, query, rr, OPT, etc.)

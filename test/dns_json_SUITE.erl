@@ -30,6 +30,7 @@ groups() ->
             test_dnskey_formats,
             test_nsec3_salt,
             test_ipseckey_gateway,
+            test_records_that_do_not_fit_rejected,
             test_error_cases,
             test_edge_cases
         ]}
@@ -908,7 +909,7 @@ test_dnskey_formats(_Config) ->
             flags = 256,
             protocol = 3,
             alg = ?DNS_ALG_RSASHA256,
-            public_key = [12345, 67890, 11111],
+            public_key = [65537, 67890],
             keytag = 12345
         }
     },
@@ -938,7 +939,7 @@ test_dnskey_formats(_Config) ->
             flags = 256,
             protocol = 3,
             alg = ?DNS_ALG_RSASHA256,
-            public_key = [12345, 67890, 11111],
+            public_key = [65537, 67890],
             keytag = 12345
         }
     },
@@ -1054,6 +1055,84 @@ test_ipseckey_gateway(_Config) ->
     },
     assert_transcode(IpseckeyDname).
 
+test_records_that_do_not_fit_rejected(_Config) ->
+    %% The encoder writes what it is given, so a record is checked when it is
+    %% loaded: an EUI64 address of two bytes loaded and then made every response
+    %% carrying it fail to encode, and preference 70000 went out as 4464
+    Rr = fun(Type, Data) ->
+        #{~"name" => ~"example.com", ~"type" => Type, ~"ttl" => 3600, ~"data" => Data}
+    end,
+    Soa = fun(Serial) ->
+        #{
+            ~"mname" => ~"ns1.example.com.",
+            ~"rname" => ~"admin.example.com.",
+            ~"serial" => Serial,
+            ~"refresh" => 1,
+            ~"retry" => 1,
+            ~"expire" => 1,
+            ~"minimum" => 1
+        }
+    end,
+    Svcb = fun(Port) ->
+        #{
+            ~"svc_priority" => 1,
+            ~"target_name" => ~"svc.example.com.",
+            ~"svc_params" => #{~"port" => Port}
+        }
+    end,
+    Fits = [
+        Rr(~"EUI48", #{~"address" => ~"001A2B3C4D5E"}),
+        Rr(~"EUI64", #{~"address" => ~"001A2B3C4D5E6F70"}),
+        Rr(~"MX", #{~"preference" => 65535, ~"exchange" => ~"mail.example.com."}),
+        Rr(~"SOA", Soa(4294967295)),
+        Rr(~"SVCB", Svcb(65535))
+    ],
+    DoNotFit = [
+        Rr(~"EUI48", #{~"address" => ~"001A"}),
+        Rr(~"EUI64", #{~"address" => ~"001A2B3C4D5E6F"}),
+        Rr(~"MX", #{~"preference" => 65536, ~"exchange" => ~"mail.example.com."}),
+        Rr(~"MX", #{~"preference" => -1, ~"exchange" => ~"mail.example.com."}),
+        Rr(~"MX", #{~"exchange" => ~"mail.example.com."}),
+        Rr(~"SOA", Soa(4294967296)),
+        Rr(~"SVCB", Svcb(65536))
+    ],
+    A = Rr(~"A", #{~"ip" => ~"192.0.2.1"}),
+    Opt = dns_json:to_map(#dns_optrr{}),
+    OptWith = fun(Field, Value) -> #{~"OPT" => (maps:get(~"OPT", Opt))#{Field => Value}} end,
+    Query = fun(Type) ->
+        #{~"query" => #{~"name" => ~"example.com", ~"type" => Type, ~"class" => 1}}
+    end,
+    [ULKey] = maps:keys(dns_json:to_map(#dns_opt_ul{lease = 1})),
+    UL = fun(Lease) -> #{ULKey => #{~"lease" => Lease}} end,
+    [?assertMatch(#dns_rr{}, dns_json:from_map(M), M) || M <- Fits],
+    [?assertError({invalid_record, _}, dns_json:from_map(M), M) || M <- DoNotFit],
+    %% RFC2181§8: a TTL is 31 bits; type and class are 16
+    ?assertMatch(#dns_rr{}, dns_json:from_map(A#{~"ttl" => 2147483647})),
+    [
+        ?assertError({invalid_record, _}, dns_json:from_map(M), M)
+     || M <- [
+            A#{~"ttl" => 2147483648},
+            A#{~"ttl" => -1},
+            A#{~"class" => 65536},
+            Rr(~"65536", #{~"data" => base64:encode(<<1>>)}),
+            A#{~"name" => <<"example.", (binary:copy(<<"a">>, 64))/binary>>}
+        ]
+    ],
+    %% The OPT pseudo-RR, its options, and queries are checked the same way
+    ?assertMatch(#dns_optrr{}, dns_json:from_map(OptWith(~"udp_payload_size", 65535))),
+    ?assertMatch(#dns_query{}, dns_json:from_map(Query(65535))),
+    ?assertMatch(#dns_optrr{}, dns_json:from_map(OptWith(~"data", [UL((1 bsl 32) - 1)]))),
+    [
+        ?assertError({invalid_record, _}, dns_json:from_map(M), M)
+     || M <- [
+            OptWith(~"udp_payload_size", 65536),
+            OptWith(~"ext_rcode", 256),
+            OptWith(~"data", [UL(-1)]),
+            UL(1 bsl 32),
+            Query(65536)
+        ]
+    ].
+
 test_error_cases(_Config) ->
     %% Test invalid map format (empty map)
     ?assertError({invalid_map_format, _}, dns_json:from_map(#{})),
@@ -1134,7 +1213,7 @@ test_error_cases(_Config) ->
     %% Test unknown type number (valid integer string but unknown type)
     UnknownTypeMap = #{
         ~"name" => ~"example.com",
-        ~"type" => ~"99999",
+        ~"type" => ~"65280",
         ~"ttl" => 3600,
         ~"data" => #{}
     },
@@ -1143,7 +1222,7 @@ test_error_cases(_Config) ->
     %% Test unknown type without data field
     UnknownTypeNoDataMap = #{
         ~"name" => ~"example.com",
-        ~"type" => ~"99999",
+        ~"type" => ~"65280",
         ~"ttl" => 3600,
         ~"data" => #{~"other" => ~"value"}
     },
@@ -1165,7 +1244,7 @@ test_error_cases(_Config) ->
     %% Test unknown type with base64 data (fallback case)
     UnknownTypeWithDataMap = #{
         ~"name" => ~"example.com",
-        ~"type" => ~"99999",
+        ~"type" => ~"65280",
         ~"ttl" => 3600,
         ~"data" => #{~"data" => base64:encode(~"raw-binary-data")}
     },
@@ -1173,7 +1252,7 @@ test_error_cases(_Config) ->
     ?assertEqual(~"raw-binary-data", UnknownRecord#dns_rr.data),
 
     %% Test dns_rr with unknown type number (integer_to_binary path)
-    UnknownTypeNum = 99999,
+    UnknownTypeNum = 65280,
     UnknownTypeNumRecord = #dns_rr{
         name = ~"example.com",
         type = UnknownTypeNum,
@@ -1209,7 +1288,7 @@ test_error_cases(_Config) ->
     %% Test to_map_rrdata with binary (unknown type)
     UnknownTypeBinary = #dns_rr{
         name = ~"example.com",
-        type = 99999,
+        type = 65280,
         ttl = 3600,
         data = ~"raw-binary-data"
     },
@@ -1352,11 +1431,9 @@ test_edge_cases(_Config) ->
     ?assertEqual(~"simple-binary-data", element(5, DnskeyData)),
 
     %% Test from_map_dnskey_publickey with properly formatted binary (list of integers)
-    %% Create a binary that matches the format: <<L:32, I:L/unit:8, ...>>
-    TestInt = 12345,
-    TestIntBin = binary:encode_unsigned(TestInt),
-    TestIntLen = byte_size(TestIntBin),
-    FormattedBin = <<TestIntLen:32, TestIntBin/binary>>,
+    %% Create a binary that matches the format: <<L:32, I:L/unit:8, ...>>, holding the
+    %% exponent and modulus of an RSA key
+    FormattedBin = <<<<(byte_size(B)):32, B/binary>> || B <- [<<1, 0, 1>>, <<48, 57>>]>>,
     DnskeyMap2 = #{
         ~"name" => ~"example.com",
         ~"type" => ~"DNSKEY",
@@ -1374,7 +1451,7 @@ test_edge_cases(_Config) ->
     ?assertEqual(dns_rr, element(1, DnskeyRecord2)),
     DnskeyData2 = element(6, DnskeyRecord2),
     ?assertEqual(dns_rrdata_dnskey, element(1, DnskeyData2)),
-    ?assertEqual([TestInt], element(5, DnskeyData2)),
+    ?assertEqual([65537, 12345], element(5, DnskeyData2)),
 
     %% Simulate API/JSON that omits svc_params for alias-form SVCB/HTTPS
     SVCBJson = #{

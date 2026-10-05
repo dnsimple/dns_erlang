@@ -31,6 +31,7 @@
     ~"2782" => ~"A DNS RR for specifying the location of services (DNS SRV)",
     ~"3403" =>
         ~"Dynamic Delegation Discovery System (DDDS) Part Three: The Domain Name System (DNS) Database",
+    ~"2181" => ~"Clarifications to the DNS Specification",
     ~"2308" => ~"Negative Caching of DNS Queries (DNS NCACHE)",
     ~"2536" => ~"DSA KEYs and SIGs in the Domain Name System (DNS)",
     ~"3110" => ~"RSA/SHA-1 SIGs and RSA KEYs in the Domain Name System (DNS)",

@@ -100,6 +100,11 @@ prop_rrdata_encode_never_raises() ->
         end
     ).
 
+%% dns_check:rrdata/1 guards the loading paths, so it has to accept every record
+%% the encoder writes faithfully, which is what rrdata/0 generates.
+prop_check_accepts_rrdata() ->
+    ?FORALL(Data, rrdata(), dns_check:rrdata(Data)).
+
 %% ============================================================================
 %% Permitted differences
 %% ============================================================================
