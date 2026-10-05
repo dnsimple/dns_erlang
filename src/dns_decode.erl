@@ -813,6 +813,15 @@ decode_rrdata(MsgBin, _Class, ?DNS_TYPE_KX, <<Preference:16, Bin/binary>>) ->
         preference = Preference,
         exchange = decode_dnameonly(MsgBin, Bin)
     };
+%% RFC6742§2: the ILNP types are class independent
+decode_rrdata(_MsgBin, _Class, ?DNS_TYPE_NID, <<Preference:16, NodeID:8/binary>>) ->
+    #dns_rrdata_nid{preference = Preference, node_id = NodeID};
+decode_rrdata(_MsgBin, _Class, ?DNS_TYPE_L32, <<Preference:16, A, B, C, D>>) ->
+    #dns_rrdata_l32{preference = Preference, locator32 = {A, B, C, D}};
+decode_rrdata(_MsgBin, _Class, ?DNS_TYPE_L64, <<Preference:16, Locator64:8/binary>>) ->
+    #dns_rrdata_l64{preference = Preference, locator64 = Locator64};
+decode_rrdata(MsgBin, _Class, ?DNS_TYPE_LP, <<Preference:16, Bin/binary>>) ->
+    #dns_rrdata_lp{preference = Preference, fqdn = decode_dnameonly(MsgBin, Bin)};
 decode_rrdata(
     _MsgBin,
     _Class,
@@ -1058,13 +1067,17 @@ requires_rrdata(?DNS_TYPE_HTTPS) -> true;
 requires_rrdata(?DNS_TYPE_IPSECKEY) -> true;
 requires_rrdata(?DNS_TYPE_KEY) -> true;
 requires_rrdata(?DNS_TYPE_KX) -> true;
+requires_rrdata(?DNS_TYPE_L32) -> true;
+requires_rrdata(?DNS_TYPE_L64) -> true;
 requires_rrdata(?DNS_TYPE_LOC) -> true;
+requires_rrdata(?DNS_TYPE_LP) -> true;
 requires_rrdata(?DNS_TYPE_MB) -> true;
 requires_rrdata(?DNS_TYPE_MG) -> true;
 requires_rrdata(?DNS_TYPE_MINFO) -> true;
 requires_rrdata(?DNS_TYPE_MR) -> true;
 requires_rrdata(?DNS_TYPE_MX) -> true;
 requires_rrdata(?DNS_TYPE_NAPTR) -> true;
+requires_rrdata(?DNS_TYPE_NID) -> true;
 requires_rrdata(?DNS_TYPE_NS) -> true;
 requires_rrdata(?DNS_TYPE_NSEC) -> true;
 requires_rrdata(?DNS_TYPE_NSEC3) -> true;

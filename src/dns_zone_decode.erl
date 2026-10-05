@@ -447,6 +447,14 @@ rdata_error_message(~"HTTPS", _RData) ->
         ~"Invalid HTTPS record: malformed priority or target",
         ~"Priority must be an integer, target must be a domain name"
     };
+rdata_error_message(TypeName, _RData) when TypeName =:= ~"NID"; TypeName =:= ~"L64" ->
+    {
+        <<"Invalid ", TypeName/binary, " record: expected a preference and a 64-bit value">>,
+        <<TypeName/binary,
+            " requires: preference and four colon-separated groups of hex digits, "
+            "without the \"::\" shorthand\n"
+            "    Example: example.com. 3600 IN ", TypeName/binary, " 10 0014:4fff:ff20:ee64">>
+    };
 rdata_error_message(TypeName, _RData) ->
     {<<"Invalid ", TypeName/binary, " record: malformed RDATA">>, undefined}.
 
@@ -1275,6 +1283,59 @@ build_rdata("EUI64", RData, Ctx) ->
             end;
         _ ->
             {error, make_rdata_error(~"EUI64", RData, Ctx)}
+    end;
+build_rdata("NID", RData, Ctx) ->
+    %% NID format: preference node-id (RFC 6742 §2.1)
+    case RData of
+        [{int, Pref}, {domain, NodeIDStr}] when is_integer(Pref), is_list(NodeIDStr) ->
+            case parse_ilnp64(NodeIDStr) of
+                {ok, NodeID} ->
+                    {ok, #dns_rrdata_nid{preference = Pref, node_id = NodeID}};
+                error ->
+                    {error, make_rdata_error(~"NID", RData, Ctx)}
+            end;
+        _ ->
+            {error, make_rdata_error(~"NID", RData, Ctx)}
+    end;
+build_rdata("L32", RData, Ctx) ->
+    %% L32 format: preference locator32, the locator spelled as an A record's address
+    %% (RFC 6742 §2.2)
+    case RData of
+        [{int, Pref}, {Kind, IP}] when
+            is_integer(Pref) andalso (Kind =:= ipv4 orelse Kind =:= domain) andalso is_list(IP)
+        ->
+            case parse_ipv4(IP) of
+                {ok, Locator32} ->
+                    {ok, #dns_rrdata_l32{preference = Pref, locator32 = Locator32}};
+                {error, _} ->
+                    {error, make_rdata_error(~"L32", RData, Ctx)}
+            end;
+        _ ->
+            {error, make_rdata_error(~"L32", RData, Ctx)}
+    end;
+build_rdata("L64", RData, Ctx) ->
+    %% L64 format: preference locator64 (RFC 6742 §2.3)
+    case RData of
+        [{int, Pref}, {domain, Locator64Str}] when is_integer(Pref), is_list(Locator64Str) ->
+            case parse_ilnp64(Locator64Str) of
+                {ok, Locator64} ->
+                    {ok, #dns_rrdata_l64{preference = Pref, locator64 = Locator64}};
+                error ->
+                    {error, make_rdata_error(~"L64", RData, Ctx)}
+            end;
+        _ ->
+            {error, make_rdata_error(~"L64", RData, Ctx)}
+    end;
+build_rdata("LP", RData, Ctx) ->
+    %% LP format: preference fqdn (RFC 6742 §2.4)
+    case RData of
+        [{int, Pref}, {domain, FQDN}] when is_integer(Pref), is_list(FQDN) ->
+            {ok, #dns_rrdata_lp{
+                preference = Pref,
+                fqdn = resolve_name(FQDN, Ctx#parse_ctx.origin)
+            }};
+        _ ->
+            {error, make_rdata_error(~"LP", RData, Ctx)}
     end;
 build_rdata("DS", RData, Ctx) ->
     %% DS format: keytag algorithm digest-type digest(hex string)
@@ -2221,6 +2282,14 @@ type_to_number("EUI48") ->
     ?DNS_TYPE_EUI48;
 type_to_number("EUI64") ->
     ?DNS_TYPE_EUI64;
+type_to_number("NID") ->
+    ?DNS_TYPE_NID;
+type_to_number("L32") ->
+    ?DNS_TYPE_L32;
+type_to_number("L64") ->
+    ?DNS_TYPE_L64;
+type_to_number("LP") ->
+    ?DNS_TYPE_LP;
 type_to_number("SPF") ->
     ?DNS_TYPE_SPF;
 type_to_number("SVCB") ->
@@ -2400,6 +2469,34 @@ concat_rdata_string_parts(Parts) ->
 -spec eui_hex_normalize(string()) -> string().
 eui_hex_normalize(S) when is_list(S) ->
     [C || C <- S, C =/= $-, C =/= $:, C =/= $\s].
+
+%% RFC 6742 §2.1, §2.3: a NodeID or Locator64 is four colon-separated groups of
+%% hex digits, as in an AAAA record, but never with the "::" shorthand, which
+%% would read as a 128-bit IPv6 address.
+-spec parse_ilnp64(string()) -> {ok, <<_:64>>} | error.
+parse_ilnp64(String) ->
+    case string:split(String, ":", all) of
+        [_, _, _, _] = Groups ->
+            case lists:all(fun is_ilnp64_group/1, Groups) of
+                true -> {ok, <<<<(list_to_integer(G, 16)):16>> || G <- Groups>>};
+                false -> error
+            end;
+        _ ->
+            error
+    end.
+
+%% One to four hex digits, and nothing else: list_to_integer/2 would also take a sign
+-spec is_ilnp64_group(string()) -> boolean().
+is_ilnp64_group([_ | _] = Group) when length(Group) =< 4 ->
+    lists:all(
+        fun(C) ->
+            (C >= $0 andalso C =< $9) orelse (C >= $a andalso C =< $f) orelse
+                (C >= $A andalso C =< $F)
+        end,
+        Group
+    );
+is_ilnp64_group(_) ->
+    false.
 
 %% Convert hexadecimal string to binary using OTP 26+ binary:decode_hex/1
 -spec hex_to_binary(binary() | string()) -> {ok, binary()} | {error, term()}.

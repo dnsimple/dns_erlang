@@ -620,6 +620,48 @@ Non-RR records (message, query, OPT records) use a two-level nested map format:
 
 **Note:** This format is used within the `data` field of `dns_rr` records.
 
+### L32 (dns_rrdata_l32) [RFC6742](https://datatracker.ietf.org/doc/html/rfc6742)
+
+**Format:** RRDATA fields (used within `dns_rr.data`)
+
+**Fields:**
+
+- `preference` (`t:dns:uint16/0`): Direct value
+- `locator32` (`t:inet:ip4_address/0`): IP address as string
+
+**Example:**
+
+```json
+{
+    "preference": 0,
+    "locator32": "10.1.2.0"
+}
+```
+
+
+**Note:** This format is used within the `data` field of `dns_rr` records.
+
+### L64 (dns_rrdata_l64) [RFC6742](https://datatracker.ietf.org/doc/html/rfc6742)
+
+**Format:** RRDATA fields (used within `dns_rr.data`)
+
+**Fields:**
+
+- `preference` (`t:dns:uint16/0`): Direct value
+- `locator64` (`<<_:64>>`): Base16 (hex)-encoded binary
+
+**Example:**
+
+```json
+{
+    "preference": 0,
+    "locator64": "20010DB811401000"
+}
+```
+
+
+**Note:** This format is used within the `data` field of `dns_rr` records.
+
 ### LOC (dns_rrdata_loc) [RFC1876](https://datatracker.ietf.org/doc/html/rfc1876)
 
 **Format:** RRDATA fields (used within `dns_rr.data`)
@@ -643,6 +685,27 @@ Non-RR records (message, query, OPT records) use a two-level nested map format:
     "lat": "value",
     "lon": "value",
     "alt": "value"
+}
+```
+
+
+**Note:** This format is used within the `data` field of `dns_rr` records.
+
+### LP (dns_rrdata_lp) [RFC6742](https://datatracker.ietf.org/doc/html/rfc6742)
+
+**Format:** RRDATA fields (used within `dns_rr.data`)
+
+**Fields:**
+
+- `preference` (`t:dns:uint16/0`): Direct value
+- `fqdn` (`t:dns:dname/0`): Binary data (dname format)
+
+**Example:**
+
+```json
+{
+    "preference": 0,
+    "fqdn": "l64-subnet1.example.com."
 }
 ```
 
@@ -771,6 +834,27 @@ Non-RR records (message, query, OPT records) use a two-level nested map format:
     "services": "value",
     "regexp": "value",
     "replacement": "value"
+}
+```
+
+
+**Note:** This format is used within the `data` field of `dns_rr` records.
+
+### NID (dns_rrdata_nid) [RFC6742](https://datatracker.ietf.org/doc/html/rfc6742)
+
+**Format:** RRDATA fields (used within `dns_rr.data`)
+
+**Fields:**
+
+- `preference` (`t:dns:uint16/0`): Direct value
+- `node_id` (`<<_:64>>`): Base16 (hex)-encoded binary
+
+**Example:**
+
+```json
+{
+    "preference": 0,
+    "node_id": "00144FFFFF20EE64"
 }
 ```
 

@@ -87,6 +87,10 @@ groups() ->
             loc_precision_range,
             naptr_invalid_utf8_regexp_rejected,
             empty_rdata_rejected_for_known_types,
+            ilnp_wire_known_answers,
+            ilnp_class_independent,
+            ilnp_wrong_size_refused,
+            lp_fqdn_not_compressed,
             rdata_names_compressed_only_for_rfc1035_types
         ]},
         {svcb, [parallel], [
@@ -1115,6 +1119,14 @@ decode_encode_rrdata(_) ->
         {?DNS_TYPE_EUI64, #dns_rrdata_eui64{
             address = <<16#00, 16#1A, 16#2B, 16#3C, 16#4D, 16#5E, 16#6F, 16#70>>
         }},
+        {?DNS_TYPE_NID, #dns_rrdata_nid{
+            preference = 10, node_id = <<16#0014:16, 16#4fff:16, 16#ff20:16, 16#ee64:16>>
+        }},
+        {?DNS_TYPE_L32, #dns_rrdata_l32{preference = 10, locator32 = {10, 1, 2, 0}}},
+        {?DNS_TYPE_L64, #dns_rrdata_l64{
+            preference = 10, locator64 = <<16#2001:16, 16#0db8:16, 16#1140:16, 16#1000:16>>
+        }},
+        {?DNS_TYPE_LP, #dns_rrdata_lp{preference = 10, fqdn = <<"l64-subnet1.example.com">>}},
         %% Bitmap windows whose first present type is a multiple of 256
         %% (URI = 256, CAA = 257; TA = 32768, DLV = 32769): regression for the
         %% off-by-one that encoded [256, 257] as the bitmap for {256, 258}
@@ -1270,13 +1282,17 @@ empty_rdata_rejected_for_known_types(_) ->
         ?DNS_TYPE_IPSECKEY,
         ?DNS_TYPE_KEY,
         ?DNS_TYPE_KX,
+        ?DNS_TYPE_L32,
+        ?DNS_TYPE_L64,
         ?DNS_TYPE_LOC,
+        ?DNS_TYPE_LP,
         ?DNS_TYPE_MB,
         ?DNS_TYPE_MG,
         ?DNS_TYPE_MINFO,
         ?DNS_TYPE_MR,
         ?DNS_TYPE_MX,
         ?DNS_TYPE_NAPTR,
+        ?DNS_TYPE_NID,
         ?DNS_TYPE_NS,
         ?DNS_TYPE_NSEC,
         ?DNS_TYPE_NSEC3,
@@ -1301,7 +1317,7 @@ empty_rdata_rejected_for_known_types(_) ->
         ?DNS_TYPE_WALLET,
         ?DNS_TYPE_ZONEMD
     ],
-    ?assertEqual(52, length(Known)),
+    ?assertEqual(56, length(Known)),
     [
         ?assertError(
             empty_rrdata,
@@ -1737,6 +1753,110 @@ optrr_honoured_anywhere_in_additional(_) ->
     %% Without an OPT nothing is reordered, and no space is reserved
     ?assertEqual([rr, tsig], Shape([ARR, TSIG])),
     ?assertNot(HasOpt(Encode([ARR], #{max_size => 512}))).
+
+%% RFC6742§2: known-answer vectors built from the examples of §2.1-§2.4. The
+%% round-trip cases cannot catch an error made in both directions alike, such as
+%% swapped fields, so these pin the bytes.
+ilnp_wire_known_answers(_) ->
+    Cases = [
+        {
+            ?DNS_TYPE_NID,
+            #dns_rrdata_nid{
+                preference = 10, node_id = <<16#0014:16, 16#4fff:16, 16#ff20:16, 16#ee64:16>>
+            },
+            <<10:16, 16#00, 16#14, 16#4f, 16#ff, 16#ff, 16#20, 16#ee, 16#64>>
+        },
+        {
+            ?DNS_TYPE_L32,
+            #dns_rrdata_l32{preference = 10, locator32 = {10, 1, 2, 0}},
+            <<10:16, 10, 1, 2, 0>>
+        },
+        {
+            ?DNS_TYPE_L64,
+            #dns_rrdata_l64{
+                preference = 10, locator64 = <<16#2001:16, 16#0db8:16, 16#1140:16, 16#1000:16>>
+            },
+            <<10:16, 16#20, 16#01, 16#0d, 16#b8, 16#11, 16#40, 16#10, 16#00>>
+        },
+        {
+            ?DNS_TYPE_LP,
+            #dns_rrdata_lp{preference = 10, fqdn = <<"l64-subnet1.example.com">>},
+            <<10:16, 11, "l64-subnet1", 7, "example", 3, "com", 0>>
+        }
+    ],
+    [
+        begin
+            ?assertEqual(Wire, dns_encode:encode_rrdata(?DNS_CLASS_IN, Data), Type),
+            ?assertEqual(Data, dns_decode:decode_rrdata(Wire, ?DNS_CLASS_IN, Type, Wire), Type)
+        end
+     || {Type, Data, Wire} <- Cases
+    ].
+
+%% RFC6742§2: "The NID RR is class independent", and likewise L32, L64 and LP.
+%% A and EUI48/EUI64 are bound to IN, so a class guard copied from them would
+%% make these records decode to opaque bytes outside IN.
+ilnp_class_independent(_) ->
+    Cases = [
+        {?DNS_TYPE_NID, #dns_rrdata_nid{preference = 1, node_id = <<1:64>>}},
+        {?DNS_TYPE_L32, #dns_rrdata_l32{preference = 1, locator32 = {192, 0, 2, 1}}},
+        {?DNS_TYPE_L64, #dns_rrdata_l64{preference = 1, locator64 = <<1:64>>}},
+        {?DNS_TYPE_LP, #dns_rrdata_lp{preference = 1, fqdn = <<"lp.example">>}}
+    ],
+    [
+        begin
+            Wire = dns_encode:encode_rrdata(Class, Data),
+            ?assertEqual(Data, dns_decode:decode_rrdata(Wire, Class, Type, Wire), {Type, Class})
+        end
+     || {Type, Data} <- Cases, Class <- [?DNS_CLASS_IN, ?DNS_CLASS_CH, ?DNS_CLASS_HS]
+    ].
+
+%% RFC6742§2.1, §2.3: a Node ID and a Locator64 are 64 bits, and RDLENGTH is
+%% written as 10 for both. One of another size is refused, as EUI64's address is,
+%% rather than written under that RDLENGTH, which would shift every record after it.
+ilnp_wrong_size_refused(_) ->
+    Cases = [
+        {?DNS_TYPE_NID, #dns_rrdata_nid{preference = 1, node_id = <<1:56>>}},
+        {?DNS_TYPE_NID, #dns_rrdata_nid{preference = 1, node_id = <<1:72>>}},
+        {?DNS_TYPE_L64, #dns_rrdata_l64{preference = 1, locator64 = <<1:56>>}},
+        {?DNS_TYPE_L64, #dns_rrdata_l64{preference = 1, locator64 = <<1:72>>}}
+    ],
+    Name = <<"host.example.com">>,
+    A = #dns_rr{
+        name = Name, type = ?DNS_TYPE_A, ttl = 60, data = #dns_rrdata_a{ip = {192, 0, 2, 1}}
+    },
+    [
+        begin
+            ?assertError(function_clause, dns_encode:encode_rrdata(?DNS_CLASS_IN, Data), Type),
+            RR = #dns_rr{name = Name, type = Type, ttl = 60, data = Data},
+            Msg = #dns_message{qr = true, anc = 2, answers = [RR, A]},
+            ?assertError(function_clause, dns:encode_message(Msg), Type)
+        end
+     || {Type, Data} <- Cases
+    ].
+
+%% RFC6742§2.4: "A sender MUST NOT use DNS name compression on the FQDN field
+%% when transmitting an LP RR", even when it shares a suffix with a name already
+%% in the message.
+lp_fqdn_not_compressed(_) ->
+    Owner = <<"host1.example.com">>,
+    FQDN = <<"l64-subnet1.example.com">>,
+    Msg = #dns_message{
+        qr = true,
+        qc = 1,
+        anc = 1,
+        questions = [#dns_query{name = Owner, type = ?DNS_TYPE_LP}],
+        answers = [
+            #dns_rr{
+                name = Owner,
+                type = ?DNS_TYPE_LP,
+                ttl = 3600,
+                data = #dns_rrdata_lp{preference = 10, fqdn = FQDN}
+            }
+        ]
+    },
+    Encoded = dns:encode_message(Msg),
+    ?assertMatch({_, _}, binary:match(Encoded, <<10:16, (dns_domain:to_wire(FQDN))/binary>>)),
+    ?assertEqual(Msg, dns:decode_message(Encoded)).
 
 %% RFC3597§4: "servers MUST NOT compress domain names embedded in the RDATA of
 %% types that are class-specific or not well-known", the well-known ones being

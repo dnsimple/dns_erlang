@@ -269,13 +269,17 @@ decodable_type() ->
         ?DNS_TYPE_IPSECKEY,
         ?DNS_TYPE_KEY,
         ?DNS_TYPE_KX,
+        ?DNS_TYPE_L32,
+        ?DNS_TYPE_L64,
         ?DNS_TYPE_LOC,
+        ?DNS_TYPE_LP,
         ?DNS_TYPE_MB,
         ?DNS_TYPE_MG,
         ?DNS_TYPE_MINFO,
         ?DNS_TYPE_MR,
         ?DNS_TYPE_MX,
         ?DNS_TYPE_NAPTR,
+        ?DNS_TYPE_NID,
         ?DNS_TYPE_NS,
         ?DNS_TYPE_NSEC,
         ?DNS_TYPE_NSEC3,
@@ -398,6 +402,9 @@ rrdata() ->
             }
         ),
         ?LET({P, E}, {u16(), dname()}, #dns_rrdata_kx{preference = P, exchange = E}),
+        ?LET({P, L}, {u16(), ip4()}, #dns_rrdata_l32{preference = P, locator32 = L}),
+        ?LET({P, L}, {u16(), bin(8, 8)}, #dns_rrdata_l64{preference = P, locator64 = L}),
+        ?LET({P, F}, {u16(), dname()}, #dns_rrdata_lp{preference = P, fqdn = F}),
         ?LET(
             {Sz, H, V, La, Lo, Al},
             {
@@ -427,6 +434,7 @@ rrdata() ->
                 replacement = Rp
             }
         ),
+        ?LET({P, N}, {u16(), bin(8, 8)}, #dns_rrdata_nid{preference = P, node_id = N}),
         ?LET(N, dname(), #dns_rrdata_ns{dname = N}),
         ?LET({N, T}, {dname(), types()}, #dns_rrdata_nsec{next_dname = N, types = T}),
         ?LET(
@@ -605,13 +613,17 @@ type_of(#dns_rrdata_https{}) -> ?DNS_TYPE_HTTPS;
 type_of(#dns_rrdata_ipseckey{}) -> ?DNS_TYPE_IPSECKEY;
 type_of(#dns_rrdata_key{}) -> ?DNS_TYPE_KEY;
 type_of(#dns_rrdata_kx{}) -> ?DNS_TYPE_KX;
+type_of(#dns_rrdata_l32{}) -> ?DNS_TYPE_L32;
+type_of(#dns_rrdata_l64{}) -> ?DNS_TYPE_L64;
 type_of(#dns_rrdata_loc{}) -> ?DNS_TYPE_LOC;
+type_of(#dns_rrdata_lp{}) -> ?DNS_TYPE_LP;
 type_of(#dns_rrdata_mb{}) -> ?DNS_TYPE_MB;
 type_of(#dns_rrdata_mg{}) -> ?DNS_TYPE_MG;
 type_of(#dns_rrdata_minfo{}) -> ?DNS_TYPE_MINFO;
 type_of(#dns_rrdata_mr{}) -> ?DNS_TYPE_MR;
 type_of(#dns_rrdata_mx{}) -> ?DNS_TYPE_MX;
 type_of(#dns_rrdata_naptr{}) -> ?DNS_TYPE_NAPTR;
+type_of(#dns_rrdata_nid{}) -> ?DNS_TYPE_NID;
 type_of(#dns_rrdata_ns{}) -> ?DNS_TYPE_NS;
 type_of(#dns_rrdata_nsec{}) -> ?DNS_TYPE_NSEC;
 type_of(#dns_rrdata_nsec3{}) -> ?DNS_TYPE_NSEC3;

@@ -331,6 +331,12 @@ encode_salt_hex(<<>>) ->
 encode_salt_hex(Salt) ->
     binary:encode_hex(Salt).
 
+%% Helper: Encode an ILNP NodeID or Locator64 as four colon-separated groups of
+%% four hex digits, never with the "::" shorthand (RFC 6742 §2.1, §2.3)
+-spec encode_ilnp64(<<_:64>>) -> iolist().
+encode_ilnp64(<<A:16, B:16, C:16, D:16>>) ->
+    io_lib:format("~4.16.0b:~4.16.0b:~4.16.0b:~4.16.0b", [A, B, C, D]).
+
 %% Helper: Encode SVCB/HTTPS record with service parameters
 -spec encode_svcb_record(
     dns:uint16(),
@@ -871,6 +877,40 @@ encode_rdata(
     ?DNS_TYPE_EUI64, #dns_rrdata_eui64{address = Addr}, _Origin, _RelativeNames, _Separator
 ) ->
     binary:encode_hex(Addr);
+encode_rdata(
+    ?DNS_TYPE_NID,
+    #dns_rrdata_nid{preference = Pref, node_id = NodeID},
+    _Origin,
+    _RelativeNames,
+    Separator
+) ->
+    join_rdata_fields([integer_to_binary(Pref), encode_ilnp64(NodeID)], Separator);
+encode_rdata(
+    ?DNS_TYPE_L32,
+    #dns_rrdata_l32{preference = Pref, locator32 = Locator32},
+    _Origin,
+    _RelativeNames,
+    Separator
+) ->
+    "" ++ _ = Locator32Str = inet:ntoa(Locator32),
+    join_rdata_fields([integer_to_binary(Pref), Locator32Str], Separator);
+encode_rdata(
+    ?DNS_TYPE_L64,
+    #dns_rrdata_l64{preference = Pref, locator64 = Locator64},
+    _Origin,
+    _RelativeNames,
+    Separator
+) ->
+    join_rdata_fields([integer_to_binary(Pref), encode_ilnp64(Locator64)], Separator);
+encode_rdata(
+    ?DNS_TYPE_LP,
+    #dns_rrdata_lp{preference = Pref, fqdn = FQDN},
+    Origin,
+    RelativeNames,
+    Separator
+) ->
+    FQDNStr = encode_dname(dns_domain:to_lower(FQDN), Origin, RelativeNames),
+    join_rdata_fields([integer_to_binary(Pref), FQDNStr], Separator);
 encode_rdata(
     ?DNS_TYPE_ZONEMD,
     #dns_rrdata_zonemd{

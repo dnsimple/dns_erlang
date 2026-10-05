@@ -31,6 +31,7 @@ functionality such as socket handling or query resolution.
 - **[RFC 6605](https://tools.ietf.org/html/rfc6605)**: Elliptic Curve Digital Signature Algorithm (DSA) for DNSSEC
 - **[RFC 6672](https://tools.ietf.org/html/rfc6672)**: DNAME Redirection in the DNS
 - **[RFC 6698](https://tools.ietf.org/html/rfc6698)**: The DNS-Based Authentication of Named Entities (DANE) Transport Layer Security (TLS) Protocol: TLSA
+- **[RFC 6742](https://tools.ietf.org/html/rfc6742)**: DNS Resource Records for the Identifier-Locator Network Protocol (ILNP)
 - **[RFC 6840](https://tools.ietf.org/html/rfc6840)**: Clarifications and Implementation Notes for DNS Security (DNSSEC)
 - **[RFC 6844](https://tools.ietf.org/html/rfc6844)**: DNS Certification Authority Authorization (CAA) Resource Record
 - **[RFC 6891](https://tools.ietf.org/html/rfc6891)**: Extension Mechanisms for DNS (EDNS(0))

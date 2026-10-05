@@ -994,6 +994,27 @@ encode_rrdata_append(
     %% RFC3597§4: KX is not one of RFC 1035's types, so its name is not compressed
     Wire = dns_domain:to_wire(Name),
     {<<Acc/binary, (2 + byte_size(Wire)):16, Pref:16, Wire/binary>>, CompMap};
+%% RFC6742§2: the ILNP types are class independent
+encode_rrdata_append(
+    Acc, _Pos, _Class, #dns_rrdata_nid{preference = Pref, node_id = NodeID}, CompMap
+) when
+    8 =:= byte_size(NodeID)
+->
+    {<<Acc/binary, 10:16, Pref:16, NodeID/binary>>, CompMap};
+encode_rrdata_append(
+    Acc, _Pos, _Class, #dns_rrdata_l32{preference = Pref, locator32 = {A, B, C, D}}, CompMap
+) ->
+    {<<Acc/binary, 6:16, Pref:16, A, B, C, D>>, CompMap};
+encode_rrdata_append(
+    Acc, _Pos, _Class, #dns_rrdata_l64{preference = Pref, locator64 = Locator64}, CompMap
+) when
+    8 =:= byte_size(Locator64)
+->
+    {<<Acc/binary, 10:16, Pref:16, Locator64/binary>>, CompMap};
+encode_rrdata_append(Acc, _Pos, _Class, #dns_rrdata_lp{preference = Pref, fqdn = FQDN}, CompMap) ->
+    %% RFC6742§2.4: a sender MUST NOT compress the FQDN
+    FQDNBin = dns_domain:to_wire(FQDN),
+    {<<Acc/binary, (2 + byte_size(FQDNBin)):16, Pref:16, FQDNBin/binary>>, CompMap};
 encode_rrdata_append(
     Acc,
     _Pos,

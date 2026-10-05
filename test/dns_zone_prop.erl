@@ -118,7 +118,11 @@ simple_valid_rr() ->
             ?DNS_TYPE_TXT,
             ?DNS_TYPE_SOA,
             ?DNS_TYPE_SRV,
-            ?DNS_TYPE_CAA
+            ?DNS_TYPE_CAA,
+            ?DNS_TYPE_NID,
+            ?DNS_TYPE_L32,
+            ?DNS_TYPE_L64,
+            ?DNS_TYPE_LP
         ]),
         ?LET(
             {Name, Class, TTL, Data},
@@ -436,6 +440,30 @@ rdata(Type) ->
                     alt = Alt
                 }
             );
+        ?DNS_TYPE_NID ->
+            ?LET(
+                {Pref, NodeID},
+                {range(0, 65535), binary(8)},
+                #dns_rrdata_nid{preference = Pref, node_id = NodeID}
+            );
+        ?DNS_TYPE_L32 ->
+            ?LET(
+                {Pref, A, B, C, D},
+                {range(0, 65535), range(0, 255), range(0, 255), range(0, 255), range(0, 255)},
+                #dns_rrdata_l32{preference = Pref, locator32 = {A, B, C, D}}
+            );
+        ?DNS_TYPE_L64 ->
+            ?LET(
+                {Pref, Locator64},
+                {range(0, 65535), binary(8)},
+                #dns_rrdata_l64{preference = Pref, locator64 = Locator64}
+            );
+        ?DNS_TYPE_LP ->
+            ?LET(
+                {Pref, FQDN},
+                {range(0, 65535), dns_prop_generator:simple_dname()},
+                #dns_rrdata_lp{preference = Pref, fqdn = FQDN}
+            );
         ?DNS_TYPE_IPSECKEY ->
             ?LET(
                 {Precedence, Alg, Gateway, PublicKey},
@@ -522,6 +550,10 @@ valid_zone_string() ->
                                     ?DNS_TYPE_SOA -> "SOA";
                                     ?DNS_TYPE_SRV -> "SRV";
                                     ?DNS_TYPE_CAA -> "CAA";
+                                    ?DNS_TYPE_NID -> "NID";
+                                    ?DNS_TYPE_L32 -> "L32";
+                                    ?DNS_TYPE_L64 -> "L64";
+                                    ?DNS_TYPE_LP -> "LP";
                                     _ -> "A"
                                 end,
                             RDataStr = format_rdata(Type, Data),
@@ -583,8 +615,20 @@ format_rdata(?DNS_TYPE_CAA, #dns_rrdata_caa{flags = Flags, tag = Tag, value = Va
     lists:flatten(
         io_lib:format("~B ~s \"~s\"", [Flags, binary_to_list(Tag), binary_to_list(Value)])
     );
+format_rdata(?DNS_TYPE_NID, #dns_rrdata_nid{preference = Pref, node_id = NodeID}) ->
+    format_ilnp64(Pref, NodeID);
+format_rdata(?DNS_TYPE_L32, #dns_rrdata_l32{preference = Pref, locator32 = {A, B, C, D}}) ->
+    lists:flatten(io_lib:format("~B ~B.~B.~B.~B", [Pref, A, B, C, D]));
+format_rdata(?DNS_TYPE_L64, #dns_rrdata_l64{preference = Pref, locator64 = Locator64}) ->
+    format_ilnp64(Pref, Locator64);
+format_rdata(?DNS_TYPE_LP, #dns_rrdata_lp{preference = Pref, fqdn = FQDN}) ->
+    lists:flatten(io_lib:format("~B ~s", [Pref, binary_to_list(FQDN)]));
 format_rdata(_Type, _Data) ->
     "192.0.2.1".
+
+%% Leading zeros dropped and upper case, the spellings the parser must also accept
+format_ilnp64(Pref, <<A:16, B:16, C:16, D:16>>) ->
+    lists:flatten(io_lib:format("~B ~.16B:~.16B:~.16B:~.16B", [Pref, A, B, C, D])).
 
 extract_origin(ZoneString) ->
     %% Try to extract origin from $ORIGIN directive, default to example.com.
@@ -617,6 +661,8 @@ normalize_rdata_dnames(#dns_rrdata_soa{mname = M, rname = RName} = R) ->
     R#dns_rrdata_soa{mname = dns_domain:to_lower(M), rname = dns_domain:to_lower(RName)};
 normalize_rdata_dnames(#dns_rrdata_srv{target = T} = R) ->
     R#dns_rrdata_srv{target = dns_domain:to_lower(T)};
+normalize_rdata_dnames(#dns_rrdata_lp{fqdn = FQDN} = R) ->
+    R#dns_rrdata_lp{fqdn = dns_domain:to_lower(FQDN)};
 normalize_rdata_dnames(#dns_rrdata_nxt{dname = DName, types = Types} = R) ->
     R#dns_rrdata_nxt{dname = dns_domain:to_lower(DName), types = Types};
 normalize_rdata_dnames(#dns_rrdata_tsig{alg = Alg} = R) ->

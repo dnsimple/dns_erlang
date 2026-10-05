@@ -373,6 +373,30 @@
     svc_params :: dns:svcb_svc_params()
 }).
 
+%% NID record for an ILNP Node Identifier. See RFC 6742: §2.1.
+-record(dns_rrdata_nid, {
+    preference :: dns:uint16(),
+    node_id :: <<_:64>>
+}).
+
+%% L32 record for an ILNP 32-bit Locator. See RFC 6742: §2.2.
+-record(dns_rrdata_l32, {
+    preference :: dns:uint16(),
+    locator32 :: inet:ip4_address()
+}).
+
+%% L64 record for an ILNP 64-bit Locator. See RFC 6742: §2.3.
+-record(dns_rrdata_l64, {
+    preference :: dns:uint16(),
+    locator64 :: <<_:64>>
+}).
+
+%% LP record for an ILNP Locator Pointer. See RFC 6742: §2.4.
+-record(dns_rrdata_lp, {
+    preference :: dns:uint16(),
+    fqdn :: dns:dname()
+}).
+
 %% EUI48 record for EUI-48 address. See RFC 7043.
 -record(dns_rrdata_eui48, {
     address :: <<_:48>>

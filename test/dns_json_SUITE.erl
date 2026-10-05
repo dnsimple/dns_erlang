@@ -31,6 +31,7 @@ groups() ->
             test_nsec3_salt,
             test_ipseckey_gateway,
             test_records_that_do_not_fit_rejected,
+            test_ilnp_records,
             test_error_cases,
             test_edge_cases
         ]}
@@ -1141,6 +1142,81 @@ test_records_that_do_not_fit_rejected(_Config) ->
             MsgWith(~"id", 70000),
             MsgWith(~"rc", 20),
             MsgWith(~"anc", 65536)
+        ]
+    ].
+
+test_ilnp_records(_Config) ->
+    %% RFC 6742: the 64-bit NodeID and Locator64 are hex like the EUI64 address,
+    %% the Locator32 is a dotted quad like the A record's address
+    Nid = #dns_rr{
+        name = ~"host1.example.com",
+        type = ?DNS_TYPE_NID,
+        ttl = 3600,
+        data = #dns_rrdata_nid{
+            preference = 10, node_id = <<16#0014:16, 16#4fff:16, 16#ff20:16, 16#ee64:16>>
+        }
+    },
+    ?assertMatch(
+        #{~"data" := #{~"preference" := 10, ~"node_id" := ~"00144FFFFF20EE64"}},
+        assert_transcode(Nid)
+    ),
+    L32 = #dns_rr{
+        name = ~"host1.example.com",
+        type = ?DNS_TYPE_L32,
+        ttl = 3600,
+        data = #dns_rrdata_l32{preference = 10, locator32 = {10, 1, 2, 0}}
+    },
+    ?assertMatch(
+        #{~"data" := #{~"preference" := 10, ~"locator32" := ~"10.1.2.0"}},
+        assert_transcode(L32)
+    ),
+    L64 = #dns_rr{
+        name = ~"host1.example.com",
+        type = ?DNS_TYPE_L64,
+        ttl = 3600,
+        data = #dns_rrdata_l64{
+            preference = 10, locator64 = <<16#2001:16, 16#0db8:16, 16#1140:16, 16#1000:16>>
+        }
+    },
+    ?assertMatch(
+        #{~"data" := #{~"preference" := 10, ~"locator64" := ~"20010DB811401000"}},
+        assert_transcode(L64)
+    ),
+    Lp = #dns_rr{
+        name = ~"host1.example.com",
+        type = ?DNS_TYPE_LP,
+        ttl = 3600,
+        data = #dns_rrdata_lp{preference = 10, fqdn = ~"l64-subnet1.example.com"}
+    },
+    ?assertMatch(
+        #{~"data" := #{~"preference" := 10, ~"fqdn" := ~"l64-subnet1.example.com"}},
+        assert_transcode(Lp)
+    ),
+    %% Strict IPv4, as for the A record: leading zeros are rejected
+    ?assertError(
+        {invalid_ip, _},
+        dns_json:from_map(#{
+            ~"name" => ~"host1.example.com",
+            ~"type" => ~"L32",
+            ~"ttl" => 3600,
+            ~"data" => #{~"preference" => 10, ~"locator32" => ~"10.1.02.0"}
+        })
+    ),
+    %% A NodeID or Locator64 of other than 8 bytes, or a preference past 16 bits, is
+    %% refused when it is loaded rather than when a response carrying it is encoded
+    Rr = fun(Type, Data) ->
+        #{~"name" => ~"host1.example.com", ~"type" => Type, ~"ttl" => 3600, ~"data" => Data}
+    end,
+    [
+        ?assertError({invalid_record, _}, dns_json:from_map(M), M)
+     || M <- [
+            Rr(~"NID", #{~"preference" => 10, ~"node_id" => ~"0014"}),
+            Rr(~"NID", #{~"preference" => 10, ~"node_id" => ~"00144FFFFF20EE6401"}),
+            Rr(~"NID", #{~"preference" => 65536, ~"node_id" => ~"00144FFFFF20EE64"}),
+            Rr(~"L64", #{~"preference" => 10, ~"locator64" => ~"20010DB8"}),
+            Rr(~"L64", #{~"preference" => 10, ~"locator64" => ~"20010DB81140100000"}),
+            Rr(~"L32", #{~"preference" => -1, ~"locator32" => ~"10.1.2.0"}),
+            Rr(~"LP", #{~"preference" => 65536, ~"fqdn" => ~"l64-subnet1.example.com"})
         ]
     ].
 

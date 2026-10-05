@@ -225,13 +225,17 @@ restrictions on the length. Labels must be 63 characters or less.
     | #dns_rrdata_ipseckey{}
     | #dns_rrdata_key{}
     | #dns_rrdata_kx{}
+    | #dns_rrdata_l32{}
+    | #dns_rrdata_l64{}
     | #dns_rrdata_loc{}
+    | #dns_rrdata_lp{}
     | #dns_rrdata_mb{}
     | #dns_rrdata_mg{}
     | #dns_rrdata_minfo{}
     | #dns_rrdata_mr{}
     | #dns_rrdata_mx{}
     | #dns_rrdata_naptr{}
+    | #dns_rrdata_nid{}
     | #dns_rrdata_ns{}
     | #dns_rrdata_nsec{}
     | #dns_rrdata_nsec3{}

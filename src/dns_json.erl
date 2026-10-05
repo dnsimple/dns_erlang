@@ -146,13 +146,17 @@ record_type_from_key(?DNS_TYPE_HINFO_BSTR) -> dns_rrdata_hinfo;
 record_type_from_key(?DNS_TYPE_IPSECKEY_BSTR) -> dns_rrdata_ipseckey;
 record_type_from_key(?DNS_TYPE_KEY_BSTR) -> dns_rrdata_key;
 record_type_from_key(?DNS_TYPE_KX_BSTR) -> dns_rrdata_kx;
+record_type_from_key(?DNS_TYPE_L32_BSTR) -> dns_rrdata_l32;
+record_type_from_key(?DNS_TYPE_L64_BSTR) -> dns_rrdata_l64;
 record_type_from_key(?DNS_TYPE_LOC_BSTR) -> dns_rrdata_loc;
+record_type_from_key(?DNS_TYPE_LP_BSTR) -> dns_rrdata_lp;
 record_type_from_key(?DNS_TYPE_MB_BSTR) -> dns_rrdata_mb;
 record_type_from_key(?DNS_TYPE_MG_BSTR) -> dns_rrdata_mg;
 record_type_from_key(?DNS_TYPE_MINFO_BSTR) -> dns_rrdata_minfo;
 record_type_from_key(?DNS_TYPE_MR_BSTR) -> dns_rrdata_mr;
 record_type_from_key(?DNS_TYPE_MX_BSTR) -> dns_rrdata_mx;
 record_type_from_key(?DNS_TYPE_NAPTR_BSTR) -> dns_rrdata_naptr;
+record_type_from_key(?DNS_TYPE_NID_BSTR) -> dns_rrdata_nid;
 record_type_from_key(?DNS_TYPE_NS_BSTR) -> dns_rrdata_ns;
 record_type_from_key(?DNS_TYPE_NSEC_BSTR) -> dns_rrdata_nsec;
 record_type_from_key(?DNS_TYPE_NSEC3_BSTR) -> dns_rrdata_nsec3;
@@ -279,6 +283,10 @@ record_fields(dns_rrdata_cdnskey) -> record_info(fields, dns_rrdata_cdnskey);
 record_fields(dns_rrdata_key) -> record_info(fields, dns_rrdata_key);
 record_fields(dns_rrdata_mx) -> record_info(fields, dns_rrdata_mx);
 record_fields(dns_rrdata_kx) -> record_info(fields, dns_rrdata_kx);
+record_fields(dns_rrdata_nid) -> record_info(fields, dns_rrdata_nid);
+record_fields(dns_rrdata_l32) -> record_info(fields, dns_rrdata_l32);
+record_fields(dns_rrdata_l64) -> record_info(fields, dns_rrdata_l64);
+record_fields(dns_rrdata_lp) -> record_info(fields, dns_rrdata_lp);
 record_fields(dns_rrdata_ns) -> record_info(fields, dns_rrdata_ns);
 record_fields(dns_rrdata_ptr) -> record_info(fields, dns_rrdata_ptr);
 record_fields(dns_rrdata_rrsig) -> record_info(fields, dns_rrdata_rrsig);
@@ -339,8 +347,12 @@ to_map_value(dns_message, additional, Value) when is_list(Value) ->
     [to_map(V) || V <- Value];
 to_map_value(dns_optrr, data, Value) when is_list(Value) ->
     [to_map(V) || V <- Value];
-to_map_value(Tag, ip, Value) when
-    (Tag =:= dns_rrdata_a orelse Tag =:= dns_rrdata_aaaa) andalso is_tuple(Value)
+%% An address field holding an address tuple, as its text form
+to_map_value(Tag, Field, Value) when
+    is_tuple(Value) andalso
+        ({Tag, Field} =:= {dns_rrdata_a, ip} orelse {Tag, Field} =:= {dns_rrdata_aaaa, ip} orelse
+            {Tag, Field} =:= {dns_rrdata_l32, locator32} orelse
+            {Tag, Field} =:= {dns_rrdata_ipseckey, gateway})
 ->
     list_to_binary(inet:ntoa(Value));
 to_map_value(Tag, public_key, Value) when
@@ -358,8 +370,6 @@ to_map_value(Tag, salt, Value) when
     end;
 to_map_value(dns_rrdata_nsec3, hash, Value) when is_binary(Value) ->
     base32:encode(Value, [hex]);
-to_map_value(dns_rrdata_ipseckey, gateway, Value) when is_tuple(Value) ->
-    list_to_binary(inet:ntoa(Value));
 to_map_value(dns_rrdata_ipseckey, gateway, Value) when is_binary(Value) ->
     Value;
 to_map_value(Tag, svc_params, Value) when
@@ -384,6 +394,8 @@ to_map_value(dns_rrdata_zonemd, hash, Value) when is_binary(Value) -> binary:enc
 to_map_value(dns_rrdata_sshfp, fp, Value) when is_binary(Value) -> binary:encode_hex(Value);
 to_map_value(dns_rrdata_eui48, address, Value) when is_binary(Value) -> binary:encode_hex(Value);
 to_map_value(dns_rrdata_eui64, address, Value) when is_binary(Value) -> binary:encode_hex(Value);
+to_map_value(dns_rrdata_nid, node_id, Value) when is_binary(Value) -> binary:encode_hex(Value);
+to_map_value(dns_rrdata_l64, locator64, Value) when is_binary(Value) -> binary:encode_hex(Value);
 to_map_value(dns_rrdata_tsig, other, Value) when is_binary(Value) -> binary:encode_hex(Value);
 to_map_value(dns_opt_nsid, data, Value) when is_binary(Value) -> binary:encode_hex(Value);
 to_map_value(dns_opt_owner, _Field, Value) when is_binary(Value) -> binary:encode_hex(Value);
@@ -403,7 +415,11 @@ from_map_field(dns_message, additional, Value) when is_list(Value) ->
     [from_map(V) || V <- Value];
 from_map_field(dns_optrr, data, Value) when is_list(Value) ->
     [from_map(V) || V <- Value];
-from_map_field(dns_rrdata_a, ip, Value) when is_binary(Value) ->
+%% RFC6742§2.2: a Locator32 is spelled as an A record's address
+from_map_field(Tag, Field, Value) when
+    is_binary(Value) andalso
+        ({Tag, Field} =:= {dns_rrdata_a, ip} orelse {Tag, Field} =:= {dns_rrdata_l32, locator32})
+->
     case inet:parse_ipv4strict_address(binary_to_list(Value)) of
         {ok, Tuple} -> Tuple;
         {error, _} -> erlang:error({invalid_ip, Value})
@@ -476,6 +492,10 @@ decode_field(dns_rrdata_sshfp, fp, Value) ->
 decode_field(dns_rrdata_eui48, address, Value) ->
     binary:decode_hex(Value);
 decode_field(dns_rrdata_eui64, address, Value) ->
+    binary:decode_hex(Value);
+decode_field(dns_rrdata_nid, node_id, Value) ->
+    binary:decode_hex(Value);
+decode_field(dns_rrdata_l64, locator64, Value) ->
     binary:decode_hex(Value);
 decode_field(dns_rrdata_tsig, other, Value) ->
     binary:decode_hex(Value);

@@ -20,6 +20,7 @@ groups() ->
             rrdata_lengths_must_fit,
             rrdata_type_numbers_must_fit,
             rrdata_names_must_fit,
+            ilnp_64_bit_values_must_be_8_bytes,
             svcb_params_must_fit,
             rr_header_must_fit,
             rr_class_must_suit_rrdata,
@@ -221,7 +222,11 @@ rrdata_integers_must_fit(_) ->
         {Tsig, #dns_rrdata_tsig.time, 48},
         {Tsig, #dns_rrdata_tsig.fudge, 16},
         {Tsig, #dns_rrdata_tsig.msgid, 16},
-        {Tsig, #dns_rrdata_tsig.err, 16}
+        {Tsig, #dns_rrdata_tsig.err, 16},
+        {#dns_rrdata_nid{preference = 1, node_id = <<1:64>>}, #dns_rrdata_nid.preference, 16},
+        {#dns_rrdata_l32{preference = 1, locator32 = {1, 2, 3, 4}}, #dns_rrdata_l32.preference, 16},
+        {#dns_rrdata_l64{preference = 1, locator64 = <<1:64>>}, #dns_rrdata_l64.preference, 16},
+        {#dns_rrdata_lp{preference = 1, fqdn = N}, #dns_rrdata_lp.preference, 16}
     ],
     [
         begin
@@ -243,7 +248,8 @@ rrdata_addresses_must_fit(_) ->
         #dns_rrdata_a{ip = {255, 255, 255, 255}},
         #dns_rrdata_aaaa{ip = {65535, 0, 0, 0, 0, 0, 0, 65535}},
         Ipseckey({255, 0, 0, 255}),
-        Ipseckey({65535, 0, 0, 0, 0, 0, 0, 65535})
+        Ipseckey({65535, 0, 0, 0, 0, 0, 0, 65535}),
+        #dns_rrdata_l32{preference = 1, locator32 = {255, 255, 255, 255}}
     ],
     DoNotFit = [
         #dns_rrdata_a{ip = {256, 0, 0, 0}},
@@ -251,7 +257,8 @@ rrdata_addresses_must_fit(_) ->
         #dns_rrdata_aaaa{ip = {65536, 0, 0, 0, 0, 0, 0, 1}},
         #dns_rrdata_aaaa{ip = {0, 0, 0, 0, 0, 0, 0, -1}},
         Ipseckey({256, 0, 0, 1}),
-        Ipseckey({0, 0, 0, 0, 0, 0, 0, 65536})
+        Ipseckey({0, 0, 0, 0, 0, 0, 0, 65536}),
+        #dns_rrdata_l32{preference = 1, locator32 = {256, 0, 0, 0}}
     ],
     [?assert(dns_check:rrdata(D), D) || D <- Fits],
     [?assertNot(dns_check:rrdata(D), D) || D <- DoNotFit].
@@ -420,6 +427,7 @@ rrdata_names_must_fit(_) ->
             #dns_rrdata_dsync{rrtype = 1, scheme = 1, port = 1, target = N},
             #dns_rrdata_ipseckey{precedence = 1, alg = 1, gateway = N, public_key = <<1>>},
             #dns_rrdata_kx{preference = 1, exchange = N},
+            #dns_rrdata_lp{preference = 1, fqdn = N},
             #dns_rrdata_mb{madname = N},
             #dns_rrdata_mg{madname = N},
             #dns_rrdata_minfo{rmailbx = N, emailbx = <<"example">>},
@@ -480,6 +488,19 @@ rrdata_names_must_fit(_) ->
     end,
     [?assert(dns_check:rrdata(D), D) || D <- Records(Ok)],
     [?assertNot(dns_check:rrdata(D), D) || N <- Names, D <- Records(N)].
+
+%% RFC6742§2.1, §2.3: the NodeID and the Locator64 are 64 bits, no more, no less.
+%% The encoder writes the binary as it is under an RDLENGTH of 10, so a value of
+%% another size would leave the record's length wrong.
+ilnp_64_bit_values_must_be_8_bytes(_) ->
+    Records = fun(Value) ->
+        [
+            #dns_rrdata_nid{preference = 1, node_id = Value},
+            #dns_rrdata_l64{preference = 1, locator64 = Value}
+        ]
+    end,
+    [?assert(dns_check:rrdata(D), D) || D <- Records(<<1:64>>)],
+    [?assertNot(dns_check:rrdata(D), D) || V <- [<<1:56>>, <<1:72>>, <<>>], D <- Records(V)].
 
 %% RFC2181§8: a TTL is 31 bits, since one with the top bit set is read as zero.
 %% Type and class are 16 bits, and the owner name has to be one the wire can hold.

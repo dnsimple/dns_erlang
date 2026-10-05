@@ -59,6 +59,7 @@
     ~"8080" => ~"Ed25519 and Ed448 for DNSSEC",
     ~"9077" => ~"NSEC and NSEC3 TTL Values",
     ~"7553" => ~"The Uniform Resource Identifier (URI) DNS Resource Record",
+    ~"6742" => ~"DNS Resource Records for the Identifier-Locator Network Protocol (ILNP)",
     ~"7043" => ~"Resource Records for EUI-48 and EUI-64 Addresses in the DNS",
     ~"8162" => ~"Using Secure DNS to Associate Certificates with Domain Names for S/MIME",
     ~"9606" => ~"DNS Resolver Information",

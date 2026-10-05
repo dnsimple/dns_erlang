@@ -141,6 +141,10 @@ RTYPE_SSHFP    = SSHFP
 RTYPE_TLSA     = TLSA
 RTYPE_EUI48    = EUI48
 RTYPE_EUI64    = EUI64
+RTYPE_NID      = NID
+RTYPE_L32      = L32
+RTYPE_L64      = L64
+RTYPE_LP       = LP
 RTYPE_SMIMEA   = SMIMEA
 RTYPE_CSYNC    = CSYNC
 RTYPE_URI      = URI
@@ -267,6 +271,9 @@ Rules.
 {RTYPE_DLV}        : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_SPF}        : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_URI}        : {token, {rtype, TokenLine, TokenChars}}.
+{RTYPE_NID}        : {token, {rtype, TokenLine, TokenChars}}.
+{RTYPE_L32}        : {token, {rtype, TokenLine, TokenChars}}.
+{RTYPE_L64}        : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_NS}         : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_MX}         : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_DS}         : {token, {rtype, TokenLine, TokenChars}}.
@@ -276,6 +283,7 @@ Rules.
 {RTYPE_MB}         : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_MG}         : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_MR}         : {token, {rtype, TokenLine, TokenChars}}.
+{RTYPE_LP}         : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_A}          : {token, {rtype, TokenLine, TokenChars}}.
 
 % Quoted strings

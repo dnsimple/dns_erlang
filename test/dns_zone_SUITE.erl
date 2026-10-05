@@ -95,6 +95,7 @@ groups() ->
             encode_resinfo_record,
             encode_eui48_record,
             encode_eui64_record,
+            encode_ilnp_records,
             encode_zonemd_record,
             encode_csync_record,
             encode_dsync_record,
@@ -316,6 +317,11 @@ groups() ->
             parse_wallet_record,
             parse_eui48_record,
             parse_eui64_record,
+            parse_nid_record,
+            parse_l32_record,
+            parse_l64_record,
+            parse_lp_record,
+            parse_ilnp_records_roundtrip,
             parse_ds_record,
             parse_dnskey_record,
             parse_key_record,
@@ -550,6 +556,10 @@ groups() ->
             parse_invalid_eui48_hex,
             parse_invalid_eui64_rdata,
             parse_invalid_eui64_hex,
+            parse_invalid_ilnp_rdata,
+            parse_invalid_ilnp64_compressed,
+            parse_invalid_l32_locator,
+            parse_invalid_ilnp_preference,
             parse_invalid_ds_rdata,
             parse_invalid_ds_hex,
             parse_invalid_rrsig_times,
@@ -1551,6 +1561,78 @@ parse_keeps_rdata_name_case(_Config) ->
 rrsig_with_times(Expiration, Inception) ->
     <<"uri.arpa. 3600 IN RRSIG SOA 8 2 3600 ", Expiration/binary, " ", Inception/binary,
         " 37444 uri.arpa. AAECAw==\n">>.
+
+parse_nid_record(_Config) ->
+    %% NID for an ILNP Node Identifier (RFC 6742 §2.1)
+    Zone = ~"host1.example.com. 3600 IN NID 10 0014:4fff:ff20:ee64\n",
+    {ok, [RR]} = dns_zone:parse_string(Zone),
+    ?assertEqual(?DNS_TYPE_NID, RR#dns_rr.type),
+    ?assertEqual(
+        #dns_rrdata_nid{
+            preference = 10, node_id = <<16#00, 16#14, 16#4f, 16#ff, 16#ff, 16#20, 16#ee, 16#64>>
+        },
+        RR#dns_rr.data
+    ),
+    %% Groups may drop leading zeros, as in an AAAA record, and hex is case-insensitive
+    {ok, [Short]} = dns_zone:parse_string(~"host1.example.com. 3600 IN NID 10 14:4FFF:0:EE64\n"),
+    ?assertEqual(
+        #dns_rrdata_nid{preference = 10, node_id = <<16#14:16, 16#4fff:16, 0:16, 16#ee64:16>>},
+        Short#dns_rr.data
+    ).
+
+parse_l32_record(_Config) ->
+    %% L32 for an ILNP 32-bit Locator (RFC 6742 §2.2)
+    Zone = ~"host1.example.com. 3600 IN L32 10 10.1.2.0\n",
+    {ok, [RR]} = dns_zone:parse_string(Zone),
+    ?assertEqual(?DNS_TYPE_L32, RR#dns_rr.type),
+    ?assertEqual(#dns_rrdata_l32{preference = 10, locator32 = {10, 1, 2, 0}}, RR#dns_rr.data).
+
+parse_l64_record(_Config) ->
+    %% L64 for an ILNP 64-bit Locator (RFC 6742 §2.3)
+    Zone = ~"host1.example.com. 3600 IN L64 10 2001:0DB8:1140:1000\n",
+    {ok, [RR]} = dns_zone:parse_string(Zone),
+    ?assertEqual(?DNS_TYPE_L64, RR#dns_rr.type),
+    ?assertEqual(
+        #dns_rrdata_l64{
+            preference = 10, locator64 = <<16#20, 16#01, 16#0d, 16#b8, 16#11, 16#40, 16#10, 16#00>>
+        },
+        RR#dns_rr.data
+    ).
+
+parse_lp_record(_Config) ->
+    %% LP for an ILNP Locator Pointer (RFC 6742 §2.4), relative to the origin or not
+    Zone =
+        ~"""
+    $ORIGIN example.com.
+    host1 3600 IN LP 10 l64-subnet1.example.com.
+    host1 3600 IN LP 20 l32-subnet1
+
+    """,
+    {ok, [Abs, Rel]} = dns_zone:parse_string(Zone),
+    ?assertEqual(?DNS_TYPE_LP, Abs#dns_rr.type),
+    ?assertEqual(
+        #dns_rrdata_lp{preference = 10, fqdn = ~"l64-subnet1.example.com."}, Abs#dns_rr.data
+    ),
+    ?assertEqual(
+        #dns_rrdata_lp{preference = 20, fqdn = ~"l32-subnet1.example.com."}, Rel#dns_rr.data
+    ).
+
+parse_ilnp_records_roundtrip(_Config) ->
+    %% The RFC 6742 §3 example set survives encode and re-parse, in any class
+    Zone =
+        ~"""
+    $ORIGIN example.com.
+    host1 3600 IN NID 10 0014:4fff:ff20:ee64
+    host1 3600 IN L64 10 2001:0db8:1140:1000
+    host1 3600 IN LP 10 l64-subnet1.example.com.
+    host1 3600 CH NID 20 0015:5fff:ff21:ee65
+    l32-subnet1 3600 IN L32 10 10.1.2.0
+
+    """,
+    {ok, Records} = dns_zone:parse_string(Zone),
+    Encoded = iolist_to_binary(dns_zone:encode_string(Records, #{origin => ~"example.com."})),
+    {ok, Reparsed} = dns_zone:parse_string(Encoded),
+    ?assertEqual(lists:sort(Records), lists:sort(Reparsed)).
 
 parse_ds_record(_Config) ->
     %% DS (Delegation Signer) for DNSSEC (RFC 4034)
@@ -2879,6 +2961,77 @@ parse_invalid_eui64_hex(_Config) ->
     %% EUI64 record with invalid hex (wrong length - not 16 digits)
     Zone = ~"example.com. 3600 IN EUI64 \"ABC\"\n",
     {error, #{type := semantic}} = dns_zone:parse_string(Zone, #{origin => ~"example.com."}).
+
+parse_invalid_ilnp_rdata(_Config) ->
+    %% Records with no RDATA, or with the preference missing
+    [
+        ?assertMatch(
+            {error, #{type := Type}},
+            dns_zone:parse_string(Zone, #{origin => ~"example.com."}),
+            Zone
+        )
+     || {Zone, Type} <- [
+            {~"example.com. 3600 IN NID\n", parser},
+            {~"example.com. 3600 IN L32\n", parser},
+            {~"example.com. 3600 IN L64\n", parser},
+            {~"example.com. 3600 IN LP\n", parser},
+            {~"example.com. 3600 IN NID 0014:4fff:ff20:ee64\n", semantic},
+            {~"example.com. 3600 IN L32 10.1.2.0\n", semantic},
+            {~"example.com. 3600 IN L64 2001:0db8:1140:1000\n", semantic},
+            {~"example.com. 3600 IN LP l64-subnet1.example.com.\n", semantic}
+        ]
+    ].
+
+parse_invalid_ilnp64_compressed(_Config) ->
+    %% RFC 6742 §2.1, §2.3: a NodeID or Locator64 is exactly four groups and never
+    %% uses the "::" shorthand, which would read as a 128-bit IPv6 address
+    [
+        ?assertMatch(
+            {error, #{type := semantic, suggestion := _}},
+            dns_zone:parse_string(<<"example.com. 3600 IN ", Value/binary, "\n">>),
+            Value
+        )
+     || Value <- [
+            ~"NID 10 0014:4fff::ee64",
+            ~"NID 10 0014:4fff:ff20",
+            ~"NID 10 0014:4fff:ff20:ee64:0001",
+            ~"NID 10 00014:4fff:ff20:ee64",
+            ~"NID 10 0014:4fff:ff20:ee6g",
+            ~"NID 10 0014:+fff:ff20:ee64",
+            ~"NID 10 0014:-fff:ff20:ee64",
+            ~"L64 10 2001:db8::",
+            ~"L64 10 2001:0db8:1140:1000:0:0:0:1",
+            ~"L64 10 \"2001:0db8:1140:1000\""
+        ]
+    ].
+
+parse_invalid_l32_locator(_Config) ->
+    %% RFC 6742 §2.2: the Locator32 is spelled as an A record's address, which this
+    %% parser reads strictly, so it refuses leading zeros just as it does for A
+    [
+        ?assertMatch(
+            {error, #{type := semantic}},
+            dns_zone:parse_string(<<"example.com. 3600 IN L32 10 ", Value/binary, "\n">>),
+            Value
+        )
+     || Value <- [~"10.1.2", ~"10.1.2.256", ~"10.1.02.0", ~"l32.example.com."]
+    ].
+
+parse_invalid_ilnp_preference(_Config) ->
+    %% The preference is a 16-bit unsigned integer
+    [
+        ?assertMatch(
+            {error, #{type := semantic}},
+            dns_zone:parse_string(<<"example.com. 3600 IN ", Value/binary, "\n">>),
+            Value
+        )
+     || Value <- [
+            ~"NID 65536 0014:4fff:ff20:ee64",
+            ~"L32 65536 10.1.2.0",
+            ~"L64 65536 2001:0db8:1140:1000",
+            ~"LP 65536 l64-subnet1.example.com."
+        ]
+    ].
 
 test_format_error(_Config) ->
     %% Test formatting of error details
@@ -4507,6 +4660,42 @@ encode_eui64_record(_Config) ->
     },
     Line = dns_zone:encode_rr(RR),
     ?assertNotEqual(nomatch, string:find(Line, "EUI64")).
+
+encode_ilnp_records(_Config) ->
+    %% RFC 6742 §2.1-§2.4 presentation formats: a NodeID or Locator64 keeps all
+    %% four hex digits of each group and never uses "::"
+    Cases = [
+        {
+            ?DNS_TYPE_NID,
+            #dns_rrdata_nid{preference = 10, node_id = <<16#14:16, 16#4fff:16, 0:16, 16#ee64:16>>},
+            ~"10 0014:4fff:0000:ee64"
+        },
+        {?DNS_TYPE_L32, #dns_rrdata_l32{preference = 10, locator32 = {10, 1, 2, 0}},
+            ~"10 10.1.2.0"},
+        {
+            ?DNS_TYPE_L64,
+            #dns_rrdata_l64{preference = 20, locator64 = <<16#2001:16, 16#db8:16, 0:16, 0:16>>},
+            ~"20 2001:0db8:0000:0000"
+        },
+        {
+            ?DNS_TYPE_LP,
+            #dns_rrdata_lp{preference = 30, fqdn = ~"L64-Subnet1.Example.com."},
+            ~"30 l64-subnet1.example.com."
+        }
+    ],
+    [
+        ?assertEqual(Expected, iolist_to_binary(dns_zone:encode_rdata(Type, Data)), Type)
+     || {Type, Data, Expected} <- Cases
+    ],
+    RR = #dns_rr{
+        name = ~"host1.example.com.",
+        type = ?DNS_TYPE_LP,
+        class = ?DNS_CLASS_IN,
+        ttl = 3600,
+        data = #dns_rrdata_lp{preference = 10, fqdn = ~"l64-subnet1.example.com."}
+    },
+    Line = iolist_to_binary(dns_zone:encode_rr(RR, #{origin => ~"example.com."})),
+    ?assertNotEqual(nomatch, string:find(Line, ~"IN LP 10 l64-subnet1")).
 
 encode_zonemd_record(_Config) ->
     RR = #dns_rr{

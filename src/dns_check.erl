@@ -139,14 +139,23 @@ fits(#dns_rrdata_key{
         ?IS_UINT(4, Sig) andalso ?IS_UINT(8, Protocol) andalso ?IS_UINT(8, Alg);
 fits(#dns_rrdata_kx{preference = Pref}) ->
     ?IS_UINT(16, Pref);
+%% RFC6742§2.2: a Locator32 is spelled as an A record's address
+fits(#dns_rrdata_l32{preference = Pref, locator32 = Locator32}) ->
+    ?IS_UINT(16, Pref) andalso inet:is_ipv4_address(Locator32);
+fits(#dns_rrdata_l64{preference = Pref, locator64 = Locator64}) ->
+    ?IS_UINT(16, Pref) andalso 8 =:= byte_size(Locator64);
 fits(#dns_rrdata_loc{lat = Lat, lon = Lon, alt = Alt}) ->
     ?IS_UINT(32, Lat + ?LOC_REFERENCE_POINT) andalso
         ?IS_UINT(32, Lon + ?LOC_REFERENCE_POINT) andalso
         ?IS_UINT(32, Alt + ?LOC_ALTITUDE_BASE);
+fits(#dns_rrdata_lp{preference = Pref}) ->
+    ?IS_UINT(16, Pref);
 fits(#dns_rrdata_mx{preference = Pref}) ->
     ?IS_UINT(16, Pref);
 fits(#dns_rrdata_naptr{order = Order, preference = Pref}) ->
     ?IS_UINT(16, Order) andalso ?IS_UINT(16, Pref);
+fits(#dns_rrdata_nid{preference = Pref, node_id = NodeID}) ->
+    ?IS_UINT(16, Pref) andalso 8 =:= byte_size(NodeID);
 fits(#dns_rrdata_nsec{types = Types}) ->
     types_fit(Types);
 fits(#dns_rrdata_nsec3{
