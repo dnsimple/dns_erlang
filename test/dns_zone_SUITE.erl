@@ -317,6 +317,8 @@ groups() ->
             parse_ds_record,
             parse_dnskey_record,
             parse_key_record,
+            parse_rrsig_record,
+            parse_rrsig_record_date_times,
             parse_zonemd_record,
             parse_cds_record,
             parse_dlv_record,
@@ -547,6 +549,7 @@ groups() ->
             parse_invalid_eui64_hex,
             parse_invalid_ds_rdata,
             parse_invalid_ds_hex,
+            parse_invalid_rrsig_times,
             parse_invalid_dnskey_rdata,
             parse_invalid_dnskey_base64,
             parse_invalid_zonemd_rdata,
@@ -1375,6 +1378,61 @@ parse_dhcid_record(_Config) ->
     %% Verify it's valid base64-decoded binary data
     ?assert(is_binary(Data)),
     ?assert(byte_size(Data) > 0).
+
+parse_rrsig_record(_Config) ->
+    %% RFC 4034 §3.2: signature times as seconds since the epoch
+    Zone = ~"uri.arpa. 3600 IN RRSIG SOA 8 2 3600 1613604280 1611185080 37444 uri.arpa. AAECAw==\n",
+    {ok, [RR]} = dns_zone:parse_string(Zone),
+    ?assertEqual(
+        #dns_rrdata_rrsig{
+            type_covered = ?DNS_TYPE_SOA,
+            alg = 8,
+            labels = 2,
+            original_ttl = 3600,
+            expiration = 1613604280,
+            inception = 1611185080,
+            keytag = 37444,
+            signers_name = ~"uri.arpa.",
+            signature = <<0, 1, 2, 3>>
+        },
+        RR#dns_rr.data
+    ).
+
+parse_rrsig_record_date_times(_Config) ->
+    %% RFC 4034 §3.2: or as a UTC date YYYYMMDDHHmmSS. These were kept as the 14-digit
+    %% number, which the 32-bit wire field cannot hold, so the encoder wrote its low
+    %% 32 bits as the signature times
+    {ok, [RR]} = dns_zone:parse_string(rrsig_with_times(~"20210217232440", ~"20210120232440")),
+    ?assertMatch(
+        #dns_rrdata_rrsig{expiration = 1613604280, inception = 1611185080}, RR#dns_rr.data
+    ),
+    %% RFC 4034 §3.1.5: from 2106 the seconds wrap, and are compared with serial arithmetic
+    {ok, [Wrapped]} = dns_zone:parse_string(rrsig_with_times(~"21060207062817", ~"21060207062816")),
+    ?assertMatch(#dns_rrdata_rrsig{expiration = 1, inception = 0}, Wrapped#dns_rr.data).
+
+parse_invalid_rrsig_times(_Config) ->
+    [
+        ?assertMatch(
+            {error, #{type := semantic}},
+            dns_zone:parse_string(rrsig_with_times(Time, ~"1611185080")),
+            Time
+        )
+     || Time <- [
+            %% month 13, 30 February, hour 24
+            ~"20211317000000",
+            ~"20210230000000",
+            ~"20210217242440",
+            %% before the epoch
+            ~"19691231235959",
+            %% too wide for 32 bits, too short for a date
+            ~"4294967296",
+            ~"123456789012"
+        ]
+    ].
+
+rrsig_with_times(Expiration, Inception) ->
+    <<"uri.arpa. 3600 IN RRSIG SOA 8 2 3600 ", Expiration/binary, " ", Inception/binary,
+        " 37444 uri.arpa. AAECAw==\n">>.
 
 parse_ds_record(_Config) ->
     %% DS (Delegation Signer) for DNSSEC (RFC 4034)
