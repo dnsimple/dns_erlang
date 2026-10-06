@@ -2233,6 +2233,9 @@ type_to_number("IPSECKEY") ->
     ?DNS_TYPE_IPSECKEY;
 type_to_number("ZONEMD") ->
     ?DNS_TYPE_ZONEMD;
+%% RFC 3597 §5: a type without a mnemonic, in RDATA such as an RRSIG's type covered
+type_to_number("TYPE" ++ _ = TypeStr) ->
+    type_to_number({generic_type, TypeStr});
 type_to_number(_) ->
     ?DNS_TYPE_A.
 

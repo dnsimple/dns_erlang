@@ -62,8 +62,10 @@ Terminals
 Rootsymbol zone.
 
 %% Expected shift/reduce conflicts due to RFC 1035's flexible field ordering
-%% (TTL and class can appear in either order or be omitted)
-Expect 35.
+%% (TTL and class can appear in either order or be omitted), and to a type, named
+%% or TYPE###, being both an RDATA element and the start of a record, which shift
+%% resolves in favour of RDATA
+Expect 38.
 
 %% ============================================================================
 %% Zone Structure
@@ -233,6 +235,9 @@ rdata_element -> rfc3597_data : {rfc3597, extract_token('$1')}.
 %% Record type tokens can appear in RDATA (e.g., RRSIG type_covered field)
 %% Treat them as strings/labels
 rdata_element -> rtype : {domain, extract_token('$1')}.
+%% RFC 3597 §5: so can a type without a mnemonic, written TYPE###, as in an RRSIG
+%% type covered or an NSEC type bitmap
+rdata_element -> generic_type : {domain, extract_token('$1')}.
 %% RFC 9460 - SVCB/HTTPS service parameter: key=value pairs
 %% Allow comma-separated labels in RDATA (for SVCB/HTTPS service parameters like "alpn=h2,h3")
 %% When lexer sees "alpn=h2,h3", it produces label("alpn=h2"), comma, label("h3")

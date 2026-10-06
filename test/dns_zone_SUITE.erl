@@ -268,7 +268,8 @@ groups() ->
             parse_rfc3597_combined_all_generic,
             parse_rfc3597_known_type_generic_rdata,
             parse_rfc3597_unknown_type,
-            parse_rfc3597_invalid_format
+            parse_rfc3597_invalid_format,
+            parse_rfc3597_generic_type_in_rdata
         ]},
         {directives, [parallel], [
             parse_origin_directive,
@@ -3572,6 +3573,34 @@ parse_rfc3597_invalid_format(_Config) ->
     %% Error type may be lexer or semantic depending on where parsing fails
     {error, Error} = Result,
     ?assert(maps:is_key(type, Error)).
+
+%% RFC 3597 §5: a type without a mnemonic is written TYPE### in RDATA too, as the
+%% encoder writes it in an RRSIG's type covered and in a type bitmap, such as the
+%% NSEC over BIND's TYPE65534 signing records
+parse_rfc3597_generic_type_in_rdata(_Config) ->
+    Zone =
+        ~"""
+    $ORIGIN example.com.
+    a 60 IN RRSIG TYPE65534 13 2 60 20260101000000 20250101000000 12345 example.com. AQ==
+    a 60 IN NSEC b.example.com. A RRSIG NSEC TYPE65534
+    a 60 IN CSYNC 66 3 A TYPE65534
+
+    """,
+    {ok, RRs} = dns_zone:parse_string(Zone),
+    ?assertMatch(
+        [
+            #dns_rr{data = #dns_rrdata_rrsig{type_covered = 65534}},
+            #dns_rr{
+                data = #dns_rrdata_nsec{
+                    types = [?DNS_TYPE_A, ?DNS_TYPE_RRSIG, ?DNS_TYPE_NSEC, 65534]
+                }
+            },
+            #dns_rr{data = #dns_rrdata_csync{types = [?DNS_TYPE_A, 65534]}}
+        ],
+        RRs
+    ),
+    Encoded = iolist_to_binary(dns_zone:encode_string(RRs, #{origin => ~"example.com."})),
+    ?assertEqual({ok, RRs}, dns_zone:parse_string(Encoded)).
 
 parse_key_record(_Config) ->
     %% Test KEY record decoding (similar to DNSKEY)
