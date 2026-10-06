@@ -7,6 +7,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## main
 
+## v5.0.21
+
+### Fixed
+
+- Zone files: a type without a mnemonic, written `TYPE###` (RFC 3597 §5), is now read in RDATA, such as an RRSIG's type covered or an NSEC or CSYNC type bitmap. The encoder writes such types that way, so a zone it wrote with them did not parse back, nor did a zone holding the TYPE65534 records BIND keeps its signing state in, which its NSEC lists and an RRSIG covers.
+- Zone files: an owner spelled as a type mnemonic, such as a host named `LOC`, `MX` or `KX`, is now read as the owner when a class follows it, directly or after a TTL. The parser read it as a type, so the record failed to parse. Without a class, as in `LOC 3600 A 192.0.2.1`, the line still reads as a record of that type with a blank owner, since the parser does not keep the whitespace that marks one.
+
+## v5.0.20
+
 ### Fixed
 
 - DNSSEC canonical form no longer lowercases the names in the RDATA of NSEC, IPSECKEY, DSYNC, SVCB and HTTPS records. RFC 3597 §7 closes the list of RFC 4034 §6.2 to the types published before it, and RFC 6840 §5.1 takes NSEC off it, so these names keep their case, as in BIND. With an uppercase letter in such a name, a signature made here did not verify elsewhere, and one made elsewhere did not verify here.
@@ -16,8 +25,6 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Zone files: RRSIG expiration and inception times written as `YYYYMMDDHHmmSS` (RFC 4034 §3.2), as signed zones usually spell them, are now read as UTC dates. They were kept as the 14-digit number, and encoding wrote its low 32 bits, so the signature times on the wire were wrong. Invalid dates and values that fit neither form are rejected.
 - `dns_domain:split/1` and `dns_domain:to_wire/1` now raise `{label_too_long, Label}` for a last label over 63 bytes, as they did for the others. `to_wire/1` wrote its length as it was, a byte the wire reads as another label type, so the uncompressed names in RDATA (SRV targets, RRSIG signers, and others) could go out malformed. Compressed names already refused it.
 - `dns_json:from_map/1` and the zone file parser now refuse, when they load it, a record the wire cannot carry as written, raising `{invalid_record, Record}` and returning a semantic error respectively. The encoder trusts its input and writes each field with bit syntax, which silently cuts an integer too wide for its field (MX preference 70000 went out as 4464, -1 as 65535) and writes a binary of the wrong size as it is. The checks cover every fixed-width RDATA field, addresses, LOC coordinates, 8-bit lengths (CAA tags, NSEC3 salts and hashes, HINFO strings), NSEC type numbers, SVCB params (a hint that is not an address was silently dropped), names, RDATA over 65535 bytes, the RR header (type and class are 16 bits, and the TTL 31 bits as RFC 2181 §8 has it), and, in JSON, message headers, queries, the OPT pseudo-RR and its options. The RDATA is checked in the record's class, so a record in a class the encoder does not write its type in, such as an A record in class CH, is refused. Such records, and EUI48 and EUI64 addresses of the wrong length in JSON, used to load and then fail every response carrying them.
-- Zone files: a type without a mnemonic, written `TYPE###` (RFC 3597 §5), is now read in RDATA, such as an RRSIG's type covered or an NSEC or CSYNC type bitmap. The encoder writes such types that way, so a zone it wrote with them did not parse back, nor did a zone holding the TYPE65534 records BIND keeps its signing state in, which its NSEC lists and an RRSIG covers.
-- Zone files: an owner spelled as a type mnemonic, such as a host named `LOC`, `MX` or `KX`, is now read as the owner when a class follows it, directly or after a TTL. The parser read it as a type, so the record failed to parse. Without a class, as in `LOC 3600 A 192.0.2.1`, the line still reads as a record of that type with a blank owner, since the parser does not keep the whitespace that marks one.
 
 ## v5.0.19
 
