@@ -48,6 +48,7 @@ groups() ->
             keytag_known_answers,
             canonical_rrdata_form_test,
             canonical_form_matches_bind,
+            signers_name_in_canonical_form,
             ih_custom_hash_test,
             dsa_sign_verify_test,
             ecdsa_sign_verify_test,
@@ -517,19 +518,7 @@ canonical_rrdata_form_test(_Config) ->
 %% the names failed both ways: BIND's signatures did not verify here, and BIND's
 %% dnssec-verify refused the signatures made here.
 canonical_form_matches_bind(_Config) ->
-    PrivateKey = base64:decode(~"6OjVqw6yokJES96M8iQmufPniuPAUpSpAsfB2hQPSp0="),
-    DNSKey = #dns_rr{
-        name = ~"example.test",
-        type = ?DNS_TYPE_DNSKEY,
-        ttl = 3600,
-        data = #dns_rrdata_dnskey{
-            flags = 256,
-            protocol = 3,
-            alg = ?DNS_ALG_ED25519,
-            public_key = base64:decode(~"VXEsoU69+/ogdTfuDFJteyXjQM3WniI/Jc11+fLq4Dg="),
-            keytag = 29059
-        }
-    },
+    {PrivateKey, DNSKey} = bind_ed25519_key(),
     RR = fun(Name, Type, TTL, Data) ->
         #dns_rr{name = Name, type = Type, ttl = TTL, data = Data}
     end,
@@ -597,6 +586,54 @@ canonical_form_matches_bind(_Config) ->
         end
      || {#dns_rr{type = Type} = Data, Sig} <- Cases
     ].
+
+%% RFC4034§3.1.8.1, RFC6840§5.1: the signer's name goes into the signed data in
+%% canonical form, lowercased. It went in as given, so signing with Example.Test
+%% gave a signature BIND's for example.test did not match, and an RRSIG received
+%% with Example.Test as its signer did not verify. The signature is BIND's, from
+%% canonical_form_matches_bind/1.
+signers_name_in_canonical_form(_Config) ->
+    {PrivateKey, DNSKey} = bind_ed25519_key(),
+    HTTPS = #dns_rr{
+        name = ~"www.example.test",
+        type = ?DNS_TYPE_HTTPS,
+        ttl = 3600,
+        data = #dns_rrdata_https{
+            svc_priority = 1, target_name = ~"Svc.Example.Test", svc_params = #{}
+        }
+    },
+    Signature = base64:decode(
+        ~"RE6RL2LW1of41k02UJEzpaMgC0vYnsuH/BmTFWdRD2n3wDkqLzeR+YPSD7WZYATcM4jQqlQe2wvUVQAbbsxnBA=="
+    ),
+    {Inception, Expiration} = {1790812800, 1793491200},
+    [#dns_rr{data = #dns_rrdata_rrsig{} = Data} = RRSig] = dnssec:sign_rr(
+        [HTTPS],
+        ~"Example.TEST",
+        29059,
+        ?DNS_ALG_ED25519,
+        PrivateKey,
+        #{inception => Inception, expiration => Expiration}
+    ),
+    ?assertMatch(#dns_rrdata_rrsig{signers_name = ~"example.test", signature = Signature}, Data),
+    Received = RRSig#dns_rr{data = Data#dns_rrdata_rrsig{signers_name = ~"Example.TEST"}},
+    ?assert(dnssec:verify_rrsig(Received, [HTTPS], [DNSKey], #{now => Inception + 1})).
+
+%% The Ed25519 key, in the zone example.test, BIND signed the records with
+bind_ed25519_key() ->
+    PrivateKey = base64:decode(~"6OjVqw6yokJES96M8iQmufPniuPAUpSpAsfB2hQPSp0="),
+    DNSKey = #dns_rr{
+        name = ~"example.test",
+        type = ?DNS_TYPE_DNSKEY,
+        ttl = 3600,
+        data = #dns_rrdata_dnskey{
+            flags = 256,
+            protocol = 3,
+            alg = ?DNS_ALG_ED25519,
+            public_key = base64:decode(~"VXEsoU69+/ogdTfuDFJteyXjQM3WniI/Jc11+fLq4Dg="),
+            keytag = 29059
+        }
+    },
+    {PrivateKey, DNSKey}.
 
 ih_custom_hash_test(_Config) ->
     %% ih/4 with custom hash function (not default SHA1)

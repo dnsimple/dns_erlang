@@ -588,7 +588,9 @@ build_sig_input(
         inception = Incept,
         expiration = Expire,
         keytag = KeyTag,
-        signers_name = SignersName
+        %% RFC4034§3.1.8.1, RFC6840§5.1: the signer's name is signed in canonical
+        %% form, lowercased, and so it is written in the RRSIG too
+        signers_name = dns_domain:to_lower(SignersName)
     },
     RRSigRDataBin = rrsig_to_digestable(RRSigData),
     SigInput0 = [RRSigRDataBin | RRSetBin],
