@@ -62,10 +62,10 @@ Terminals
 Rootsymbol zone.
 
 %% Expected shift/reduce conflicts due to RFC 1035's flexible field ordering
-%% (TTL and class can appear in either order or be omitted), and to a type, named
-%% or TYPE###, being both an RDATA element and the start of a record, which shift
-%% resolves in favour of RDATA
-Expect 38.
+%% (TTL and class can appear in either order or be omitted), to a type, named or
+%% TYPE###, being both an RDATA element and the start of a record, which shift
+%% resolves in favour of RDATA, and to an owner spelled as a type (see below)
+Expect 42.
 
 %% ============================================================================
 %% Zone Structure
@@ -150,8 +150,34 @@ resource_record -> ttl_value rtype_value rdata :
 resource_record -> class_value rtype_value rdata :
     {rr, undefined, undefined, '$1', '$2', '$3'}.
 
-resource_record -> rtype_value rdata :
-    {rr, undefined, undefined, undefined, '$1', '$2'}.
+%% Written out for each kind of type, rather than as rtype_value, so that the
+%% choice between this and an owner spelled as a type, below, waits for the token
+%% after the type
+resource_record -> rtype rdata :
+    {rr, undefined, undefined, undefined, extract_token('$1'), '$2'}.
+
+resource_record -> generic_type rdata :
+    {rr, undefined, undefined, undefined, {generic_type, extract_token('$1')}, '$2'}.
+
+%% An owner spelled as a type mnemonic, such as a host named LOC, lexes as the
+%% type. Whitespace is not kept, so a line that starts with a type reads as a
+%% record with a blank owner, as above, unless a class follows the type, directly
+%% or after a TTL. A class is never part of RDATA, so the type is then the owner.
+%% Without a class, as in "LOC 3600 A 192.0.2.1", the owner is read as the type.
+%% The TTL is the token itself rather than ttl_value, as "LOC 3600" followed by a
+%% class could also be a LOC record ending there, records not having to end in a
+%% newline here, and the owner is chosen by shift, as for the conflicts above.
+resource_record -> rtype int class_value rtype_value rdata :
+    {rr, extract_token('$1'), extract_value('$2'), '$3', '$4', '$5'}.
+
+resource_record -> rtype time class_value rtype_value rdata :
+    {rr, extract_token('$1'), extract_value('$2'), '$3', '$4', '$5'}.
+
+resource_record -> rtype class_value ttl_value rtype_value rdata :
+    {rr, extract_token('$1'), '$3', '$2', '$4', '$5'}.
+
+resource_record -> rtype class_value rtype_value rdata :
+    {rr, extract_token('$1'), undefined, '$2', '$3', '$4'}.
 
 %% ============================================================================
 %% Record Fields

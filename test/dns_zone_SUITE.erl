@@ -286,7 +286,8 @@ groups() ->
             parse_comment_only_lines
         ]},
         {blank_owner, [parallel], [
-            parse_blank_owner
+            parse_blank_owner,
+            parse_owner_spelled_as_type
         ]},
         {uncommon_records, [parallel], [
             parse_hinfo_record,
@@ -1188,6 +1189,42 @@ parse_blank_owner(_Config) ->
     [NS1, NS2] = Records,
     ?assertEqual(~"example.com.", NS1#dns_rr.name),
     ?assertEqual(~"example.com.", NS2#dns_rr.name).
+
+%% A host named as a type, such as LOC, lexes as the type. It is read as the owner
+%% when a class follows it, directly or after a TTL, as a class is never part of
+%% RDATA. Without one the line reads as a record of that type with a blank owner,
+%% as the indented ones do, whitespace not being kept.
+parse_owner_spelled_as_type(_Config) ->
+    Zone =
+        ~"""
+    $ORIGIN example.com.
+    $TTL 300
+    LOC 3600 IN A 192.0.2.1
+    MX 1h IN A 192.0.2.2
+    KX IN A 192.0.2.3
+    RT IN 3600 A 192.0.2.4
+    KEY CLASS1 A 192.0.2.5
+        MX 10 mail.example.com.
+        KX 10 kx.example.com.
+
+    """,
+    {ok, RRs} = dns_zone:parse_string(Zone),
+    ?assertEqual(
+        [
+            {~"loc.example.com.", ?DNS_TYPE_A, 3600},
+            {~"mx.example.com.", ?DNS_TYPE_A, 3600},
+            {~"kx.example.com.", ?DNS_TYPE_A, 300},
+            {~"rt.example.com.", ?DNS_TYPE_A, 3600},
+            {~"key.example.com.", ?DNS_TYPE_A, 300},
+            {~"key.example.com.", ?DNS_TYPE_MX, 300},
+            {~"key.example.com.", ?DNS_TYPE_KX, 300}
+        ],
+        [{Name, Type, TTL} || #dns_rr{name = Name, type = Type, ttl = TTL} <- RRs]
+    ),
+    ?assertMatch(
+        {error, #{message := <<"Invalid LOC record", _/binary>>}},
+        dns_zone:parse_string(~"$ORIGIN example.com.\nLOC 3600 A 192.0.2.1\n")
+    ).
 
 %% ============================================================================
 %% Less Common Record Type Tests
