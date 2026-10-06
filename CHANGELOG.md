@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## main
 
+## v5.1.0
+
 ### Added
 
 - Add support for the ILNP records NID (Type 104), L32 (Type 105), L64 (Type 106) and LP (Type 107) — [RFC 6742](https://datatracker.ietf.org/doc/rfc6742/). They encode and decode on the wire in any class, parse from and encode to zone files, and transcode to JSON. LP's FQDN is never compressed on the wire and keeps its case in DNSSEC canonical form.
