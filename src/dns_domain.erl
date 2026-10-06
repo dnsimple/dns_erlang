@@ -59,6 +59,7 @@ and backslashes, removing escape sequences from the resulting labels.
 Returns an empty list for empty names or root (single dot).
 
 Raises `{invalid_dname, empty_label}` if the name contains contiguous dots.
+Raises `{label_too_long, Label}` if any label exceeds 63 bytes.
 
 ## Examples:
 
@@ -80,13 +81,18 @@ split(Name) when is_binary(Name) ->
     do_split(Name, <<>>).
 
 -spec do_split(binary(), binary()) -> labels().
-%% End of input - return empty list if no label accumulated, otherwise return label
+%% End of input - return empty list if no label accumulated, otherwise return label.
+%% The last label is measured here, as the separator clause below measures the others.
 do_split(<<>>, <<>>) ->
     [];
+do_split(<<>>, Label) when 63 < byte_size(Label) ->
+    error({label_too_long, Label});
 do_split(<<>>, Label) ->
     [Label];
 do_split(<<$.>>, <<>>) ->
     [];
+do_split(<<$.>>, Label) when 63 < byte_size(Label) ->
+    error({label_too_long, Label});
 do_split(<<$.>>, Label) ->
     [Label];
 %% Match 8 bytes at once when all are safe (common case - no dots, no backslashes)

@@ -581,6 +581,10 @@ to_wire_errors(_) ->
     Label64 = iolist_to_binary(<<<<$a>> || _ <- lists:seq(1, 64)>>),
     Name64 = <<Label64/binary, ".com">>,
     ?assertError({label_too_long, _}, dns_domain:to_wire(Name64)),
+    %% The last label is measured too: on the wire a length byte over 63 is not a
+    %% label length but another label type, RFC1035§4.1.4 and RFC6891§5
+    ?assertError({label_too_long, Label64}, dns_domain:to_wire(<<"www.", Label64/binary>>)),
+    ?assertError({label_too_long, Label64}, dns_domain:to_wire(<<"www.", Label64/binary, ".">>)),
     %% Too many labels (> 127 labels)
     Labels128 = [<<"a">> || _ <- lists:seq(1, 128)],
     Name128 = dns_domain:join(Labels128),
@@ -1195,7 +1199,16 @@ split_errors(_) ->
         <<"example..com..">>,
         <<"a..b..c">>
     ],
-    [?assertError({invalid_dname, empty_label}, dns_domain:split(Name)) || Name <- ErrorCases].
+    [?assertError({invalid_dname, empty_label}, dns_domain:split(Name)) || Name <- ErrorCases],
+    %% RFC1035§2.3.4: a label is 63 octets or less, the last one too
+    Label64 = binary:copy(<<"a">>, 64),
+    TooLong = [
+        <<Label64/binary, ".com">>,
+        <<"www.", Label64/binary>>,
+        <<"www.", Label64/binary, ".">>,
+        Label64
+    ],
+    [?assertError({label_too_long, Label64}, dns_domain:split(Name)) || Name <- TooLong].
 
 compression_errors(_) ->
     %% Test bad compression pointer (points outside message)

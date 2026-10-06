@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Fixed
 
 - Zone files: RRSIG expiration and inception times written as `YYYYMMDDHHmmSS` (RFC 4034 §3.2), as signed zones usually spell them, are now read as UTC dates. They were kept as the 14-digit number, and encoding wrote its low 32 bits, so the signature times on the wire were wrong. Invalid dates and values that fit neither form are rejected.
+- `dns_domain:split/1` and `dns_domain:to_wire/1` now raise `{label_too_long, Label}` for a last label over 63 bytes, as they did for the others. `to_wire/1` wrote its length as it was, a byte the wire reads as another label type, so the uncompressed names in RDATA (SRV targets, RRSIG signers, and others) could go out malformed. Compressed names already refused it.
 
 ## v5.0.19
 
