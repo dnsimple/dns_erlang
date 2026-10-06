@@ -189,7 +189,7 @@ capitalize(Atom) ->
 %% Initialize parser context from options
 -spec init_context(parse_options(), [string()]) -> parse_ctx().
 init_context(Options, SourceLines) ->
-    Origin = dns_domain:to_lower(maps:get(origin, Options, <<>>)),
+    Origin = maps:get(origin, Options, <<>>),
     DefaultTTL = maps:get(default_ttl, Options, 0),
     DefaultClass = maps:get(default_class, Options, ?DNS_CLASS_IN),
     BaseDir = maps:get(base_dir, Options, ""),
@@ -490,7 +490,7 @@ process_entry(empty, Ctx) ->
     {ok, Ctx, []};
 process_entry({directive, origin, Origin0}, Ctx) ->
     %% Update the origin
-    Origin = dns_domain:to_lower(ensure_binary(Origin0)),
+    Origin = ensure_binary(Origin0),
     NewOrigin = ensure_fqdn(Origin),
     NewCtx = Ctx#parse_ctx{origin = NewOrigin, last_owner = NewOrigin},
     {ok, NewCtx, []};
@@ -2026,15 +2026,17 @@ extract_strings(RData) when is_list(RData) ->
         error:badarg -> {error, invalid_strings}
     end.
 
-%% Resolve a name relative to the origin
+%% Resolve a name relative to the origin. RFC1035§2.3.3: the case of a name is kept
+%% as it is written. Owner names are lowercased by build_rr/6, but the names in
+%% the RDATA of types DNSSEC does not lowercase (RFC3597§7, RFC6840§5.1) are signed
+%% as they are, so a signature over them only verifies with the case they have.
 -spec resolve_name(string(), binary()) -> binary().
 resolve_name("@", Origin) when Origin =/= <<>> ->
     ensure_fqdn(Origin);
 resolve_name("@", <<>>) ->
     ~".";
 resolve_name(Name, Origin) when is_list(Name) ->
-    %% Convert string name to binary for final record
-    BinName = dns_domain:to_lower(list_to_binary(Name)),
+    BinName = list_to_binary(Name),
     case is_fqdn(Name) of
         true ->
             BinName;

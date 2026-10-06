@@ -319,6 +319,7 @@ groups() ->
             parse_key_record,
             parse_rrsig_record,
             parse_rrsig_record_date_times,
+            parse_keeps_rdata_name_case,
             parse_zonemd_record,
             parse_cds_record,
             parse_dlv_record,
@@ -1481,6 +1482,34 @@ parse_values_that_do_not_fit_rejected(_Config) ->
     {error, #{message := Message}} = dns_zone:parse_string(Zone(~"MX 65536 mail.example.com.")),
     ?assertEqual(~"Invalid MX record: a value does not fit its field", Message).
 
+%% RFC1035§2.3.3: names keep the case they are written in. The parser lowercased
+%% the names in RDATA, so a signature BIND made over an HTTPS record pointing at
+%% Svc.Example.Test. did not verify against the record read from the same zone, as
+%% RFC3597§7 has HTTPS keep that case in what is signed. Owner names are still
+%% lowercased, and so is the origin they are resolved against.
+parse_keeps_rdata_name_case(_Config) ->
+    Zone =
+        ~"""
+        $ORIGIN Example.Test.
+        @ 3600 IN DNSKEY 256 3 15 VXEsoU69+/ogdTfuDFJteyXjQM3WniI/Jc11+fLq4Dg=
+        WWW 3600 IN HTTPS 1 Svc.Example.Test.
+        www 3600 IN RRSIG HTTPS 15 3 3600 20261101000000 20261001000000 29059 example.test. RE6RL2LW1of41k02UJEzpaMgC0vYnsuH/BmTFWdRD2n3wDkqLzeR+YPSD7WZYATcM4jQqlQe2wvUVQAbbsxnBA==
+        mail 3600 IN MX 10 MX.Example.Test.
+        cname 3600 IN CNAME Target
+        """,
+    {ok, [DNSKey, HTTPS, RRSig, MX, CNAME]} = dns_zone:parse_string(Zone),
+    ?assertMatch(
+        #dns_rr{
+            name = ~"www.example.test.",
+            data = #dns_rrdata_https{target_name = ~"Svc.Example.Test."}
+        },
+        HTTPS
+    ),
+    ?assertMatch(#dns_rr{name = ~"example.test."}, DNSKey),
+    ?assertMatch(#dns_rrdata_mx{exchange = ~"MX.Example.Test."}, MX#dns_rr.data),
+    ?assertMatch(#dns_rrdata_cname{dname = ~"Target.Example.Test."}, CNAME#dns_rr.data),
+    ?assert(dnssec:verify_rrsig(RRSig, [HTTPS], [DNSKey], #{now => 1790812801})).
+
 rrsig_with_times(Expiration, Inception) ->
     <<"uri.arpa. 3600 IN RRSIG SOA 8 2 3600 ", Expiration/binary, " ", Inception/binary,
         " 37444 uri.arpa. AAECAw==\n">>.
@@ -2335,10 +2364,11 @@ parse_file_dyn(Config) ->
         end,
         Records
     ),
+    %% RDATA names keep the case the file writes them in
     ?assertMatch(
         {value, #dns_rr{
             data = #dns_rrdata_mx{
-                exchange = ~"mx.l.mike.com."
+                exchange = ~"MX.L.MIKE.COM."
             }
         }},
         SearchMx
