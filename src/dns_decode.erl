@@ -1032,11 +1032,10 @@ decode_rrdata(MsgBin, Class, ?DNS_TYPE_PX, <<Pref:16, Bin/binary>>) when ?CLASS_
     #dns_rrdata_px{
         preference = Pref, map822 = Map822, mapx400 = decode_dnameonly(MsgBin, MapX400Bin)
     };
-%% RFC2535§4.1: the RDATA RRSIG took over field for field, so it is read as RRSIG's
-%% and retagged, the record having RRSIG's fields in the same order
+%% RFC2535§4.1: read as RRSIG's, which took it over field for field
 decode_rrdata(MsgBin, Class, ?DNS_TYPE_SIG, Bin) ->
     case decode_rrdata(MsgBin, Class, ?DNS_TYPE_RRSIG, Bin) of
-        #dns_rrdata_rrsig{} = RRSig -> setelement(1, RRSig, dns_rrdata_sig);
+        #dns_rrdata_rrsig{} = RRSig -> dns_encode:rrsig_to_sig(RRSig);
         Opaque -> Opaque
     end;
 decode_rrdata(MsgBin, _Class, ?DNS_TYPE_RT, <<Pref:16, Bin/binary>>) ->

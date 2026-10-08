@@ -37,6 +37,7 @@ groups() ->
             test_hip_record,
             test_sig_record,
             test_px_record,
+            test_opaque_rrdata_of_decoded_types,
             test_error_cases,
             test_edge_cases
         ]}
@@ -1456,6 +1457,33 @@ test_px_record(_Config) ->
             #{~"mapx400" => 1}
         ]
     ].
+
+test_opaque_rrdata_of_decoded_types(_Config) ->
+    %% RDATA the decoder leaves opaque for a type it decodes, such as an AMTRELAY
+    %% with an undefined relay type or a HIP with an empty HIT, is a lone base64
+    %% data key, and loads back as the same binary
+    [
+        ?assertMatch(
+            #{~"data" := #{~"data" := _} = Data} when map_size(Data) =:= 1,
+            assert_transcode(#dns_rr{name = ~"example.com", type = Type, ttl = 3600, data = Bin}),
+            Type
+        )
+     || {Type, Bin} <- [
+            {?DNS_TYPE_AMTRELAY, <<10, 4, 1, 2>>},
+            {?DNS_TYPE_HIP, <<0, 2, 0, 1, 5>>},
+            {?DNS_TYPE_A, <<1, 2, 3>>}
+        ]
+    ],
+    %% A type whose record has a data field takes it as that field
+    ?assertMatch(
+        #dns_rr{data = #dns_rrdata_hhit{data = <<1, 2, 3>>}},
+        dns_json:from_map(#{
+            ~"name" => ~"example.com",
+            ~"type" => ~"HHIT",
+            ~"ttl" => 3600,
+            ~"data" => #{~"data" => base64:encode(<<1, 2, 3>>)}
+        })
+    ).
 
 test_error_cases(_Config) ->
     %% Test invalid map format (empty map)

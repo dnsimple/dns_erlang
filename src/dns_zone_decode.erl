@@ -1342,16 +1342,11 @@ build_rdata("EUI64", RData, Ctx) ->
     end;
 build_rdata("NID", RData, Ctx) ->
     %% NID format: preference node-id (RFC 6742 §2.1)
-    case RData of
-        [{int, Pref}, {domain, NodeIDStr}] when is_integer(Pref), is_list(NodeIDStr) ->
-            case parse_ilnp64(NodeIDStr) of
-                {ok, NodeID} ->
-                    {ok, #dns_rrdata_nid{preference = Pref, node_id = NodeID}};
-                error ->
-                    {error, make_rdata_error(~"NID", RData, Ctx)}
-            end;
-        _ ->
-            {error, make_rdata_error(~"NID", RData, Ctx)}
+    maybe
+        {ok, Pref, NodeID} ?= build_ilnp64(RData),
+        {ok, #dns_rrdata_nid{preference = Pref, node_id = NodeID}}
+    else
+        error -> {error, make_rdata_error(~"NID", RData, Ctx)}
     end;
 build_rdata("L32", RData, Ctx) ->
     %% L32 format: preference locator32, the locator spelled as an A record's address
@@ -1371,16 +1366,11 @@ build_rdata("L32", RData, Ctx) ->
     end;
 build_rdata("L64", RData, Ctx) ->
     %% L64 format: preference locator64 (RFC 6742 §2.3)
-    case RData of
-        [{int, Pref}, {domain, Locator64Str}] when is_integer(Pref), is_list(Locator64Str) ->
-            case parse_ilnp64(Locator64Str) of
-                {ok, Locator64} ->
-                    {ok, #dns_rrdata_l64{preference = Pref, locator64 = Locator64}};
-                error ->
-                    {error, make_rdata_error(~"L64", RData, Ctx)}
-            end;
-        _ ->
-            {error, make_rdata_error(~"L64", RData, Ctx)}
+    maybe
+        {ok, Pref, Locator64} ?= build_ilnp64(RData),
+        {ok, #dns_rrdata_l64{preference = Pref, locator64 = Locator64}}
+    else
+        error -> {error, make_rdata_error(~"L64", RData, Ctx)}
     end;
 build_rdata("LP", RData, Ctx) ->
     %% LP format: preference fqdn (RFC 6742 §2.4)
@@ -1763,9 +1753,9 @@ build_rdata("RRSIG", RData, Ctx) ->
     end;
 build_rdata("SIG", RData, Ctx) ->
     %% SIG format: as RRSIG's, which took it over field for field (RFC 2535 §7.2,
-    %% RFC 4034 §3.2), the record having RRSIG's fields in the same order
+    %% RFC 4034 §3.2)
     case build_rdata("RRSIG", RData, Ctx) of
-        {ok, RRSig} -> {ok, setelement(1, RRSig, dns_rrdata_sig)};
+        {ok, RRSig} -> {ok, dns_encode:rrsig_to_sig(RRSig)};
         {error, _} -> {error, make_rdata_error(~"SIG", RData, Ctx)}
     end;
 build_rdata("NSEC", RData, Ctx) ->
@@ -2565,33 +2555,29 @@ concat_rdata_string_parts(Parts) ->
 eui_hex_normalize(S) when is_list(S) ->
     [C || C <- S, C =/= $-, C =/= $:, C =/= $\s].
 
+%% The RDATA of NID and L64: a preference and a NodeID or Locator64
+-spec build_ilnp64([rdata()]) -> {ok, integer(), <<_:64>>} | error.
+build_ilnp64([{int, Pref}, {domain, Value}]) when is_integer(Pref), is_list(Value) ->
+    case parse_ilnp64(Value) of
+        {ok, Bin} -> {ok, Pref, Bin};
+        error -> error
+    end;
+build_ilnp64(_RData) ->
+    error.
+
 %% RFC 6742 §2.1, §2.3: a NodeID or Locator64 is four colon-separated groups of
-%% hex digits, as in an AAAA record, but never with the "::" shorthand, which
-%% would read as a 128-bit IPv6 address.
+%% one to four hex digits, as in an AAAA record, but never with the "::" shorthand,
+%% which would read as a 128-bit IPv6 address.
 -spec parse_ilnp64(string()) -> {ok, <<_:64>>} | error.
 parse_ilnp64(String) ->
-    case string:split(String, ":", all) of
-        [_, _, _, _] = Groups ->
-            case lists:all(fun is_ilnp64_group/1, Groups) of
-                true -> {ok, <<<<(list_to_integer(G, 16)):16>> || G <- Groups>>};
-                false -> error
-            end;
-        _ ->
-            error
+    maybe
+        [_, _, _, _] = Groups ?= string:split(String, ":", all),
+        true ?= lists:all(fun(G) -> 1 =< length(G) andalso length(G) =< 4 end, Groups),
+        {ok, <<_:64>> = Bin} ?= hex_to_binary([string:pad(G, 4, leading, $0) || G <- Groups]),
+        {ok, Bin}
+    else
+        _ -> error
     end.
-
-%% One to four hex digits, and nothing else: list_to_integer/2 would also take a sign
--spec is_ilnp64_group(string()) -> boolean().
-is_ilnp64_group([_ | _] = Group) when length(Group) =< 4 ->
-    lists:all(
-        fun(C) ->
-            (C >= $0 andalso C =< $9) orelse (C >= $a andalso C =< $f) orelse
-                (C >= $A andalso C =< $F)
-        end,
-        Group
-    );
-is_ilnp64_group(_) ->
-    false.
 
 %% Domain names, each resolved against the origin
 -spec parse_domain_names([rdata()], parse_ctx()) -> {ok, [dns:dname()]} | error.

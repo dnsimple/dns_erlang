@@ -1253,7 +1253,20 @@ parse_owner_spelled_as_type(_Config) ->
     ?assertMatch(
         {error, #{message := <<"Invalid LOC record", _/binary>>}},
         dns_zone:parse_string(~"$ORIGIN example.com.\nLOC 3600 A 192.0.2.1\n")
-    ).
+    ),
+    %% So is an owner spelled as one of the RFC 6742, 8777, 9886, 8005, 2535 and
+    %% 2163 types
+    [
+        ?assertMatch(
+            {ok, [#dns_rr{name = Name, type = ?DNS_TYPE_A}]},
+            dns_zone:parse_string(<<"$ORIGIN example.com.\n", Type/binary, " IN A 192.0.2.1\n">>),
+            Type
+        )
+     || Type <- [
+            ~"NID", ~"L32", ~"L64", ~"LP", ~"AMTRELAY", ~"HHIT", ~"BRID", ~"HIP", ~"SIG", ~"PX"
+        ],
+        Name <- [<<(string:lowercase(Type))/binary, ".example.com.">>]
+    ].
 
 %% ============================================================================
 %% Less Common Record Type Tests

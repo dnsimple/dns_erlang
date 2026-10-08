@@ -201,7 +201,7 @@ fits(#dns_rrdata_rrsig{
         ?IS_UINT(32, Inception) andalso ?IS_UINT(16, KeyTag);
 %% SIG's RDATA is RRSIG's, field for field
 fits(#dns_rrdata_sig{} = Sig) ->
-    fits(setelement(1, Sig, dns_rrdata_rrsig));
+    fits(dns_encode:sig_to_rrsig(Sig));
 fits(#dns_rrdata_rt{preference = Pref}) ->
     ?IS_UINT(16, Pref);
 fits(#dns_rrdata_smimea{usage = Usage, selector = Selector, matching_type = MatchingType}) ->

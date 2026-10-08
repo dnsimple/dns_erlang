@@ -256,14 +256,26 @@ from_map_rrdata(Type, DataMap) ->
                     erlang:error({unknown_type_cannot_convert_to_rrdata, Type})
             end;
         Tag when is_atom(Tag) ->
-            %% Known type - convert to record
             Fields = record_fields(Tag),
-            Values = [
-                from_map_field(Tag, Field, maps:get(field_name(Tag, Field), DataMap, undefined))
-             || Field <- Fields
-            ],
-            from_map_siblings(list_to_tuple([Tag | Values]))
+            case DataMap of
+                #{~"data" := Base64Data} when map_size(DataMap) =:= 1 ->
+                    case lists:member(data, Fields) of
+                        %% RDATA the decoder left opaque, as to_map_rrdata/1 writes it
+                        false -> base64:decode(Base64Data);
+                        true -> from_map_record(Tag, Fields, DataMap)
+                    end;
+                _ ->
+                    from_map_record(Tag, Fields, DataMap)
+            end
     end.
+
+-spec from_map_record(atom(), [atom()], map()) -> tuple().
+from_map_record(Tag, Fields, DataMap) ->
+    Values = [
+        from_map_field(Tag, Field, maps:get(field_name(Tag, Field), DataMap, undefined))
+     || Field <- Fields
+    ],
+    from_map_siblings(list_to_tuple([Tag | Values])).
 
 %% A field whose decoding depends on another field of the record, which
 %% from_map_field/3 does not see, is decoded here once the record is built.

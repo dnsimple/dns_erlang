@@ -339,8 +339,8 @@
 }).
 
 %% SIG record for a signature. RRSIG replaced it in zones, and as SIG(0) (RFC 2931)
-%% it signs a whole message, with type_covered 0. Its fields are RRSIG's in the same
-%% order, as the codecs read and write it as one retagged. See RFC 2535: §4.1.
+%% it signs a whole message, with type_covered 0. Its fields are RRSIG's, and the
+%% codecs read and write it as RRSIG's. See RFC 2535: §4.1.
 -record(dns_rrdata_sig, {
     type_covered :: dns:uint16(),
     alg :: dns:uint8(),

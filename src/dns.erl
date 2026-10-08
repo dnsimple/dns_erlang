@@ -203,6 +203,9 @@ restrictions on the length. Labels must be 63 characters or less.
 -doc "RRSIG record payload (DNSSEC signature).".
 -type rrdata_rrsig() :: #dns_rrdata_rrsig{}.
 -doc #{group => "Types: records"}.
+-doc "SIG record payload (signature, including SIG(0) message signatures).".
+-type rrdata_sig() :: #dns_rrdata_sig{}.
+-doc #{group => "Types: records"}.
 -doc "Resource record data: binary for unknown types or a specific rrdata record.".
 -type rrdata() ::
     binary()
@@ -312,7 +315,8 @@ restrictions on the length. Labels must be 63 characters or less.
     opt_owner/0,
     opt_unknown/0,
     optrr_elem/0,
-    rrdata_rrsig/0
+    rrdata_rrsig/0,
+    rrdata_sig/0
 ]).
 
 -doc #{group => "Types: TSIG"}.
