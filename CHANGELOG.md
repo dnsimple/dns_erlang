@@ -7,6 +7,22 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## main
 
+## v5.1.0
+
+### Added
+
+- Add support for the ILNP records NID (Type 104), L32 (Type 105), L64 (Type 106) and LP (Type 107) — [RFC 6742](https://datatracker.ietf.org/doc/rfc6742/). They encode and decode on the wire in any class, parse from and encode to zone files, and transcode to JSON. LP's FQDN is never compressed on the wire and keeps its case in DNSSEC canonical form.
+- Add support for the AMTRELAY record (Type 260) — [RFC 8777](https://datatracker.ietf.org/doc/rfc8777/). It encodes and decodes on the wire in any class, parses from and encodes to zone files, and transcodes to JSON. Relay types 0 (no relay), 1 (IPv4), 2 (IPv6) and 3 (domain name) get a record; an undefined relay type stays opaque RDATA. The relay's domain name is never compressed on the wire and keeps its case in DNSSEC canonical form.
+- Add support for the DRIP records HHIT (Type 67) and BRID (Type 68) — [RFC 9886](https://datatracker.ietf.org/doc/rfc9886/). Their CBOR data is carried as it is: it encodes and decodes on the wire in any class, parses from and encodes to zone files as base64, which may be split into several pieces, and transcodes to JSON as base64.
+- Add support for the HIP record (Type 55) — [RFC 8005](https://datatracker.ietf.org/doc/rfc8005/). It encodes and decodes on the wire in any class, parses from and encodes to zone files, and transcodes to JSON, the HIT as hex and the public key as base64. The rendezvous servers' names are never compressed on the wire and keep their case in DNSSEC canonical form. A HIP RDATA with an empty HIT or public key, both of which the RFC requires, stays opaque.
+- Add support for the SIG record (Type 24) — [RFC 2535](https://datatracker.ietf.org/doc/rfc2535/), and so for SIG(0) message signatures — [RFC 2931](https://datatracker.ietf.org/doc/rfc2931/), as a record: creating and verifying SIG(0) signatures is not part of this. It encodes and decodes on the wire, parses from and encodes to zone files and transcodes to JSON as RRSIG does. The signer's name is never compressed on the wire and is lowercased in DNSSEC canonical form, as RFC 4034 §6.2 has it for SIG.
+- Add support for the PX record (Type 26) — [RFC 2163](https://datatracker.ietf.org/doc/rfc2163/). It encodes and decodes on the wire in class IN, as A does, parses from and encodes to zone files, and transcodes to JSON. Its names are never compressed on the wire and are lowercased in DNSSEC canonical form, as RFC 4034 §6.2 has it for PX.
+
+### Changed
+
+- RRs of types SIG (24), PX (26) and HIP (55), which this library used to leave as opaque binary RDATA, now decode into their records, so code matching a binary `data` for them no longer matches. Like every type decoded into a record, an empty RDATA for them now decodes to `formerr`.
+- Zone files: as for the other types, a line that starts with one of the new mnemonics (NID, L32, L64, LP, AMTRELAY, HHIT, BRID, HIP, SIG or PX) and has no class reads as a record of that type with a blank owner. An owner spelled as one of them, such as a host named `PX`, needs a class after it, directly or after a TTL, as in `PX IN A 192.0.2.1`.
+
 ## v5.0.21
 
 ### Fixed

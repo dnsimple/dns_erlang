@@ -331,6 +331,12 @@ encode_salt_hex(<<>>) ->
 encode_salt_hex(Salt) ->
     binary:encode_hex(Salt).
 
+%% Helper: Encode an ILNP NodeID or Locator64 as four colon-separated groups of
+%% four hex digits, never with the "::" shorthand (RFC 6742 §2.1, §2.3)
+-spec encode_ilnp64(<<_:64>>) -> iolist().
+encode_ilnp64(<<A:16, B:16, C:16, D:16>>) ->
+    io_lib:format("~4.16.0b:~4.16.0b:~4.16.0b:~4.16.0b", [A, B, C, D]).
+
 %% Helper: Encode SVCB/HTTPS record with service parameters
 -spec encode_svcb_record(
     dns:uint16(),
@@ -518,6 +524,19 @@ encode_rdata(
 ) ->
     encode_quoted_strings([CPU, OS], Separator);
 encode_rdata(
+    ?DNS_TYPE_HIP,
+    #dns_rrdata_hip{alg = Alg, hit = HIT, public_key = PublicKey, rendezvous_servers = Servers},
+    Origin,
+    RelativeNames,
+    Separator
+) ->
+    %% RFC 8005 §6: the HIT in hex and the key in base64, each without whitespace
+    ServerStrs = [encode_dname(dns_domain:to_lower(S), Origin, RelativeNames) || S <- Servers],
+    join_rdata_fields(
+        [integer_to_binary(Alg), binary:encode_hex(HIT), base64:encode(PublicKey) | ServerStrs],
+        Separator
+    );
+encode_rdata(
     ?DNS_TYPE_RP,
     #dns_rrdata_rp{
         mbox = Mbox,
@@ -569,6 +588,21 @@ encode_rdata(
     PrefBin = integer_to_binary(Preference),
     ExchangeStr = encode_dname(dns_domain:to_lower(Exchange), Origin, RelativeNames),
     join_rdata_fields([PrefBin, ExchangeStr], Separator);
+encode_rdata(
+    ?DNS_TYPE_PX,
+    #dns_rrdata_px{preference = Preference, map822 = Map822, mapx400 = MapX400},
+    Origin,
+    RelativeNames,
+    Separator
+) ->
+    join_rdata_fields(
+        [
+            integer_to_binary(Preference),
+            encode_dname(dns_domain:to_lower(Map822), Origin, RelativeNames),
+            encode_dname(dns_domain:to_lower(MapX400), Origin, RelativeNames)
+        ],
+        Separator
+    );
 encode_rdata(
     ?DNS_TYPE_DNAME,
     #dns_rrdata_dname{dname = DName},
@@ -703,6 +737,10 @@ encode_rdata(
         ],
         Separator
     );
+encode_rdata(?DNS_TYPE_SIG, #dns_rrdata_sig{} = Sig, Origin, RelativeNames, Separator) ->
+    %% RFC 2535 §7.2: as RRSIG's, which took it over field for field
+    RRSig = dns_encode:sig_to_rrsig(Sig),
+    encode_rdata(?DNS_TYPE_RRSIG, RRSig, Origin, RelativeNames, Separator);
 encode_rdata(
     ?DNS_TYPE_NSEC,
     #dns_rrdata_nsec{
@@ -841,6 +879,10 @@ encode_rdata(
     ?DNS_TYPE_OPENPGPKEY, #dns_rrdata_openpgpkey{data = Data}, _Origin, _RelativeNames, _Separator
 ) ->
     base64:encode(Data);
+encode_rdata(?DNS_TYPE_HHIT, #dns_rrdata_hhit{data = Data}, _Origin, _RelativeNames, _Separator) ->
+    base64:encode(Data);
+encode_rdata(?DNS_TYPE_BRID, #dns_rrdata_brid{data = Data}, _Origin, _RelativeNames, _Separator) ->
+    base64:encode(Data);
 encode_rdata(
     ?DNS_TYPE_WALLET, #dns_rrdata_wallet{data = Strings}, _Origin, _RelativeNames, Separator
 ) ->
@@ -871,6 +913,40 @@ encode_rdata(
     ?DNS_TYPE_EUI64, #dns_rrdata_eui64{address = Addr}, _Origin, _RelativeNames, _Separator
 ) ->
     binary:encode_hex(Addr);
+encode_rdata(
+    ?DNS_TYPE_NID,
+    #dns_rrdata_nid{preference = Pref, node_id = NodeID},
+    _Origin,
+    _RelativeNames,
+    Separator
+) ->
+    join_rdata_fields([integer_to_binary(Pref), encode_ilnp64(NodeID)], Separator);
+encode_rdata(
+    ?DNS_TYPE_L32,
+    #dns_rrdata_l32{preference = Pref, locator32 = Locator32},
+    _Origin,
+    _RelativeNames,
+    Separator
+) ->
+    "" ++ _ = Locator32Str = inet:ntoa(Locator32),
+    join_rdata_fields([integer_to_binary(Pref), Locator32Str], Separator);
+encode_rdata(
+    ?DNS_TYPE_L64,
+    #dns_rrdata_l64{preference = Pref, locator64 = Locator64},
+    _Origin,
+    _RelativeNames,
+    Separator
+) ->
+    join_rdata_fields([integer_to_binary(Pref), encode_ilnp64(Locator64)], Separator);
+encode_rdata(
+    ?DNS_TYPE_LP,
+    #dns_rrdata_lp{preference = Pref, fqdn = FQDN},
+    Origin,
+    RelativeNames,
+    Separator
+) ->
+    FQDNStr = encode_dname(dns_domain:to_lower(FQDN), Origin, RelativeNames),
+    join_rdata_fields([integer_to_binary(Pref), FQDNStr], Separator);
 encode_rdata(
     ?DNS_TYPE_ZONEMD,
     #dns_rrdata_zonemd{
@@ -1001,6 +1077,33 @@ encode_rdata(
         end,
     PublicKeyHex = binary:encode_hex(PublicKey),
     join_rdata_fields([PrecedenceBin, AlgBin, GatewayStr, PublicKeyHex], Separator);
+encode_rdata(
+    ?DNS_TYPE_AMTRELAY,
+    #dns_rrdata_amtrelay{
+        precedence = Precedence,
+        discovery_optional = DiscoveryOptional,
+        relay_type = RelayType,
+        relay = Relay
+    },
+    Origin,
+    RelativeNames,
+    Separator
+) ->
+    %% RFC 8777 §4.3.1: the relay is "." when there is none
+    RelayStr =
+        case RelayType of
+            0 -> ~".";
+            3 -> encode_dname(dns_domain:to_lower(Relay), Origin, RelativeNames);
+            _ -> "" ++ _ = inet:ntoa(Relay)
+        end,
+    DBin =
+        case DiscoveryOptional of
+            true -> ~"1";
+            false -> ~"0"
+        end,
+    join_rdata_fields(
+        [integer_to_binary(Precedence), DBin, integer_to_binary(RelayType), RelayStr], Separator
+    );
 encode_rdata(
     ?DNS_TYPE_KEY,
     #dns_rrdata_key{

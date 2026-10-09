@@ -16,6 +16,7 @@
 -export([encode/1, encode/2]).
 -export([encode_rrdata/2]).
 -export([encode_rsa_key/2, encode_dsa_key/1]).
+-export([sig_to_rrsig/1, rrsig_to_sig/1]).
 
 -ifdef(TEST).
 -export([
@@ -650,6 +651,22 @@ encode_rrdata_append(
 ) ->
     HostnameBin = dns_domain:to_wire(Hostname),
     {<<Acc/binary, (2 + byte_size(HostnameBin)):16, Subtype:16, HostnameBin/binary>>, CompMap};
+%% RFC8777§4.1: AMTRELAY is class independent
+encode_rrdata_append(
+    Acc,
+    _Pos,
+    _Class,
+    #dns_rrdata_amtrelay{
+        precedence = Precedence, discovery_optional = D, relay_type = RelayType, relay = Relay
+    },
+    CompMap
+) ->
+    RelayBin = encode_amtrelay_relay(RelayType, Relay),
+    {
+        <<Acc/binary, (2 + byte_size(RelayBin)):16, Precedence, (encode_bool(D)):1, RelayType:7,
+            RelayBin/binary>>,
+        CompMap
+    };
 encode_rrdata_append(
     Acc, _Pos, _Class, #dns_rrdata_caa{flags = Flags, tag = Tag, value = Value}, CompMap
 ) ->
@@ -676,6 +693,10 @@ encode_rrdata_append(Acc, Pos, _Class, #dns_rrdata_cname{dname = Name}, CompMap)
 encode_rrdata_append(Acc, _Pos, ?DNS_CLASS_IN, #dns_rrdata_dhcid{data = Bin}, CompMap) ->
     {<<Acc/binary, (byte_size(Bin)):16, Bin/binary>>, CompMap};
 encode_rrdata_append(Acc, _Pos, ?DNS_CLASS_IN, #dns_rrdata_openpgpkey{data = Bin}, CompMap) ->
+    {<<Acc/binary, (byte_size(Bin)):16, Bin/binary>>, CompMap};
+encode_rrdata_append(Acc, _Pos, _Class, #dns_rrdata_hhit{data = Bin}, CompMap) ->
+    {<<Acc/binary, (byte_size(Bin)):16, Bin/binary>>, CompMap};
+encode_rrdata_append(Acc, _Pos, _Class, #dns_rrdata_brid{data = Bin}, CompMap) ->
     {<<Acc/binary, (byte_size(Bin)):16, Bin/binary>>, CompMap};
 encode_rrdata_append(
     Acc,
@@ -899,6 +920,26 @@ encode_rrdata_append(
     Acc,
     _Pos,
     _Class,
+    #dns_rrdata_hip{alg = Alg, hit = HIT, public_key = PublicKey, rendezvous_servers = Servers},
+    CompMap
+) when
+    byte_size(HIT) =< 255
+->
+    %% RFC8005§5: the HIT length is 8 bits, so a longer HIT is refused rather than
+    %% written with its length wrapped. The rendezvous servers' names MUST NOT be
+    %% compressed (§5.6).
+    ServersBin = <<<<(dns_domain:to_wire(Server))/binary>> || Server <- Servers>>,
+    HITLen = byte_size(HIT),
+    PKLen = byte_size(PublicKey),
+    {
+        <<Acc/binary, (4 + HITLen + PKLen + byte_size(ServersBin)):16, HITLen, Alg, PKLen:16,
+            HIT/binary, PublicKey/binary, ServersBin/binary>>,
+        CompMap
+    };
+encode_rrdata_append(
+    Acc,
+    _Pos,
+    _Class,
     #dns_rrdata_ipseckey{
         precedence = Precedence,
         alg = Algorithm,
@@ -994,6 +1035,27 @@ encode_rrdata_append(
     %% RFC3597§4: KX is not one of RFC 1035's types, so its name is not compressed
     Wire = dns_domain:to_wire(Name),
     {<<Acc/binary, (2 + byte_size(Wire)):16, Pref:16, Wire/binary>>, CompMap};
+%% RFC6742§2: the ILNP types are class independent
+encode_rrdata_append(
+    Acc, _Pos, _Class, #dns_rrdata_nid{preference = Pref, node_id = NodeID}, CompMap
+) when
+    8 =:= byte_size(NodeID)
+->
+    {<<Acc/binary, 10:16, Pref:16, NodeID/binary>>, CompMap};
+encode_rrdata_append(
+    Acc, _Pos, _Class, #dns_rrdata_l32{preference = Pref, locator32 = {A, B, C, D}}, CompMap
+) ->
+    {<<Acc/binary, 6:16, Pref:16, A, B, C, D>>, CompMap};
+encode_rrdata_append(
+    Acc, _Pos, _Class, #dns_rrdata_l64{preference = Pref, locator64 = Locator64}, CompMap
+) when
+    8 =:= byte_size(Locator64)
+->
+    {<<Acc/binary, 10:16, Pref:16, Locator64/binary>>, CompMap};
+encode_rrdata_append(Acc, _Pos, _Class, #dns_rrdata_lp{preference = Pref, fqdn = FQDN}, CompMap) ->
+    %% RFC6742§2.4: a sender MUST NOT compress the FQDN
+    FQDNBin = dns_domain:to_wire(FQDN),
+    {<<Acc/binary, (2 + byte_size(FQDNBin)):16, Pref:16, FQDNBin/binary>>, CompMap};
 encode_rrdata_append(
     Acc,
     _Pos,
@@ -1248,6 +1310,23 @@ encode_rrdata_append(
             Sig/binary>>,
         CompMap
     };
+encode_rrdata_append(
+    Acc, _Pos, Class, #dns_rrdata_px{preference = Pref, map822 = Map822, mapx400 = MapX400}, CompMap
+) when
+    ?CLASS_IS_IN(Class)
+->
+    %% RFC3597§4: PX is not one of RFC 1035's types, so its names are not compressed
+    Map822Bin = dns_domain:to_wire(Map822),
+    MapX400Bin = dns_domain:to_wire(MapX400),
+    {
+        <<Acc/binary, (2 + byte_size(Map822Bin) + byte_size(MapX400Bin)):16, Pref:16,
+            Map822Bin/binary, MapX400Bin/binary>>,
+        CompMap
+    };
+%% RFC2535§4.1: written as RRSIG's, its name uncompressed as SIG is not one of
+%% RFC 1035's types (RFC3597§4)
+encode_rrdata_append(Acc, Pos, Class, #dns_rrdata_sig{} = Sig, CompMap) ->
+    encode_rrdata_append(Acc, Pos, Class, sig_to_rrsig(Sig), CompMap);
 encode_rrdata_append(
     Acc,
     _Pos,
@@ -1549,6 +1628,18 @@ encode_dname(undefined, _Pos, Name) ->
 encode_dname(CompMap, Pos, Name) ->
     dns_domain:to_wire(CompMap, Pos, Name).
 
+%% RFC8777§4.2.4: no relay for type 0, an IPv4 or IPv6 address for types 1 and 2,
+%% and for type 3 a domain name, which MUST NOT be compressed (§4.2.3)
+-spec encode_amtrelay_relay(0..3, dynamic()) -> binary().
+encode_amtrelay_relay(0, _Relay) ->
+    <<>>;
+encode_amtrelay_relay(1, {A, B, C, D}) ->
+    <<A, B, C, D>>;
+encode_amtrelay_relay(2, {A, B, C, D, E, F, G, H}) ->
+    <<A:16, B:16, C:16, D:16, E:16, F:16, G:16, H:16>>;
+encode_amtrelay_relay(3, Relay) ->
+    dns_domain:to_wire(Relay).
+
 -spec encode_bool(boolean()) -> 0 | 1.
 encode_bool(false) -> 0;
 encode_bool(true) -> 1.
@@ -1560,6 +1651,56 @@ strip_leading_zeros(Binary) ->
     Binary.
 
 %% Helper function to encode RSA keys for DNSKEY and CDNSKEY records
+%% RFC2535§4.1: RRSIG took SIG's RDATA over field for field, so the codecs read
+%% and write a SIG as an RRSIG, converted field by field
+-spec sig_to_rrsig(dns:rrdata_sig()) -> dns:rrdata_rrsig().
+sig_to_rrsig(#dns_rrdata_sig{
+    type_covered = TypeCovered,
+    alg = Alg,
+    labels = Labels,
+    original_ttl = OriginalTTL,
+    expiration = Expiration,
+    inception = Inception,
+    keytag = KeyTag,
+    signers_name = SignersName,
+    signature = Signature
+}) ->
+    #dns_rrdata_rrsig{
+        type_covered = TypeCovered,
+        alg = Alg,
+        labels = Labels,
+        original_ttl = OriginalTTL,
+        expiration = Expiration,
+        inception = Inception,
+        keytag = KeyTag,
+        signers_name = SignersName,
+        signature = Signature
+    }.
+
+-spec rrsig_to_sig(dns:rrdata_rrsig()) -> dns:rrdata_sig().
+rrsig_to_sig(#dns_rrdata_rrsig{
+    type_covered = TypeCovered,
+    alg = Alg,
+    labels = Labels,
+    original_ttl = OriginalTTL,
+    expiration = Expiration,
+    inception = Inception,
+    keytag = KeyTag,
+    signers_name = SignersName,
+    signature = Signature
+}) ->
+    #dns_rrdata_sig{
+        type_covered = TypeCovered,
+        alg = Alg,
+        labels = Labels,
+        original_ttl = OriginalTTL,
+        expiration = Expiration,
+        inception = Inception,
+        keytag = KeyTag,
+        signers_name = SignersName,
+        signature = Signature
+    }.
+
 -spec encode_rsa_key(integer(), integer()) -> binary().
 encode_rsa_key(E, M) ->
     MBin = strip_leading_zeros(binary:encode_unsigned(M)),

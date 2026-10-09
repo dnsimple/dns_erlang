@@ -148,6 +148,14 @@
     os :: binary()
 }).
 
+%% HIP record for a Host Identity Protocol host's identity. See RFC 8005: §5.
+-record(dns_rrdata_hip, {
+    alg :: dns:uint8(),
+    hit :: binary(),
+    public_key :: binary(),
+    rendezvous_servers :: [dns:dname()]
+}).
+
 %% IPSECKEY record for storing IPsec keying material. See RFC 4025: §2.
 -record(dns_rrdata_ipseckey, {
     precedence :: dns:uint8(),
@@ -246,6 +254,16 @@
     target :: dns:dname()
 }).
 
+%% HHIT record for DRIP Entity Tag registration data, as CBOR. See RFC 9886: §5.1.
+-record(dns_rrdata_hhit, {
+    data :: binary()
+}).
+
+%% BRID record for static UAS Broadcast Remote ID data, as CBOR. See RFC 9886: §5.2.
+-record(dns_rrdata_brid, {
+    data :: binary()
+}).
+
 %% NSEC3 record for DNSSEC authenticated denial of existence. See RFC 5155: §4.2.
 -record(dns_rrdata_nsec3, {
     hash_alg :: dns:uint8(),
@@ -320,6 +338,28 @@
     signature = <<>> :: binary()
 }).
 
+%% SIG record for a signature. RRSIG replaced it in zones, and as SIG(0) (RFC 2931)
+%% it signs a whole message, with type_covered 0. Its fields are RRSIG's, and the
+%% codecs read and write it as RRSIG's. See RFC 2535: §4.1.
+-record(dns_rrdata_sig, {
+    type_covered :: dns:uint16(),
+    alg :: dns:uint8(),
+    labels :: dns:uint8(),
+    original_ttl :: dns:uint32(),
+    expiration :: dns:uint32(),
+    inception :: dns:uint32(),
+    keytag :: dns:uint16(),
+    signers_name :: dns:dname(),
+    signature = <<>> :: binary()
+}).
+
+%% PX record for mapping between Internet and X.400 mail addresses. See RFC 2163: §4.
+-record(dns_rrdata_px, {
+    preference :: dns:uint16(),
+    map822 :: dns:dname(),
+    mapx400 :: dns:dname()
+}).
+
 %% RT record for route through. See RFC 1183: §3.3.
 -record(dns_rrdata_rt, {
     preference :: dns:uint16(),
@@ -373,6 +413,30 @@
     svc_params :: dns:svcb_svc_params()
 }).
 
+%% NID record for an ILNP Node Identifier. See RFC 6742: §2.1.
+-record(dns_rrdata_nid, {
+    preference :: dns:uint16(),
+    node_id :: <<_:64>>
+}).
+
+%% L32 record for an ILNP 32-bit Locator. See RFC 6742: §2.2.
+-record(dns_rrdata_l32, {
+    preference :: dns:uint16(),
+    locator32 :: inet:ip4_address()
+}).
+
+%% L64 record for an ILNP 64-bit Locator. See RFC 6742: §2.3.
+-record(dns_rrdata_l64, {
+    preference :: dns:uint16(),
+    locator64 :: <<_:64>>
+}).
+
+%% LP record for an ILNP Locator Pointer. See RFC 6742: §2.4.
+-record(dns_rrdata_lp, {
+    preference :: dns:uint16(),
+    fqdn :: dns:dname()
+}).
+
 %% EUI48 record for EUI-48 address. See RFC 7043.
 -record(dns_rrdata_eui48, {
     address :: <<_:48>>
@@ -388,6 +452,17 @@
     priority :: dns:uint16(),
     weight :: dns:uint16(),
     target :: binary()
+}).
+
+%% AMTRELAY record for an Automatic Multicast Tunneling relay. The relay is `<<>>`
+%% for relay type 0 (no relay), an address for types 1 (IPv4) and 2 (IPv6), and a
+%% domain name for type 3; other types are not decoded into this record.
+%% See RFC 8777: §4.2.
+-record(dns_rrdata_amtrelay, {
+    precedence :: dns:uint8(),
+    discovery_optional :: boolean(),
+    relay_type :: 0..3,
+    relay :: <<>> | inet:ip4_address() | inet:ip6_address() | dns:dname()
 }).
 
 %% RESINFO record for resource information. See RFC 9606

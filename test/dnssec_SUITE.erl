@@ -505,9 +505,40 @@ canonical_rrdata_form_test(_Config) ->
             },
             #dns_rrdata_nsec{next_dname = ~"NEXT.EXAMPLE", types = []},
             #dns_rrdata_svcb{svc_priority = 1, target_name = ~"SVCB.EXAMPLE", svc_params = #{}},
-            #dns_rrdata_https{svc_priority = 1, target_name = ~"HTTPS.EXAMPLE", svc_params = #{}}
+            #dns_rrdata_https{svc_priority = 1, target_name = ~"HTTPS.EXAMPLE", svc_params = #{}},
+            #dns_rrdata_lp{preference = 10, fqdn = ~"LP.EXAMPLE"},
+            #dns_rrdata_amtrelay{
+                precedence = 10,
+                discovery_optional = false,
+                relay_type = 3,
+                relay = ~"Relay.EXAMPLE"
+            },
+            #dns_rrdata_hip{
+                alg = 2, hit = <<1:128>>, public_key = <<1>>, rendezvous_servers = [~"RVS.Example"]
+            }
         ]
     ],
+    %% RFC4034§6.2: PX and SIG are on the list, so their names are lowercased
+    ?assertEqual(
+        #dns_rrdata_px{preference = 10, map822 = ~"net2.it", mapx400 = ~"prmd-net2.c-it"},
+        dnssec:canonical_rrdata_form(
+            #dns_rrdata_px{preference = 10, map822 = ~"NET2.it", mapx400 = ~"PRMD-net2.C-it"}
+        )
+    ),
+    Sig = #dns_rrdata_sig{
+        type_covered = ?DNS_TYPE_A,
+        alg = ?DNS_ALG_RSASHA1,
+        labels = 2,
+        original_ttl = 3600,
+        expiration = 1,
+        inception = 1,
+        keytag = 1,
+        signers_name = ~"Example.COM",
+        signature = <<1>>
+    },
+    ?assertEqual(
+        Sig#dns_rrdata_sig{signers_name = ~"example.com"}, dnssec:canonical_rrdata_form(Sig)
+    ),
     %% Passthrough for unknown type
     ?assertEqual(~"binary", dnssec:canonical_rrdata_form(~"binary")).
 

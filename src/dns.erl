@@ -203,12 +203,17 @@ restrictions on the length. Labels must be 63 characters or less.
 -doc "RRSIG record payload (DNSSEC signature).".
 -type rrdata_rrsig() :: #dns_rrdata_rrsig{}.
 -doc #{group => "Types: records"}.
+-doc "SIG record payload (signature, including SIG(0) message signatures).".
+-type rrdata_sig() :: #dns_rrdata_sig{}.
+-doc #{group => "Types: records"}.
 -doc "Resource record data: binary for unknown types or a specific rrdata record.".
 -type rrdata() ::
     binary()
     | #dns_rrdata_a{}
     | #dns_rrdata_aaaa{}
     | #dns_rrdata_afsdb{}
+    | #dns_rrdata_amtrelay{}
+    | #dns_rrdata_brid{}
     | #dns_rrdata_caa{}
     | #dns_rrdata_cdnskey{}
     | #dns_rrdata_cds{}
@@ -221,17 +226,23 @@ restrictions on the length. Labels must be 63 characters or less.
     | #dns_rrdata_eui64{}
     | #dns_rrdata_dnskey{}
     | #dns_rrdata_ds{}
+    | #dns_rrdata_hhit{}
     | #dns_rrdata_hinfo{}
+    | #dns_rrdata_hip{}
     | #dns_rrdata_ipseckey{}
     | #dns_rrdata_key{}
     | #dns_rrdata_kx{}
+    | #dns_rrdata_l32{}
+    | #dns_rrdata_l64{}
     | #dns_rrdata_loc{}
+    | #dns_rrdata_lp{}
     | #dns_rrdata_mb{}
     | #dns_rrdata_mg{}
     | #dns_rrdata_minfo{}
     | #dns_rrdata_mr{}
     | #dns_rrdata_mx{}
     | #dns_rrdata_naptr{}
+    | #dns_rrdata_nid{}
     | #dns_rrdata_ns{}
     | #dns_rrdata_nsec{}
     | #dns_rrdata_nsec3{}
@@ -241,9 +252,11 @@ restrictions on the length. Labels must be 63 characters or less.
     | #dns_rrdata_dsync{}
     | #dns_rrdata_openpgpkey{}
     | #dns_rrdata_ptr{}
+    | #dns_rrdata_px{}
     | #dns_rrdata_rp{}
     | #dns_rrdata_rrsig{}
     | #dns_rrdata_rt{}
+    | #dns_rrdata_sig{}
     | #dns_rrdata_soa{}
     | #dns_rrdata_spf{}
     | #dns_rrdata_srv{}
@@ -302,7 +315,8 @@ restrictions on the length. Labels must be 63 characters or less.
     opt_owner/0,
     opt_unknown/0,
     optrr_elem/0,
-    rrdata_rrsig/0
+    rrdata_rrsig/0,
+    rrdata_sig/0
 ]).
 
 -doc #{group => "Types: TSIG"}.

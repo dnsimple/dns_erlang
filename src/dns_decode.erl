@@ -557,6 +557,38 @@ decode_rrdata(MsgBin, _Class, ?DNS_TYPE_AFSDB, <<Subtype:16, Bin/binary>>) ->
         subtype = Subtype,
         hostname = decode_dnameonly(MsgBin, Bin)
     };
+%% RFC8777§4.1: AMTRELAY is class independent. §4.2.3: a relay type past 3 is
+%% undefined, so its RDATA stays opaque, as an unknown type's does.
+decode_rrdata(_MsgBin, _Class, ?DNS_TYPE_AMTRELAY, <<Precedence, D:1, 0:7>>) ->
+    #dns_rrdata_amtrelay{
+        precedence = Precedence, discovery_optional = decode_bool(D), relay_type = 0, relay = <<>>
+    };
+decode_rrdata(_MsgBin, _Class, ?DNS_TYPE_AMTRELAY, <<Precedence, D:1, 1:7, A, B, C, E>>) ->
+    #dns_rrdata_amtrelay{
+        precedence = Precedence,
+        discovery_optional = decode_bool(D),
+        relay_type = 1,
+        relay = {A, B, C, E}
+    };
+decode_rrdata(
+    _MsgBin,
+    _Class,
+    ?DNS_TYPE_AMTRELAY,
+    <<Precedence, D:1, 2:7, A:16, B:16, C:16, E:16, F:16, G:16, H:16, I:16>>
+) ->
+    #dns_rrdata_amtrelay{
+        precedence = Precedence,
+        discovery_optional = decode_bool(D),
+        relay_type = 2,
+        relay = {A, B, C, E, F, G, H, I}
+    };
+decode_rrdata(MsgBin, _Class, ?DNS_TYPE_AMTRELAY, <<Precedence, D:1, 3:7, Bin/binary>>) ->
+    #dns_rrdata_amtrelay{
+        precedence = Precedence,
+        discovery_optional = decode_bool(D),
+        relay_type = 3,
+        relay = decode_dnameonly(MsgBin, Bin)
+    };
 decode_rrdata(_MsgBin, _Class, ?DNS_TYPE_CAA, <<Flags:8, Len:8, Bin/binary>>) ->
     <<Tag:Len/binary, Value/binary>> = Bin,
     #dns_rrdata_caa{flags = Flags, tag = Tag, value = Value};
@@ -568,6 +600,12 @@ decode_rrdata(_MsgBin, Class, ?DNS_TYPE_DHCID, Bin) when ?CLASS_IS_IN(Class) ->
     #dns_rrdata_dhcid{data = Bin};
 decode_rrdata(_MsgBin, Class, ?DNS_TYPE_OPENPGPKEY, Bin) when ?CLASS_IS_IN(Class) ->
     #dns_rrdata_openpgpkey{data = Bin};
+%% RFC9886§5.1, §5.2: HHIT and BRID hold CBOR, which is carried as it is, and they
+%% are not bound to a class
+decode_rrdata(_MsgBin, _Class, ?DNS_TYPE_HHIT, Bin) ->
+    #dns_rrdata_hhit{data = Bin};
+decode_rrdata(_MsgBin, _Class, ?DNS_TYPE_BRID, Bin) ->
+    #dns_rrdata_brid{data = Bin};
 decode_rrdata(
     _MsgBin,
     _Class,
@@ -748,6 +786,20 @@ decode_rrdata(_MsgBin, _Class, ?DNS_TYPE_ZONEMD, <<Serial:32, Scheme:8, Alg:8, H
 decode_rrdata(_MsgBin, _Class, ?DNS_TYPE_HINFO, Bin) ->
     [CPU, OS] = decode_text(Bin),
     #dns_rrdata_hinfo{cpu = CPU, os = OS};
+%% RFC8005§5: the HIT and the public key are REQUIRED, so with either empty the
+%% RDATA stays opaque, as BIND refuses it
+decode_rrdata(
+    MsgBin,
+    _Class,
+    ?DNS_TYPE_HIP,
+    <<HITLen, Alg, PKLen:16, HIT:HITLen/binary, PublicKey:PKLen/binary, Servers/binary>>
+) when 0 < HITLen andalso 0 < PKLen ->
+    #dns_rrdata_hip{
+        alg = Alg,
+        hit = HIT,
+        public_key = PublicKey,
+        rendezvous_servers = decode_dnames(MsgBin, Servers)
+    };
 decode_rrdata(
     _MsgBin,
     _Class,
@@ -813,6 +865,15 @@ decode_rrdata(MsgBin, _Class, ?DNS_TYPE_KX, <<Preference:16, Bin/binary>>) ->
         preference = Preference,
         exchange = decode_dnameonly(MsgBin, Bin)
     };
+%% RFC6742§2: the ILNP types are class independent
+decode_rrdata(_MsgBin, _Class, ?DNS_TYPE_NID, <<Preference:16, NodeID:8/binary>>) ->
+    #dns_rrdata_nid{preference = Preference, node_id = NodeID};
+decode_rrdata(_MsgBin, _Class, ?DNS_TYPE_L32, <<Preference:16, A, B, C, D>>) ->
+    #dns_rrdata_l32{preference = Preference, locator32 = {A, B, C, D}};
+decode_rrdata(_MsgBin, _Class, ?DNS_TYPE_L64, <<Preference:16, Locator64:8/binary>>) ->
+    #dns_rrdata_l64{preference = Preference, locator64 = Locator64};
+decode_rrdata(MsgBin, _Class, ?DNS_TYPE_LP, <<Preference:16, Bin/binary>>) ->
+    #dns_rrdata_lp{preference = Preference, fqdn = decode_dnameonly(MsgBin, Bin)};
 decode_rrdata(
     _MsgBin,
     _Class,
@@ -965,6 +1026,18 @@ decode_rrdata(
         signers_name = SigName,
         signature = Sig
     };
+%% RFC2163§4: PX is defined for class IN
+decode_rrdata(MsgBin, Class, ?DNS_TYPE_PX, <<Pref:16, Bin/binary>>) when ?CLASS_IS_IN(Class) ->
+    {Map822, MapX400Bin} = dns_domain:from_wire(MsgBin, Bin),
+    #dns_rrdata_px{
+        preference = Pref, map822 = Map822, mapx400 = decode_dnameonly(MsgBin, MapX400Bin)
+    };
+%% RFC2535§4.1: read as RRSIG's, which took it over field for field
+decode_rrdata(MsgBin, Class, ?DNS_TYPE_SIG, Bin) ->
+    case decode_rrdata(MsgBin, Class, ?DNS_TYPE_RRSIG, Bin) of
+        #dns_rrdata_rrsig{} = RRSig -> dns_encode:rrsig_to_sig(RRSig);
+        Opaque -> Opaque
+    end;
 decode_rrdata(MsgBin, _Class, ?DNS_TYPE_RT, <<Pref:16, Bin/binary>>) ->
     #dns_rrdata_rt{preference = Pref, host = decode_dnameonly(MsgBin, Bin)};
 decode_rrdata(MsgBin, _Class, ?DNS_TYPE_SOA, Bin) ->
@@ -1039,6 +1112,8 @@ empty_rrdata(Type) ->
 requires_rrdata(?DNS_TYPE_A) -> true;
 requires_rrdata(?DNS_TYPE_AAAA) -> true;
 requires_rrdata(?DNS_TYPE_AFSDB) -> true;
+requires_rrdata(?DNS_TYPE_AMTRELAY) -> true;
+requires_rrdata(?DNS_TYPE_BRID) -> true;
 requires_rrdata(?DNS_TYPE_CAA) -> true;
 requires_rrdata(?DNS_TYPE_CDNSKEY) -> true;
 requires_rrdata(?DNS_TYPE_CDS) -> true;
@@ -1053,18 +1128,24 @@ requires_rrdata(?DNS_TYPE_DS) -> true;
 requires_rrdata(?DNS_TYPE_DSYNC) -> true;
 requires_rrdata(?DNS_TYPE_EUI48) -> true;
 requires_rrdata(?DNS_TYPE_EUI64) -> true;
+requires_rrdata(?DNS_TYPE_HHIT) -> true;
 requires_rrdata(?DNS_TYPE_HINFO) -> true;
+requires_rrdata(?DNS_TYPE_HIP) -> true;
 requires_rrdata(?DNS_TYPE_HTTPS) -> true;
 requires_rrdata(?DNS_TYPE_IPSECKEY) -> true;
 requires_rrdata(?DNS_TYPE_KEY) -> true;
 requires_rrdata(?DNS_TYPE_KX) -> true;
+requires_rrdata(?DNS_TYPE_L32) -> true;
+requires_rrdata(?DNS_TYPE_L64) -> true;
 requires_rrdata(?DNS_TYPE_LOC) -> true;
+requires_rrdata(?DNS_TYPE_LP) -> true;
 requires_rrdata(?DNS_TYPE_MB) -> true;
 requires_rrdata(?DNS_TYPE_MG) -> true;
 requires_rrdata(?DNS_TYPE_MINFO) -> true;
 requires_rrdata(?DNS_TYPE_MR) -> true;
 requires_rrdata(?DNS_TYPE_MX) -> true;
 requires_rrdata(?DNS_TYPE_NAPTR) -> true;
+requires_rrdata(?DNS_TYPE_NID) -> true;
 requires_rrdata(?DNS_TYPE_NS) -> true;
 requires_rrdata(?DNS_TYPE_NSEC) -> true;
 requires_rrdata(?DNS_TYPE_NSEC3) -> true;
@@ -1072,10 +1153,12 @@ requires_rrdata(?DNS_TYPE_NSEC3PARAM) -> true;
 requires_rrdata(?DNS_TYPE_NXT) -> true;
 requires_rrdata(?DNS_TYPE_OPENPGPKEY) -> true;
 requires_rrdata(?DNS_TYPE_PTR) -> true;
+requires_rrdata(?DNS_TYPE_PX) -> true;
 requires_rrdata(?DNS_TYPE_RESINFO) -> true;
 requires_rrdata(?DNS_TYPE_RP) -> true;
 requires_rrdata(?DNS_TYPE_RRSIG) -> true;
 requires_rrdata(?DNS_TYPE_RT) -> true;
+requires_rrdata(?DNS_TYPE_SIG) -> true;
 requires_rrdata(?DNS_TYPE_SMIMEA) -> true;
 requires_rrdata(?DNS_TYPE_SOA) -> true;
 requires_rrdata(?DNS_TYPE_SPF) -> true;
@@ -1097,6 +1180,14 @@ decode_naptr_regexp(RawRegexp) ->
         Regexp when is_binary(Regexp) -> Regexp;
         _ -> error(bad_naptr_regexp)
     end.
+
+%% RFC8005§5.6: names one after the other, to the end of the RDATA
+-spec decode_dnames(dns:message_bin(), binary()) -> [dns:dname()].
+decode_dnames(_MsgBin, <<>>) ->
+    [];
+decode_dnames(MsgBin, Bin) ->
+    {DName, Rest} = dns_domain:from_wire(MsgBin, Bin),
+    [DName | decode_dnames(MsgBin, Rest)].
 
 -spec decode_dnameonly(dns:message_bin(), nonempty_binary()) -> binary().
 decode_dnameonly(MsgBin, Bin) ->

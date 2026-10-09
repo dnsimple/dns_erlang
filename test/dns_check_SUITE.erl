@@ -20,6 +20,10 @@ groups() ->
             rrdata_lengths_must_fit,
             rrdata_type_numbers_must_fit,
             rrdata_names_must_fit,
+            ilnp_64_bit_values_must_be_8_bytes,
+            amtrelay_relay_must_match_its_type,
+            drip_data_must_not_be_empty,
+            hip_hit_and_key_must_fit,
             svcb_params_must_fit,
             rr_header_must_fit,
             rr_class_must_suit_rrdata,
@@ -57,6 +61,17 @@ rrdata_integers_must_fit(_) ->
         alg = 13,
         labels = 1,
         original_ttl = 1,
+        expiration = 1,
+        inception = 1,
+        keytag = 1,
+        signers_name = N,
+        signature = <<1>>
+    },
+    Sig = #dns_rrdata_sig{
+        type_covered = 0,
+        alg = 15,
+        labels = 0,
+        original_ttl = 0,
         expiration = 1,
         inception = 1,
         keytag = 1,
@@ -221,7 +236,31 @@ rrdata_integers_must_fit(_) ->
         {Tsig, #dns_rrdata_tsig.time, 48},
         {Tsig, #dns_rrdata_tsig.fudge, 16},
         {Tsig, #dns_rrdata_tsig.msgid, 16},
-        {Tsig, #dns_rrdata_tsig.err, 16}
+        {Tsig, #dns_rrdata_tsig.err, 16},
+        {#dns_rrdata_nid{preference = 1, node_id = <<1:64>>}, #dns_rrdata_nid.preference, 16},
+        {#dns_rrdata_l32{preference = 1, locator32 = {1, 2, 3, 4}}, #dns_rrdata_l32.preference, 16},
+        {#dns_rrdata_l64{preference = 1, locator64 = <<1:64>>}, #dns_rrdata_l64.preference, 16},
+        {#dns_rrdata_lp{preference = 1, fqdn = N}, #dns_rrdata_lp.preference, 16},
+        {
+            #dns_rrdata_amtrelay{
+                precedence = 1, discovery_optional = false, relay_type = 3, relay = N
+            },
+            #dns_rrdata_amtrelay.precedence,
+            8
+        },
+        {
+            #dns_rrdata_hip{alg = 1, hit = <<1>>, public_key = <<1>>, rendezvous_servers = []},
+            #dns_rrdata_hip.alg,
+            8
+        },
+        {Sig, #dns_rrdata_sig.type_covered, 16},
+        {Sig, #dns_rrdata_sig.alg, 8},
+        {Sig, #dns_rrdata_sig.labels, 8},
+        {Sig, #dns_rrdata_sig.original_ttl, 32},
+        {Sig, #dns_rrdata_sig.expiration, 32},
+        {Sig, #dns_rrdata_sig.inception, 32},
+        {Sig, #dns_rrdata_sig.keytag, 16},
+        {#dns_rrdata_px{preference = 1, map822 = N, mapx400 = N}, #dns_rrdata_px.preference, 16}
     ],
     [
         begin
@@ -239,11 +278,19 @@ rrdata_addresses_must_fit(_) ->
     Ipseckey = fun(Gateway) ->
         #dns_rrdata_ipseckey{precedence = 1, alg = 1, gateway = Gateway, public_key = <<1>>}
     end,
+    Amtrelay = fun(RelayType, Relay) ->
+        #dns_rrdata_amtrelay{
+            precedence = 1, discovery_optional = false, relay_type = RelayType, relay = Relay
+        }
+    end,
     Fits = [
         #dns_rrdata_a{ip = {255, 255, 255, 255}},
         #dns_rrdata_aaaa{ip = {65535, 0, 0, 0, 0, 0, 0, 65535}},
         Ipseckey({255, 0, 0, 255}),
-        Ipseckey({65535, 0, 0, 0, 0, 0, 0, 65535})
+        Ipseckey({65535, 0, 0, 0, 0, 0, 0, 65535}),
+        #dns_rrdata_l32{preference = 1, locator32 = {255, 255, 255, 255}},
+        Amtrelay(1, {255, 255, 255, 255}),
+        Amtrelay(2, {65535, 0, 0, 0, 0, 0, 0, 65535})
     ],
     DoNotFit = [
         #dns_rrdata_a{ip = {256, 0, 0, 0}},
@@ -251,7 +298,10 @@ rrdata_addresses_must_fit(_) ->
         #dns_rrdata_aaaa{ip = {65536, 0, 0, 0, 0, 0, 0, 1}},
         #dns_rrdata_aaaa{ip = {0, 0, 0, 0, 0, 0, 0, -1}},
         Ipseckey({256, 0, 0, 1}),
-        Ipseckey({0, 0, 0, 0, 0, 0, 0, 65536})
+        Ipseckey({0, 0, 0, 0, 0, 0, 0, 65536}),
+        #dns_rrdata_l32{preference = 1, locator32 = {256, 0, 0, 0}},
+        Amtrelay(1, {256, 0, 0, 0}),
+        Amtrelay(2, {0, 0, 0, 0, 0, 0, 0, 65536})
     ],
     [?assert(dns_check:rrdata(D), D) || D <- Fits],
     [?assertNot(dns_check:rrdata(D), D) || D <- DoNotFit].
@@ -415,11 +465,19 @@ rrdata_names_must_fit(_) ->
     Records = fun(N) ->
         [
             #dns_rrdata_afsdb{subtype = 1, hostname = N},
+            #dns_rrdata_amtrelay{
+                precedence = 1, discovery_optional = false, relay_type = 3, relay = N
+            },
             #dns_rrdata_cname{dname = N},
             #dns_rrdata_dname{dname = N},
+            #dns_rrdata_hip{alg = 1, hit = <<1>>, public_key = <<1>>, rendezvous_servers = [N]},
+            #dns_rrdata_hip{
+                alg = 1, hit = <<1>>, public_key = <<1>>, rendezvous_servers = [<<"example">>, N]
+            },
             #dns_rrdata_dsync{rrtype = 1, scheme = 1, port = 1, target = N},
             #dns_rrdata_ipseckey{precedence = 1, alg = 1, gateway = N, public_key = <<1>>},
             #dns_rrdata_kx{preference = 1, exchange = N},
+            #dns_rrdata_lp{preference = 1, fqdn = N},
             #dns_rrdata_mb{madname = N},
             #dns_rrdata_mg{madname = N},
             #dns_rrdata_minfo{rmailbx = N, emailbx = <<"example">>},
@@ -438,6 +496,8 @@ rrdata_names_must_fit(_) ->
             #dns_rrdata_nsec{next_dname = N, types = []},
             #dns_rrdata_nxt{dname = N, types = []},
             #dns_rrdata_ptr{dname = N},
+            #dns_rrdata_px{preference = 1, map822 = N, mapx400 = <<"example">>},
+            #dns_rrdata_px{preference = 1, map822 = <<"example">>, mapx400 = N},
             #dns_rrdata_rp{mbox = N, txt = <<"example">>},
             #dns_rrdata_rp{mbox = <<"example">>, txt = N},
             #dns_rrdata_rrsig{
@@ -452,6 +512,17 @@ rrdata_names_must_fit(_) ->
                 signature = <<1>>
             },
             #dns_rrdata_rt{preference = 1, host = N},
+            #dns_rrdata_sig{
+                type_covered = 0,
+                alg = 15,
+                labels = 0,
+                original_ttl = 0,
+                expiration = 1,
+                inception = 1,
+                keytag = 1,
+                signers_name = N,
+                signature = <<1>>
+            },
             #dns_rrdata_soa{
                 mname = N,
                 rname = <<"example">>,
@@ -480,6 +551,89 @@ rrdata_names_must_fit(_) ->
     end,
     [?assert(dns_check:rrdata(D), D) || D <- Records(Ok)],
     [?assertNot(dns_check:rrdata(D), D) || N <- Names, D <- Records(N)].
+
+%% RFC6742§2.1, §2.3: the NodeID and the Locator64 are 64 bits, no more, no less.
+%% The encoder writes the binary as it is under an RDLENGTH of 10, so a value of
+%% another size would leave the record's length wrong.
+ilnp_64_bit_values_must_be_8_bytes(_) ->
+    Records = fun(Value) ->
+        [
+            #dns_rrdata_nid{preference = 1, node_id = Value},
+            #dns_rrdata_l64{preference = 1, locator64 = Value}
+        ]
+    end,
+    [?assert(dns_check:rrdata(D), D) || D <- Records(<<1:64>>)],
+    [?assertNot(dns_check:rrdata(D), D) || V <- [<<1:56>>, <<1:72>>, <<>>], D <- Records(V)].
+
+%% RFC8777§4.2.3, §4.2.4: the relay type says what the relay holds, and the encoder
+%% writes the relay by its type: a type 0 record carries no relay at all, so one
+%% that holds a name would lose it, and only types 0 to 3 are defined.
+amtrelay_relay_must_match_its_type(_) ->
+    Amtrelay = fun(RelayType, Relay) ->
+        #dns_rrdata_amtrelay{
+            precedence = 1, discovery_optional = true, relay_type = RelayType, relay = Relay
+        }
+    end,
+    V4 = {192, 0, 2, 1},
+    V6 = {16#2001, 16#db8, 0, 0, 0, 0, 0, 1},
+    Name = <<"relay.example">>,
+    Fits = [Amtrelay(0, <<>>), Amtrelay(1, V4), Amtrelay(2, V6), Amtrelay(3, Name)],
+    DoNotFit = [
+        Amtrelay(0, Name),
+        Amtrelay(0, V4),
+        Amtrelay(1, V6),
+        Amtrelay(1, Name),
+        Amtrelay(2, V4),
+        Amtrelay(2, Name),
+        Amtrelay(3, V4),
+        Amtrelay(3, V6),
+        Amtrelay(4, <<>>),
+        Amtrelay(-1, <<>>),
+        (Amtrelay(0, <<>>))#dns_rrdata_amtrelay{discovery_optional = 1}
+    ],
+    [?assert(dns_check:rrdata(D), D) || D <- Fits],
+    [?assertNot(dns_check:rrdata(D), D) || D <- DoNotFit].
+
+%% RFC9886§5.1, §5.2: HHIT and BRID hold CBOR with mandatory fields, and the
+%% decoder refuses RDATA of zero length for every type it knows, so an empty one
+%% would go out and not come back.
+drip_data_must_not_be_empty(_) ->
+    [
+        ?assert(dns_check:rrdata(D), D)
+     || D <- [#dns_rrdata_hhit{data = <<0>>}, #dns_rrdata_brid{data = <<0>>}]
+    ],
+    [
+        ?assertNot(dns_check:rrdata(D), D)
+     || D <- [
+            #dns_rrdata_hhit{data = <<>>},
+            #dns_rrdata_brid{data = <<>>},
+            #dns_rrdata_hhit{data = [<<0>>]},
+            #dns_rrdata_brid{data = undefined}
+        ]
+    ].
+
+%% RFC8005§5: the HIT and the public key are REQUIRED, and the HIT's length is
+%% one octet, so a HIT of 256 bytes would go out with a length of 0
+hip_hit_and_key_must_fit(_) ->
+    Hip = fun(HIT, PublicKey, Servers) ->
+        #dns_rrdata_hip{alg = 2, hit = HIT, public_key = PublicKey, rendezvous_servers = Servers}
+    end,
+    Fits = [
+        Hip(<<1>>, <<1>>, []),
+        Hip(binary:copy(<<1>>, 255), <<1>>, [<<"rvs.example">>]),
+        Hip(<<1:128>>, binary:copy(<<1>>, 1000), [<<"rvs1.example">>, <<"rvs2.example">>])
+    ],
+    DoNotFit = [
+        Hip(<<>>, <<1>>, []),
+        Hip(binary:copy(<<1>>, 256), <<1>>, []),
+        Hip(<<1>>, <<>>, []),
+        Hip(<<1>>, <<1>>, <<"rvs.example">>),
+        Hip(<<1>>, <<1>>, undefined),
+        Hip(undefined, <<1>>, []),
+        Hip(<<1>>, binary:copy(<<1>>, 65532), [])
+    ],
+    [?assert(dns_check:rrdata(D), D) || D <- Fits],
+    [?assertNot(dns_check:rrdata(D), D) || D <- DoNotFit].
 
 %% RFC2181§8: a TTL is 31 bits, since one with the top bit set is read as zero.
 %% Type and class are 16 bits, and the owner name has to be one the wire can hold.

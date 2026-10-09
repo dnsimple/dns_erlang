@@ -13,6 +13,7 @@
 -export([header/1, rr/1, rrdata/1, rrdata/2, query/1, optrr/1, opt/1]).
 
 -define(IS_UINT(Bits, X), (is_integer(X) andalso 0 =< X andalso X < (1 bsl Bits))).
+-define(IS_NONEMPTY_BIN(X), (is_binary(X) andalso <<>> =/= X)).
 %% RFC1035§3.2.1: RDLENGTH is 16 bits, as is every length written inside RDATA,
 %% so an RDATA that fits RDLENGTH also fits each of those
 -define(MAX_RDLENGTH, 16#FFFF).
@@ -102,6 +103,13 @@ fits(#dns_rrdata_aaaa{ip = IP}) ->
     inet:is_ipv6_address(IP);
 fits(#dns_rrdata_afsdb{subtype = Subtype}) ->
     ?IS_UINT(16, Subtype);
+fits(#dns_rrdata_amtrelay{
+    precedence = Precedence, discovery_optional = D, relay_type = RelayType, relay = Relay
+}) ->
+    ?IS_UINT(8, Precedence) andalso is_boolean(D) andalso relay_fits(RelayType, Relay);
+%% RFC9886§5.2: the BRID data is CBOR, and RDATA of zero length would not decode
+fits(#dns_rrdata_brid{data = Data}) ->
+    ?IS_NONEMPTY_BIN(Data);
 fits(#dns_rrdata_caa{flags = Flags, tag = Tag}) ->
     ?IS_UINT(8, Flags) andalso byte_size(Tag) =< ?MAX_STRING;
 fits(#dns_rrdata_cdnskey{flags = Flags, protocol = Protocol, alg = Alg}) ->
@@ -124,6 +132,14 @@ fits(#dns_rrdata_eui48{address = Address}) ->
     6 =:= byte_size(Address);
 fits(#dns_rrdata_eui64{address = Address}) ->
     8 =:= byte_size(Address);
+%% RFC9886§5.1: the HHIT data is CBOR, and RDATA of zero length would not decode
+fits(#dns_rrdata_hhit{data = Data}) ->
+    ?IS_NONEMPTY_BIN(Data);
+%% RFC8005§5: the HIT and the public key are REQUIRED, and the HIT's length is
+%% written in 8 bits
+fits(#dns_rrdata_hip{alg = Alg, hit = HIT, public_key = PublicKey, rendezvous_servers = Servers}) ->
+    ?IS_UINT(8, Alg) andalso ?IS_NONEMPTY_BIN(HIT) andalso ?IS_UINT(8, byte_size(HIT)) andalso
+        ?IS_NONEMPTY_BIN(PublicKey) andalso is_list(Servers);
 %% RFC1035§3.3.2: CPU and OS are one <character-string> each, and the encoder
 %% splits a longer one into several, leaving more than two
 fits(#dns_rrdata_hinfo{cpu = CPU, os = OS}) ->
@@ -139,14 +155,23 @@ fits(#dns_rrdata_key{
         ?IS_UINT(4, Sig) andalso ?IS_UINT(8, Protocol) andalso ?IS_UINT(8, Alg);
 fits(#dns_rrdata_kx{preference = Pref}) ->
     ?IS_UINT(16, Pref);
+%% RFC6742§2.2: a Locator32 is spelled as an A record's address
+fits(#dns_rrdata_l32{preference = Pref, locator32 = Locator32}) ->
+    ?IS_UINT(16, Pref) andalso inet:is_ipv4_address(Locator32);
+fits(#dns_rrdata_l64{preference = Pref, locator64 = Locator64}) ->
+    ?IS_UINT(16, Pref) andalso 8 =:= byte_size(Locator64);
 fits(#dns_rrdata_loc{lat = Lat, lon = Lon, alt = Alt}) ->
     ?IS_UINT(32, Lat + ?LOC_REFERENCE_POINT) andalso
         ?IS_UINT(32, Lon + ?LOC_REFERENCE_POINT) andalso
         ?IS_UINT(32, Alt + ?LOC_ALTITUDE_BASE);
+fits(#dns_rrdata_lp{preference = Pref}) ->
+    ?IS_UINT(16, Pref);
 fits(#dns_rrdata_mx{preference = Pref}) ->
     ?IS_UINT(16, Pref);
 fits(#dns_rrdata_naptr{order = Order, preference = Pref}) ->
     ?IS_UINT(16, Order) andalso ?IS_UINT(16, Pref);
+fits(#dns_rrdata_nid{preference = Pref, node_id = NodeID}) ->
+    ?IS_UINT(16, Pref) andalso 8 =:= byte_size(NodeID);
 fits(#dns_rrdata_nsec{types = Types}) ->
     types_fit(Types);
 fits(#dns_rrdata_nsec3{
@@ -160,6 +185,8 @@ fits(#dns_rrdata_nsec3param{
 }) ->
     ?IS_UINT(8, HashAlg) andalso ?IS_UINT(8, Flags) andalso ?IS_UINT(16, Iterations) andalso
         byte_size(Salt) =< ?MAX_STRING;
+fits(#dns_rrdata_px{preference = Pref}) ->
+    ?IS_UINT(16, Pref);
 fits(#dns_rrdata_rrsig{
     type_covered = TypeCovered,
     alg = Alg,
@@ -172,6 +199,9 @@ fits(#dns_rrdata_rrsig{
     ?IS_UINT(16, TypeCovered) andalso ?IS_UINT(8, Alg) andalso ?IS_UINT(8, Labels) andalso
         ?IS_UINT(32, OriginalTTL) andalso ?IS_UINT(32, Expiration) andalso
         ?IS_UINT(32, Inception) andalso ?IS_UINT(16, KeyTag);
+%% SIG's RDATA is RRSIG's, field for field
+fits(#dns_rrdata_sig{} = Sig) ->
+    fits(dns_encode:sig_to_rrsig(Sig));
 fits(#dns_rrdata_rt{preference = Pref}) ->
     ?IS_UINT(16, Pref);
 fits(#dns_rrdata_smimea{usage = Usage, selector = Selector, matching_type = MatchingType}) ->
@@ -239,6 +269,15 @@ types_fit(Types) ->
 gateway_fits({_, _, _, _} = IP) -> inet:is_ipv4_address(IP);
 gateway_fits({_, _, _, _, _, _, _, _} = IP) -> inet:is_ipv6_address(IP);
 gateway_fits(Name) -> is_binary(Name).
+
+%% RFC8777§4.2.4: the relay is empty, an IPv4 or IPv6 address, or a domain name, as
+%% its type announces. The encoder writes no relay for type 0, whatever the field
+%% holds, so a type 0 relay must be empty.
+-spec relay_fits(dynamic(), dynamic()) -> boolean().
+relay_fits(0, Relay) -> Relay =:= <<>>;
+relay_fits(1, Relay) -> inet:is_ipv4_address(Relay);
+relay_fits(2, Relay) -> inet:is_ipv6_address(Relay);
+relay_fits(RelayType, Relay) -> RelayType =:= 3 andalso is_binary(Relay).
 
 %% RFC9460§2.2: keys, ports and mandatory keys are 16 bits and hints are
 %% addresses. The encoder skips a hint that is not an address tuple.

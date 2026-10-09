@@ -31,6 +31,13 @@ groups() ->
             test_nsec3_salt,
             test_ipseckey_gateway,
             test_records_that_do_not_fit_rejected,
+            test_ilnp_records,
+            test_amtrelay_records,
+            test_drip_records,
+            test_hip_record,
+            test_sig_record,
+            test_px_record,
+            test_opaque_rrdata_of_decoded_types,
             test_error_cases,
             test_edge_cases
         ]}
@@ -1143,6 +1150,340 @@ test_records_that_do_not_fit_rejected(_Config) ->
             MsgWith(~"anc", 65536)
         ]
     ].
+
+test_ilnp_records(_Config) ->
+    %% RFC 6742: the 64-bit NodeID and Locator64 are hex like the EUI64 address,
+    %% the Locator32 is a dotted quad like the A record's address
+    Nid = #dns_rr{
+        name = ~"host1.example.com",
+        type = ?DNS_TYPE_NID,
+        ttl = 3600,
+        data = #dns_rrdata_nid{
+            preference = 10, node_id = <<16#0014:16, 16#4fff:16, 16#ff20:16, 16#ee64:16>>
+        }
+    },
+    ?assertMatch(
+        #{~"data" := #{~"preference" := 10, ~"node_id" := ~"00144FFFFF20EE64"}},
+        assert_transcode(Nid)
+    ),
+    L32 = #dns_rr{
+        name = ~"host1.example.com",
+        type = ?DNS_TYPE_L32,
+        ttl = 3600,
+        data = #dns_rrdata_l32{preference = 10, locator32 = {10, 1, 2, 0}}
+    },
+    ?assertMatch(
+        #{~"data" := #{~"preference" := 10, ~"locator32" := ~"10.1.2.0"}},
+        assert_transcode(L32)
+    ),
+    L64 = #dns_rr{
+        name = ~"host1.example.com",
+        type = ?DNS_TYPE_L64,
+        ttl = 3600,
+        data = #dns_rrdata_l64{
+            preference = 10, locator64 = <<16#2001:16, 16#0db8:16, 16#1140:16, 16#1000:16>>
+        }
+    },
+    ?assertMatch(
+        #{~"data" := #{~"preference" := 10, ~"locator64" := ~"20010DB811401000"}},
+        assert_transcode(L64)
+    ),
+    Lp = #dns_rr{
+        name = ~"host1.example.com",
+        type = ?DNS_TYPE_LP,
+        ttl = 3600,
+        data = #dns_rrdata_lp{preference = 10, fqdn = ~"l64-subnet1.example.com"}
+    },
+    ?assertMatch(
+        #{~"data" := #{~"preference" := 10, ~"fqdn" := ~"l64-subnet1.example.com"}},
+        assert_transcode(Lp)
+    ),
+    %% Strict IPv4, as for the A record: leading zeros are rejected
+    ?assertError(
+        {invalid_ip, _},
+        dns_json:from_map(#{
+            ~"name" => ~"host1.example.com",
+            ~"type" => ~"L32",
+            ~"ttl" => 3600,
+            ~"data" => #{~"preference" => 10, ~"locator32" => ~"10.1.02.0"}
+        })
+    ),
+    %% A NodeID or Locator64 of other than 8 bytes, or a preference past 16 bits, is
+    %% refused when it is loaded rather than when a response carrying it is encoded
+    Rr = fun(Type, Data) ->
+        #{~"name" => ~"host1.example.com", ~"type" => Type, ~"ttl" => 3600, ~"data" => Data}
+    end,
+    [
+        ?assertError({invalid_record, _}, dns_json:from_map(M), M)
+     || M <- [
+            Rr(~"NID", #{~"preference" => 10, ~"node_id" => ~"0014"}),
+            Rr(~"NID", #{~"preference" => 10, ~"node_id" => ~"00144FFFFF20EE6401"}),
+            Rr(~"NID", #{~"preference" => 65536, ~"node_id" => ~"00144FFFFF20EE64"}),
+            Rr(~"L64", #{~"preference" => 10, ~"locator64" => ~"20010DB8"}),
+            Rr(~"L64", #{~"preference" => 10, ~"locator64" => ~"20010DB81140100000"}),
+            Rr(~"L32", #{~"preference" => -1, ~"locator32" => ~"10.1.2.0"}),
+            Rr(~"LP", #{~"preference" => 65536, ~"fqdn" => ~"l64-subnet1.example.com"})
+        ]
+    ].
+
+test_amtrelay_records(_Config) ->
+    %% RFC 8777: the relay is an address string for relay types 1 and 2, a name for
+    %% type 3, and empty for type 0
+    Rr = fun(RelayType, Relay) ->
+        #dns_rr{
+            name = ~"12.100.51.198.in-addr.arpa",
+            type = ?DNS_TYPE_AMTRELAY,
+            ttl = 3600,
+            data = #dns_rrdata_amtrelay{
+                precedence = 10, discovery_optional = true, relay_type = RelayType, relay = Relay
+            }
+        }
+    end,
+    [
+        ?assertMatch(
+            #{
+                ~"data" := #{
+                    ~"precedence" := 10,
+                    ~"discovery_optional" := true,
+                    ~"relay_type" := RelayType,
+                    ~"relay" := Json
+                }
+            },
+            assert_transcode(Rr(RelayType, Relay)),
+            RelayType
+        )
+     || {RelayType, Relay, Json} <- [
+            {0, <<>>, <<>>},
+            {1, {203, 0, 113, 15}, ~"203.0.113.15"},
+            {2, {16#2001, 16#db8, 0, 0, 0, 0, 0, 16#15}, ~"2001:db8::15"},
+            {3, ~"amtrelays.example.com", ~"amtrelays.example.com"}
+        ]
+    ],
+    %% A relay that is not what its type announces, an undefined relay type, a
+    %% D-bit that is not a boolean or a precedence past 8 bits is refused on load
+    Map = fun(Data) ->
+        #{
+            ~"name" => ~"12.100.51.198.in-addr.arpa",
+            ~"type" => ~"AMTRELAY",
+            ~"ttl" => 3600,
+            ~"data" => maps:merge(
+                #{
+                    ~"precedence" => 10,
+                    ~"discovery_optional" => false,
+                    ~"relay_type" => 1,
+                    ~"relay" => ~"203.0.113.15"
+                },
+                Data
+            )
+        }
+    end,
+    ?assertMatch(#dns_rr{}, dns_json:from_map(Map(#{}))),
+    [
+        ?assertError({invalid_record, _}, dns_json:from_map(Map(Data)), Data)
+     || Data <- [
+            #{~"relay_type" => 2},
+            #{~"relay_type" => 0},
+            #{~"relay" => ~"relay.example.com"},
+            #{~"relay" => ~"203.0.113"},
+            #{~"relay_type" => 0, ~"relay" => ~"."},
+            #{~"relay_type" => 4, ~"relay" => <<>>},
+            #{~"discovery_optional" => 1},
+            #{~"precedence" => 256}
+        ]
+    ],
+    %% A type 3 relay is a name even when it reads like an address
+    ?assertMatch(
+        #dns_rr{data = #dns_rrdata_amtrelay{relay = ~"203.0.113.15"}},
+        dns_json:from_map(Map(#{~"relay_type" => 3}))
+    ).
+
+test_drip_records(_Config) ->
+    %% RFC 9886: the HHIT and BRID CBOR data is base64, as OPENPGPKEY's data is
+    Rr = fun(Type, Data) ->
+        #dns_rr{name = ~"det.example", type = Type, ttl = 3600, data = Data}
+    end,
+    ?assertMatch(
+        #{~"type" := ~"HHIT", ~"data" := #{~"data" := ~"gxJgQA=="}},
+        assert_transcode(Rr(?DNS_TYPE_HHIT, #dns_rrdata_hhit{data = <<16#83, 18, 16#60, 16#40>>}))
+    ),
+    ?assertMatch(
+        #{~"type" := ~"BRID", ~"data" := #{~"data" := ~"oQAA"}},
+        assert_transcode(Rr(?DNS_TYPE_BRID, #dns_rrdata_brid{data = <<16#a1, 0, 0>>}))
+    ),
+    %% No data at all is refused on load, since it would not decode
+    [
+        ?assertError(
+            {invalid_record, _},
+            dns_json:from_map(#{
+                ~"name" => ~"det.example", ~"type" => Type, ~"ttl" => 3600, ~"data" => Data
+            }),
+            {Type, Data}
+        )
+     || Type <- [~"HHIT", ~"BRID"], Data <- [#{~"data" => <<>>}, #{}]
+    ].
+
+test_hip_record(_Config) ->
+    %% RFC 8005: the HIT is hex and the public key base64, as in zone files
+    Hip = #dns_rr{
+        name = ~"www.example.com",
+        type = ?DNS_TYPE_HIP,
+        ttl = 3600,
+        data = #dns_rrdata_hip{
+            alg = 2,
+            hit = <<16#200100107B1A74DF365639CC39F1D578:128>>,
+            public_key = <<3, 1, 0, 1>>,
+            rendezvous_servers = [~"rvs1.example.com", ~"rvs2.example.com"]
+        }
+    },
+    ?assertMatch(
+        #{
+            ~"data" := #{
+                ~"alg" := 2,
+                ~"hit" := ~"200100107B1A74DF365639CC39F1D578",
+                ~"public_key" := ~"AwEAAQ==",
+                ~"rendezvous_servers" := [~"rvs1.example.com", ~"rvs2.example.com"]
+            }
+        },
+        assert_transcode(Hip)
+    ),
+    assert_transcode(Hip#dns_rr{data = (Hip#dns_rr.data)#dns_rrdata_hip{rendezvous_servers = []}}),
+    %% An empty HIT or key, servers that are not a list of names, or an algorithm past
+    %% 8 bits, is refused on load
+    Map = fun(Data) ->
+        #{
+            ~"name" => ~"www.example.com",
+            ~"type" => ~"HIP",
+            ~"ttl" => 3600,
+            ~"data" => maps:merge(
+                #{
+                    ~"alg" => 2,
+                    ~"hit" => ~"20010010",
+                    ~"public_key" => ~"AwEAAQ==",
+                    ~"rendezvous_servers" => []
+                },
+                Data
+            )
+        }
+    end,
+    ?assertMatch(#dns_rr{}, dns_json:from_map(Map(#{}))),
+    [
+        ?assertError({invalid_record, _}, dns_json:from_map(Map(Data)), Data)
+     || Data <- [
+            #{~"hit" => <<>>},
+            #{~"public_key" => <<>>},
+            #{~"rendezvous_servers" => ~"rvs.example.com"},
+            #{~"rendezvous_servers" => [1]},
+            #{~"alg" => 256}
+        ]
+    ].
+
+test_sig_record(_Config) ->
+    %% RFC 2535 §4.1, RFC 2931: as RRSIG, the signature in base64, here a SIG(0)
+    Sig0 = #dns_rr{
+        name = <<>>,
+        type = ?DNS_TYPE_SIG,
+        class = ?DNS_CLASS_ANY,
+        ttl = 0,
+        data = #dns_rrdata_sig{
+            type_covered = 0,
+            alg = ?DNS_ALG_ED25519,
+            labels = 0,
+            original_ttl = 0,
+            expiration = 1700000300,
+            inception = 1700000000,
+            keytag = 12345,
+            signers_name = ~"host.example.com",
+            signature = <<0, 1, 2, 3>>
+        }
+    },
+    ?assertMatch(
+        #{
+            ~"type" := ~"SIG",
+            ~"class" := ~"ANY",
+            ~"data" := #{
+                ~"type_covered" := 0,
+                ~"keytag" := 12345,
+                ~"signers_name" := ~"host.example.com",
+                ~"signature" := ~"AAECAw=="
+            }
+        },
+        assert_transcode(Sig0)
+    ),
+    Map = dns_json:to_map(Sig0),
+    [
+        ?assertError(
+            {invalid_record, _},
+            dns_json:from_map(Map#{~"data" := maps:merge(maps:get(~"data", Map), Data)}),
+            Data
+        )
+     || Data <- [
+            #{~"type_covered" => 65536},
+            #{~"alg" => 256},
+            #{~"expiration" => 1 bsl 32},
+            #{~"signers_name" => binary:copy(~"a", 64)}
+        ]
+    ].
+
+test_px_record(_Config) ->
+    %% RFC 2163: a preference and two names
+    Px = #dns_rr{
+        name = ~"*.net2.it",
+        type = ?DNS_TYPE_PX,
+        ttl = 3600,
+        data = #dns_rrdata_px{
+            preference = 10, map822 = ~"net2.it", mapx400 = ~"PRMD-net2.ADMD-p400.C-it"
+        }
+    },
+    ?assertMatch(
+        #{
+            ~"data" := #{
+                ~"preference" := 10,
+                ~"map822" := ~"net2.it",
+                ~"mapx400" := ~"PRMD-net2.ADMD-p400.C-it"
+            }
+        },
+        assert_transcode(Px)
+    ),
+    Map = dns_json:to_map(Px),
+    [
+        ?assertError(
+            {invalid_record, _},
+            dns_json:from_map(Map#{~"data" := maps:merge(maps:get(~"data", Map), Data)}),
+            Data
+        )
+     || Data <- [
+            #{~"preference" => 65536},
+            #{~"map822" => binary:copy(~"a", 64)},
+            #{~"mapx400" => 1}
+        ]
+    ].
+
+test_opaque_rrdata_of_decoded_types(_Config) ->
+    %% RDATA the decoder leaves opaque for a type it decodes, such as an AMTRELAY
+    %% with an undefined relay type or a HIP with an empty HIT, is a lone base64
+    %% data key, and loads back as the same binary
+    [
+        ?assertMatch(
+            #{~"data" := #{~"data" := _} = Data} when map_size(Data) =:= 1,
+            assert_transcode(#dns_rr{name = ~"example.com", type = Type, ttl = 3600, data = Bin}),
+            Type
+        )
+     || {Type, Bin} <- [
+            {?DNS_TYPE_AMTRELAY, <<10, 4, 1, 2>>},
+            {?DNS_TYPE_HIP, <<0, 2, 0, 1, 5>>},
+            {?DNS_TYPE_A, <<1, 2, 3>>}
+        ]
+    ],
+    %% A type whose record has a data field takes it as that field
+    ?assertMatch(
+        #dns_rr{data = #dns_rrdata_hhit{data = <<1, 2, 3>>}},
+        dns_json:from_map(#{
+            ~"name" => ~"example.com",
+            ~"type" => ~"HHIT",
+            ~"ttl" => 3600,
+            ~"data" => #{~"data" => base64:encode(<<1, 2, 3>>)}
+        })
+    ).
 
 test_error_cases(_Config) ->
     %% Test invalid map format (empty map)

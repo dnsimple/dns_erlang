@@ -141,6 +141,10 @@ RTYPE_SSHFP    = SSHFP
 RTYPE_TLSA     = TLSA
 RTYPE_EUI48    = EUI48
 RTYPE_EUI64    = EUI64
+RTYPE_NID      = NID
+RTYPE_L32      = L32
+RTYPE_L64      = L64
+RTYPE_LP       = LP
 RTYPE_SMIMEA   = SMIMEA
 RTYPE_CSYNC    = CSYNC
 RTYPE_URI      = URI
@@ -177,6 +181,12 @@ RTYPE_HTTPS    = HTTPS
 RTYPE_DLV      = DLV
 RTYPE_IPSECKEY = IPSECKEY
 RTYPE_ZONEMD   = ZONEMD
+RTYPE_AMTRELAY = AMTRELAY
+RTYPE_HHIT     = HHIT
+RTYPE_HIP      = HIP
+RTYPE_SIG      = SIG
+RTYPE_PX       = PX
+RTYPE_BRID     = BRID
 RTYPE_ALIAS    = ALIAS
 
 % Quoted strings for TXT records, etc.
@@ -228,6 +238,7 @@ Rules.
 {RTYPE_NSEC3PARAM} : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_OPENPGPKEY} : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_IPSECKEY}   : {token, {rtype, TokenLine, TokenChars}}.
+{RTYPE_AMTRELAY}   : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_CDNSKEY}    : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_DNSKEY}     : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_SMIMEA}     : {token, {rtype, TokenLine, TokenChars}}.
@@ -252,6 +263,8 @@ Rules.
 {RTYPE_EUI64}      : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_AAAA}       : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_TLSA}       : {token, {rtype, TokenLine, TokenChars}}.
+{RTYPE_HHIT}       : {token, {rtype, TokenLine, TokenChars}}.
+{RTYPE_BRID}       : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_NSEC}       : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_SVCB}       : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_CERT}       : {token, {rtype, TokenLine, TokenChars}}.
@@ -262,11 +275,16 @@ Rules.
 {RTYPE_CAA}        : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_CDS}        : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_KEY}        : {token, {rtype, TokenLine, TokenChars}}.
+{RTYPE_HIP}        : {token, {rtype, TokenLine, TokenChars}}.
+{RTYPE_SIG}        : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_LOC}        : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_NXT}        : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_DLV}        : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_SPF}        : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_URI}        : {token, {rtype, TokenLine, TokenChars}}.
+{RTYPE_NID}        : {token, {rtype, TokenLine, TokenChars}}.
+{RTYPE_L32}        : {token, {rtype, TokenLine, TokenChars}}.
+{RTYPE_L64}        : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_NS}         : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_MX}         : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_DS}         : {token, {rtype, TokenLine, TokenChars}}.
@@ -276,6 +294,8 @@ Rules.
 {RTYPE_MB}         : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_MG}         : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_MR}         : {token, {rtype, TokenLine, TokenChars}}.
+{RTYPE_LP}         : {token, {rtype, TokenLine, TokenChars}}.
+{RTYPE_PX}         : {token, {rtype, TokenLine, TokenChars}}.
 {RTYPE_A}          : {token, {rtype, TokenLine, TokenChars}}.
 
 % Quoted strings

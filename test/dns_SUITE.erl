@@ -87,7 +87,26 @@ groups() ->
             loc_precision_range,
             naptr_invalid_utf8_regexp_rejected,
             empty_rdata_rejected_for_known_types,
-            rdata_names_compressed_only_for_rfc1035_types
+            ilnp_wire_known_answers,
+            ilnp_class_independent,
+            ilnp_wrong_size_refused,
+            lp_fqdn_not_compressed,
+            rdata_names_compressed_only_for_rfc1035_types,
+            amtrelay_wire_known_answers,
+            amtrelay_class_independent,
+            amtrelay_relay_not_compressed,
+            amtrelay_undefined_relay_type_kept_opaque,
+            amtrelay_bad_relay_name_formerr,
+            drip_data_carried_as_is,
+            hip_wire_known_answer,
+            hip_hit_too_long_refused,
+            hip_rendezvous_servers_not_compressed,
+            hip_without_hit_or_key_kept_opaque,
+            sig_wire_known_answer,
+            sig_read_and_written_as_rrsig,
+            sig0_ends_the_additional_section,
+            px_wire_known_answer,
+            px_bound_to_class_in
         ]},
         {svcb, [parallel], [
             decode_encode_svcb_params,
@@ -1115,6 +1134,57 @@ decode_encode_rrdata(_) ->
         {?DNS_TYPE_EUI64, #dns_rrdata_eui64{
             address = <<16#00, 16#1A, 16#2B, 16#3C, 16#4D, 16#5E, 16#6F, 16#70>>
         }},
+        {?DNS_TYPE_NID, #dns_rrdata_nid{
+            preference = 10, node_id = <<16#0014:16, 16#4fff:16, 16#ff20:16, 16#ee64:16>>
+        }},
+        {?DNS_TYPE_L32, #dns_rrdata_l32{preference = 10, locator32 = {10, 1, 2, 0}}},
+        {?DNS_TYPE_L64, #dns_rrdata_l64{
+            preference = 10, locator64 = <<16#2001:16, 16#0db8:16, 16#1140:16, 16#1000:16>>
+        }},
+        {?DNS_TYPE_LP, #dns_rrdata_lp{preference = 10, fqdn = <<"l64-subnet1.example.com">>}},
+        {?DNS_TYPE_AMTRELAY, #dns_rrdata_amtrelay{
+            precedence = 0, discovery_optional = false, relay_type = 0, relay = <<>>
+        }},
+        {?DNS_TYPE_HHIT, #dns_rrdata_hhit{data = <<16#83, 18, 16#60, 16#40>>}},
+        {?DNS_TYPE_BRID, #dns_rrdata_brid{data = <<16#a1, 0, 0>>}},
+        {?DNS_TYPE_HIP, #dns_rrdata_hip{
+            alg = 2, hit = <<1:128>>, public_key = <<3, 1, 0, 1, 2>>, rendezvous_servers = []
+        }},
+        {?DNS_TYPE_PX, #dns_rrdata_px{
+            preference = 10, map822 = <<"net2.it">>, mapx400 = <<"PRMD-net2.ADMD-p400.C-it">>
+        }},
+        {?DNS_TYPE_SIG, #dns_rrdata_sig{
+            type_covered = ?DNS_TYPE_A,
+            alg = ?DNS_ALG_RSASHA1,
+            labels = 2,
+            original_ttl = 3600,
+            expiration = 1700000000,
+            inception = 1690000000,
+            keytag = 2642,
+            signers_name = <<"example.com">>,
+            signature = <<1, 2, 3, 4>>
+        }},
+        {?DNS_TYPE_HIP, #dns_rrdata_hip{
+            alg = 3,
+            hit = <<1:128>>,
+            public_key = <<4, 5>>,
+            rendezvous_servers = [<<"rvs1.example.com">>, <<"rvs2.example.com">>]
+        }},
+        {?DNS_TYPE_AMTRELAY, #dns_rrdata_amtrelay{
+            precedence = 10, discovery_optional = false, relay_type = 1, relay = {203, 0, 113, 15}
+        }},
+        {?DNS_TYPE_AMTRELAY, #dns_rrdata_amtrelay{
+            precedence = 10,
+            discovery_optional = true,
+            relay_type = 2,
+            relay = {16#2001, 16#db8, 0, 0, 0, 0, 0, 16#15}
+        }},
+        {?DNS_TYPE_AMTRELAY, #dns_rrdata_amtrelay{
+            precedence = 128,
+            discovery_optional = true,
+            relay_type = 3,
+            relay = <<"amtrelays.example.com">>
+        }},
         %% Bitmap windows whose first present type is a multiple of 256
         %% (URI = 256, CAA = 257; TA = 32768, DLV = 32769): regression for the
         %% off-by-one that encoded [256, 257] as the bitmap for {256, 258}
@@ -1251,6 +1321,8 @@ empty_rdata_rejected_for_known_types(_) ->
         ?DNS_TYPE_A,
         ?DNS_TYPE_AAAA,
         ?DNS_TYPE_AFSDB,
+        ?DNS_TYPE_AMTRELAY,
+        ?DNS_TYPE_BRID,
         ?DNS_TYPE_CAA,
         ?DNS_TYPE_CDNSKEY,
         ?DNS_TYPE_CDS,
@@ -1265,18 +1337,24 @@ empty_rdata_rejected_for_known_types(_) ->
         ?DNS_TYPE_DSYNC,
         ?DNS_TYPE_EUI48,
         ?DNS_TYPE_EUI64,
+        ?DNS_TYPE_HHIT,
         ?DNS_TYPE_HINFO,
+        ?DNS_TYPE_HIP,
         ?DNS_TYPE_HTTPS,
         ?DNS_TYPE_IPSECKEY,
         ?DNS_TYPE_KEY,
         ?DNS_TYPE_KX,
+        ?DNS_TYPE_L32,
+        ?DNS_TYPE_L64,
         ?DNS_TYPE_LOC,
+        ?DNS_TYPE_LP,
         ?DNS_TYPE_MB,
         ?DNS_TYPE_MG,
         ?DNS_TYPE_MINFO,
         ?DNS_TYPE_MR,
         ?DNS_TYPE_MX,
         ?DNS_TYPE_NAPTR,
+        ?DNS_TYPE_NID,
         ?DNS_TYPE_NS,
         ?DNS_TYPE_NSEC,
         ?DNS_TYPE_NSEC3,
@@ -1284,10 +1362,12 @@ empty_rdata_rejected_for_known_types(_) ->
         ?DNS_TYPE_NXT,
         ?DNS_TYPE_OPENPGPKEY,
         ?DNS_TYPE_PTR,
+        ?DNS_TYPE_PX,
         ?DNS_TYPE_RESINFO,
         ?DNS_TYPE_RP,
         ?DNS_TYPE_RRSIG,
         ?DNS_TYPE_RT,
+        ?DNS_TYPE_SIG,
         ?DNS_TYPE_SMIMEA,
         ?DNS_TYPE_SOA,
         ?DNS_TYPE_SPF,
@@ -1301,7 +1381,7 @@ empty_rdata_rejected_for_known_types(_) ->
         ?DNS_TYPE_WALLET,
         ?DNS_TYPE_ZONEMD
     ],
-    ?assertEqual(52, length(Known)),
+    ?assertEqual(62, length(Known)),
     [
         ?assertError(
             empty_rrdata,
@@ -1738,6 +1818,110 @@ optrr_honoured_anywhere_in_additional(_) ->
     ?assertEqual([rr, tsig], Shape([ARR, TSIG])),
     ?assertNot(HasOpt(Encode([ARR], #{max_size => 512}))).
 
+%% RFC6742§2: known-answer vectors built from the examples of §2.1-§2.4. The
+%% round-trip cases cannot catch an error made in both directions alike, such as
+%% swapped fields, so these pin the bytes.
+ilnp_wire_known_answers(_) ->
+    Cases = [
+        {
+            ?DNS_TYPE_NID,
+            #dns_rrdata_nid{
+                preference = 10, node_id = <<16#0014:16, 16#4fff:16, 16#ff20:16, 16#ee64:16>>
+            },
+            <<10:16, 16#00, 16#14, 16#4f, 16#ff, 16#ff, 16#20, 16#ee, 16#64>>
+        },
+        {
+            ?DNS_TYPE_L32,
+            #dns_rrdata_l32{preference = 10, locator32 = {10, 1, 2, 0}},
+            <<10:16, 10, 1, 2, 0>>
+        },
+        {
+            ?DNS_TYPE_L64,
+            #dns_rrdata_l64{
+                preference = 10, locator64 = <<16#2001:16, 16#0db8:16, 16#1140:16, 16#1000:16>>
+            },
+            <<10:16, 16#20, 16#01, 16#0d, 16#b8, 16#11, 16#40, 16#10, 16#00>>
+        },
+        {
+            ?DNS_TYPE_LP,
+            #dns_rrdata_lp{preference = 10, fqdn = <<"l64-subnet1.example.com">>},
+            <<10:16, 11, "l64-subnet1", 7, "example", 3, "com", 0>>
+        }
+    ],
+    [
+        begin
+            ?assertEqual(Wire, dns_encode:encode_rrdata(?DNS_CLASS_IN, Data), Type),
+            ?assertEqual(Data, dns_decode:decode_rrdata(Wire, ?DNS_CLASS_IN, Type, Wire), Type)
+        end
+     || {Type, Data, Wire} <- Cases
+    ].
+
+%% RFC6742§2: "The NID RR is class independent", and likewise L32, L64 and LP.
+%% A and EUI48/EUI64 are bound to IN, so a class guard copied from them would
+%% make these records decode to opaque bytes outside IN.
+ilnp_class_independent(_) ->
+    Cases = [
+        {?DNS_TYPE_NID, #dns_rrdata_nid{preference = 1, node_id = <<1:64>>}},
+        {?DNS_TYPE_L32, #dns_rrdata_l32{preference = 1, locator32 = {192, 0, 2, 1}}},
+        {?DNS_TYPE_L64, #dns_rrdata_l64{preference = 1, locator64 = <<1:64>>}},
+        {?DNS_TYPE_LP, #dns_rrdata_lp{preference = 1, fqdn = <<"lp.example">>}}
+    ],
+    [
+        begin
+            Wire = dns_encode:encode_rrdata(Class, Data),
+            ?assertEqual(Data, dns_decode:decode_rrdata(Wire, Class, Type, Wire), {Type, Class})
+        end
+     || {Type, Data} <- Cases, Class <- [?DNS_CLASS_IN, ?DNS_CLASS_CH, ?DNS_CLASS_HS]
+    ].
+
+%% RFC6742§2.1, §2.3: a Node ID and a Locator64 are 64 bits, and RDLENGTH is
+%% written as 10 for both. One of another size is refused, as EUI64's address is,
+%% rather than written under that RDLENGTH, which would shift every record after it.
+ilnp_wrong_size_refused(_) ->
+    Cases = [
+        {?DNS_TYPE_NID, #dns_rrdata_nid{preference = 1, node_id = <<1:56>>}},
+        {?DNS_TYPE_NID, #dns_rrdata_nid{preference = 1, node_id = <<1:72>>}},
+        {?DNS_TYPE_L64, #dns_rrdata_l64{preference = 1, locator64 = <<1:56>>}},
+        {?DNS_TYPE_L64, #dns_rrdata_l64{preference = 1, locator64 = <<1:72>>}}
+    ],
+    Name = <<"host.example.com">>,
+    A = #dns_rr{
+        name = Name, type = ?DNS_TYPE_A, ttl = 60, data = #dns_rrdata_a{ip = {192, 0, 2, 1}}
+    },
+    [
+        begin
+            ?assertError(function_clause, dns_encode:encode_rrdata(?DNS_CLASS_IN, Data), Type),
+            RR = #dns_rr{name = Name, type = Type, ttl = 60, data = Data},
+            Msg = #dns_message{qr = true, anc = 2, answers = [RR, A]},
+            ?assertError(function_clause, dns:encode_message(Msg), Type)
+        end
+     || {Type, Data} <- Cases
+    ].
+
+%% RFC6742§2.4: "A sender MUST NOT use DNS name compression on the FQDN field
+%% when transmitting an LP RR", even when it shares a suffix with a name already
+%% in the message.
+lp_fqdn_not_compressed(_) ->
+    Owner = <<"host1.example.com">>,
+    FQDN = <<"l64-subnet1.example.com">>,
+    Msg = #dns_message{
+        qr = true,
+        qc = 1,
+        anc = 1,
+        questions = [#dns_query{name = Owner, type = ?DNS_TYPE_LP}],
+        answers = [
+            #dns_rr{
+                name = Owner,
+                type = ?DNS_TYPE_LP,
+                ttl = 3600,
+                data = #dns_rrdata_lp{preference = 10, fqdn = FQDN}
+            }
+        ]
+    },
+    Encoded = dns:encode_message(Msg),
+    ?assertMatch({_, _}, binary:match(Encoded, <<10:16, (dns_domain:to_wire(FQDN))/binary>>)),
+    ?assertEqual(Msg, dns:decode_message(Encoded)).
+
 %% RFC3597§4: "servers MUST NOT compress domain names embedded in the RDATA of
 %% types that are class-specific or not well-known", the well-known ones being
 %% RFC 1035's, and RFC6672§2.5 says so of DNAME's target. A receiver that does not
@@ -1777,6 +1961,340 @@ rdata_names_compressed_only_for_rfc1035_types(_) ->
             Encode(?DNS_TYPE_MX, #dns_rrdata_mx{preference = 10, exchange = Name}), NameWire
         )
     ).
+%% RFC8777§4.3.2: the examples' RFC 3597 forms, as corrected by erratum 6218: the
+%% published IPv6 relay read 2001:db8::15 as decimal, and the domain name lacked
+%% its root label.
+amtrelay_wire_known_answers(_) ->
+    Cases = [
+        {
+            #dns_rrdata_amtrelay{
+                precedence = 10,
+                discovery_optional = false,
+                relay_type = 1,
+                relay = {203, 0, 113, 15}
+            },
+            <<16#0a, 16#01, 16#cb, 16#00, 16#71, 16#0f>>
+        },
+        {
+            #dns_rrdata_amtrelay{
+                precedence = 10,
+                discovery_optional = false,
+                relay_type = 2,
+                relay = {16#2001, 16#db8, 0, 0, 0, 0, 0, 16#15}
+            },
+            <<16#0a, 16#02, 16#20010db8000000000000000000000015:128>>
+        },
+        {
+            #dns_rrdata_amtrelay{
+                precedence = 128,
+                discovery_optional = true,
+                relay_type = 3,
+                relay = <<"amtrelays.example.com">>
+            },
+            <<16#80, 16#83, 9, "amtrelays", 7, "example", 3, "com", 0>>
+        },
+        %% §4.2.4: relay type 0 has an empty relay
+        {
+            #dns_rrdata_amtrelay{
+                precedence = 255, discovery_optional = true, relay_type = 0, relay = <<>>
+            },
+            <<16#ff, 16#80>>
+        }
+    ],
+    [
+        begin
+            ?assertEqual(Wire, dns_encode:encode_rrdata(?DNS_CLASS_IN, Data)),
+            ?assertEqual(
+                Data, dns_decode:decode_rrdata(Wire, ?DNS_CLASS_IN, ?DNS_TYPE_AMTRELAY, Wire)
+            )
+        end
+     || {Data, Wire} <- Cases
+    ].
+
+%% RFC8777§4.1: "The AMTRELAY RR is class independent", so unlike A and AAAA its
+%% addresses decode in any class
+amtrelay_class_independent(_) ->
+    Cases = [
+        #dns_rrdata_amtrelay{
+            precedence = 1, discovery_optional = false, relay_type = 1, relay = {192, 0, 2, 1}
+        },
+        #dns_rrdata_amtrelay{
+            precedence = 1,
+            discovery_optional = false,
+            relay_type = 2,
+            relay = {16#2001, 16#db8, 0, 0, 0, 0, 0, 1}
+        },
+        #dns_rrdata_amtrelay{
+            precedence = 1, discovery_optional = false, relay_type = 3, relay = <<"relay.example">>
+        }
+    ],
+    [
+        begin
+            Wire = dns_encode:encode_rrdata(Class, Data),
+            ?assertEqual(
+                Data, dns_decode:decode_rrdata(Wire, Class, ?DNS_TYPE_AMTRELAY, Wire), Class
+            )
+        end
+     || Data <- Cases, Class <- [?DNS_CLASS_IN, ?DNS_CLASS_CH, ?DNS_CLASS_HS]
+    ].
+
+%% RFC8777§4.2.3: the relay's domain name "MUST NOT be compressed", even when it
+%% shares a suffix with a name already in the message
+amtrelay_relay_not_compressed(_) ->
+    Owner = <<"12.100.51.198.in-addr.arpa">>,
+    Relay = <<"relay.51.198.in-addr.arpa">>,
+    Msg = #dns_message{
+        qr = true,
+        qc = 1,
+        anc = 1,
+        questions = [#dns_query{name = Owner, type = ?DNS_TYPE_AMTRELAY}],
+        answers = [
+            #dns_rr{
+                name = Owner,
+                type = ?DNS_TYPE_AMTRELAY,
+                ttl = 3600,
+                data = #dns_rrdata_amtrelay{
+                    precedence = 10, discovery_optional = false, relay_type = 3, relay = Relay
+                }
+            }
+        ]
+    },
+    Encoded = dns:encode_message(Msg),
+    ?assertMatch({_, _}, binary:match(Encoded, <<10, 3, (dns_domain:to_wire(Relay))/binary>>)),
+    ?assertEqual(Msg, dns:decode_message(Encoded)).
+
+%% RFC8777§4.2.3: relay types past 3 are undefined, and a receiver "SHOULD NOT"
+%% use them, so their RDATA stays opaque, as does a relay of the wrong length for
+%% its type
+amtrelay_undefined_relay_type_kept_opaque(_) ->
+    [
+        ?assertEqual(Wire, dns_decode:decode_rrdata(Wire, ?DNS_CLASS_IN, ?DNS_TYPE_AMTRELAY, Wire))
+     || Wire <- [
+            <<10, 4, 1, 2, 3, 4>>,
+            <<10, 16#ff, 1, 2>>,
+            <<10, 0, 0>>,
+            <<10, 1, 203, 0, 113>>,
+            <<10, 1, 203, 0, 113, 15, 0>>,
+            <<10, 2, 16#20010db8:32>>,
+            <<10>>
+        ]
+    ].
+
+%% RFC8777§4.2.4: a type 3 relay is a domain name, so one that is missing, cut short
+%% or followed by more bytes makes the message a FORMERR, as a bad name in any other
+%% RDATA does, rather than stay opaque as a relay of the wrong length for types 0-2
+amtrelay_bad_relay_name_formerr(_) ->
+    Owner = dns_domain:to_wire(<<"x.example">>),
+    [
+        ?assertMatch(
+            {formerr, _, _},
+            dns:decode_message(
+                <<1:16, 16#8400:16, 0:16, 1:16, 0:16, 0:16, Owner/binary, ?DNS_TYPE_AMTRELAY:16,
+                    ?DNS_CLASS_IN:16, 60:32, (byte_size(RData)):16, RData/binary>>
+            ),
+            RData
+        )
+     || RData <- [<<10, 3>>, <<10, 3, 3, "ab">>, <<10, 3, 0, 1>>]
+    ].
+
+%% RFC9886§5.1, §5.2: the HHIT and BRID RDATA is the CBOR data and nothing else,
+%% whatever its contents and in any class, as BIND has these types
+drip_data_carried_as_is(_) ->
+    Data = <<16#83, 18, 16#69, "3ff8 000a", 16#41, 0>>,
+    [
+        begin
+            Wire = dns_encode:encode_rrdata(Class, Record),
+            ?assertEqual(Data, Wire, {Type, Class}),
+            ?assertEqual(Record, dns_decode:decode_rrdata(Wire, Class, Type, Wire), {Type, Class})
+        end
+     || {Type, Record} <- [
+            {?DNS_TYPE_HHIT, #dns_rrdata_hhit{data = Data}},
+            {?DNS_TYPE_BRID, #dns_rrdata_brid{data = Data}}
+        ],
+        Class <- [?DNS_CLASS_IN, ?DNS_CLASS_CH, ?DNS_CLASS_HS]
+    ].
+
+%% RFC8005§5, §7: the example HIP with two rendezvous servers, in any class. The
+%% HIT length comes first, then the algorithm, then the 16-bit key length.
+hip_wire_known_answer(_) ->
+    HIT = <<16#200100107B1A74DF365639CC39F1D578:128>>,
+    PublicKey = base64:decode(
+        <<"AwEAAbdxyhNuSutc5EMzxTs9LBPCIkOFH8cIvM4p9+LrV4e19WzK00+CI6zBCQTdtWsuxKbWIy87UOoJTwkUs7lBu+Upr1gsNrut79ryra+bSRGQb1slImA8YVJyuIDsj7kwzG7jnERNqnWxZ48AWkskmdHaVDP4BcelrTI3rMXdXF5D">>
+    ),
+    Data = #dns_rrdata_hip{
+        alg = 2,
+        hit = HIT,
+        public_key = PublicKey,
+        rendezvous_servers = [<<"rvs1.example.com">>, <<"rvs2.example.com">>]
+    },
+    Wire =
+        <<16, 2, 132:16, HIT/binary, PublicKey/binary, 4, "rvs1", 7, "example", 3, "com", 0, 4,
+            "rvs2", 7, "example", 3, "com", 0>>,
+    [
+        begin
+            ?assertEqual(Wire, dns_encode:encode_rrdata(Class, Data), Class),
+            ?assertEqual(Data, dns_decode:decode_rrdata(Wire, Class, ?DNS_TYPE_HIP, Wire), Class)
+        end
+     || Class <- [?DNS_CLASS_IN, ?DNS_CLASS_CH, ?DNS_CLASS_HS]
+    ].
+
+%% RFC8005§5: the HIT length is 8 bits. A HIT of 256 bytes is refused, rather than
+%% written with a length of 0 that this decoder keeps opaque and others reject.
+hip_hit_too_long_refused(_) ->
+    Max = #dns_rrdata_hip{
+        alg = 2, hit = binary:copy(<<1>>, 255), public_key = <<9>>, rendezvous_servers = []
+    },
+    <<255, 2, 1:16, _:255/binary, 9>> = dns_encode:encode_rrdata(?DNS_CLASS_IN, Max),
+    TooLong = Max#dns_rrdata_hip{hit = binary:copy(<<1>>, 256)},
+    ?assertError(function_clause, dns_encode:encode_rrdata(?DNS_CLASS_IN, TooLong)).
+
+%% RFC8005§5.6: the rendezvous servers' names "MUST NOT be compressed", even when
+%% they share a suffix with a name already in the message
+hip_rendezvous_servers_not_compressed(_) ->
+    Owner = <<"www.example.com">>,
+    Servers = [<<"rvs1.example.com">>, <<"rvs2.example.com">>],
+    Msg = #dns_message{
+        qr = true,
+        qc = 1,
+        anc = 1,
+        questions = [#dns_query{name = Owner, type = ?DNS_TYPE_HIP}],
+        answers = [
+            #dns_rr{
+                name = Owner,
+                type = ?DNS_TYPE_HIP,
+                ttl = 3600,
+                data = #dns_rrdata_hip{
+                    alg = 2, hit = <<1:128>>, public_key = <<1, 2, 3>>, rendezvous_servers = Servers
+                }
+            }
+        ]
+    },
+    Encoded = dns:encode_message(Msg),
+    ServersWire = iolist_to_binary([dns_domain:to_wire(S) || S <- Servers]),
+    ?assertMatch({_, _}, binary:match(Encoded, <<1, 2, 3, ServersWire/binary>>)),
+    ?assertEqual(Msg, dns:decode_message(Encoded)).
+
+%% RFC8005§5: the HIT and the public key are REQUIRED, so a HIP RDATA with either
+%% empty, or with lengths past its end, stays opaque, as BIND refuses it
+hip_without_hit_or_key_kept_opaque(_) ->
+    [
+        ?assertEqual(Wire, dns_decode:decode_rrdata(Wire, ?DNS_CLASS_IN, ?DNS_TYPE_HIP, Wire))
+     || Wire <- [
+            <<0, 2, 1:16, 7>>,
+            <<1, 2, 0:16, 7>>,
+            <<0, 2, 0:16>>,
+            <<2, 2, 1:16, 7, 7>>,
+            <<1, 2, 2:16, 7, 7>>,
+            <<1, 2>>
+        ]
+    ].
+
+%% RFC2535§4.1: the RDATA RRSIG took over, field by field, with the signer's name
+%% uncompressed
+sig_wire_known_answer(_) ->
+    Data = #dns_rrdata_sig{
+        type_covered = ?DNS_TYPE_A,
+        alg = ?DNS_ALG_RSASHA1,
+        labels = 2,
+        original_ttl = 3600,
+        expiration = 16#65B5F180,
+        inception = 16#65A3B000,
+        keytag = 2642,
+        signers_name = <<"example.com">>,
+        signature = <<1, 2, 3, 4>>
+    },
+    Wire =
+        <<?DNS_TYPE_A:16, ?DNS_ALG_RSASHA1, 2, 3600:32, 16#65B5F180:32, 16#65A3B000:32, 2642:16, 7,
+            "example", 3, "com", 0, 1, 2, 3, 4>>,
+    ?assertEqual(Wire, dns_encode:encode_rrdata(?DNS_CLASS_IN, Data)),
+    ?assertEqual(Data, dns_decode:decode_rrdata(Wire, ?DNS_CLASS_IN, ?DNS_TYPE_SIG, Wire)).
+
+%% SIG is read and written as an RRSIG retagged, which needs its record to have
+%% RRSIG's fields in the same order, with the same defaults, and so stays opaque
+%% wherever RRSIG does
+sig_read_and_written_as_rrsig(_) ->
+    ?assertEqual(record_info(fields, dns_rrdata_rrsig), record_info(fields, dns_rrdata_sig)),
+    ?assertEqual(setelement(1, #dns_rrdata_rrsig{}, dns_rrdata_sig), #dns_rrdata_sig{}),
+    Short = <<?DNS_TYPE_A:16, 5, 2, 3600:32>>,
+    ?assertEqual(Short, dns_decode:decode_rrdata(Short, ?DNS_CLASS_IN, ?DNS_TYPE_RRSIG, Short)),
+    ?assertEqual(Short, dns_decode:decode_rrdata(Short, ?DNS_CLASS_IN, ?DNS_TYPE_SIG, Short)).
+
+%% RFC2931§3: a SIG(0) covers type 0 and goes last in the additional section, with
+%% the root as owner, class ANY and TTL 0. It is a SIG like any other on the wire,
+%% and RFC3597§4 keeps its signer's name, which shares a suffix with the question,
+%% uncompressed.
+sig0_ends_the_additional_section(_) ->
+    Sig0 = #dns_rr{
+        name = <<>>,
+        type = ?DNS_TYPE_SIG,
+        class = ?DNS_CLASS_ANY,
+        ttl = 0,
+        data = #dns_rrdata_sig{
+            type_covered = 0,
+            alg = ?DNS_ALG_ED25519,
+            labels = 0,
+            original_ttl = 0,
+            expiration = 1700000300,
+            inception = 1700000000,
+            keytag = 12345,
+            signers_name = <<"host.example.com">>,
+            signature = binary:copy(<<7>>, 64)
+        }
+    },
+    Msg = #dns_message{
+        qc = 1,
+        adc = 2,
+        questions = [#dns_query{name = <<"www.example.com">>, type = ?DNS_TYPE_A}],
+        additional = [
+            #dns_rr{
+                name = <<"www.example.com">>,
+                type = ?DNS_TYPE_A,
+                ttl = 60,
+                data = #dns_rrdata_a{ip = {192, 0, 2, 1}}
+            },
+            Sig0
+        ]
+    },
+    Encoded = dns:encode_message(Msg),
+    ?assertMatch(
+        {_, _},
+        binary:match(Encoded, <<12345:16, (dns_domain:to_wire(<<"host.example.com">>))/binary>>)
+    ),
+    ?assertEqual(Msg, dns:decode_message(Encoded)).
+
+%% RFC2163§4.1: an example PX, as the preference and two names. RFC3597§4 keeps
+%% PX's names uncompressed, as it is not one of RFC 1035's types, even where they
+%% repeat the owner.
+px_wire_known_answer(_) ->
+    Data = #dns_rrdata_px{
+        preference = 10, map822 = <<"ab.net2.it">>, mapx400 = <<"O-ab.PRMD-net2.ADMDb.C-it">>
+    },
+    Wire =
+        <<10:16, 2, "ab", 4, "net2", 2, "it", 0, 4, "O-ab", 9, "PRMD-net2", 5, "ADMDb", 4, "C-it",
+            0>>,
+    ?assertEqual(Wire, dns_encode:encode_rrdata(?DNS_CLASS_IN, Data)),
+    ?assertEqual(Data, dns_decode:decode_rrdata(Wire, ?DNS_CLASS_IN, ?DNS_TYPE_PX, Wire)),
+    Msg = #dns_message{
+        qr = true,
+        qc = 1,
+        anc = 1,
+        questions = [#dns_query{name = <<"ab.net2.it">>, type = ?DNS_TYPE_PX}],
+        answers = [#dns_rr{name = <<"ab.net2.it">>, type = ?DNS_TYPE_PX, ttl = 60, data = Data}]
+    },
+    Encoded = dns:encode_message(Msg),
+    ?assertMatch({_, _}, binary:match(Encoded, Wire)),
+    ?assertEqual(Msg, dns:decode_message(Encoded)).
+
+%% RFC2163§4: PX is defined for class IN, so elsewhere its RDATA stays opaque, as
+%% an A record's does
+px_bound_to_class_in(_) ->
+    Data = #dns_rrdata_px{preference = 10, map822 = <<"net2.it">>, mapx400 = <<"C-it">>},
+    Wire = dns_encode:encode_rrdata(?DNS_CLASS_IN, Data),
+    ?assertEqual(Data, dns_decode:decode_rrdata(Wire, ?DNS_CLASS_NONE, ?DNS_TYPE_PX, Wire)),
+    [
+        ?assertEqual(Wire, dns_decode:decode_rrdata(Wire, Class, ?DNS_TYPE_PX, Wire), Class)
+     || Class <- [?DNS_CLASS_CH, ?DNS_CLASS_HS]
+    ].
 
 %% RFC3403§4.1: the NAPTR REGEXP field is UTF-8. unicode:characters_to_binary/2
 %% reports invalid input by returning an error tuple instead of raising, so the

@@ -120,6 +120,10 @@ type_name(_) ->
         ?DNS_TYPE_UID_NUMBER,
         ?DNS_TYPE_GID_NUMBER,
         ?DNS_TYPE_UNSPEC_NUMBER,
+        ?DNS_TYPE_NID_NUMBER,
+        ?DNS_TYPE_L32_NUMBER,
+        ?DNS_TYPE_L64_NUMBER,
+        ?DNS_TYPE_LP_NUMBER,
         ?DNS_TYPE_EUI48_NUMBER,
         ?DNS_TYPE_EUI64_NUMBER,
         ?DNS_TYPE_NXNAME_NUMBER,
@@ -131,9 +135,12 @@ type_name(_) ->
         ?DNS_TYPE_MAILA_NUMBER,
         ?DNS_TYPE_ANY_NUMBER,
         ?DNS_TYPE_URI_NUMBER,
+        ?DNS_TYPE_AMTRELAY_NUMBER,
         ?DNS_TYPE_RESINFO_NUMBER,
         ?DNS_TYPE_CSYNC_NUMBER,
         ?DNS_TYPE_DSYNC_NUMBER,
+        ?DNS_TYPE_HHIT_NUMBER,
+        ?DNS_TYPE_BRID_NUMBER,
         ?DNS_TYPE_WALLET_NUMBER,
         ?DNS_TYPE_DLV_NUMBER
         | Types

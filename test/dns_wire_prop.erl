@@ -250,6 +250,8 @@ decodable_type() ->
         ?DNS_TYPE_A,
         ?DNS_TYPE_AAAA,
         ?DNS_TYPE_AFSDB,
+        ?DNS_TYPE_AMTRELAY,
+        ?DNS_TYPE_BRID,
         ?DNS_TYPE_CAA,
         ?DNS_TYPE_CDNSKEY,
         ?DNS_TYPE_CDS,
@@ -264,18 +266,24 @@ decodable_type() ->
         ?DNS_TYPE_DSYNC,
         ?DNS_TYPE_EUI48,
         ?DNS_TYPE_EUI64,
+        ?DNS_TYPE_HHIT,
         ?DNS_TYPE_HINFO,
+        ?DNS_TYPE_HIP,
         ?DNS_TYPE_HTTPS,
         ?DNS_TYPE_IPSECKEY,
         ?DNS_TYPE_KEY,
         ?DNS_TYPE_KX,
+        ?DNS_TYPE_L32,
+        ?DNS_TYPE_L64,
         ?DNS_TYPE_LOC,
+        ?DNS_TYPE_LP,
         ?DNS_TYPE_MB,
         ?DNS_TYPE_MG,
         ?DNS_TYPE_MINFO,
         ?DNS_TYPE_MR,
         ?DNS_TYPE_MX,
         ?DNS_TYPE_NAPTR,
+        ?DNS_TYPE_NID,
         ?DNS_TYPE_NS,
         ?DNS_TYPE_NSEC,
         ?DNS_TYPE_NSEC3,
@@ -283,10 +291,12 @@ decodable_type() ->
         ?DNS_TYPE_NXT,
         ?DNS_TYPE_OPENPGPKEY,
         ?DNS_TYPE_PTR,
+        ?DNS_TYPE_PX,
         ?DNS_TYPE_RESINFO,
         ?DNS_TYPE_RP,
         ?DNS_TYPE_RRSIG,
         ?DNS_TYPE_RT,
+        ?DNS_TYPE_SIG,
         ?DNS_TYPE_SMIMEA,
         ?DNS_TYPE_SOA,
         ?DNS_TYPE_SPF,
@@ -373,7 +383,14 @@ rrdata() ->
         ),
         ?LET(B, bin(6, 6), #dns_rrdata_eui48{address = B}),
         ?LET(B, bin(8, 8), #dns_rrdata_eui64{address = B}),
+        ?LET(D, bin(1, 40), #dns_rrdata_hhit{data = D}),
+        ?LET(D, bin(1, 40), #dns_rrdata_brid{data = D}),
         ?LET({C, O}, {bin(0, 20), bin(0, 20)}, #dns_rrdata_hinfo{cpu = C, os = O}),
+        ?LET(
+            {A, H, K, S},
+            {u8(), bin(1, 20), bin(1, 40), ?LET(N, integer(0, 3), vector(N, dname()))},
+            #dns_rrdata_hip{alg = A, hit = H, public_key = K, rendezvous_servers = S}
+        ),
         ?LET({P, T}, {u16(), dname()}, #dns_rrdata_https{
             svc_priority = P,
             target_name = T,
@@ -398,6 +415,14 @@ rrdata() ->
             }
         ),
         ?LET({P, E}, {u16(), dname()}, #dns_rrdata_kx{preference = P, exchange = E}),
+        ?LET({P, L}, {u16(), ip4()}, #dns_rrdata_l32{preference = P, locator32 = L}),
+        ?LET({P, L}, {u16(), bin(8, 8)}, #dns_rrdata_l64{preference = P, locator64 = L}),
+        ?LET({P, F}, {u16(), dname()}, #dns_rrdata_lp{preference = P, fqdn = F}),
+        ?LET(
+            {P, D, {T, R}},
+            {u8(), boolean(), oneof([{0, <<>>}, {1, ip4()}, {2, ip6()}, {3, dname()}])},
+            #dns_rrdata_amtrelay{precedence = P, discovery_optional = D, relay_type = T, relay = R}
+        ),
         ?LET(
             {Sz, H, V, La, Lo, Al},
             {
@@ -427,6 +452,7 @@ rrdata() ->
                 replacement = Rp
             }
         ),
+        ?LET({P, N}, {u16(), bin(8, 8)}, #dns_rrdata_nid{preference = P, node_id = N}),
         ?LET(N, dname(), #dns_rrdata_ns{dname = N}),
         ?LET({N, T}, {dname(), types()}, #dns_rrdata_nsec{next_dname = N, types = T}),
         ?LET(
@@ -449,6 +475,11 @@ rrdata() ->
         ?LET({N, T}, {dname(), nxt_types()}, #dns_rrdata_nxt{dname = N, types = T}),
         ?LET(B, bin(1, 20), #dns_rrdata_openpgpkey{data = B}),
         ?LET(N, dname(), #dns_rrdata_ptr{dname = N}),
+        ?LET(
+            {P, M, X}, {u16(), dname(), dname()}, #dns_rrdata_px{
+                preference = P, map822 = M, mapx400 = X
+            }
+        ),
         ?LET(S, charstrings(), #dns_rrdata_resinfo{data = S}),
         ?LET({M, T}, {dname(), dname()}, #dns_rrdata_rp{mbox = M, txt = T}),
         ?LET(
@@ -467,6 +498,21 @@ rrdata() ->
             }
         ),
         ?LET({P, H}, {u16(), dname()}, #dns_rrdata_rt{preference = P, host = H}),
+        ?LET(
+            {Tc, A, L, Ot, Ex, In, K, Sn, Sg},
+            {u16(), u8(), u8(), u32(), u32(), u32(), u16(), dname(), bin(0, 20)},
+            #dns_rrdata_sig{
+                type_covered = Tc,
+                alg = A,
+                labels = L,
+                original_ttl = Ot,
+                expiration = Ex,
+                inception = In,
+                keytag = K,
+                signers_name = Sn,
+                signature = Sg
+            }
+        ),
         ?LET(
             {U, S, M, C},
             {u8(), u8(), u8(), bin(1, 20)},
@@ -586,6 +632,8 @@ uri() ->
 type_of(#dns_rrdata_a{}) -> ?DNS_TYPE_A;
 type_of(#dns_rrdata_aaaa{}) -> ?DNS_TYPE_AAAA;
 type_of(#dns_rrdata_afsdb{}) -> ?DNS_TYPE_AFSDB;
+type_of(#dns_rrdata_amtrelay{}) -> ?DNS_TYPE_AMTRELAY;
+type_of(#dns_rrdata_brid{}) -> ?DNS_TYPE_BRID;
 type_of(#dns_rrdata_caa{}) -> ?DNS_TYPE_CAA;
 type_of(#dns_rrdata_cdnskey{}) -> ?DNS_TYPE_CDNSKEY;
 type_of(#dns_rrdata_cds{}) -> ?DNS_TYPE_CDS;
@@ -600,18 +648,24 @@ type_of(#dns_rrdata_ds{}) -> ?DNS_TYPE_DS;
 type_of(#dns_rrdata_dsync{}) -> ?DNS_TYPE_DSYNC;
 type_of(#dns_rrdata_eui48{}) -> ?DNS_TYPE_EUI48;
 type_of(#dns_rrdata_eui64{}) -> ?DNS_TYPE_EUI64;
+type_of(#dns_rrdata_hhit{}) -> ?DNS_TYPE_HHIT;
 type_of(#dns_rrdata_hinfo{}) -> ?DNS_TYPE_HINFO;
+type_of(#dns_rrdata_hip{}) -> ?DNS_TYPE_HIP;
 type_of(#dns_rrdata_https{}) -> ?DNS_TYPE_HTTPS;
 type_of(#dns_rrdata_ipseckey{}) -> ?DNS_TYPE_IPSECKEY;
 type_of(#dns_rrdata_key{}) -> ?DNS_TYPE_KEY;
 type_of(#dns_rrdata_kx{}) -> ?DNS_TYPE_KX;
+type_of(#dns_rrdata_l32{}) -> ?DNS_TYPE_L32;
+type_of(#dns_rrdata_l64{}) -> ?DNS_TYPE_L64;
 type_of(#dns_rrdata_loc{}) -> ?DNS_TYPE_LOC;
+type_of(#dns_rrdata_lp{}) -> ?DNS_TYPE_LP;
 type_of(#dns_rrdata_mb{}) -> ?DNS_TYPE_MB;
 type_of(#dns_rrdata_mg{}) -> ?DNS_TYPE_MG;
 type_of(#dns_rrdata_minfo{}) -> ?DNS_TYPE_MINFO;
 type_of(#dns_rrdata_mr{}) -> ?DNS_TYPE_MR;
 type_of(#dns_rrdata_mx{}) -> ?DNS_TYPE_MX;
 type_of(#dns_rrdata_naptr{}) -> ?DNS_TYPE_NAPTR;
+type_of(#dns_rrdata_nid{}) -> ?DNS_TYPE_NID;
 type_of(#dns_rrdata_ns{}) -> ?DNS_TYPE_NS;
 type_of(#dns_rrdata_nsec{}) -> ?DNS_TYPE_NSEC;
 type_of(#dns_rrdata_nsec3{}) -> ?DNS_TYPE_NSEC3;
@@ -619,10 +673,12 @@ type_of(#dns_rrdata_nsec3param{}) -> ?DNS_TYPE_NSEC3PARAM;
 type_of(#dns_rrdata_nxt{}) -> ?DNS_TYPE_NXT;
 type_of(#dns_rrdata_openpgpkey{}) -> ?DNS_TYPE_OPENPGPKEY;
 type_of(#dns_rrdata_ptr{}) -> ?DNS_TYPE_PTR;
+type_of(#dns_rrdata_px{}) -> ?DNS_TYPE_PX;
 type_of(#dns_rrdata_resinfo{}) -> ?DNS_TYPE_RESINFO;
 type_of(#dns_rrdata_rp{}) -> ?DNS_TYPE_RP;
 type_of(#dns_rrdata_rrsig{}) -> ?DNS_TYPE_RRSIG;
 type_of(#dns_rrdata_rt{}) -> ?DNS_TYPE_RT;
+type_of(#dns_rrdata_sig{}) -> ?DNS_TYPE_SIG;
 type_of(#dns_rrdata_smimea{}) -> ?DNS_TYPE_SMIMEA;
 type_of(#dns_rrdata_soa{}) -> ?DNS_TYPE_SOA;
 type_of(#dns_rrdata_spf{}) -> ?DNS_TYPE_SPF;

@@ -654,6 +654,8 @@ encoding_description(base16, FieldName, _TypeStr) ->
     <<"Base16 (hex)-encoded", Suffix/binary>>;
 encoding_description(base32, _FieldName, _TypeStr) ->
     ~"Base32-encoded binary (NSEC3 hash)";
+encoding_description(ip_string, relay, _TypeStr) ->
+    ~"IP address as string for relay types 1 and 2, domain name for type 3, empty string for type 0";
 encoding_description(ip_string, _FieldName, _TypeStr) ->
     ~"IP address as string";
 encoding_description(binary, _FieldName, _TypeStr) ->
@@ -663,11 +665,13 @@ encoding_description(direct, FieldName, TypeStr) ->
     HasDname = nomatch =/= string:find(TypeStrLower, "dname"),
     HasBinary = nomatch =/= string:find(TypeStrLower, "binary"),
     HasSvcbParams = nomatch =/= string:find(TypeStrLower, "svcb_svc_params"),
+    IsList = nomatch =/= string:prefix(TypeStr, "["),
     case FieldName of
         ip ->
             ~"IP address as string";
         svc_params when HasSvcbParams ->
             ~"Map of SVCB service parameters (see [SVCB Service Parameters below](#svcb-service-parameters))";
+        _ when HasDname andalso IsList -> ~"List of domain names (dname format)";
         _ when HasDname orelse HasBinary -> ~"Binary data (dname format)";
         _ ->
             ~"Direct value"
@@ -828,6 +832,16 @@ example_value_map() ->
         dname => ~"\"example.com.\"",
         hostname => ~"\"example.com.\"",
         exchange => ~"\"mail.example.com.\"",
+        locator32 => ~"\"10.1.2.0\"",
+        node_id => ~"\"00144FFFFF20EE64\"",
+        locator64 => ~"\"20010DB811401000\"",
+        map822 => ~"\"net2.it.\"",
+        mapx400 => ~"\"PRMD-net2.ADMD-p400.C-it.\"",
+        fqdn => ~"\"l64-subnet1.example.com.\"",
+        relay_type => ~"1",
+        hit => ~"\"200100107B1A74DF365639CC39F1D578\"",
+        rendezvous_servers => ~"[\"rvs.example.com.\"]",
+        relay => ~"\"203.0.113.15\"",
         target => ~"\"target.example.com.\"",
         target_name => ~"\"target.example.com.\"",
         mname => ~"\"ns1.example.com.\"",
@@ -838,7 +852,7 @@ example_value_map() ->
 
 -spec boolean_fields() -> [field_name()].
 boolean_fields() ->
-    [qr, aa, tc, rd, ra, ad, cd, opt_out, oc].
+    [qr, aa, tc, rd, ra, ad, cd, opt_out, oc, discovery_optional].
 
 -spec list_fields() -> [field_name()].
 list_fields() ->

@@ -447,6 +447,31 @@ rdata_error_message(~"HTTPS", _RData) ->
         ~"Invalid HTTPS record: malformed priority or target",
         ~"Priority must be an integer, target must be a domain name"
     };
+rdata_error_message(TypeName, _RData) when TypeName =:= ~"NID"; TypeName =:= ~"L64" ->
+    {
+        <<"Invalid ", TypeName/binary, " record: expected a preference and a 64-bit value">>,
+        <<TypeName/binary,
+            " requires: preference and four colon-separated groups of hex digits, "
+            "without the \"::\" shorthand\n"
+            "    Example: example.com. 3600 IN ", TypeName/binary, " 10 0014:4fff:ff20:ee64">>
+    };
+rdata_error_message(~"AMTRELAY", _RData) ->
+    {
+        ~"Invalid AMTRELAY record: expected a precedence, a D-bit, a relay type and a relay",
+        ~"""
+        AMTRELAY requires: precedence (0-255), D-bit (0 or 1), relay type and relay, the relay
+        being "." for type 0, an IPv4 address for type 1, an IPv6 address for type 2 and a
+        domain name for type 3
+            Example: 12.100.51.198.in-addr.arpa. 3600 IN AMTRELAY 10 0 1 203.0.113.15
+        """
+    };
+rdata_error_message(TypeName, _RData) when TypeName =:= ~"HHIT"; TypeName =:= ~"BRID" ->
+    {
+        <<"Invalid ", TypeName/binary, " record: data must be valid base64">>,
+        <<TypeName/binary,
+            " requires: base64 CBOR data, which may be split into several pieces\n"
+            "    Example: example.com. 3600 IN ", TypeName/binary, " ( gxJpM2ZmOCAw MDBhWQEY... )">>
+    };
 rdata_error_message(TypeName, _RData) ->
     {<<"Invalid ", TypeName/binary, " record: malformed RDATA">>, undefined}.
 
@@ -995,6 +1020,21 @@ build_rdata("HINFO", RData, Ctx) ->
         _ ->
             {error, make_semantic_error({invalid_rdata, 'HINFO', RData}, Ctx)}
     end;
+build_rdata("HIP", RData, Ctx) ->
+    %% HIP format: pk-algorithm hit(hex) public-key(base64) [rendezvous-server ...], the
+    %% HIT and the key each one word (RFC 8005 §6)
+    maybe
+        [{int, Alg}, {_, HITHex}, {_, PublicKeyB64} | ServerTokens] ?= RData,
+        true ?= is_integer(Alg) andalso is_list(HITHex) andalso is_list(PublicKeyB64),
+        {ok, HIT} ?= hex_to_binary(HITHex),
+        {ok, PublicKey} ?= parse_base64_pieces([{string, PublicKeyB64}]),
+        {ok, Servers} ?= parse_domain_names(ServerTokens, Ctx),
+        {ok, #dns_rrdata_hip{
+            alg = Alg, hit = HIT, public_key = PublicKey, rendezvous_servers = Servers
+        }}
+    else
+        _ -> {error, make_rdata_error(~"HIP", RData, Ctx)}
+    end;
 build_rdata("MINFO", RData, Ctx) ->
     case RData of
         [{domain, RMailbx}, {domain, EmailBx}] when is_list(RMailbx), is_list(EmailBx) ->
@@ -1034,6 +1074,18 @@ build_rdata("RT", RData, Ctx) ->
             }};
         _ ->
             {error, make_semantic_error({invalid_rdata, 'RT', RData}, Ctx)}
+    end;
+build_rdata("PX", RData, Ctx) ->
+    %% PX format: preference map822 mapx400 (RFC 2163 §4)
+    case RData of
+        [{int, Preference}, {domain, Map822}, {domain, MapX400}] when is_integer(Preference) ->
+            {ok, #dns_rrdata_px{
+                preference = Preference,
+                map822 = resolve_name(Map822, Ctx#parse_ctx.origin),
+                mapx400 = resolve_name(MapX400, Ctx#parse_ctx.origin)
+            }};
+        _ ->
+            {error, make_rdata_error(~"PX", RData, Ctx)}
     end;
 build_rdata("KX", RData, Ctx) ->
     case RData of
@@ -1169,6 +1221,18 @@ build_rdata("OPENPGPKEY", RData, Ctx) ->
         _ ->
             {error, make_rdata_error(~"OPENPGPKEY", RData, Ctx)}
     end;
+build_rdata("HHIT", RData, Ctx) ->
+    %% HHIT format: CBOR data in base64 (RFC 9886 §5.1.1)
+    case parse_base64_pieces(RData) of
+        {ok, Data} -> {ok, #dns_rrdata_hhit{data = Data}};
+        error -> {error, make_rdata_error(~"HHIT", RData, Ctx)}
+    end;
+build_rdata("BRID", RData, Ctx) ->
+    %% BRID format: CBOR data in base64 (RFC 9886 §5.2.1)
+    case parse_base64_pieces(RData) of
+        {ok, Data} -> {ok, #dns_rrdata_brid{data = Data}};
+        error -> {error, make_rdata_error(~"BRID", RData, Ctx)}
+    end;
 build_rdata("URI", RData, Ctx) ->
     %% URI format: priority weight target
     %% RFC 7553 - The Uniform Resource Identifier (URI) DNS Resource Record
@@ -1275,6 +1339,69 @@ build_rdata("EUI64", RData, Ctx) ->
             end;
         _ ->
             {error, make_rdata_error(~"EUI64", RData, Ctx)}
+    end;
+build_rdata("NID", RData, Ctx) ->
+    %% NID format: preference node-id (RFC 6742 §2.1)
+    maybe
+        {ok, Pref, NodeID} ?= build_ilnp64(RData),
+        {ok, #dns_rrdata_nid{preference = Pref, node_id = NodeID}}
+    else
+        error -> {error, make_rdata_error(~"NID", RData, Ctx)}
+    end;
+build_rdata("L32", RData, Ctx) ->
+    %% L32 format: preference locator32, the locator spelled as an A record's address
+    %% (RFC 6742 §2.2)
+    case RData of
+        [{int, Pref}, {Kind, IP}] when
+            is_integer(Pref) andalso (Kind =:= ipv4 orelse Kind =:= domain) andalso is_list(IP)
+        ->
+            case parse_ipv4(IP) of
+                {ok, Locator32} ->
+                    {ok, #dns_rrdata_l32{preference = Pref, locator32 = Locator32}};
+                {error, _} ->
+                    {error, make_rdata_error(~"L32", RData, Ctx)}
+            end;
+        _ ->
+            {error, make_rdata_error(~"L32", RData, Ctx)}
+    end;
+build_rdata("L64", RData, Ctx) ->
+    %% L64 format: preference locator64 (RFC 6742 §2.3)
+    maybe
+        {ok, Pref, Locator64} ?= build_ilnp64(RData),
+        {ok, #dns_rrdata_l64{preference = Pref, locator64 = Locator64}}
+    else
+        error -> {error, make_rdata_error(~"L64", RData, Ctx)}
+    end;
+build_rdata("LP", RData, Ctx) ->
+    %% LP format: preference fqdn (RFC 6742 §2.4)
+    case RData of
+        [{int, Pref}, {domain, FQDN}] when is_integer(Pref), is_list(FQDN) ->
+            {ok, #dns_rrdata_lp{
+                preference = Pref,
+                fqdn = resolve_name(FQDN, Ctx#parse_ctx.origin)
+            }};
+        _ ->
+            {error, make_rdata_error(~"LP", RData, Ctx)}
+    end;
+build_rdata("AMTRELAY", RData, Ctx) ->
+    %% AMTRELAY format: precedence D-bit relay-type relay (RFC 8777 §4.3.1)
+    case RData of
+        [{int, Precedence}, {int, D}, {int, RelayType}, RelayToken] when
+            is_integer(Precedence) andalso (D =:= 0 orelse D =:= 1) andalso is_integer(RelayType)
+        ->
+            case parse_amtrelay_relay(RelayType, RelayToken, Ctx) of
+                {ok, Relay} ->
+                    {ok, #dns_rrdata_amtrelay{
+                        precedence = Precedence,
+                        discovery_optional = D =:= 1,
+                        relay_type = RelayType,
+                        relay = Relay
+                    }};
+                error ->
+                    {error, make_rdata_error(~"AMTRELAY", RData, Ctx)}
+            end;
+        _ ->
+            {error, make_rdata_error(~"AMTRELAY", RData, Ctx)}
     end;
 build_rdata("DS", RData, Ctx) ->
     %% DS format: keytag algorithm digest-type digest(hex string)
@@ -1623,6 +1750,13 @@ build_rdata("RRSIG", RData, Ctx) ->
             end;
         _ ->
             {error, make_rdata_error(~"RRSIG", RData, Ctx)}
+    end;
+build_rdata("SIG", RData, Ctx) ->
+    %% SIG format: as RRSIG's, which took it over field for field (RFC 2535 §7.2,
+    %% RFC 4034 §3.2)
+    case build_rdata("RRSIG", RData, Ctx) of
+        {ok, RRSig} -> {ok, dns_encode:rrsig_to_sig(RRSig)};
+        {error, _} -> {error, make_rdata_error(~"SIG", RData, Ctx)}
     end;
 build_rdata("NSEC", RData, Ctx) ->
     %% NSEC format: next_dname type1 type2 type3 ...
@@ -2221,6 +2355,14 @@ type_to_number("EUI48") ->
     ?DNS_TYPE_EUI48;
 type_to_number("EUI64") ->
     ?DNS_TYPE_EUI64;
+type_to_number("NID") ->
+    ?DNS_TYPE_NID;
+type_to_number("L32") ->
+    ?DNS_TYPE_L32;
+type_to_number("L64") ->
+    ?DNS_TYPE_L64;
+type_to_number("LP") ->
+    ?DNS_TYPE_LP;
 type_to_number("SPF") ->
     ?DNS_TYPE_SPF;
 type_to_number("SVCB") ->
@@ -2233,6 +2375,18 @@ type_to_number("IPSECKEY") ->
     ?DNS_TYPE_IPSECKEY;
 type_to_number("ZONEMD") ->
     ?DNS_TYPE_ZONEMD;
+type_to_number("AMTRELAY") ->
+    ?DNS_TYPE_AMTRELAY;
+type_to_number("HHIT") ->
+    ?DNS_TYPE_HHIT;
+type_to_number("HIP") ->
+    ?DNS_TYPE_HIP;
+type_to_number("SIG") ->
+    ?DNS_TYPE_SIG;
+type_to_number("PX") ->
+    ?DNS_TYPE_PX;
+type_to_number("BRID") ->
+    ?DNS_TYPE_BRID;
 %% RFC 3597 §5: a type without a mnemonic, in RDATA such as an RRSIG's type covered
 type_to_number("TYPE" ++ _ = TypeStr) ->
     type_to_number({generic_type, TypeStr});
@@ -2401,6 +2555,53 @@ concat_rdata_string_parts(Parts) ->
 eui_hex_normalize(S) when is_list(S) ->
     [C || C <- S, C =/= $-, C =/= $:, C =/= $\s].
 
+%% The RDATA of NID and L64: a preference and a NodeID or Locator64
+-spec build_ilnp64([rdata()]) -> {ok, integer(), <<_:64>>} | error.
+build_ilnp64([{int, Pref}, {domain, Value}]) when is_integer(Pref), is_list(Value) ->
+    case parse_ilnp64(Value) of
+        {ok, Bin} -> {ok, Pref, Bin};
+        error -> error
+    end;
+build_ilnp64(_RData) ->
+    error.
+
+%% RFC 6742 §2.1, §2.3: a NodeID or Locator64 is four colon-separated groups of
+%% one to four hex digits, as in an AAAA record, but never with the "::" shorthand,
+%% which would read as a 128-bit IPv6 address.
+-spec parse_ilnp64(string()) -> {ok, <<_:64>>} | error.
+parse_ilnp64(String) ->
+    maybe
+        [_, _, _, _] = Groups ?= string:split(String, ":", all),
+        true ?= lists:all(fun(G) -> 1 =< length(G) andalso length(G) =< 4 end, Groups),
+        {ok, <<_:64>> = Bin} ?= hex_to_binary([string:pad(G, 4, leading, $0) || G <- Groups]),
+        {ok, Bin}
+    else
+        _ -> error
+    end.
+
+%% Domain names, each resolved against the origin
+-spec parse_domain_names([rdata()], parse_ctx()) -> {ok, [dns:dname()]} | error.
+parse_domain_names(Tokens, Ctx) ->
+    case [Name || {domain, Name} <- Tokens] of
+        Names when length(Names) =:= length(Tokens) ->
+            {ok, [resolve_name(Name, Ctx#parse_ctx.origin) || Name <- Names]};
+        _ ->
+            error
+    end.
+
+%% RFC 9886 §5.1.1, §5.2.1: base64 that "may be divided into any number of
+%% white-space-separated substrings", which are concatenated
+-spec parse_base64_pieces([rdata()]) -> {ok, binary()} | error.
+parse_base64_pieces(RData) ->
+    maybe
+        {ok, Base64} ?= concat_rdata_string_parts(RData),
+        try
+            {ok, base64:decode(Base64)}
+        catch
+            error:_ -> error
+        end
+    end.
+
 %% Convert hexadecimal string to binary using OTP 26+ binary:decode_hex/1
 -spec hex_to_binary(binary() | string()) -> {ok, binary()} | {error, term()}.
 hex_to_binary(HexString) when is_list(HexString) ->
@@ -2413,6 +2614,28 @@ hex_to_binary(HexBin) when is_binary(HexBin) ->
         error:badarg ->
             {error, {invalid_hex_data, HexBin}}
     end.
+
+%% RFC 8777 §4.3.1: the relay is "." for relay type 0, an IPv4 or IPv6 address for
+%% types 1 and 2, and a domain name for type 3. The relay types past 3 have no
+%% presentation format; the RFC 3597 generic form still carries them.
+-spec parse_amtrelay_relay(integer(), rdata(), parse_ctx()) ->
+    {ok, <<>> | inet:ip_address() | dns:dname()} | error.
+parse_amtrelay_relay(0, {domain, "."}, _Ctx) ->
+    {ok, <<>>};
+parse_amtrelay_relay(1, {Kind, IP}, _Ctx) when Kind =:= ipv4; Kind =:= domain ->
+    case parse_ipv4(IP) of
+        {ok, Relay} -> {ok, Relay};
+        {error, _} -> error
+    end;
+parse_amtrelay_relay(2, {Kind, IP}, _Ctx) when Kind =:= ipv6; Kind =:= domain ->
+    case parse_ipv6(IP) of
+        {ok, Relay} -> {ok, Relay};
+        {error, _} -> error
+    end;
+parse_amtrelay_relay(3, {domain, Name}, Ctx) ->
+    {ok, resolve_name(Name, Ctx#parse_ctx.origin)};
+parse_amtrelay_relay(_RelayType, _RelayToken, _Ctx) ->
+    error.
 
 %% Parse IPSECKEY gateway field (can be IPv4, IPv6, domain name, or "." for none)
 -spec parse_ipseckey_gateway(rdata(), parse_ctx()) -> inet:ip_address() | dns:dname() | <<>>.

@@ -179,6 +179,50 @@ Non-RR records (message, query, OPT records) use a two-level nested map format:
 
 **Note:** This format is used within the `data` field of `dns_rr` records.
 
+### AMTRELAY (dns_rrdata_amtrelay) [RFC8777](https://datatracker.ietf.org/doc/html/rfc8777)
+
+**Format:** RRDATA fields (used within `dns_rr.data`)
+
+**Fields:**
+
+- `precedence` (`t:dns:uint8/0`): Direct value
+- `discovery_optional` (`t:boolean/0`): Direct value
+- `relay_type` (`0..3`): Direct value
+- `relay` (`<<>>` | `t:inet:ip4_address/0` | `t:inet:ip6_address/0` | `t:dns:dname/0`): IP address as string for relay types 1 and 2, domain name for type 3, empty string for type 0
+
+**Example:**
+
+```json
+{
+    "precedence": 0,
+    "discovery_optional": false,
+    "relay_type": 1,
+    "relay": "203.0.113.15"
+}
+```
+
+
+**Note:** This format is used within the `data` field of `dns_rr` records.
+
+### BRID (dns_rrdata_brid) [RFC9886](https://datatracker.ietf.org/doc/html/rfc9886)
+
+**Format:** RRDATA fields (used within `dns_rr.data`)
+
+**Fields:**
+
+- `data` (`t:binary/0`): Base64-encoded data
+
+**Example:**
+
+```json
+{
+    "data": "base64-encoded-data"
+}
+```
+
+
+**Note:** This format is used within the `data` field of `dns_rr` records.
+
 ### CAA (dns_rrdata_caa) [RFC6844](https://datatracker.ietf.org/doc/html/rfc6844)
 
 **Format:** RRDATA fields (used within `dns_rr.data`)
@@ -499,6 +543,25 @@ Non-RR records (message, query, OPT records) use a two-level nested map format:
 
 **Note:** This format is used within the `data` field of `dns_rr` records.
 
+### HHIT (dns_rrdata_hhit) [RFC9886](https://datatracker.ietf.org/doc/html/rfc9886)
+
+**Format:** RRDATA fields (used within `dns_rr.data`)
+
+**Fields:**
+
+- `data` (`t:binary/0`): Base64-encoded data
+
+**Example:**
+
+```json
+{
+    "data": "base64-encoded-data"
+}
+```
+
+
+**Note:** This format is used within the `data` field of `dns_rr` records.
+
 ### HINFO (dns_rrdata_hinfo) [RFC1035](https://datatracker.ietf.org/doc/html/rfc1035)
 
 **Format:** RRDATA fields (used within `dns_rr.data`)
@@ -514,6 +577,31 @@ Non-RR records (message, query, OPT records) use a two-level nested map format:
 {
     "cpu": "value",
     "os": "value"
+}
+```
+
+
+**Note:** This format is used within the `data` field of `dns_rr` records.
+
+### HIP (dns_rrdata_hip) [RFC8005](https://datatracker.ietf.org/doc/html/rfc8005)
+
+**Format:** RRDATA fields (used within `dns_rr.data`)
+
+**Fields:**
+
+- `alg` (`t:dns:uint8/0`): Direct value
+- `hit` (`t:binary/0`): Base16 (hex)-encoded binary
+- `public_key` (`t:binary/0`): Base64-encoded public key
+- `rendezvous_servers` ([`t:dns:dname/0`]): List of domain names (dname format)
+
+**Example:**
+
+```json
+{
+    "alg": 0,
+    "hit": "200100107B1A74DF365639CC39F1D578",
+    "public_key": "base64-encoded-data",
+    "rendezvous_servers": ["rvs.example.com."]
 }
 ```
 
@@ -620,6 +708,48 @@ Non-RR records (message, query, OPT records) use a two-level nested map format:
 
 **Note:** This format is used within the `data` field of `dns_rr` records.
 
+### L32 (dns_rrdata_l32) [RFC6742](https://datatracker.ietf.org/doc/html/rfc6742)
+
+**Format:** RRDATA fields (used within `dns_rr.data`)
+
+**Fields:**
+
+- `preference` (`t:dns:uint16/0`): Direct value
+- `locator32` (`t:inet:ip4_address/0`): IP address as string
+
+**Example:**
+
+```json
+{
+    "preference": 0,
+    "locator32": "10.1.2.0"
+}
+```
+
+
+**Note:** This format is used within the `data` field of `dns_rr` records.
+
+### L64 (dns_rrdata_l64) [RFC6742](https://datatracker.ietf.org/doc/html/rfc6742)
+
+**Format:** RRDATA fields (used within `dns_rr.data`)
+
+**Fields:**
+
+- `preference` (`t:dns:uint16/0`): Direct value
+- `locator64` (`<<_:64>>`): Base16 (hex)-encoded binary
+
+**Example:**
+
+```json
+{
+    "preference": 0,
+    "locator64": "20010DB811401000"
+}
+```
+
+
+**Note:** This format is used within the `data` field of `dns_rr` records.
+
 ### LOC (dns_rrdata_loc) [RFC1876](https://datatracker.ietf.org/doc/html/rfc1876)
 
 **Format:** RRDATA fields (used within `dns_rr.data`)
@@ -643,6 +773,27 @@ Non-RR records (message, query, OPT records) use a two-level nested map format:
     "lat": "value",
     "lon": "value",
     "alt": "value"
+}
+```
+
+
+**Note:** This format is used within the `data` field of `dns_rr` records.
+
+### LP (dns_rrdata_lp) [RFC6742](https://datatracker.ietf.org/doc/html/rfc6742)
+
+**Format:** RRDATA fields (used within `dns_rr.data`)
+
+**Fields:**
+
+- `preference` (`t:dns:uint16/0`): Direct value
+- `fqdn` (`t:dns:dname/0`): Binary data (dname format)
+
+**Example:**
+
+```json
+{
+    "preference": 0,
+    "fqdn": "l64-subnet1.example.com."
 }
 ```
 
@@ -771,6 +922,27 @@ Non-RR records (message, query, OPT records) use a two-level nested map format:
     "services": "value",
     "regexp": "value",
     "replacement": "value"
+}
+```
+
+
+**Note:** This format is used within the `data` field of `dns_rr` records.
+
+### NID (dns_rrdata_nid) [RFC6742](https://datatracker.ietf.org/doc/html/rfc6742)
+
+**Format:** RRDATA fields (used within `dns_rr.data`)
+
+**Fields:**
+
+- `preference` (`t:dns:uint16/0`): Direct value
+- `node_id` (`<<_:64>>`): Base16 (hex)-encoded binary
+
+**Example:**
+
+```json
+{
+    "preference": 0,
+    "node_id": "00144FFFFF20EE64"
 }
 ```
 
@@ -930,6 +1102,29 @@ Non-RR records (message, query, OPT records) use a two-level nested map format:
 
 **Note:** This format is used within the `data` field of `dns_rr` records.
 
+### PX (dns_rrdata_px) [RFC2163](https://datatracker.ietf.org/doc/html/rfc2163)
+
+**Format:** RRDATA fields (used within `dns_rr.data`)
+
+**Fields:**
+
+- `preference` (`t:dns:uint16/0`): Direct value
+- `map822` (`t:dns:dname/0`): Binary data (dname format)
+- `mapx400` (`t:dns:dname/0`): Binary data (dname format)
+
+**Example:**
+
+```json
+{
+    "preference": 0,
+    "map822": "net2.it.",
+    "mapx400": "PRMD-net2.ADMD-p400.C-it."
+}
+```
+
+
+**Note:** This format is used within the `data` field of `dns_rr` records.
+
 ### RESINFO (dns_rrdata_resinfo) [RFC9606](https://datatracker.ietf.org/doc/html/rfc9606)
 
 **Format:** RRDATA fields (used within `dns_rr.data`)
@@ -1020,6 +1215,41 @@ Non-RR records (message, query, OPT records) use a two-level nested map format:
 {
     "preference": 0,
     "host": "value"
+}
+```
+
+
+**Note:** This format is used within the `data` field of `dns_rr` records.
+
+### SIG (dns_rrdata_sig) [RFC2535](https://datatracker.ietf.org/doc/html/rfc2535)
+
+**Format:** RRDATA fields (used within `dns_rr.data`)
+
+**Fields:**
+
+- `type_covered` (`t:dns:uint16/0`): Direct value
+- `alg` (`t:dns:uint8/0`): Direct value
+- `labels` (`t:dns:uint8/0`): Direct value
+- `original_ttl` (`t:dns:uint32/0`): Direct value
+- `expiration` (`t:dns:uint32/0`): Direct value
+- `inception` (`t:dns:uint32/0`): Direct value
+- `keytag` (`t:dns:uint16/0`): Direct value
+- `signers_name` (`t:dns:dname/0`): Binary data (dname format)
+- `signature` (`t:binary/0`): Base64-encoded signature
+
+**Example:**
+
+```json
+{
+    "type_covered": "value",
+    "alg": 0,
+    "labels": "value",
+    "original_ttl": "value",
+    "expiration": "value",
+    "inception": "value",
+    "keytag": 0,
+    "signers_name": "value",
+    "signature": "base64-encoded-data"
 }
 ```
 

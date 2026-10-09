@@ -95,6 +95,12 @@ groups() ->
             encode_resinfo_record,
             encode_eui48_record,
             encode_eui64_record,
+            encode_ilnp_records,
+            encode_amtrelay_record,
+            encode_drip_records,
+            encode_hip_record,
+            encode_sig_record,
+            encode_px_record,
             encode_zonemd_record,
             encode_csync_record,
             encode_dsync_record,
@@ -316,6 +322,19 @@ groups() ->
             parse_wallet_record,
             parse_eui48_record,
             parse_eui64_record,
+            parse_nid_record,
+            parse_l32_record,
+            parse_l64_record,
+            parse_lp_record,
+            parse_ilnp_records_roundtrip,
+            parse_amtrelay_record,
+            parse_amtrelay_records_roundtrip,
+            parse_drip_records,
+            parse_drip_records_roundtrip,
+            parse_hip_record,
+            parse_hip_records_roundtrip,
+            parse_sig_record,
+            parse_px_record,
             parse_ds_record,
             parse_dnskey_record,
             parse_key_record,
@@ -550,6 +569,16 @@ groups() ->
             parse_invalid_eui48_hex,
             parse_invalid_eui64_rdata,
             parse_invalid_eui64_hex,
+            parse_invalid_ilnp_rdata,
+            parse_invalid_ilnp64_compressed,
+            parse_invalid_l32_locator,
+            parse_invalid_ilnp_preference,
+            parse_invalid_amtrelay_rdata,
+            parse_invalid_amtrelay_relay,
+            parse_invalid_drip_rdata,
+            parse_invalid_hip_rdata,
+            parse_invalid_sig_rdata,
+            parse_invalid_px_rdata,
             parse_invalid_ds_rdata,
             parse_invalid_ds_hex,
             parse_invalid_rrsig_times,
@@ -1224,7 +1253,20 @@ parse_owner_spelled_as_type(_Config) ->
     ?assertMatch(
         {error, #{message := <<"Invalid LOC record", _/binary>>}},
         dns_zone:parse_string(~"$ORIGIN example.com.\nLOC 3600 A 192.0.2.1\n")
-    ).
+    ),
+    %% So is an owner spelled as one of the RFC 6742, 8777, 9886, 8005, 2535 and
+    %% 2163 types
+    [
+        ?assertMatch(
+            {ok, [#dns_rr{name = Name, type = ?DNS_TYPE_A}]},
+            dns_zone:parse_string(<<"$ORIGIN example.com.\n", Type/binary, " IN A 192.0.2.1\n">>),
+            Type
+        )
+     || Type <- [
+            ~"NID", ~"L32", ~"L64", ~"LP", ~"AMTRELAY", ~"HHIT", ~"BRID", ~"HIP", ~"SIG", ~"PX"
+        ],
+        Name <- [<<(string:lowercase(Type))/binary, ".example.com.">>]
+    ].
 
 %% ============================================================================
 %% Less Common Record Type Tests
@@ -1551,6 +1593,377 @@ parse_keeps_rdata_name_case(_Config) ->
 rrsig_with_times(Expiration, Inception) ->
     <<"uri.arpa. 3600 IN RRSIG SOA 8 2 3600 ", Expiration/binary, " ", Inception/binary,
         " 37444 uri.arpa. AAECAw==\n">>.
+
+parse_nid_record(_Config) ->
+    %% NID for an ILNP Node Identifier (RFC 6742 §2.1)
+    Zone = ~"host1.example.com. 3600 IN NID 10 0014:4fff:ff20:ee64\n",
+    {ok, [RR]} = dns_zone:parse_string(Zone),
+    ?assertEqual(?DNS_TYPE_NID, RR#dns_rr.type),
+    ?assertEqual(
+        #dns_rrdata_nid{
+            preference = 10, node_id = <<16#00, 16#14, 16#4f, 16#ff, 16#ff, 16#20, 16#ee, 16#64>>
+        },
+        RR#dns_rr.data
+    ),
+    %% Groups may drop leading zeros, as in an AAAA record, and hex is case-insensitive
+    {ok, [Short]} = dns_zone:parse_string(~"host1.example.com. 3600 IN NID 10 14:4FFF:0:EE64\n"),
+    ?assertEqual(
+        #dns_rrdata_nid{preference = 10, node_id = <<16#14:16, 16#4fff:16, 0:16, 16#ee64:16>>},
+        Short#dns_rr.data
+    ).
+
+parse_l32_record(_Config) ->
+    %% L32 for an ILNP 32-bit Locator (RFC 6742 §2.2)
+    Zone = ~"host1.example.com. 3600 IN L32 10 10.1.2.0\n",
+    {ok, [RR]} = dns_zone:parse_string(Zone),
+    ?assertEqual(?DNS_TYPE_L32, RR#dns_rr.type),
+    ?assertEqual(#dns_rrdata_l32{preference = 10, locator32 = {10, 1, 2, 0}}, RR#dns_rr.data).
+
+parse_l64_record(_Config) ->
+    %% L64 for an ILNP 64-bit Locator (RFC 6742 §2.3)
+    Zone = ~"host1.example.com. 3600 IN L64 10 2001:0DB8:1140:1000\n",
+    {ok, [RR]} = dns_zone:parse_string(Zone),
+    ?assertEqual(?DNS_TYPE_L64, RR#dns_rr.type),
+    ?assertEqual(
+        #dns_rrdata_l64{
+            preference = 10, locator64 = <<16#20, 16#01, 16#0d, 16#b8, 16#11, 16#40, 16#10, 16#00>>
+        },
+        RR#dns_rr.data
+    ).
+
+parse_lp_record(_Config) ->
+    %% LP for an ILNP Locator Pointer (RFC 6742 §2.4), relative to the origin or not
+    Zone =
+        ~"""
+    $ORIGIN example.com.
+    host1 3600 IN LP 10 l64-subnet1.example.com.
+    host1 3600 IN LP 20 l32-subnet1
+
+    """,
+    {ok, [Abs, Rel]} = dns_zone:parse_string(Zone),
+    ?assertEqual(?DNS_TYPE_LP, Abs#dns_rr.type),
+    ?assertEqual(
+        #dns_rrdata_lp{preference = 10, fqdn = ~"l64-subnet1.example.com."}, Abs#dns_rr.data
+    ),
+    ?assertEqual(
+        #dns_rrdata_lp{preference = 20, fqdn = ~"l32-subnet1.example.com."}, Rel#dns_rr.data
+    ).
+
+parse_ilnp_records_roundtrip(_Config) ->
+    %% The RFC 6742 §3 example set survives encode and re-parse, in any class
+    Zone =
+        ~"""
+    $ORIGIN example.com.
+    host1 3600 IN NID 10 0014:4fff:ff20:ee64
+    host1 3600 IN L64 10 2001:0db8:1140:1000
+    host1 3600 IN LP 10 l64-subnet1.example.com.
+    host1 3600 CH NID 20 0015:5fff:ff21:ee65
+    l32-subnet1 3600 IN L32 10 10.1.2.0
+
+    """,
+    {ok, Records} = dns_zone:parse_string(Zone),
+    Encoded = iolist_to_binary(dns_zone:encode_string(Records, #{origin => ~"example.com."})),
+    {ok, Reparsed} = dns_zone:parse_string(Encoded),
+    ?assertEqual(lists:sort(Records), lists:sort(Reparsed)).
+
+parse_amtrelay_record(_Config) ->
+    %% AMTRELAY for an AMT relay (RFC 8777 §4.3.2), and relay type 0, whose relay is
+    %% ".". The RFC's owner is "12", which this parser reads as a TTL, so the owner
+    %% is spelled in full.
+    Zone =
+        ~"""
+    $ORIGIN 100.51.198.in-addr.arpa.
+    12.100.51.198.in-addr.arpa. IN AMTRELAY  10 0 1 203.0.113.15
+    12.100.51.198.in-addr.arpa. IN AMTRELAY  10 0 2 2001:db8::15
+    12.100.51.198.in-addr.arpa. IN AMTRELAY 128 1 3 amtrelays.example.com.
+    12.100.51.198.in-addr.arpa. IN AMTRELAY 20 0 3 relay
+    12.100.51.198.in-addr.arpa. IN AMTRELAY 255 0 0 .
+
+    """,
+    {ok, RRs} = dns_zone:parse_string(Zone),
+    ?assertEqual(
+        [{~"12.100.51.198.in-addr.arpa.", ?DNS_TYPE_AMTRELAY}],
+        lists:usort([{RR#dns_rr.name, RR#dns_rr.type} || RR <- RRs])
+    ),
+    ?assertEqual(
+        [
+            #dns_rrdata_amtrelay{
+                precedence = 10,
+                discovery_optional = false,
+                relay_type = 1,
+                relay = {203, 0, 113, 15}
+            },
+            #dns_rrdata_amtrelay{
+                precedence = 10,
+                discovery_optional = false,
+                relay_type = 2,
+                relay = {16#2001, 16#db8, 0, 0, 0, 0, 0, 16#15}
+            },
+            #dns_rrdata_amtrelay{
+                precedence = 128,
+                discovery_optional = true,
+                relay_type = 3,
+                relay = ~"amtrelays.example.com."
+            },
+            #dns_rrdata_amtrelay{
+                precedence = 20,
+                discovery_optional = false,
+                relay_type = 3,
+                relay = ~"relay.100.51.198.in-addr.arpa."
+            },
+            #dns_rrdata_amtrelay{
+                precedence = 255, discovery_optional = false, relay_type = 0, relay = <<>>
+            }
+        ],
+        [RR#dns_rr.data || RR <- RRs]
+    ),
+    %% A type 3 relay is a domain name even when it reads like an address, as in BIND
+    {ok, [Numeric]} = dns_zone:parse_string(
+        ~"example.com. 3600 IN AMTRELAY 10 0 3 203.0.113.15.\n"
+    ),
+    ?assertMatch(#dns_rrdata_amtrelay{relay = ~"203.0.113.15."}, Numeric#dns_rr.data).
+
+parse_amtrelay_records_roundtrip(_Config) ->
+    %% Every relay type survives encode and re-parse, in any class (RFC 8777 §4.1).
+    %% Names are written in full, as a relative owner "12" would read back as a TTL.
+    Zone =
+        ~"""
+    $ORIGIN 100.51.198.in-addr.arpa.
+    12.100.51.198.in-addr.arpa. 3600 IN AMTRELAY 10 0 1 203.0.113.15
+    12.100.51.198.in-addr.arpa. 3600 IN AMTRELAY 10 1 2 2001:db8::15
+    12.100.51.198.in-addr.arpa. 3600 IN AMTRELAY 128 1 3 amtrelays.example.com.
+    12.100.51.198.in-addr.arpa. 3600 IN AMTRELAY 30 0 3 relay
+    12.100.51.198.in-addr.arpa. 3600 IN AMTRELAY 0 0 0 .
+    13.100.51.198.in-addr.arpa. 3600 CH AMTRELAY 5 1 1 192.0.2.1
+
+    """,
+    {ok, Records} = dns_zone:parse_string(Zone),
+    Encoded = iolist_to_binary(
+        dns_zone:encode_string(Records, #{
+            origin => ~"100.51.198.in-addr.arpa.", relative_names => false
+        })
+    ),
+    {ok, Reparsed} = dns_zone:parse_string(Encoded),
+    ?assertEqual(lists:sort(Records), lists:sort(Reparsed)).
+
+parse_drip_records(_Config) ->
+    %% RFC 9886 Appendix A.2.2, Figure 18: base64 split over several lines. The BRID
+    %% data is the one erratum 8823 corrects to match the CDDL of §5.2.2.
+    Zone =
+        ~"""
+    $ORIGIN 5.0.a.0.0.0.e.f.f.3.0.0.1.0.0.2.ip6.example.com.
+    2.b.6.c.b.4.a.9.9.6.4.2.8.0.3.1 IN HHIT (
+        gxJpM2ZmOCAwMDBhWQEYMIIBFDCBx6AD
+        AgECAgFUMAUGAytlcDArMSkwJwYDVQQD
+        DCAyMDAxMDAzZmZlMDAwYTA1MjYwZWQ0
+        Mzc2YjI1NmUyODAeFw0yNTA0MDkyMTEz
+        MDBaFw0yNTA0MDkyMjEzMDBaMAAwKjAF
+        BgMrZXADIQDJLi+dl+iWD5tfFlT4sJA5
+        +drcW88GHqxPDOp56Oh3+qM7MDkwNwYD
+        VR0RAQH/BC0wK4cQIAEAP/4ACgUTCCRp
+        mkvGsoYXaHR0cHM6Ly9oZGEuZXhhbXBs
+        ZS5jb20wBQYDK2VwA0EA0DbcdngC7/BB
+        /aLjZmLieo0ZFCDbd/KIxAy+3X2KtT4J
+        todVxRMPAkN6o008gacbNfTG8p9npEcD
+        eYhesl2jBQ==
+    )
+    2.b.6.c.b.4.a.9.9.6.4.2.8.0.3.1 IN BRID (
+        owAAAYGCBFEBIAEAP/4ACgUTCCRpmkvG
+        sgKEggVYiQH63vZnCu32ZyABAD/+AAAF
+        XmChVx6RoLeZkNWwS3KhgGbUCStSx9SZ
+        T7fBa9fowfRA/6jQT/HhPyABAD/+AAAF
+        XmChVx6RoLe8L2bUmC69e3tbajjDE+6Z
+        pPUg/dNA3d9A/byGkidIiWxLCrxQI2Ob
+        Zp3ul1O+bYSp84lA08oKW9FmbipM7kUM
+        ggVYiQGX4PZnp+72ZyABAD/+AAoFZhXu
+        RdQnCaDOaB424RQa61YNbna8eWt7fLRU
+        5GPMsfEt4wo4AQGAPyABAD/+AAAFXmCh
+        Vx6RoLfv3q+mLRB3ya5TmjY8+3CzdoDZ
+        T9RZ+XpN5hDiA6JyyxBJvUewxLzPNhTX
+        Qp8vED71XAE82tMmt3fB4zbzWNQLggVY
+        iQEK4fZnGu/2ZyABAD/+AAoFJg7UN2sl
+        biiCM/2utQaLwUhZ0ROg7fz43AeBTj3S
+        dl5rW4LgTQcFlyABAD/+AAoFZhXuRdQn
+        CaCI8gq4iQsQMgFkzhz5pRy9NjCkqbB7
+        4ok83qsAR/Sv0a8+NQmIsfR2swCDgGTv
+        BXH1OTPliyyWaGkFgR5zG00MggVYiQHc
+        4vZn7PD2ZyABAD/+AAoFEwgkaZpLxrLJ
+        Li+dl+iWD5tfFlT4sJA5+drcW88GHqxP
+        DOp56Oh3+iABAD/+AAoFJg7UN2slbiiA
+        59zyNOKZguZM47IVmhTHaM47C0HWOepQ
+        mvpthrAyg+tHcyUoYEZaxXPXJc2pRRGg
+        Kph3Cxh7rW93mLpgmqcB
+    )
+
+    """,
+    {ok, [Hhit, Brid]} = dns_zone:parse_string(Zone),
+    ?assertEqual(?DNS_TYPE_HHIT, Hhit#dns_rr.type),
+    ?assertEqual(?DNS_TYPE_BRID, Brid#dns_rr.type),
+    %% Figure 19: an array of the entity type 18, the HID abbreviation "3ff8 000a"
+    %% and the 280-byte DER certificate of Figure 20
+    #dns_rrdata_hhit{data = HhitData} = Hhit#dns_rr.data,
+    ?assertMatch(
+        <<16#83, 18, 16#69, "3ff8 000a", 16#59, 280:16, 16#30, 16#82, 16#01, 16#14, _:276/binary>>,
+        HhitData
+    ),
+    %% Figure 21 as erratum 8822 corrects it: a map of three entries, uas_type 0
+    %% first, then uas_ids, a list of [id_type, uas_id] pairs
+    #dns_rrdata_brid{data = BridData} = Brid#dns_rr.data,
+    ?assertEqual(591, byte_size(BridData)),
+    ?assertMatch(
+        <<16#a3, 0, 0, 1, 16#81, 16#82, 4, 16#51, 1, 16#2001003ffe000a05:64, _/binary>>, BridData
+    ).
+
+parse_drip_records_roundtrip(_Config) ->
+    %% One base64 word or several, quoted or not, in any class, survive encode and
+    %% re-parse
+    Zone =
+        ~"""
+    det.example.com. 3600 IN HHIT gxJgQA==
+    det.example.com. 3600 IN BRID ( oQ AA )
+    det.example.com. 3600 CH HHIT "gxJp" "M2ZmOCAwMDBh"
+
+    """,
+    {ok, Records} = dns_zone:parse_string(Zone),
+    ?assertEqual(
+        [
+            #dns_rrdata_hhit{data = <<16#83, 18, 16#60, 16#40>>},
+            #dns_rrdata_brid{data = <<16#a1, 0, 0>>},
+            #dns_rrdata_hhit{data = <<16#83, 18, 16#69, "3ff8 000a">>}
+        ],
+        [RR#dns_rr.data || RR <- Records]
+    ),
+    Encoded = iolist_to_binary(dns_zone:encode_string(Records, #{origin => ~"example.com."})),
+    {ok, Reparsed} = dns_zone:parse_string(Encoded),
+    ?assertEqual(lists:sort(Records), lists:sort(Reparsed)).
+
+parse_hip_record(_Config) ->
+    %% RFC 8005 §7: no rendezvous server, one, and two, one of them relative. The RFC
+    %% wraps the public key to fit the page; in a zone file it is one word.
+    Zone =
+        ~"""
+    $ORIGIN example.com.
+    www.example.com. IN HIP ( 2 200100107B1A74DF365639CC39F1D578
+        AwEAAbdxyhNuSutc5EMzxTs9LBPCIkOFH8cIvM4p9+LrV4e19WzK00+CI6zBCQTdtWsuxKbWIy87UOoJTwkUs7lBu+Upr1gsNrut79ryra+bSRGQb1slImA8YVJyuIDsj7kwzG7jnERNqnWxZ48AWkskmdHaVDP4BcelrTI3rMXdXF5D )
+    www.example.com. IN HIP ( 2 200100107B1A74DF365639CC39F1D578
+        AwEAAbdxyhNuSutc5EMzxTs9LBPCIkOFH8cIvM4p9+LrV4e19WzK00+CI6zBCQTdtWsuxKbWIy87UOoJTwkUs7lBu+Upr1gsNrut79ryra+bSRGQb1slImA8YVJyuIDsj7kwzG7jnERNqnWxZ48AWkskmdHaVDP4BcelrTI3rMXdXF5D
+        rvs.example.com. )
+    www.example.com. IN HIP ( 2 200100107B1A74DF365639CC39F1D578
+        AwEAAbdxyhNuSutc5EMzxTs9LBPCIkOFH8cIvM4p9+LrV4e19WzK00+CI6zBCQTdtWsuxKbWIy87UOoJTwkUs7lBu+Upr1gsNrut79ryra+bSRGQb1slImA8YVJyuIDsj7kwzG7jnERNqnWxZ48AWkskmdHaVDP4BcelrTI3rMXdXF5D
+        rvs1.example.com.
+        rvs2 )
+
+    """,
+    {ok, RRs} = dns_zone:parse_string(Zone),
+    Hip = #dns_rrdata_hip{
+        alg = 2,
+        hit = <<16#200100107B1A74DF365639CC39F1D578:128>>,
+        public_key = base64:decode(
+            <<"AwEAAbdxyhNuSutc5EMzxTs9LBPCIkOFH8cIvM4p9+LrV4e19WzK00+CI6zBCQTdtWsuxKbWIy87UOoJTwkUs7lBu+Upr1gsNrut79ryra+bSRGQb1slImA8YVJyuIDsj7kwzG7jnERNqnWxZ48AWkskmdHaVDP4BcelrTI3rMXdXF5D">>
+        ),
+        rendezvous_servers = []
+    },
+    ?assertEqual(
+        [
+            Hip,
+            Hip#dns_rrdata_hip{rendezvous_servers = [~"rvs.example.com."]},
+            Hip#dns_rrdata_hip{rendezvous_servers = [~"rvs1.example.com.", ~"rvs2.example.com."]}
+        ],
+        [RR#dns_rr.data || RR <- RRs]
+    ),
+    ?assertEqual([?DNS_TYPE_HIP], lists:usort([RR#dns_rr.type || RR <- RRs])),
+    ?assertEqual(132, byte_size(Hip#dns_rrdata_hip.public_key)).
+
+parse_hip_records_roundtrip(_Config) ->
+    %% Lower-case hex, and any class, survive encode and re-parse. A HIT of decimal
+    %% digits only, such as "01", would lex as a number and lose its leading zero.
+    Zone =
+        ~"""
+    $ORIGIN example.com.
+    www 3600 IN HIP 2 200100107b1a74df365639cc39f1d578 AwEAAQ==
+    www 3600 IN HIP ( 3 0a AwEAAQ== rvs1 rvs2.example.org. )
+    www 3600 CH HIP 2 ff AQ==
+
+    """,
+    {ok, Records} = dns_zone:parse_string(Zone),
+    Encoded = iolist_to_binary(dns_zone:encode_string(Records, #{origin => ~"example.com."})),
+    {ok, Reparsed} = dns_zone:parse_string(Encoded),
+    ?assertEqual(lists:sort(Records), lists:sort(Reparsed)).
+
+parse_sig_record(_Config) ->
+    %% RFC 2535 §7.2: as RRSIG, times as YYYYMMDDHHMMSS or seconds, the signature
+    %% base64 in any number of pieces
+    Zone =
+        ~"""
+    $ORIGIN example.com.
+    host 3600 IN SIG A 5 2 3600 20210217232440 20210120232440 2642 example.com. (
+        AAEC
+        Aw== )
+    host 3600 IN SIG MX 1 2 3600 1613604280 1611185080 2642 @ AAECAw==
+
+    """,
+    {ok, [Dates, Seconds]} = dns_zone:parse_string(Zone),
+    Sig = #dns_rrdata_sig{
+        type_covered = ?DNS_TYPE_A,
+        alg = 5,
+        labels = 2,
+        original_ttl = 3600,
+        expiration = 1613604280,
+        inception = 1611185080,
+        keytag = 2642,
+        signers_name = ~"example.com.",
+        signature = <<0, 1, 2, 3>>
+    },
+    ?assertEqual({~"host.example.com.", ?DNS_TYPE_SIG, Sig}, {
+        Dates#dns_rr.name, Dates#dns_rr.type, Dates#dns_rr.data
+    }),
+    ?assertEqual(
+        Sig#dns_rrdata_sig{type_covered = ?DNS_TYPE_MX, alg = 1}, Seconds#dns_rr.data
+    ),
+    %% Encode and re-parse
+    Encoded = iolist_to_binary(
+        dns_zone:encode_string([Dates, Seconds], #{origin => ~"example.com."})
+    ),
+    ?assertEqual({ok, [Dates, Seconds]}, dns_zone:parse_string(Encoded)).
+
+parse_px_record(_Config) ->
+    %% RFC 2163 §4.1: a wildcard and an exact match, and a relative name
+    Zone =
+        ~"""
+    $ORIGIN net2.it.
+    *.net2.it.   IN  PX  10   net2.it.  PRMD-net2.ADMD-p400.C-it.
+    ab.net2.it.  IN  PX  10   ab.net2.it.  O-ab.PRMD-net2.ADMDb.C-it.
+    ab IN PX 20 ab O-ab.PRMD-net2.ADMDb.C-it.
+
+    """,
+    {ok, RRs} = dns_zone:parse_string(Zone),
+    ?assertEqual(
+        [
+            {~"*.net2.it.", #dns_rrdata_px{
+                preference = 10, map822 = ~"net2.it.", mapx400 = ~"PRMD-net2.ADMD-p400.C-it."
+            }},
+            {~"ab.net2.it.", #dns_rrdata_px{
+                preference = 10, map822 = ~"ab.net2.it.", mapx400 = ~"O-ab.PRMD-net2.ADMDb.C-it."
+            }},
+            {~"ab.net2.it.", #dns_rrdata_px{
+                preference = 20, map822 = ~"ab.net2.it.", mapx400 = ~"O-ab.PRMD-net2.ADMDb.C-it."
+            }}
+        ],
+        [{RR#dns_rr.name, RR#dns_rr.data} || RR <- RRs]
+    ),
+    ?assertEqual([?DNS_TYPE_PX], lists:usort([RR#dns_rr.type || RR <- RRs])),
+    Encoded = iolist_to_binary(dns_zone:encode_string(RRs, #{origin => ~"net2.it."})),
+    {ok, Reparsed} = dns_zone:parse_string(Encoded),
+    %% The zone encoder writes RDATA names lowercased
+    Lowered = [
+        RR#dns_rr{
+            data = PX#dns_rrdata_px{
+                map822 = dns_domain:to_lower(Map822), mapx400 = dns_domain:to_lower(MapX400)
+            }
+        }
+     || #dns_rr{data = #dns_rrdata_px{map822 = Map822, mapx400 = MapX400} = PX} = RR <- RRs
+    ],
+    ?assertEqual(lists:sort(Lowered), lists:sort(Reparsed)).
 
 parse_ds_record(_Config) ->
     %% DS (Delegation Signer) for DNSSEC (RFC 4034)
@@ -2880,6 +3293,203 @@ parse_invalid_eui64_hex(_Config) ->
     Zone = ~"example.com. 3600 IN EUI64 \"ABC\"\n",
     {error, #{type := semantic}} = dns_zone:parse_string(Zone, #{origin => ~"example.com."}).
 
+parse_invalid_ilnp_rdata(_Config) ->
+    %% Records with no RDATA, or with the preference missing
+    [
+        ?assertMatch(
+            {error, #{type := Type}},
+            dns_zone:parse_string(Zone, #{origin => ~"example.com."}),
+            Zone
+        )
+     || {Zone, Type} <- [
+            {~"example.com. 3600 IN NID\n", parser},
+            {~"example.com. 3600 IN L32\n", parser},
+            {~"example.com. 3600 IN L64\n", parser},
+            {~"example.com. 3600 IN LP\n", parser},
+            {~"example.com. 3600 IN NID 0014:4fff:ff20:ee64\n", semantic},
+            {~"example.com. 3600 IN L32 10.1.2.0\n", semantic},
+            {~"example.com. 3600 IN L64 2001:0db8:1140:1000\n", semantic},
+            {~"example.com. 3600 IN LP l64-subnet1.example.com.\n", semantic}
+        ]
+    ].
+
+parse_invalid_ilnp64_compressed(_Config) ->
+    %% RFC 6742 §2.1, §2.3: a NodeID or Locator64 is exactly four groups and never
+    %% uses the "::" shorthand, which would read as a 128-bit IPv6 address
+    [
+        ?assertMatch(
+            {error, #{type := semantic, suggestion := _}},
+            dns_zone:parse_string(<<"example.com. 3600 IN ", Value/binary, "\n">>),
+            Value
+        )
+     || Value <- [
+            ~"NID 10 0014:4fff::ee64",
+            ~"NID 10 0014:4fff:ff20",
+            ~"NID 10 0014:4fff:ff20:ee64:0001",
+            ~"NID 10 00014:4fff:ff20:ee64",
+            ~"NID 10 0014:4fff:ff20:ee6g",
+            ~"NID 10 0014:+fff:ff20:ee64",
+            ~"NID 10 0014:-fff:ff20:ee64",
+            ~"L64 10 2001:db8::",
+            ~"L64 10 2001:0db8:1140:1000:0:0:0:1",
+            ~"L64 10 \"2001:0db8:1140:1000\""
+        ]
+    ].
+
+parse_invalid_l32_locator(_Config) ->
+    %% RFC 6742 §2.2: the Locator32 is spelled as an A record's address, which this
+    %% parser reads strictly, so it refuses leading zeros just as it does for A
+    [
+        ?assertMatch(
+            {error, #{type := semantic}},
+            dns_zone:parse_string(<<"example.com. 3600 IN L32 10 ", Value/binary, "\n">>),
+            Value
+        )
+     || Value <- [~"10.1.2", ~"10.1.2.256", ~"10.1.02.0", ~"l32.example.com."]
+    ].
+
+parse_invalid_ilnp_preference(_Config) ->
+    %% The preference is a 16-bit unsigned integer
+    [
+        ?assertMatch(
+            {error, #{type := semantic}},
+            dns_zone:parse_string(<<"example.com. 3600 IN ", Value/binary, "\n">>),
+            Value
+        )
+     || Value <- [
+            ~"NID 65536 0014:4fff:ff20:ee64",
+            ~"L32 65536 10.1.2.0",
+            ~"L64 65536 2001:0db8:1140:1000",
+            ~"LP 65536 l64-subnet1.example.com."
+        ]
+    ].
+
+parse_invalid_amtrelay_rdata(_Config) ->
+    %% A missing field, or a D-bit other than 0 or 1 (RFC 8777 §4.2.2)
+    [
+        ?assertMatch(
+            {error, #{type := Type}},
+            dns_zone:parse_string(<<"example.com. 3600 IN AMTRELAY", Value/binary, "\n">>),
+            Value
+        )
+     || {Value, Type} <- [
+            {~"", parser},
+            {~" 10 0 1", semantic},
+            {~" 10 1 203.0.113.15", semantic},
+            {~" 10 0 1 203.0.113.15 192.0.2.1", semantic},
+            {~" 10 2 1 203.0.113.15", semantic},
+            {~" 256 0 1 203.0.113.15", semantic}
+        ]
+    ].
+
+parse_invalid_amtrelay_relay(_Config) ->
+    %% RFC 8777 §4.3.1: the relay must be what its type announces, "." for type 0,
+    %% and the relay types past 3 have no presentation format
+    [
+        ?assertMatch(
+            {error, #{type := semantic, suggestion := _}},
+            dns_zone:parse_string(<<"example.com. 3600 IN AMTRELAY 10 0 ", Value/binary, "\n">>),
+            Value
+        )
+     || Value <- [
+            ~"0 relay.example.com.",
+            ~"0 203.0.113.15",
+            ~"1 2001:db8::15",
+            ~"1 relay.example.com.",
+            ~"1 203.0.113.256",
+            ~"1 203.0.113",
+            ~"2 203.0.113.15",
+            ~"2 relay.example.com.",
+            ~"4 relay.example.com.",
+            ~"127 .",
+            ~"128 ."
+        ]
+    ].
+
+parse_invalid_drip_rdata(_Config) ->
+    %% RFC 9886 §5.1.1, §5.2.1: the data is base64, and there must be some
+    [
+        ?assertMatch(
+            {error, #{type := Type}},
+            dns_zone:parse_string(<<"det.example.com. 3600 IN ", Value/binary, "\n">>),
+            Value
+        )
+     || {Value, Type} <- [
+            {~"HHIT", parser},
+            {~"BRID", parser},
+            {~"HHIT gxJgQA=", semantic},
+            {~"BRID oQ*A", semantic},
+            {~"HHIT \"\"", semantic},
+            {~"BRID 10 0 1 203.0.113.15", semantic}
+        ]
+    ].
+
+parse_invalid_hip_rdata(_Config) ->
+    %% RFC 8005 §6: an algorithm, a hex HIT and a base64 key are required, and the
+    %% rendezvous servers are domain names. Each case breaks one field of the record
+    %% that parses first. The HIT has a hex letter, as one of digits only lexes as a
+    %% number and would be refused for that alone. A server spelled as an address is
+    %% a name, as it is for NS, so the bad server is one whose label is too long.
+    LongLabel = binary:copy(~"a", 64),
+    Parse = fun(Value) ->
+        dns_zone:parse_string(<<"www.example.com. 3600 IN ", Value/binary, "\n">>)
+    end,
+    ?assertMatch({ok, [_]}, Parse(~"HIP 2 200100107B1A AwEAAQ== rvs.example.com.")),
+    [
+        ?assertMatch({error, #{type := Type}}, Parse(Value), Value)
+     || {Value, Type} <- [
+            {~"HIP", parser},
+            {~"HIP 2", semantic},
+            {~"HIP 2 200100107B1A74DF365639CC39F1D578", semantic},
+            {~"HIP 2 200100107B1 AwEAAQ== rvs.example.com.", semantic},
+            {~"HIP 2 200100107B1X AwEAAQ== rvs.example.com.", semantic},
+            {~"HIP 2 200100107B1A AwEAAQ= rvs.example.com.", semantic},
+            {<<"HIP 2 200100107B1A AwEAAQ== ", LongLabel/binary, ".example.com.">>, semantic},
+            {~"HIP 2 200100107B1A AwEAAQ== \"rvs.example.com.\"", semantic},
+            {~"HIP 256 200100107B1A AwEAAQ== rvs.example.com.", semantic}
+        ]
+    ].
+
+parse_invalid_sig_rdata(_Config) ->
+    %% A field missing, a date that is not one, or a signature that is not base64
+    [
+        ?assertMatch(
+            {error, #{type := semantic, message := <<"Invalid SIG record", _/binary>>}},
+            dns_zone:parse_string(<<"host.example.com. 3600 IN SIG ", Value/binary, "\n">>),
+            Value
+        )
+     || Value <- [
+            ~"A 5 2 3600 1613604280 1611185080 2642 example.com.",
+            ~"A 5 2 3600 1613604280 2642 example.com. AAECAw==",
+            ~"A 5 2 3600 20211317000000 1611185080 2642 example.com. AAECAw==",
+            ~"A 5 2 3600 1613604280 1611185080 2642 example.com. AAECAw="
+        ]
+    ],
+    ?assertMatch(
+        {error, #{type := semantic}},
+        dns_zone:parse_string(
+            ~"host.example.com. 3600 IN SIG A 256 2 3600 1613604280 1611185080 2642 example.com. AAECAw==\n"
+        )
+    ).
+
+parse_invalid_px_rdata(_Config) ->
+    %% RFC 2163 §4: a preference and two domain names
+    [
+        ?assertMatch(
+            {error, #{type := Type}},
+            dns_zone:parse_string(<<"net2.it. 3600 IN ", Value/binary, "\n">>),
+            Value
+        )
+     || {Value, Type} <- [
+            {~"PX", parser},
+            {~"PX 10 net2.it.", semantic},
+            {~"PX net2.it. PRMD-net2.ADMD-p400.C-it.", semantic},
+            {~"PX 10 net2.it. PRMD-net2.ADMD-p400.C-it. extra.", semantic},
+            {~"PX 10 net2.it. \"C-it\"", semantic},
+            {~"PX 65536 net2.it. PRMD-net2.ADMD-p400.C-it.", semantic}
+        ]
+    ].
+
 test_format_error(_Config) ->
     %% Test formatting of error details
     Zone = ~"example.com. 3600 IN SSHFP 2 1\n",
@@ -3612,13 +4222,14 @@ parse_rfc3597_invalid_format(_Config) ->
     ?assert(maps:is_key(type, Error)).
 
 %% RFC 3597 §5: a type without a mnemonic is written TYPE### in RDATA too, as the
-%% encoder writes it in an RRSIG's type covered and in a type bitmap, such as the
-%% NSEC over BIND's TYPE65534 signing records
+%% encoder writes it in an RRSIG's or a SIG's type covered and in a type bitmap,
+%% such as the NSEC over BIND's TYPE65534 signing records
 parse_rfc3597_generic_type_in_rdata(_Config) ->
     Zone =
         ~"""
     $ORIGIN example.com.
     a 60 IN RRSIG TYPE65534 13 2 60 20260101000000 20250101000000 12345 example.com. AQ==
+    a 60 IN SIG TYPE0 13 0 0 20260101000000 20250101000000 12345 example.com. AQ==
     a 60 IN NSEC b.example.com. A RRSIG NSEC TYPE65534
     a 60 IN CSYNC 66 3 A TYPE65534
 
@@ -3627,6 +4238,7 @@ parse_rfc3597_generic_type_in_rdata(_Config) ->
     ?assertMatch(
         [
             #dns_rr{data = #dns_rrdata_rrsig{type_covered = 65534}},
+            #dns_rr{data = #dns_rrdata_sig{type_covered = 0}},
             #dns_rr{
                 data = #dns_rrdata_nsec{
                     types = [?DNS_TYPE_A, ?DNS_TYPE_RRSIG, ?DNS_TYPE_NSEC, 65534]
@@ -4507,6 +5119,174 @@ encode_eui64_record(_Config) ->
     },
     Line = dns_zone:encode_rr(RR),
     ?assertNotEqual(nomatch, string:find(Line, "EUI64")).
+
+encode_ilnp_records(_Config) ->
+    %% RFC 6742 §2.1-§2.4 presentation formats: a NodeID or Locator64 keeps all
+    %% four hex digits of each group and never uses "::"
+    Cases = [
+        {
+            ?DNS_TYPE_NID,
+            #dns_rrdata_nid{preference = 10, node_id = <<16#14:16, 16#4fff:16, 0:16, 16#ee64:16>>},
+            ~"10 0014:4fff:0000:ee64"
+        },
+        {?DNS_TYPE_L32, #dns_rrdata_l32{preference = 10, locator32 = {10, 1, 2, 0}},
+            ~"10 10.1.2.0"},
+        {
+            ?DNS_TYPE_L64,
+            #dns_rrdata_l64{preference = 20, locator64 = <<16#2001:16, 16#db8:16, 0:16, 0:16>>},
+            ~"20 2001:0db8:0000:0000"
+        },
+        {
+            ?DNS_TYPE_LP,
+            #dns_rrdata_lp{preference = 30, fqdn = ~"L64-Subnet1.Example.com."},
+            ~"30 l64-subnet1.example.com."
+        }
+    ],
+    [
+        ?assertEqual(Expected, iolist_to_binary(dns_zone:encode_rdata(Type, Data)), Type)
+     || {Type, Data, Expected} <- Cases
+    ],
+    RR = #dns_rr{
+        name = ~"host1.example.com.",
+        type = ?DNS_TYPE_LP,
+        class = ?DNS_CLASS_IN,
+        ttl = 3600,
+        data = #dns_rrdata_lp{preference = 10, fqdn = ~"l64-subnet1.example.com."}
+    },
+    Line = iolist_to_binary(dns_zone:encode_rr(RR, #{origin => ~"example.com."})),
+    ?assertNotEqual(nomatch, string:find(Line, ~"IN LP 10 l64-subnet1")).
+
+encode_amtrelay_record(_Config) ->
+    %% RFC 8777 §4.3.1: precedence D-bit relay-type relay, with "." for no relay
+    Cases = [
+        {
+            #dns_rrdata_amtrelay{
+                precedence = 10,
+                discovery_optional = false,
+                relay_type = 1,
+                relay = {203, 0, 113, 15}
+            },
+            ~"10 0 1 203.0.113.15"
+        },
+        {
+            #dns_rrdata_amtrelay{
+                precedence = 10,
+                discovery_optional = false,
+                relay_type = 2,
+                relay = {16#2001, 16#db8, 0, 0, 0, 0, 0, 16#15}
+            },
+            ~"10 0 2 2001:db8::15"
+        },
+        {
+            #dns_rrdata_amtrelay{
+                precedence = 128,
+                discovery_optional = true,
+                relay_type = 3,
+                relay = ~"AMTRelays.Example.com."
+            },
+            ~"128 1 3 amtrelays.example.com."
+        },
+        {
+            #dns_rrdata_amtrelay{
+                precedence = 0, discovery_optional = true, relay_type = 0, relay = <<>>
+            },
+            ~"0 1 0 ."
+        }
+    ],
+    [
+        ?assertEqual(
+            Expected, iolist_to_binary(dns_zone:encode_rdata(?DNS_TYPE_AMTRELAY, Data)), Expected
+        )
+     || {Data, Expected} <- Cases
+    ],
+    RR = #dns_rr{
+        name = ~"12.100.51.198.in-addr.arpa.",
+        type = ?DNS_TYPE_AMTRELAY,
+        class = ?DNS_CLASS_IN,
+        ttl = 3600,
+        data = #dns_rrdata_amtrelay{
+            precedence = 10,
+            discovery_optional = false,
+            relay_type = 3,
+            relay = ~"relay.100.51.198.in-addr.arpa."
+        }
+    },
+    Line = iolist_to_binary(dns_zone:encode_rr(RR, #{origin => ~"100.51.198.in-addr.arpa."})),
+    ?assertNotEqual(nomatch, string:find(Line, ~"IN AMTRELAY 10 0 3 relay")).
+
+encode_drip_records(_Config) ->
+    %% RFC 9886 §5.1.1, §5.2.1: a single logical base64 string
+    ?assertEqual(
+        ~"gxJgQA==",
+        iolist_to_binary(
+            dns_zone:encode_rdata(?DNS_TYPE_HHIT, #dns_rrdata_hhit{
+                data = <<16#83, 18, 16#60, 16#40>>
+            })
+        )
+    ),
+    ?assertEqual(
+        ~"oQAA",
+        iolist_to_binary(
+            dns_zone:encode_rdata(?DNS_TYPE_BRID, #dns_rrdata_brid{data = <<16#a1, 0, 0>>})
+        )
+    ).
+
+encode_hip_record(_Config) ->
+    %% RFC 8005 §6: pk-algorithm, the HIT in hex, the key in base64, then the servers
+    Hip = #dns_rrdata_hip{
+        alg = 2,
+        hit = <<16#200100107B1A74DF365639CC39F1D578:128>>,
+        public_key = <<3, 1, 0, 1>>,
+        rendezvous_servers = []
+    },
+    ?assertEqual(
+        ~"2 200100107B1A74DF365639CC39F1D578 AwEAAQ==",
+        iolist_to_binary(dns_zone:encode_rdata(?DNS_TYPE_HIP, Hip))
+    ),
+    ?assertEqual(
+        ~"2 200100107B1A74DF365639CC39F1D578 AwEAAQ== rvs1 rvs2.example.org.",
+        iolist_to_binary(
+            dns_zone:encode_rdata(
+                ?DNS_TYPE_HIP,
+                Hip#dns_rrdata_hip{
+                    rendezvous_servers = [~"RVS1.example.com.", ~"rvs2.example.org."]
+                },
+                #{origin => ~"example.com."}
+            )
+        )
+    ).
+
+encode_sig_record(_Config) ->
+    %% RFC 2535 §7.2: as RRSIG
+    Sig = #dns_rrdata_sig{
+        type_covered = ?DNS_TYPE_A,
+        alg = 5,
+        labels = 2,
+        original_ttl = 3600,
+        expiration = 1613604280,
+        inception = 1611185080,
+        keytag = 2642,
+        signers_name = ~"Example.COM.",
+        signature = <<0, 1, 2, 3>>
+    },
+    ?assertEqual(
+        ~"A 5 2 3600 1613604280 1611185080 2642 example.com. AAECAw==",
+        iolist_to_binary(dns_zone:encode_rdata(?DNS_TYPE_SIG, Sig))
+    ).
+
+encode_px_record(_Config) ->
+    %% RFC 2163 §4: preference map822 mapx400
+    Px = #dns_rrdata_px{
+        preference = 10, map822 = ~"Net2.IT.", mapx400 = ~"PRMD-net2.ADMD-p400.C-it."
+    },
+    ?assertEqual(
+        ~"10 net2.it. prmd-net2.admd-p400.c-it.",
+        iolist_to_binary(dns_zone:encode_rdata(?DNS_TYPE_PX, Px))
+    ),
+    ?assertEqual(
+        ~"10 @ prmd-net2.admd-p400.c-it.",
+        iolist_to_binary(dns_zone:encode_rdata(?DNS_TYPE_PX, Px, #{origin => ~"net2.it."}))
+    ).
 
 encode_zonemd_record(_Config) ->
     RR = #dns_rr{

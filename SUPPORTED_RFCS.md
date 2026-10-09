@@ -8,6 +8,7 @@ functionality such as socket handling or query resolution.
 - **[RFC 1035](https://tools.ietf.org/html/rfc1035)**: Domain Names - Implementation and Specification
 - **[RFC 1183](https://tools.ietf.org/html/rfc1183)**: New DNS RR Definitions
 - **[RFC 1876](https://tools.ietf.org/html/rfc1876)**: A Means for Expressing Location Information in the Domain Name System
+- **[RFC 2163](https://tools.ietf.org/html/rfc2163)**: Using the Internet DNS to Distribute MIXER Conformant Global Address Mapping (MCGAM)
 - **[RFC 2181](https://tools.ietf.org/html/rfc2181)**: Clarifications to the DNS Specification
 - **[RFC 2230](https://tools.ietf.org/html/rfc2230)**: Key Exchange Delegation Record for the DNS
 - **[RFC 2308](https://tools.ietf.org/html/rfc2308)**: Negative Caching of DNS Queries (DNS NCACHE)
@@ -15,6 +16,7 @@ functionality such as socket handling or query resolution.
 - **[RFC 2536](https://tools.ietf.org/html/rfc2536)**: DSA KEYs and SIGs in the Domain Name System (DNS)
 - **[RFC 2782](https://tools.ietf.org/html/rfc2782)**: A DNS RR for specifying the location of services (DNS SRV)
 - **[RFC 2845](https://tools.ietf.org/html/rfc2845)**: Secret Key Transaction Authentication for DNS (TSIG)
+- **[RFC 2931](https://tools.ietf.org/html/rfc2931)**: DNS Request and Transaction Signatures ( SIG(0)s )
 - **[RFC 3110](https://tools.ietf.org/html/rfc3110)**: RSA/SHA-1 SIGs and RSA KEYs in the Domain Name System (DNS)
 - **[RFC 3403](https://tools.ietf.org/html/rfc3403)**: Dynamic Delegation Discovery System (DDDS) Part Three: The Domain Name System (DNS) Database
 - **[RFC 3596](https://tools.ietf.org/html/rfc3596)**: DNS Extensions to Support IP Version 6
@@ -31,6 +33,7 @@ functionality such as socket handling or query resolution.
 - **[RFC 6605](https://tools.ietf.org/html/rfc6605)**: Elliptic Curve Digital Signature Algorithm (DSA) for DNSSEC
 - **[RFC 6672](https://tools.ietf.org/html/rfc6672)**: DNAME Redirection in the DNS
 - **[RFC 6698](https://tools.ietf.org/html/rfc6698)**: The DNS-Based Authentication of Named Entities (DANE) Transport Layer Security (TLS) Protocol: TLSA
+- **[RFC 6742](https://tools.ietf.org/html/rfc6742)**: DNS Resource Records for the Identifier-Locator Network Protocol (ILNP)
 - **[RFC 6840](https://tools.ietf.org/html/rfc6840)**: Clarifications and Implementation Notes for DNS Security (DNSSEC)
 - **[RFC 6844](https://tools.ietf.org/html/rfc6844)**: DNS Certification Authority Authorization (CAA) Resource Record
 - **[RFC 6891](https://tools.ietf.org/html/rfc6891)**: Extension Mechanisms for DNS (EDNS(0))
@@ -41,9 +44,11 @@ functionality such as socket handling or query resolution.
 - **[RFC 7871](https://tools.ietf.org/html/rfc7871)**: Client Subnet in DNS Queries
 - **[RFC 7873](https://tools.ietf.org/html/rfc7873)**: Domain Name System (DNS) Cookies
 - **[RFC 7929](https://tools.ietf.org/html/rfc7929)**: DNS-Based Authentication of Named Entities (DANE) Bindings for OpenPGP
+- **[RFC 8005](https://tools.ietf.org/html/rfc8005)**: Host Identity Protocol (HIP) Domain Name System (DNS) Extension
 - **[RFC 8080](https://tools.ietf.org/html/rfc8080)**: Ed25519 and Ed448 for DNSSEC
 - **[RFC 8162](https://tools.ietf.org/html/rfc8162)**: Using Secure DNS to Associate Certificates with Domain Names for S/MIME
 - **[RFC 8764](https://tools.ietf.org/html/rfc8764)**: DNS Long-Lived Queries (LLQ)
+- **[RFC 8777](https://tools.ietf.org/html/rfc8777)**: DNS Reverse IP Automatic Multicast Tunneling (AMT) Discovery
 - **[RFC 8914](https://tools.ietf.org/html/rfc8914)**: Extended DNS Errors
 - **[RFC 8976](https://tools.ietf.org/html/rfc8976)**: Message Digest for DNS Zones
 - **[RFC 9077](https://tools.ietf.org/html/rfc9077)**: NSEC and NSEC3 TTL Values
@@ -51,3 +56,4 @@ functionality such as socket handling or query resolution.
 - **[RFC 9606](https://tools.ietf.org/html/rfc9606)**: DNS Resolver Information
 - **[RFC 9619](https://tools.ietf.org/html/rfc9619)**: In the DNS, QDCOUNT Is (Usually) One
 - **[RFC 9859](https://tools.ietf.org/html/rfc9859)**: Generalized DNS Notifications
+- **[RFC 9886](https://tools.ietf.org/html/rfc9886)**: DRIP Entity Tags (DETs) in the Domain Name System

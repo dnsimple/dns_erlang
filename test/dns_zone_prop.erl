@@ -118,7 +118,16 @@ simple_valid_rr() ->
             ?DNS_TYPE_TXT,
             ?DNS_TYPE_SOA,
             ?DNS_TYPE_SRV,
-            ?DNS_TYPE_CAA
+            ?DNS_TYPE_CAA,
+            ?DNS_TYPE_NID,
+            ?DNS_TYPE_L32,
+            ?DNS_TYPE_L64,
+            ?DNS_TYPE_LP,
+            ?DNS_TYPE_AMTRELAY,
+            ?DNS_TYPE_HHIT,
+            ?DNS_TYPE_BRID,
+            ?DNS_TYPE_HIP,
+            ?DNS_TYPE_PX
         ]),
         ?LET(
             {Name, Class, TTL, Data},
@@ -436,6 +445,90 @@ rdata(Type) ->
                     alt = Alt
                 }
             );
+        ?DNS_TYPE_NID ->
+            ?LET(
+                {Pref, NodeID},
+                {range(0, 65535), binary(8)},
+                #dns_rrdata_nid{preference = Pref, node_id = NodeID}
+            );
+        ?DNS_TYPE_L32 ->
+            ?LET(
+                {Pref, A, B, C, D},
+                {range(0, 65535), range(0, 255), range(0, 255), range(0, 255), range(0, 255)},
+                #dns_rrdata_l32{preference = Pref, locator32 = {A, B, C, D}}
+            );
+        ?DNS_TYPE_L64 ->
+            ?LET(
+                {Pref, Locator64},
+                {range(0, 65535), binary(8)},
+                #dns_rrdata_l64{preference = Pref, locator64 = Locator64}
+            );
+        ?DNS_TYPE_LP ->
+            ?LET(
+                {Pref, FQDN},
+                {range(0, 65535), dns_prop_generator:simple_dname()},
+                #dns_rrdata_lp{preference = Pref, fqdn = FQDN}
+            );
+        %% The lexer reads a word of digits as a number, or one like "1d2h" as a TTL,
+        %% a limitation of the zone parser, so hex and base64 data that came out that
+        %% way would not parse. A HIT is drawn with a hex letter in it, and the key and
+        %% the CBOR array and map heads lead their base64 with a letter.
+        ?DNS_TYPE_HIP ->
+            ?LET(
+                {Alg, HIT, PublicKey, Servers},
+                {
+                    range(0, 255),
+                    ?SUCHTHAT(H, binary(16), has_hex_letter(H)),
+                    ?LET(Key, binary(), <<3, 1, 0, 1, Key/binary>>),
+                    list(dns_prop_generator:simple_dname())
+                },
+                #dns_rrdata_hip{
+                    alg = Alg, hit = HIT, public_key = PublicKey, rendezvous_servers = Servers
+                }
+            );
+        ?DNS_TYPE_PX ->
+            ?LET(
+                {Pref, Map822, MapX400},
+                {
+                    range(0, 65535),
+                    dns_prop_generator:simple_dname(),
+                    dns_prop_generator:simple_dname()
+                },
+                #dns_rrdata_px{preference = Pref, map822 = Map822, mapx400 = MapX400}
+            );
+        ?DNS_TYPE_HHIT ->
+            ?LET(Data, binary(), #dns_rrdata_hhit{data = <<16#83, Data/binary>>});
+        ?DNS_TYPE_BRID ->
+            ?LET(Data, binary(), #dns_rrdata_brid{data = <<16#a3, Data/binary>>});
+        ?DNS_TYPE_AMTRELAY ->
+            ?LET(
+                {Precedence, D, {RelayType, Relay}},
+                {
+                    range(0, 255),
+                    boolean(),
+                    oneof([
+                        {0, <<>>},
+                        {1, {range(0, 255), range(0, 255), range(0, 255), range(0, 255)}},
+                        {2, {
+                            range(0, 65535),
+                            range(0, 65535),
+                            range(0, 65535),
+                            range(0, 65535),
+                            range(0, 65535),
+                            range(0, 65535),
+                            range(0, 65535),
+                            range(0, 65535)
+                        }},
+                        {3, dns_prop_generator:simple_dname()}
+                    ])
+                },
+                #dns_rrdata_amtrelay{
+                    precedence = Precedence,
+                    discovery_optional = D,
+                    relay_type = RelayType,
+                    relay = Relay
+                }
+            );
         ?DNS_TYPE_IPSECKEY ->
             ?LET(
                 {Precedence, Alg, Gateway, PublicKey},
@@ -522,6 +615,15 @@ valid_zone_string() ->
                                     ?DNS_TYPE_SOA -> "SOA";
                                     ?DNS_TYPE_SRV -> "SRV";
                                     ?DNS_TYPE_CAA -> "CAA";
+                                    ?DNS_TYPE_NID -> "NID";
+                                    ?DNS_TYPE_L32 -> "L32";
+                                    ?DNS_TYPE_L64 -> "L64";
+                                    ?DNS_TYPE_LP -> "LP";
+                                    ?DNS_TYPE_AMTRELAY -> "AMTRELAY";
+                                    ?DNS_TYPE_HHIT -> "HHIT";
+                                    ?DNS_TYPE_BRID -> "BRID";
+                                    ?DNS_TYPE_HIP -> "HIP";
+                                    ?DNS_TYPE_PX -> "PX";
                                     _ -> "A"
                                 end,
                             RDataStr = format_rdata(Type, Data),
@@ -583,8 +685,80 @@ format_rdata(?DNS_TYPE_CAA, #dns_rrdata_caa{flags = Flags, tag = Tag, value = Va
     lists:flatten(
         io_lib:format("~B ~s \"~s\"", [Flags, binary_to_list(Tag), binary_to_list(Value)])
     );
+format_rdata(?DNS_TYPE_NID, #dns_rrdata_nid{preference = Pref, node_id = NodeID}) ->
+    format_ilnp64(Pref, NodeID);
+format_rdata(?DNS_TYPE_L32, #dns_rrdata_l32{preference = Pref, locator32 = {A, B, C, D}}) ->
+    lists:flatten(io_lib:format("~B ~B.~B.~B.~B", [Pref, A, B, C, D]));
+format_rdata(?DNS_TYPE_L64, #dns_rrdata_l64{preference = Pref, locator64 = Locator64}) ->
+    format_ilnp64(Pref, Locator64);
+format_rdata(?DNS_TYPE_LP, #dns_rrdata_lp{preference = Pref, fqdn = FQDN}) ->
+    lists:flatten(io_lib:format("~B ~s", [Pref, binary_to_list(FQDN)]));
+format_rdata(?DNS_TYPE_AMTRELAY, #dns_rrdata_amtrelay{
+    precedence = Precedence, discovery_optional = D, relay_type = RelayType, relay = Relay
+}) ->
+    RelayStr =
+        case Relay of
+            <<>> -> ".";
+            Name when is_binary(Name) -> binary_to_list(Name);
+            {_, _, _, _, _, _, _, _} -> format_rdata(?DNS_TYPE_AAAA, #dns_rrdata_aaaa{ip = Relay});
+            {_, _, _, _} -> format_rdata(?DNS_TYPE_A, #dns_rrdata_a{ip = Relay})
+        end,
+    DBit =
+        case D of
+            true -> 1;
+            false -> 0
+        end,
+    lists:flatten(io_lib:format("~B ~B ~B ~s", [Precedence, DBit, RelayType, RelayStr]));
+format_rdata(?DNS_TYPE_HHIT, #dns_rrdata_hhit{data = Data}) ->
+    format_base64_pieces(Data);
+format_rdata(?DNS_TYPE_BRID, #dns_rrdata_brid{data = Data}) ->
+    format_base64_pieces(Data);
+format_rdata(?DNS_TYPE_HIP, #dns_rrdata_hip{
+    alg = Alg, hit = HIT, public_key = PublicKey, rendezvous_servers = Servers
+}) ->
+    %% Lower-case hex, the spelling the parser must also accept
+    lists:flatten(
+        io_lib:format("( ~B ~s ~s ~s )", [
+            Alg,
+            string:lowercase(binary_to_list(binary:encode_hex(HIT))),
+            base64:encode(PublicKey),
+            lists:join(" ", [binary_to_list(S) || S <- Servers])
+        ])
+    );
+format_rdata(?DNS_TYPE_PX, #dns_rrdata_px{preference = Pref, map822 = Map822, mapx400 = MapX400}) ->
+    lists:flatten(
+        io_lib:format("~B ~s ~s", [Pref, binary_to_list(Map822), binary_to_list(MapX400)])
+    );
 format_rdata(_Type, _Data) ->
     "192.0.2.1".
+
+has_hex_letter(Bin) ->
+    nomatch =/= re:run(binary:encode_hex(Bin), "[A-F]").
+
+%% RFC 9886 §5.1.1: base64 split into whitespace-separated pieces in parentheses.
+%% The lexer reads a word of digits as a number, or one like "1d2h" as a TTL, so the
+%% split falls, nearest the middle, before a letter, as the first piece starts with
+%% one; with no letter to split before, the base64 stays whole.
+format_base64_pieces(Data) ->
+    Base64 = binary_to_list(base64:encode(Data)),
+    Middle = length(Base64) div 2,
+    Splits = [N || N <- lists:seq(1, length(Base64) - 1), is_letter(lists:nth(N + 1, Base64))],
+    Pieces =
+        case lists:sort([{abs(N - Middle), N} || N <- Splits]) of
+            [] ->
+                Base64;
+            [{_, N} | _] ->
+                {First, Rest} = lists:split(N, Base64),
+                [First, "\n    ", Rest]
+        end,
+    lists:flatten(["( ", Pieces, " )"]).
+
+is_letter(C) ->
+    (C >= $a andalso C =< $z) orelse (C >= $A andalso C =< $Z).
+
+%% Leading zeros dropped and upper case, the spellings the parser must also accept
+format_ilnp64(Pref, <<A:16, B:16, C:16, D:16>>) ->
+    lists:flatten(io_lib:format("~B ~.16B:~.16B:~.16B:~.16B", [Pref, A, B, C, D])).
 
 extract_origin(ZoneString) ->
     %% Try to extract origin from $ORIGIN directive, default to example.com.
@@ -617,6 +791,14 @@ normalize_rdata_dnames(#dns_rrdata_soa{mname = M, rname = RName} = R) ->
     R#dns_rrdata_soa{mname = dns_domain:to_lower(M), rname = dns_domain:to_lower(RName)};
 normalize_rdata_dnames(#dns_rrdata_srv{target = T} = R) ->
     R#dns_rrdata_srv{target = dns_domain:to_lower(T)};
+normalize_rdata_dnames(#dns_rrdata_lp{fqdn = FQDN} = R) ->
+    R#dns_rrdata_lp{fqdn = dns_domain:to_lower(FQDN)};
+normalize_rdata_dnames(#dns_rrdata_px{map822 = Map822, mapx400 = MapX400} = R) ->
+    R#dns_rrdata_px{map822 = dns_domain:to_lower(Map822), mapx400 = dns_domain:to_lower(MapX400)};
+normalize_rdata_dnames(#dns_rrdata_hip{rendezvous_servers = Servers} = R) ->
+    R#dns_rrdata_hip{rendezvous_servers = [dns_domain:to_lower(S) || S <- Servers]};
+normalize_rdata_dnames(#dns_rrdata_amtrelay{relay_type = 3, relay = Relay} = R) ->
+    R#dns_rrdata_amtrelay{relay = dns_domain:to_lower(Relay)};
 normalize_rdata_dnames(#dns_rrdata_nxt{dname = DName, types = Types} = R) ->
     R#dns_rrdata_nxt{dname = dns_domain:to_lower(DName), types = Types};
 normalize_rdata_dnames(#dns_rrdata_tsig{alg = Alg} = R) ->
