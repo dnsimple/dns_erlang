@@ -108,19 +108,71 @@ Raises `{label_too_long, Label}` if any label exceeds 63 bytes.
 """.
 -spec split(dname()) -> labels().
 split(Name) when is_binary(Name) ->
-    split_esc(Name, <<>>).
+    split_labels(Name).
+
+-spec split_labels(binary()) -> labels().
+%% Clean labels are matched out whole, as copies (63 bytes or less). From the first label with a
+%% '\' on, split_esc/2 walks the rest of the name.
+split_labels(Cs) ->
+    case special_at(Cs, 0) of
+        nomatch ->
+            split_last(Cs);
+        escape ->
+            split_esc(Cs, <<>>);
+        N ->
+            <<Label:N/binary, $., Rest/binary>> = Cs,
+            split_dot(Rest, Label)
+    end.
+
+%% The last label, or none after a trailing dot.
+split_last(<<>>) ->
+    [];
+split_last(Label) when 63 < byte_size(Label) ->
+    error({label_too_long, Label});
+split_last(Label) ->
+    [Label].
+
+%% Label was ended by a dot.
+split_dot(<<>>, Label) ->
+    split_last(Label);
+%% Check for empty label (contiguous dots) - illegal except for root
+split_dot(<<$., _/binary>>, _) ->
+    error({invalid_dname, empty_label});
+split_dot(_, Label) when 63 < byte_size(Label) ->
+    error({label_too_long, Label});
+split_dot(Rest, Label) ->
+    [Label | split_labels(Rest)].
+
+%% Offset of the first '.', escape if a '\' comes first, or nomatch. The lowest flag is exact.
+-spec special_at(binary(), non_neg_integer()) -> nomatch | escape | non_neg_integer().
+special_at(<<W:56/unsigned-little, Rest/binary>>, N) ->
+    Dots = ?HASBYTE56(W, ?DOTS56),
+    Slash = ?HASBYTE56(W, ?BSLS56),
+    case Dots bor Slash of
+        0 ->
+            special_at(Rest, N + 7);
+        Z ->
+            case Z band -Z of
+                Low when Low band Dots =:= 0 -> escape;
+                Low -> N + lowest_byte(Low)
+            end
+    end;
+special_at(<<$., _/binary>>, N) ->
+    N;
+special_at(<<$\\, _/binary>>, _N) ->
+    escape;
+special_at(<<_, Rest/binary>>, N) ->
+    special_at(Rest, N + 1);
+special_at(<<>>, _N) ->
+    nomatch.
 
 -spec split_esc(binary(), binary()) -> labels().
-%% End of input - return empty list if no label accumulated, otherwise return label.
+%% End of input. The label is never empty: it holds a '\' or follows a dot.
 %% The last label is measured here, as the separator clause below measures the others.
-split_esc(<<>>, <<>>) ->
-    [];
 split_esc(<<>>, Label) when 63 < byte_size(Label) ->
     error({label_too_long, Label});
 split_esc(<<>>, Label) ->
     [Label];
-split_esc(<<$.>>, <<>>) ->
-    [];
 split_esc(<<$.>>, Label) when 63 < byte_size(Label) ->
     error({label_too_long, Label});
 split_esc(<<$.>>, Label) ->
@@ -377,7 +429,7 @@ Returns `<<0>>` for empty names or root.
 """.
 -spec to_wire(dname()) -> wire().
 to_wire(Name) ->
-    Labels = split_esc(Name, <<>>),
+    Labels = split_labels(Name),
     LabelsBin = <<<<(byte_size(L)), L/binary>> || L <- Labels>>,
     254 < byte_size(LabelsBin) andalso error(name_too_long),
     <<LabelsBin/binary, 0>>.
@@ -417,7 +469,7 @@ to_wire(CompMap, Pos, Name) when is_binary(Name) ->
     Key = memo_key(Name),
     maybe
         miss ?= memo(CompMap, Pos, Key),
-        %% An escaped name keeps its untrimmed spelling: split_esc/2 resolves its escapes.
+        %% An escaped name keeps its untrimmed spelling: split_labels/1 resolves its escapes.
         case classify(Name) of
             escaped -> to_wire_escaped(CompMap, Pos, Name);
             false -> to_wire_lc_write(CompMap, Pos, Key, <<>>, remember(Pos, Key, []));
@@ -525,7 +577,7 @@ no_empty(_) ->
 %% binary otherwise. The two key spaces never compare equal, so they cannot collide, while the
 %% unambiguous tail of an escaped name still shares keys with ordinary names.
 to_wire_escaped(CompMap, Pos, Name) ->
-    Labels = split_esc(Name, <<>>),
+    Labels = split_labels(Name),
     Lower =
         case has_upper(Name) of
             false -> Labels;

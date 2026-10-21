@@ -31,6 +31,9 @@ groups() ->
             split_escaped_chars,
             split_trailing_dots,
             split_boundaries,
+            split_every_short_name,
+            split_special_positions,
+            split_labels_own_binary,
             split_errors
         ]},
         {join_tests, [parallel], [
@@ -158,6 +161,79 @@ split_boundaries(_) ->
     Wire63 = dns_domain:to_wire(Name63),
     ?assertEqual(<<63, Label63/binary, 3, "com", 0>>, Wire63),
     ?assertEqual([Label63, <<"com">>], dns_domain:split(Name63)).
+
+split_every_short_name(_) ->
+    %% Every name of up to 9 bytes over '.', '\' and a plain byte
+    Names = lists:append([strings([$., $\\, $a], Len) || Len <- lists:seq(0, 9)]),
+    [assert_split_ref(Name) || Name <- Names].
+
+split_special_positions(_) ->
+    %% '.', an escape, a lone '\' or a byte one bit off, at every position of labels up to 64 bytes
+    Specials = [<<".">>, <<"\\.">>, <<"\\\\">>, <<"\\">>, <<16#AE>>, <<16#DC>>],
+    [
+        assert_split_ref(
+            <<
+                (binary:copy(<<"a">>, P))/binary,
+                S/binary,
+                (binary:copy(<<"b">>, Len - P))/binary,
+                Tail/binary
+            >>
+        )
+     || Len <- lists:seq(0, 64),
+        P <- lists:seq(0, Len),
+        S <- Specials,
+        Tail <- [<<>>, <<".com">>, <<"..">>]
+    ].
+
+split_labels_own_binary(_) ->
+    %% Labels never reference the name, nor a larger binary the name is a part of
+    Big = <<
+        (binary:copy(<<"x">>, 4096))/binary,
+        "www.exa\\.mple.",
+        (binary:copy(<<"y">>, 63))/binary,
+        ".com"
+    >>,
+    <<_:4096/binary, Name/binary>> = Big,
+    Labels = dns_domain:split(Name),
+    ?assertEqual([<<"www">>, <<"exa.mple">>, binary:copy(<<"y">>, 63), <<"com">>], Labels),
+    [?assert(binary:referenced_byte_size(L) < byte_size(Big)) || L <- Labels].
+
+assert_split_ref(Name) ->
+    ?assertEqual(split_result(fun split_ref/1, Name), split_result(fun dns_domain:split/1, Name)).
+
+split_result(Split, Name) ->
+    try
+        Split(Name)
+    catch
+        error:Reason -> {error, Reason}
+    end.
+
+%% Byte by byte reference: '\.' and '\\' unescape, any other byte is kept, '.' ends a label.
+split_ref(Name) ->
+    split_ref(Name, <<>>).
+
+split_ref(<<>>, <<>>) ->
+    [];
+split_ref(<<>>, Label) ->
+    [split_ref_label(Label)];
+split_ref(<<$.>>, <<>>) ->
+    [];
+split_ref(<<$.>>, Label) ->
+    [split_ref_label(Label)];
+split_ref(<<$., $., _/binary>>, _) ->
+    error({invalid_dname, empty_label});
+split_ref(<<$., Rest/binary>>, Label) ->
+    [split_ref_label(Label) | split_ref(Rest, <<>>)];
+split_ref(<<$\\, X, Rest/binary>>, Label) when X =:= $.; X =:= $\\ ->
+    split_ref(Rest, <<Label/binary, X>>);
+split_ref(<<C, Rest/binary>>, Label) ->
+    split_ref(Rest, <<Label/binary, C>>).
+
+split_ref_label(Label) when 63 < byte_size(Label) -> error({label_too_long, Label});
+split_ref_label(Label) -> Label.
+
+strings(_, 0) -> [<<>>];
+strings(Alphabet, Len) -> [<<C, S/binary>> || C <- Alphabet, S <- strings(Alphabet, Len - 1)].
 
 %% ============================================================================
 %% Join Tests
