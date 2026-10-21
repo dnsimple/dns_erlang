@@ -50,6 +50,36 @@ offsets in it are relative to the start of the message being built.
 
 -export_type([dname/0, label/0, labels/0, wire/0, encode_error/0, decode_error/0]).
 
+%% 56-bit (7-byte) and 32-bit SWAR constants — stay within BEAM small integer range
+-define(ONES56, 16#01010101010101).
+-define(HIGHS56, 16#80808080808080).
+-define(ONES32, 16#01010101).
+-define(HIGHS32, 16#80808080).
+-define(DOTS56, (?ONES56 * $.)).
+-define(BSLS56, (?ONES56 * $\\)).
+-define(DOTS32, (?ONES32 * $.)).
+-define(BSLS32, (?ONES32 * $\\)).
+
+%% Flag word for "does W contain byte C", C given pre-multiplied by ones: the zero-byte half of the
+%% CLEAN56 test, kept separate so the matching lane can be located and not just detected.
+-define(HASBYTE56(W, C),
+    (((((W) bxor (C)) - ?ONES56) band bnot ((W) bxor (C))) band ?HIGHS56)
+).
+
+%% Guard-legal test that a word contains neither '.' nor '\': W bxor (C * ones) has a zero byte iff
+%% W contains byte C, and (V - ones) band (bnot V) band highs =/= 0 iff V has a zero byte (exact, no
+%% false positives).
+-define(CLEAN56(W),
+    (0 =:=
+        ((((((W) bxor ?DOTS56) - ?ONES56) band bnot ((W) bxor ?DOTS56)) bor
+            ((((W) bxor ?BSLS56) - ?ONES56) band bnot ((W) bxor ?BSLS56))) band ?HIGHS56))
+).
+-define(CLEAN32(W),
+    (0 =:=
+        ((((((W) bxor ?DOTS32) - ?ONES32) band bnot ((W) bxor ?DOTS32)) bor
+            ((((W) bxor ?BSLS32) - ?ONES32) band bnot ((W) bxor ?BSLS32))) band ?HIGHS32))
+).
+
 -doc """
 Split domain name into labels.
 
@@ -78,25 +108,25 @@ Raises `{label_too_long, Label}` if any label exceeds 63 bytes.
 """.
 -spec split(dname()) -> labels().
 split(Name) when is_binary(Name) ->
-    do_split(Name, <<>>).
+    split_esc(Name, <<>>).
 
--spec do_split(binary(), binary()) -> labels().
+-spec split_esc(binary(), binary()) -> labels().
 %% End of input - return empty list if no label accumulated, otherwise return label.
 %% The last label is measured here, as the separator clause below measures the others.
-do_split(<<>>, <<>>) ->
+split_esc(<<>>, <<>>) ->
     [];
-do_split(<<>>, Label) when 63 < byte_size(Label) ->
+split_esc(<<>>, Label) when 63 < byte_size(Label) ->
     error({label_too_long, Label});
-do_split(<<>>, Label) ->
+split_esc(<<>>, Label) ->
     [Label];
-do_split(<<$.>>, <<>>) ->
+split_esc(<<$.>>, <<>>) ->
     [];
-do_split(<<$.>>, Label) when 63 < byte_size(Label) ->
+split_esc(<<$.>>, Label) when 63 < byte_size(Label) ->
     error({label_too_long, Label});
-do_split(<<$.>>, Label) ->
+split_esc(<<$.>>, Label) ->
     [Label];
 %% Match 8 bytes at once when all are safe (common case - no dots, no backslashes)
-do_split(<<A, B, C, D, E, F, G, H, Rest/binary>>, Label) when
+split_esc(<<A, B, C, D, E, F, G, H, Rest/binary>>, Label) when
     A =/= $.,
     A =/= $\\,
     B =/= $.,
@@ -114,9 +144,9 @@ do_split(<<A, B, C, D, E, F, G, H, Rest/binary>>, Label) when
     H =/= $.,
     H =/= $\\
 ->
-    do_split(Rest, <<Label/binary, A, B, C, D, E, F, G, H>>);
+    split_esc(Rest, <<Label/binary, A, B, C, D, E, F, G, H>>);
 %% Match 4 bytes
-do_split(<<A, B, C, D, Rest/binary>>, Label) when
+split_esc(<<A, B, C, D, Rest/binary>>, Label) when
     A =/= $.,
     A =/= $\\,
     B =/= $.,
@@ -126,29 +156,29 @@ do_split(<<A, B, C, D, Rest/binary>>, Label) when
     D =/= $.,
     D =/= $\\
 ->
-    do_split(Rest, <<Label/binary, A, B, C, D>>);
+    split_esc(Rest, <<Label/binary, A, B, C, D>>);
 %% Check for empty label (contiguous dots) - illegal except for root
-do_split(<<$., $., _/binary>>, _) ->
+split_esc(<<$., $., _/binary>>, _) ->
     error({invalid_dname, empty_label});
 %% Match 2 bytes
-do_split(<<A, B, Rest/binary>>, Label) when
+split_esc(<<A, B, Rest/binary>>, Label) when
     A =/= $., A =/= $\\, B =/= $., B =/= $\\
 ->
-    do_split(Rest, <<Label/binary, A, B>>);
+    split_esc(Rest, <<Label/binary, A, B>>);
 %% Unescaped dot - label separator
-do_split(<<$., _/binary>>, Label) when 63 < byte_size(Label) ->
+split_esc(<<$., _/binary>>, Label) when 63 < byte_size(Label) ->
     error({label_too_long, Label});
-do_split(<<$., Cs/binary>>, Label) ->
-    [Label | do_split(Cs, <<>>)];
+split_esc(<<$., Cs/binary>>, Label) ->
+    [Label | split_esc(Cs, <<>>)];
 %% Escaped dot - literal dot in label
-do_split(<<$\\, $., Cs/binary>>, Label) ->
-    do_split(Cs, <<Label/binary, $.>>);
+split_esc(<<$\\, $., Cs/binary>>, Label) ->
+    split_esc(Cs, <<Label/binary, $.>>);
 %% Escaped backslash - literal backslash in label
-do_split(<<$\\, $\\, Cs/binary>>, Label) ->
-    do_split(Cs, <<Label/binary, $\\>>);
+split_esc(<<$\\, $\\, Cs/binary>>, Label) ->
+    split_esc(Cs, <<Label/binary, $\\>>);
 %% Single byte fallback
-do_split(<<C, Cs/binary>>, Label) ->
-    do_split(Cs, <<Label/binary, C>>).
+split_esc(<<C, Cs/binary>>, Label) ->
+    split_esc(Cs, <<Label/binary, C>>).
 
 -doc #{equiv => join(Labels, subdomain)}.
 -spec join(Labels :: labels()) -> dname().
@@ -347,7 +377,7 @@ Returns `<<0>>` for empty names or root.
 """.
 -spec to_wire(dname()) -> wire().
 to_wire(Name) ->
-    Labels = do_split(Name, <<>>),
+    Labels = split_esc(Name, <<>>),
     LabelsBin = <<<<(byte_size(L)), L/binary>> || L <- Labels>>,
     254 < byte_size(LabelsBin) andalso error(name_too_long),
     <<LabelsBin/binary, 0>>.
@@ -387,7 +417,7 @@ to_wire(CompMap, Pos, Name) when is_binary(Name) ->
     Key = memo_key(Name),
     maybe
         miss ?= memo(CompMap, Pos, Key),
-        %% An escaped name keeps its untrimmed spelling: do_split/2 resolves its escapes.
+        %% An escaped name keeps its untrimmed spelling: split_esc/2 resolves its escapes.
         case classify(Name) of
             escaped -> to_wire_escaped(CompMap, Pos, Name);
             false -> to_wire_lc_write(CompMap, Pos, Key, <<>>, remember(Pos, Key, []));
@@ -495,7 +525,7 @@ no_empty(_) ->
 %% binary otherwise. The two key spaces never compare equal, so they cannot collide, while the
 %% unambiguous tail of an escaped name still shares keys with ordinary names.
 to_wire_escaped(CompMap, Pos, Name) ->
-    Labels = do_split(Name, <<>>),
+    Labels = split_esc(Name, <<>>),
     Lower =
         case has_upper(Name) of
             false -> Labels;
@@ -563,36 +593,6 @@ merge_pending(CompMap, [{K1, P1}, {K2, P2}, {K3, P3}]) ->
     CompMap#{K1 => P1, K2 => P2, K3 => P3};
 merge_pending(CompMap, Pending) ->
     maps:merge(CompMap, maps:from_list(Pending)).
-
-%% 56-bit (7-byte) and 32-bit SWAR constants — stay within BEAM small integer range
--define(ONES56, 16#01010101010101).
--define(HIGHS56, 16#80808080808080).
--define(ONES32, 16#01010101).
--define(HIGHS32, 16#80808080).
--define(DOTS56, (?ONES56 * $.)).
--define(BSLS56, (?ONES56 * $\\)).
--define(DOTS32, (?ONES32 * $.)).
--define(BSLS32, (?ONES32 * $\\)).
-
-%% Flag word for "does W contain byte C", C given pre-multiplied by ones: the zero-byte half of the
-%% CLEAN56 test, kept separate so the matching lane can be located and not just detected.
--define(HASBYTE56(W, C),
-    (((((W) bxor (C)) - ?ONES56) band bnot ((W) bxor (C))) band ?HIGHS56)
-).
-
-%% Guard-legal test that a word contains neither '.' nor '\': W bxor (C * ones) has a zero byte iff
-%% W contains byte C, and (V - ones) band (bnot V) band highs =/= 0 iff V has a zero byte (exact, no
-%% false positives).
--define(CLEAN56(W),
-    (0 =:=
-        ((((((W) bxor ?DOTS56) - ?ONES56) band bnot ((W) bxor ?DOTS56)) bor
-            ((((W) bxor ?BSLS56) - ?ONES56) band bnot ((W) bxor ?BSLS56))) band ?HIGHS56))
-).
--define(CLEAN32(W),
-    (0 =:=
-        ((((((W) bxor ?DOTS32) - ?ONES32) band bnot ((W) bxor ?DOTS32)) bor
-            ((((W) bxor ?BSLS32) - ?ONES32) band bnot ((W) bxor ?BSLS32))) band ?HIGHS32))
-).
 
 -doc """
 Convert wire format to domain name.
