@@ -7,6 +7,12 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## main
 
+## v5.1.1
+
+### Updated
+
+- Optimized `dns_domain:from_wire/1,2` on labels holding `.` or `\`, which come out escaped: 1.15–1.6x faster when many bytes need escaping, as in a label crafted of dots or backslashes, and unchanged on names that need no escaping.
+
 ## v5.1.0
 
 ### Added

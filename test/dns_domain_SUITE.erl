@@ -68,6 +68,9 @@ groups() ->
             from_wire_trailing_data,
             from_wire_boundaries,
             from_wire_chunked_escaping,
+            from_wire_escape_positions,
+            from_wire_escape_every_word,
+            from_wire_escape_all_bytes,
             from_wire_errors
         ]},
         {compression_tests, [parallel], [
@@ -659,6 +662,57 @@ from_wire_chunked_escaping(_) ->
         {<<13, "abcdefgh.test", 0>>, {<<"abcdefgh\\.test">>, <<>>}}
     ],
     [?assertEqual(Expected, dns_domain:from_wire(Input)) || {Input, Expected} <- Cases].
+
+from_wire_escape_positions(_) ->
+    %% One '.' or '\' at every position of every label length, so every lane of a 7-byte word, and
+    %% every byte of the shorter tail, gets a byte to escape
+    [
+        assert_from_wire_escapes(
+            <<(binary:copy(<<"a">>, P))/binary, C, (binary:copy(<<"a">>, Len - P - 1))/binary>>
+        )
+     || Len <- lists:seq(1, 63), P <- lists:seq(0, Len - 1), C <- [$., $\\]
+    ].
+
+from_wire_escape_every_word(_) ->
+    %% Every 7-byte word over '.', '\', a plain byte and the bytes one bit away from '.' (16#AE)
+    %% and '\' (16#DC), which must not be taken for them. Alone, and then straddling two words.
+    A = [$., $\\, $a, 16#AE, 16#DC],
+    Words = [
+        <<B0, B1, B2, B3, B4, B5, B6>>
+     || B0 <- A, B1 <- A, B2 <- A, B3 <- A, B4 <- A, B5 <- A, B6 <- A
+    ],
+    [assert_from_wire_escapes(Word) || Word <- Words],
+    [assert_from_wire_escapes(<<"xyz", Word/binary, "abcd">>) || Word <- Words].
+
+from_wire_escape_all_bytes(_) ->
+    %% Only '.' and '\' are escaped, whatever the byte values around them
+    [
+        assert_from_wire_escapes(Label)
+     || B <- lists:seq(0, 255),
+        Label <- [<<B>>, binary:copy(<<B>>, 63), <<B, $., B, $\\, B, B, B, B, $., B>>]
+    ].
+
+%% A label decodes to its escaped form as the first label of a name and after another label, both
+%% plain and in a compressed message, where the second name reaches the label through a pointer
+assert_from_wire_escapes(Label) ->
+    Len = byte_size(Label),
+    Escaped = escape_label_ref(Label),
+    ?assertEqual({Escaped, <<>>}, dns_domain:from_wire(<<Len, Label/binary, 0>>)),
+    ?assertEqual(
+        {<<"x.", Escaped/binary>>, <<>>}, dns_domain:from_wire(<<1, "x", Len, Label/binary, 0>>)
+    ),
+    Msg = <<0:96, Len, Label/binary, 0, 1, "y", 16#C0, 12>>,
+    ?assertEqual({Escaped, <<>>}, dns_domain:from_wire(Msg, binary:part(Msg, 12, Len + 2))),
+    ?assertEqual(
+        {<<"y.", Escaped/binary>>, <<>>}, dns_domain:from_wire(Msg, binary:part(Msg, 14 + Len, 4))
+    ).
+
+%% Byte by byte reference: '.' and '\' get a '\' in front, everything else is kept as it is
+escape_label_ref(Label) ->
+    <<<<(escape_byte_ref(C))/binary>> || <<C>> <= Label>>.
+
+escape_byte_ref(C) when C =:= $.; C =:= $\\ -> <<$\\, C>>;
+escape_byte_ref(C) -> <<C>>.
 
 from_wire_errors(_) ->
     %% Truncated cases

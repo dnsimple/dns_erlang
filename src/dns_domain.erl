@@ -656,18 +656,25 @@ from_wire_rest(<<Len, Label:Len/binary, Rest/binary>>, Acc, LabelCount) ->
     AccEscaped = escape_label_chunk(Label, <<Acc/binary, $.>>),
     from_wire_rest(Rest, AccEscaped, LabelCount + 1).
 
-%% Escape a label, appending directly into the accumulator. SWAR optimised.
+%% Escape a label, appending directly into the accumulator. SWAR optimised: once a word is found to
+%% hold a byte to escape, escape_label_bytes/2 copies up to that byte and escapes it before any word
+%% is tested again, rather than testing a word that is known to fail once per byte.
 escape_label_chunk(<<W:56/unsigned-little, Rest/binary>>, Acc) when ?CLEAN56(W) ->
     escape_label_chunk(Rest, <<Acc/binary, W:56/unsigned-little>>);
+escape_label_chunk(<<_:56, _/binary>> = Label, Acc) ->
+    escape_label_bytes(Label, Acc);
 escape_label_chunk(<<W:32/unsigned-little, Rest/binary>>, Acc) when ?CLEAN32(W) ->
     escape_label_chunk(Rest, <<Acc/binary, W:32/unsigned-little>>);
-escape_label_chunk(<<$., Rest/binary>>, Acc) ->
+escape_label_chunk(Label, Acc) ->
+    escape_label_bytes(Label, Acc).
+
+escape_label_bytes(<<$., Rest/binary>>, Acc) ->
     escape_label_chunk(Rest, <<Acc/binary, "\\.">>);
-escape_label_chunk(<<$\\, Rest/binary>>, Acc) ->
+escape_label_bytes(<<$\\, Rest/binary>>, Acc) ->
     escape_label_chunk(Rest, <<Acc/binary, "\\\\">>);
-escape_label_chunk(<<C, Rest/binary>>, Acc) ->
-    escape_label_chunk(Rest, <<Acc/binary, C>>);
-escape_label_chunk(<<>>, Acc) ->
+escape_label_bytes(<<C, Rest/binary>>, Acc) ->
+    escape_label_bytes(Rest, <<Acc/binary, C>>);
+escape_label_bytes(<<>>, Acc) ->
     Acc.
 
 -doc """
