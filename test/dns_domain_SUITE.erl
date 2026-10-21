@@ -39,7 +39,10 @@ groups() ->
         {join_tests, [parallel], [
             join_basic,
             join_empty_cases,
-            join_escaped_chars
+            join_escaped_chars,
+            join_every_short_label,
+            join_special_positions,
+            join_label_positions
         ]},
         {escape_tests, [parallel], [
             escape_label_iter_basic,
@@ -275,6 +278,59 @@ join_escaped_chars(_) ->
         {[<<"a.b\\c.d">>], <<"a\\.b\\\\c\\.d">>}
     ],
     [?assertEqual(Expect, dns_domain:join(Input)) || {Input, Expect} <- Cases].
+
+join_every_short_label(_) ->
+    %% Labels of up to 6 bytes over '.', '\', a plain byte and bytes one bit off, in three places
+    Labels = labels_upto([$., $\\, $a, 16#AE, 16#DC], 6),
+    [
+        assert_join_ref(Ls)
+     || L <- Labels, Ls <- [[L], [L, <<"b">>, <<"c">>], [<<"b">>, <<"c">>, L]]
+    ].
+
+join_special_positions(_) ->
+    %% A byte to escape, or one bit off, at every position of labels up to 64 bytes
+    [
+        assert_join_ref([
+            <<(binary:copy(<<"a">>, P))/binary, C, (binary:copy(<<"b">>, Len - P - 1))/binary>>,
+            <<"com">>
+        ])
+     || Len <- lists:seq(1, 64), P <- lists:seq(0, Len - 1), C <- [$., $\\, 16#AE, 16#DC]
+    ].
+
+join_label_positions(_) ->
+    %% One label at every position of names of up to 12 labels of up to 9 bytes
+    Odd = [
+        <<".">>,
+        <<"\\">>,
+        <<".a">>,
+        <<"a.">>,
+        <<"\\a">>,
+        <<"a\\">>,
+        <<"x">>,
+        <<"ab">>,
+        <<"a\\b">>,
+        <<"abc.defgh">>
+    ],
+    [
+        assert_join_ref(lists:duplicate(P, Clean) ++ [L] ++ lists:duplicate(Count - P - 1, Clean))
+     || Count <- lists:seq(1, 12),
+        P <- lists:seq(0, Count - 1),
+        Clean <- [binary:part(<<"cdefghijk">>, 0, Size) || Size <- lists:seq(0, 9)],
+        L <- Odd
+    ].
+
+%% Reference: labels escaped byte by byte and joined with '.', as subdomain and fqdn
+assert_join_ref(Labels) ->
+    Ref = iolist_to_binary(lists:join($., [escape_label_ref(L) || L <- Labels])),
+    ?assertEqual(Ref, dns_domain:join(Labels)),
+    ?assertEqual(<<Ref/binary, ".">>, dns_domain:join(Labels, fqdn)).
+
+%% Every binary over the alphabet of up to Max bytes
+labels_upto(_, 0) ->
+    [<<>>];
+labels_upto(Alphabet, Max) ->
+    Shorter = labels_upto(Alphabet, Max - 1),
+    lists:usort([<<C, L/binary>> || C <- Alphabet, L <- Shorter] ++ Shorter).
 
 %% ============================================================================
 %% Escape Tests
