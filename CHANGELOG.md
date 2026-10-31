@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Zone files: read hex split by whitespace in DS, CDS, DLV, TLSA and SMIMEA, and base64 in DHCID, CERT and KEY.
 - Zone files: read TLSA, SMIMEA, DHCID and CERT data unquoted, as their RFCs' examples write it.
+- Zone files: read base64 whose final `=` is alone on a line.
 
 ## v5.1.1
 

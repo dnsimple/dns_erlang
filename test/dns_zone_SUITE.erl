@@ -339,6 +339,7 @@ groups() ->
             parse_ds_digest_split,
             parse_tlsa_data_split,
             parse_base64_split,
+            parse_base64_padding_alone,
             parse_hex_split_never_misread,
             parse_dnskey_record,
             parse_key_record,
@@ -2076,6 +2077,36 @@ parse_base64_split(_Config) ->
             #dns_rr{data = #dns_rrdata_dhcid{data = DHCID}},
             #dns_rr{data = #dns_rrdata_cert{type = 1, keytag = 12345, alg = 8, cert = Cert}},
             #dns_rr{data = #dns_rrdata_key{protocol = 3, alg = 13, public_key = Key}}
+        ]},
+        dns_zone:parse_string(Zone)
+    ).
+
+%% Split base64 can leave its final "=" alone, as the RRSIG of RFC 5702 §6.2
+%% does. A lone "=" read as a token of its own, which nothing takes, and the
+%% record failed to parse. "==" alone already read as base64.
+parse_base64_padding_alone(_Config) ->
+    Zone =
+        ~"""
+    www.example.net. 3600  IN  RRSIG  (A 10 3 3600 20300101000000
+                     20000101000000 3740 example.net. tsb4wnjRUDnB1BUi+t
+                     6TMTXThjVnG+eCkWqjvvjhzQL1d0YRoOe0CbxrVDYd0xDtsuJRa
+                     eUw1ep94PzEWzr0iGYgZBWm/zpq+9fOuagYJRfDqfReKBzMweOL
+                     DiNa8iP5g9vMhpuv6OPlvpXwm9Sa9ZXIbNl1MBGk0fthPgxdDLw
+                     =);{id = 3740}
+    example.com. 3600 IN DNSKEY 256 3 13 ( AQIDBAU
+            = )
+    example.com. 3600 IN DNSKEY 256 3 13 ( AQIDBA
+            == )
+
+    """,
+    Signature = base64:decode(
+        ~"tsb4wnjRUDnB1BUi+t6TMTXThjVnG+eCkWqjvvjhzQL1d0YRoOe0CbxrVDYd0xDtsuJRaeUw1ep94PzEWzr0iGYgZBWm/zpq+9fOuagYJRfDqfReKBzMweOLDiNa8iP5g9vMhpuv6OPlvpXwm9Sa9ZXIbNl1MBGk0fthPgxdDLw="
+    ),
+    ?assertMatch(
+        {ok, [
+            #dns_rr{data = #dns_rrdata_rrsig{keytag = 3740, signature = Signature}},
+            #dns_rr{data = #dns_rrdata_dnskey{public_key = <<1, 2, 3, 4, 5>>}},
+            #dns_rr{data = #dns_rrdata_dnskey{public_key = <<1, 2, 3, 4>>}}
         ]},
         dns_zone:parse_string(Zone)
     ).

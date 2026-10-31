@@ -90,8 +90,8 @@ TIME_VALUE = ({TIME_NUM}{TIME_UNIT}+)+
 %   +/= (plus, slash, equals) - RFC 4648: Base64 encoding (equals for padding)
 % Note: RFC 1035 hostnames cannot start with digit or hyphen,
 %       but zone file labels are more permissive
-% Note: = is used for base64 padding and also as EQUALS token, but standalone = will
-% still match EQUALS since LABEL requires at least one non-= character
+% Note: = alone is a label too, as when base64 is split with its last = on a
+% line of its own (RFC 4034 §2.2, §3.2 allow whitespace within base64)
 LABEL_CHAR = [a-zA-Z0-9\-_*:+\/=?]
 LABEL      = [a-zA-Z0-9\-_*:+\/=?][a-zA-Z0-9\-_*:+\/=?]*
 
@@ -192,9 +192,6 @@ RTYPE_ALIAS    = ALIAS
 % Quoted strings for TXT records, etc.
 STRING    = "([^"\\]|\\.)*"
 
-% Generic tokens
-EQUALS    = =
-
 Rules.
 
 % Directives
@@ -220,7 +217,6 @@ Rules.
 {DOT}          : {token, {dot, TokenLine}}.
 {LPAREN}       : {token, {lparen, TokenLine}}.
 {RPAREN}       : {token, {rparen, TokenLine}}.
-{EQUALS}       : {token, {equals, TokenLine}}.
 {COMMA}        : {token, {comma, TokenLine}}.
 {DOLLAR}       : {token, {dollar, TokenLine}}.
 {LBRACE}       : {token, {lbrace, TokenLine}}.
