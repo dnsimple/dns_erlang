@@ -250,24 +250,37 @@ cycle_nsec_encoding(_Config, RRs) ->
 %% Every RRSIG in the AXFRs of the zones BIND signed in data_samples:dnssec/0
 %% verifies. This test once matched the record types as atoms, found no
 %% signatures and passed without verifying anything, while ECDSA and DSA
-%% signatures did not verify at all, so every zone must yield signatures.
+%% signatures did not verify at all, so every zone must yield signatures. Each
+%% verifies with the DNSKEYs as the wire decoder gives them, RSA and DSA keys as
+%% integers, and with their keys as RDATA bytes, as a zone file gives them.
 verify_rrset(Config) ->
     PerZone = helper_verify_rrset_test_cases(Config),
     ?assertEqual(length(proplists:get_value(dnssec_samples, Config)), length(PerZone)),
     [?assertNotEqual([], Cases, Zone) || {Zone, Cases} <- PerZone],
     Failed = [
-        {Zone, length(Bad), length(Cases)}
+        {Zone, Form, length(Bad), length(Cases)}
      || {Zone, Cases} <- PerZone,
+        {Form, KeyForm} <- [{decoded, fun(Keys) -> Keys end}, {bytes, fun dnskeys_as_bytes/1}],
         Bad <- [
             [
                 RRSig
              || {RRSig, RRSet, DNSKeys, Opts} <- Cases,
-                not dnssec:verify_rrsig(RRSig, RRSet, DNSKeys, Opts)
+                not dnssec:verify_rrsig(RRSig, RRSet, KeyForm(DNSKeys), Opts)
             ]
         ],
         Bad =/= []
     ],
     ?assertEqual([], Failed).
+
+%% The DNSKEYs with their keys as the RDATA's bytes, as a zone file gives them
+dnskeys_as_bytes(DNSKeys) ->
+    [
+        begin
+            <<_:32, Key/binary>> = dns_encode:encode_rrdata(?DNS_CLASS_IN, Data),
+            RR#dns_rr{data = Data#dns_rrdata_dnskey{public_key = Key}}
+        end
+     || #dns_rr{data = Data} = RR <- DNSKeys
+    ].
 
 verify_rrsig_expiry(_Config) ->
     %% Build a valid-looking RRSIG with inception in the future -> false

@@ -101,8 +101,15 @@ Unlike `t:dns:alg/0`, this type is restricted to algorithms valid for zone signi
 -type gen_nsec3_opts() :: gen_nsec_opts().
 -doc "DNSKEY key tag (RFC 4034 Appendix B).".
 -type keytag() :: integer().
--doc "Cryptographic key material for signing or verification.".
--type key() :: [binary()] | binary().
+-doc """
+Cryptographic key material for signing or verification.
+
+RSA and DSA keys are lists of integers, `[E, N, D]` or `[P, Q, G, X]` to sign
+and `[E, M]` or `[P, Q, G, Y]` to verify, which is how the wire decoder gives a
+DNSKEY's key. A DNSKEY parsed from a zone file keeps the RDATA's key bytes,
+which verify as well. Other keys are binaries.
+""".
+-type key() :: [integer()] | binary().
 -doc "Options for `sign_rr/6` and `sign_rrset/6`.".
 -type sign_rr_opts() :: #{inception => dns:unix_time(), expiration => dns:unix_time()}.
 -doc "Options for `verify_rrsig/4`.".
@@ -428,7 +435,7 @@ sign(Alg, BaseSigInput, Key) when Alg =:= ?DNS_ALG_DSA orelse Alg =:= ?DNS_ALG_N
     %% RFC2536: Key must be [P, Q, G, X] as integers (crypto key format).
     DerSig = crypto:sign(dss, sha, BaseSigInput, Key),
     #'Dss-Sig-Value'{r = R, s = S} = public_key:der_decode('Dss-Sig-Value', DerSig),
-    [P, _Q, _G, _Y] = Key,
+    [P, _Q, _G, _X] = Key,
     M = byte_size(binary:encode_unsigned(P)),
     T = (M - 64) div 8,
     <<T, R:20/unit:8, S:20/unit:8>>;
@@ -520,9 +527,7 @@ verify_with_key(Alg, Key, Signature, SigInput) ->
 verify(Alg, Key, Signature, SigInput) when Alg =:= ?DNS_ALG_DSA orelse Alg =:= ?DNS_ALG_NSEC3DSA ->
     <<_T, R:20/unit:8, S:20/unit:8>> = Signature,
     AsnSig = public_key:der_encode('Dss-Sig-Value', #'Dss-Sig-Value'{r = R, s = S}),
-    %% DNSKEY public_key from decode is [P, Q, G, Y] as binaries; normalize to integers for crypto.
-    KeyInts = dsa_pubkey_to_integers(Key),
-    crypto:verify(dss, sha, SigInput, AsnSig, KeyInts);
+    crypto:verify(dss, sha, SigInput, AsnSig, dsa_public_key(Key));
 verify(Alg, Key, Signature, SigInput) when
     Alg =:= ?DNS_ALG_NSEC3RSASHA1 orelse
         Alg =:= ?DNS_ALG_RSASHA1 orelse
@@ -741,26 +746,16 @@ count_labels([~"*" | Labels]) ->
 count_labels(List) when is_list(List) ->
     length(List).
 
-%% A DNSKEY decoded from the wire holds the RSA key as [E, M]; one parsed from a
-%% zone file, or one the decoder found not canonical, holds the RFC3110§2 bytes.
--spec rsa_public_key([integer()] | binary()) -> [integer()].
-rsa_public_key([_E, _M] = Key) ->
-    Key;
-rsa_public_key(<<0, Len:16, E:Len/unit:8, M/binary>>) ->
-    [E, binary:decode_unsigned(M)];
-rsa_public_key(<<Len, E:Len/unit:8, M/binary>>) when 0 < Len ->
-    [E, binary:decode_unsigned(M)].
+%% A DNSKEY decoded from the wire holds an RSA or DSA key as integers, and one
+%% parsed from a zone file its RDATA bytes, which are read as the decoder reads
+%% them. Bytes that do not parse stay a binary, which verifies nothing.
+-spec rsa_public_key(key()) -> key().
+rsa_public_key(Key) when is_binary(Key) -> dns_decode:rsa_public_key(Key);
+rsa_public_key(Key) -> Key.
 
-%% Convert DNSKEY public_key [P, Q, G, Y] (binaries from decode) to integers for crypto:verify.
--spec dsa_pubkey_to_integers([binary() | integer()]) -> [integer()].
-dsa_pubkey_to_integers([P, Q, G, Y]) ->
-    [dsa_elem_to_int(X) || X <- [P, Q, G, Y]].
-
--spec dsa_elem_to_int(binary() | integer()) -> integer().
-dsa_elem_to_int(B) when is_binary(B) ->
-    binary:decode_unsigned(B);
-dsa_elem_to_int(I) when is_integer(I) ->
-    I.
+-spec dsa_public_key(key()) -> key().
+dsa_public_key(Key) when is_binary(Key) -> dns_decode:dsa_public_key(Key);
+dsa_public_key(Key) -> Key.
 
 %% RFC 6605 §4: ECDSA signatures on the wire are r || s, each padded to FieldSize bytes.
 %% crypto:sign returns DER-encoded ASN.1; crypto:verify expects DER-encoded ASN.1.
