@@ -612,11 +612,9 @@ build_sig_input(
     SigInput = preprocess_sig_input(Alg, SigInput0),
     {RRSigData, SigInput}.
 
+%% RSA signs a DigestInfo built here (RFC3110§3, RFC5702§3). The others take
+%% the signed data as it is: crypto does any hashing they need.
 -spec preprocess_sig_input(dns:uint8(), [binary()]) -> binary().
-preprocess_sig_input(Alg, SigInput) when Alg =:= ?DNS_ALG_DSA orelse Alg =:= ?DNS_ALG_NSEC3DSA ->
-    NewSigInput = iolist_to_binary(SigInput),
-    NewSigInputSize = byte_size(NewSigInput),
-    <<NewSigInputSize:32, NewSigInput/binary>>;
 preprocess_sig_input(Alg, SigInput) when
     Alg =:= ?DNS_ALG_NSEC3RSASHA1 orelse
         Alg =:= ?DNS_ALG_RSASHA1 orelse
@@ -626,10 +624,6 @@ preprocess_sig_input(Alg, SigInput) when
     {Prefix, HashType} = choose_sha_prefix_and_type(Alg),
     Hash = crypto:hash(HashType, SigInput),
     <<Prefix/binary, Hash/binary>>;
-preprocess_sig_input(?DNS_ALG_ECDSAP256SHA256, SigInput) ->
-    crypto:hash(sha256, SigInput);
-preprocess_sig_input(?DNS_ALG_ECDSAP384SHA384, SigInput) ->
-    crypto:hash(sha384, SigInput);
 preprocess_sig_input(_Alg, SigInput) ->
     iolist_to_binary(SigInput).
 

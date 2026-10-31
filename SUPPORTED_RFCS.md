@@ -31,6 +31,7 @@ functionality such as socket handling or query resolution.
 - **[RFC 4701](https://tools.ietf.org/html/rfc4701)**: A DNS Resource Record (RR) for Encoding Dynamic Host Configuration Protocol (DHCP) Information (DHCID RR)
 - **[RFC 5001](https://tools.ietf.org/html/rfc5001)**: DNS Name Server Identifier (NSID) Option
 - **[RFC 5155](https://tools.ietf.org/html/rfc5155)**: DNS Security (DNSSEC) Hashed Authenticated Denial of Existence
+- **[RFC 5702](https://tools.ietf.org/html/rfc5702)**: Use of SHA-2 Algorithms with RSA in DNSKEY and RRSIG Resource Records for DNSSEC
 - **[RFC 6605](https://tools.ietf.org/html/rfc6605)**: Elliptic Curve Digital Signature Algorithm (DSA) for DNSSEC
 - **[RFC 6672](https://tools.ietf.org/html/rfc6672)**: DNAME Redirection in the DNS
 - **[RFC 6698](https://tools.ietf.org/html/rfc6698)**: The DNS-Based Authentication of Named Entities (DANE) Transport Layer Security (TLS) Protocol: TLSA
