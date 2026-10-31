@@ -57,6 +57,8 @@ groups() ->
             malformed_input_does_not_verify,
             verify_needs_zone_key,
             verify_needs_rrsig_key_tag,
+            verify_rejects_rrsig_not_fitting_rrset,
+            verify_wildcard_expansion,
             verify_with_decremented_ttl,
             signers_name_in_canonical_form,
             ih_custom_hash_test,
@@ -711,7 +713,8 @@ rfc_known_answer(#{source := Source, alg := Alg, private_key := PrivateKey, zone
     Flipped = SigData#dns_rrdata_rrsig{signature = <<Head/binary, (Last bxor 1)>>},
     ?assertNot(dnssec:verify_rrsig(RRSig#dns_rr{data = Flipped}, RRSet, [DNSKey], Opts), Source),
     Moved = [RR#dns_rr{name = <<"moved.", Name/binary>>} || #dns_rr{name = Name} = RR <- RRSet],
-    ?assertNot(dnssec:verify_rrsig(RRSig, Moved, [DNSKey], Opts), Source),
+    MovedRRSig = RRSig#dns_rr{name = <<"moved.", (RRSig#dns_rr.name)/binary>>},
+    ?assertNot(dnssec:verify_rrsig(MovedRRSig, Moved, [DNSKey], Opts), Source),
     Signed = dnssec:sign_rrset(
         RRSet, Signer, KeyTag, Alg, PrivateKey, #{inception => Inception, expiration => Expiration}
     ),
@@ -801,9 +804,14 @@ sign_by_hand_rrset(Alg, KeyTag, Zone, PrivateKey, Inception, Expiration) ->
 signed_data_by_hand(Alg, KeyTag, Zone, Inception, Expiration) ->
     Owner = <<"www.", Zone/binary>>,
     Labels = length(binary:split(Owner, ~".", [global, trim_all])),
-    <<?DNS_TYPE_A:16, Alg, Labels, 3600:32, Expiration:32, Inception:32, KeyTag:16,
-        (wire_by_hand(Zone))/binary, (wire_by_hand(Owner))/binary, ?DNS_TYPE_A:16, ?DNS_CLASS_IN:16,
-        3600:32, 4:16, 192, 0, 2, 1>>.
+    signed_data_by_hand(Alg, KeyTag, Zone, Owner, Inception, Expiration, ?DNS_TYPE_A, Labels).
+
+%% The same, with the RRset's owner, and the RRSIG RDATA's type covered and
+%% labels, as given
+signed_data_by_hand(Alg, KeyTag, Signer, Owner, Inception, Expiration, TypeCovered, Labels) ->
+    <<TypeCovered:16, Alg, Labels, 3600:32, Expiration:32, Inception:32, KeyTag:16,
+        (wire_by_hand(Signer))/binary, (wire_by_hand(Owner))/binary, ?DNS_TYPE_A:16,
+        ?DNS_CLASS_IN:16, 3600:32, 4:16, 192, 0, 2, 1>>.
 
 wire_by_hand(Name) ->
     Labels = binary:split(string:lowercase(Name), ~".", [global, trim_all]),
@@ -1015,6 +1023,109 @@ verify_needs_rrsig_key_tag(_Config) ->
     #dns_rr{data = SigData} = RRSig,
     Spelled = RRSig#dns_rr{data = SigData#dns_rrdata_rrsig{signers_name = ~"Example.NET"}},
     ?assert(dnssec:verify_rrsig(Spelled, RRSet, [KSK], #{now => Now})).
+
+%% RFC4035§5.3.1: an RRSIG whose owner or class is not the RRset's, whose type
+%% covered is not the RRset's type, or whose labels field counts more labels
+%% than the RRset's owner has, does not verify, even signed by the zone's own
+%% key. Signed by hand with the RFC8080§6 Ed25519 key: the RRSIG with the right
+%% fields verifies, the others do not.
+verify_rejects_rrsig_not_fitting_rrset(_Config) ->
+    [#{private_key := PrivateKey, zone := Zone} | _] =
+        [V || #{alg := ?DNS_ALG_ED25519} = V <- rfc_vectors()],
+    {ok, RRs} = dns_zone:parse_string(Zone),
+    [#dns_rr{data = #dns_rrdata_dnskey{keytag = KeyTag}} = DNSKey] =
+        [RR || #dns_rr{type = ?DNS_TYPE_DNSKEY} = RR <- RRs],
+    RR = #dns_rr{
+        name = ~"www.example.com",
+        type = ?DNS_TYPE_A,
+        ttl = 3600,
+        data = #dns_rrdata_a{ip = {192, 0, 2, 1}}
+    },
+    %% RFC4035§5.3.2: an RRSIG whose labels field counts fewer labels than its
+    %% owner has signs the wildcard it names
+    SignedOwners = #{0 => ~"*", 1 => ~"*.com", 2 => ~"*.example.com"},
+    RRSig = fun(Signer, TypeCovered, Labels) ->
+        SignedData = signed_data_by_hand(
+            ?DNS_ALG_ED25519,
+            KeyTag,
+            Signer,
+            maps:get(Labels, SignedOwners, ~"www.example.com"),
+            1000000,
+            2000000,
+            TypeCovered,
+            Labels
+        ),
+        #dns_rr{
+            name = ~"www.example.com",
+            type = ?DNS_TYPE_RRSIG,
+            ttl = 3600,
+            data = #dns_rrdata_rrsig{
+                type_covered = TypeCovered,
+                alg = ?DNS_ALG_ED25519,
+                labels = Labels,
+                original_ttl = 3600,
+                inception = 1000000,
+                expiration = 2000000,
+                keytag = KeyTag,
+                signers_name = Signer,
+                signature = crypto:sign(eddsa, none, SignedData, [PrivateKey, ed25519])
+            }
+        }
+    end,
+    Verify = fun(RRSIG) -> dnssec:verify_rrsig(RRSIG, [RR], [DNSKey], #{now => 1500000}) end,
+    Fits = RRSig(~"example.com", ?DNS_TYPE_A, 3),
+    ?assert(Verify(Fits)),
+    ?assert(Verify(Fits#dns_rr{name = ~"WWW.Example.COM."})),
+    ?assertNot(Verify(Fits#dns_rr{name = ~"other.example.com"})),
+    ?assertNot(Verify(Fits#dns_rr{class = ?DNS_CLASS_CH})),
+    ?assertNot(Verify(RRSig(~"example.com", ?DNS_TYPE_MX, 3))),
+    ?assertNot(Verify(RRSig(~"example.com", ?DNS_TYPE_A, 4))),
+    %% The same key published at another name: it verifies the RRsets at or
+    %% under that name, whose zone it can be, and no others, nor the expansions
+    %% of a wildcard above that name
+    SignedBy = fun(Signer, Labels) ->
+        Key = DNSKey#dns_rr{name = Signer},
+        dnssec:verify_rrsig(RRSig(Signer, ?DNS_TYPE_A, Labels), [RR], [Key], #{now => 1500000})
+    end,
+    ?assert(SignedBy(~"com", 3)),
+    ?assert(SignedBy(~"com", 1)),
+    ?assert(SignedBy(~"example.com", 2)),
+    ?assert(SignedBy(~"www.example.com", 3)),
+    ?assertNot(SignedBy(~"example.com", 1)),
+    ?assertNot(SignedBy(~"www.example.com", 2)),
+    ?assertNot(SignedBy(~"example.net", 3)),
+    ?assertNot(SignedBy(~"ample.com", 3)),
+    ?assertNot(SignedBy(~"a.www.example.com", 3)).
+
+%% RFC4035§5.3.2: an answer a wildcard was expanded into carries the wildcard's
+%% RRSIG, whose labels field counts the wildcard's labels but not its "*", and is
+%% verified as "*" and that many of the answer's last labels. The zones BIND
+%% signed in data_samples:dnssec/0 hold wildcards: their RRSIGs verify for names
+%% under them, and not for a name that is not.
+verify_wildcard_expansion(Config) ->
+    Wildcards = [
+        Case
+     || {_Zone, Cases} <- helper_verify_rrset_test_cases(Config),
+        {_, [#dns_rr{name = <<"*.", _/binary>>} | _], _, _} = Case <- Cases
+    ],
+    ?assertNotEqual([], Wildcards),
+    %% The answer, its RRSIG with it, at Name
+    Verify = fun(RRSig, RRSet, Keys, Opts, Name) ->
+        dnssec:verify_rrsig(
+            RRSig#dns_rr{name = Name}, [RR#dns_rr{name = Name} || RR <- RRSet], Keys, Opts
+        )
+    end,
+    [
+        begin
+            <<"*.", Parent/binary>> = Wildcard,
+            ?assert(dnssec:verify_rrsig(RRSig, RRSet, Keys, Opts), Wildcard),
+            ?assert(Verify(RRSig, RRSet, Keys, Opts, <<"a.", Parent/binary>>)),
+            ?assert(Verify(RRSig, RRSet, Keys, Opts, <<"a.B.", Parent/binary>>)),
+            %% Under another parent the wildcard's last labels do not match
+            ?assertNot(Verify(RRSig, RRSet, Keys, Opts, <<"a.not", Parent/binary>>))
+        end
+     || {RRSig, [#dns_rr{name = Wildcard} | _] = RRSet, Keys, Opts} <- Wildcards
+    ].
 
 rsa_private_key(E, N, D) ->
     [binary:decode_unsigned(base64:decode(B)) || B <- [E, N, D]].

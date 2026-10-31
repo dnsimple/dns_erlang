@@ -408,7 +408,7 @@ sign_rrset(RRSet, SignerName, KeyTag, Alg, Key) ->
 -spec sign_rrset([dns:rr(), ...], dns:dname(), keytag(), sigalg(), key(), sign_rr_opts()) ->
     dns:rr().
 sign_rrset(
-    [#dns_rr{name = Name, class = Class, ttl = TTL} | _] = RRs,
+    [#dns_rr{name = Name, class = Class, type = Type, ttl = TTL} | _] = RRs,
     SignersName,
     KeyTag,
     Alg,
@@ -419,9 +419,19 @@ sign_rrset(
     Incept = maps:get(inception, Opts, Now),
     %% 1 year
     Expire = maps:get(expiration, Opts, Now + ?SECS_IN_YEAR),
-    {Data0, BaseSigInput} = build_sig_input(RRs, SignersName, KeyTag, Alg, Incept, Expire),
-    Signature = sign(Alg, BaseSigInput, Key),
-    Data = Data0#dns_rrdata_rrsig{signature = Signature},
+    Data0 = #dns_rrdata_rrsig{
+        type_covered = Type,
+        alg = Alg,
+        labels = count_labels(dns_domain:split(Name)),
+        original_ttl = TTL,
+        inception = Incept,
+        expiration = Expire,
+        keytag = KeyTag,
+        %% RFC4034§3.1.8.1, RFC6840§5.1: the signer's name is signed in canonical
+        %% form, lowercased, and so it is written in the RRSIG too
+        signers_name = dns_domain:to_lower(SignersName)
+    },
+    Data = Data0#dns_rrdata_rrsig{signature = sign(Alg, signed_data(Data0, RRs), Key)},
     #dns_rr{
         name = Name,
         type = ?DNS_TYPE_RRSIG,
@@ -463,24 +473,33 @@ sign(Alg, _BaseSigInput, _Key) ->
     error({unsupported_algorithm, Alg}).
 
 -doc """
-Verifies an RRset against one of its RRSIGs.
+Verifies an RRset against one of its RRSIGs, as RFC 4035 §5.3 has a validator do.
 
-Returns `true` if the time `now` in `Opts`, by default the current time, is
-within the RRSIG's validity period, and its signature verifies with one of the
-DNSKEYs it names: a zone key, with the Zone Key flag set, at the RRSIG's
-signer's name, with the RRSIG's algorithm and key tag. Otherwise it returns
-`false`, as it does for an algorithm this module does not implement and for a
-malformed key or signature.
+Returns `true` if the RRSIG has the RRset's owner and class and covers its type,
+its signer is the owner or one of its ancestors, its labels field counts no more
+labels than the owner has and no fewer than the signer has, the time `now` in
+`Opts`, by default the current time, is within its validity period, and its
+signature verifies with one of the DNSKEYs it names: a zone key, with the Zone
+Key flag set, at the RRSIG's signer's name, with the RRSIG's algorithm and key
+tag. Otherwise it returns `false`, as it does for an algorithm this module does
+not implement and for a malformed key or signature.
 
-The wire decoder and the zone file parser set a DNSKEY's key tag; set it on
-one built otherwise with `add_keytag_to_dnskey/1`. Whether the DNSKEYs are to
-be trusted is for the caller to decide.
+An RRset a wildcard was expanded into verifies with the wildcard's RRSIG. The
+wire decoder and the zone file parser set a DNSKEY's key tag; set it on one
+built otherwise with `add_keytag_to_dnskey/1`. Whether the DNSKEYs are to be
+trusted is for the caller to decide.
 """.
 -spec verify_rrsig(dns:rr(), [dns:rr()], [dns:rr()], verify_rrsig_opts()) -> boolean().
-verify_rrsig(#dns_rr{type = ?DNS_TYPE_RRSIG, data = Data}, RRs, RRDNSKey, Opts) ->
+verify_rrsig(
+    #dns_rr{name = SigOwner, class = SigClass, type = ?DNS_TYPE_RRSIG, data = Data},
+    RRs,
+    RRDNSKey,
+    Opts
+) ->
     Now = maps:get(now, Opts, erlang:system_time(second)),
     #dns_rrdata_rrsig{
-        original_ttl = OTTL,
+        type_covered = TypeCovered,
+        labels = Labels,
         keytag = SigKeyTag,
         alg = SigAlg,
         inception = Incept,
@@ -511,20 +530,30 @@ verify_rrsig(#dns_rr{type = ?DNS_TYPE_RRSIG, data = Data}, RRs, RRDNSKey, Opts) 
         dns_domain:are_equal_labels(dns_domain:split(Name), Signer)
     ],
     case RRs of
-        [_ | _] when Keys =/= [], Incept =< Now, Now =< Expire ->
-            {_SigTuple, SigInput} = build_sig_input(
-                RRs,
-                SignersName,
-                SigKeyTag,
-                SigAlg,
-                Incept,
-                Expire,
-                OTTL
-            ),
-            lists:any(
-                fun(Key) -> verify_with_key(SigAlg, Key, Signature, SigInput) end,
-                Keys
-            );
+        %% RFC4035§5.3.1: the RRSIG has the RRset's owner and class, covers its
+        %% type, its labels field counts no more labels than the owner has, and
+        %% its signer is the RRset's zone. The zone cut is not known here, so the
+        %% signer must be the owner or one of its ancestors, and the labels field
+        %% count no fewer labels than the signer has, so that a wildcard it names
+        %% (RFC4035§5.3.2) is in the signer's zone too
+        [#dns_rr{name = Owner, class = SigClass, type = TypeCovered} | _] when
+            Keys =/= [], Incept =< Now, Now =< Expire
+        ->
+            OwnerLabels = dns_domain:split(Owner),
+            case
+                dns_domain:are_equal_labels(OwnerLabels, dns_domain:split(SigOwner)) andalso
+                    Labels =< count_labels(OwnerLabels) andalso
+                    length(Signer) =< Labels andalso
+                    is_at_or_under(OwnerLabels, Signer)
+            of
+                true ->
+                    SignedData = signed_data(Data, RRs),
+                    lists:any(
+                        fun(Key) -> verify_with_key(SigAlg, Key, Signature, SignedData) end, Keys
+                    );
+                false ->
+                    false
+            end;
         _ ->
             false
     end.
@@ -580,53 +609,33 @@ verify(?DNS_ALG_ED448, <<_:57/binary>> = Key, <<_:114/binary>> = Signature, SigI
 verify(_Alg, _Key, _Signature, _SigInput) ->
     false.
 
--spec build_sig_input([dns:rr(), ...], dns:dname(), keytag(), dns:alg(), integer(), integer()) ->
-    {dns:rrdata_rrsig(), iodata()}.
-build_sig_input(
-    [#dns_rr{ttl = TTL} | _] = RRs,
-    SignersName,
-    KeyTag,
-    Alg,
-    Incept,
-    Expire
+%% RFC4034§3.1.8.1: the RRSIG RDATA without its signature, then the RRset in
+%% canonical form (RFC4034§6.2). RFC4035§5.3.2: each record goes in with the
+%% RRSIG's original TTL, whatever TTL it arrived with, as one from a cache
+%% arrives decremented, and with the owner the RRSIG's labels field gives it.
+-spec signed_data(dns:rrdata_rrsig(), [dns:rr(), ...]) -> iodata().
+signed_data(
+    #dns_rrdata_rrsig{labels = Labels, original_ttl = TTL} = RRSig,
+    [#dns_rr{name = Name, class = Class, type = Type} | _] = RRs
 ) ->
-    build_sig_input(RRs, SignersName, KeyTag, Alg, Incept, Expire, TTL).
-
--spec build_sig_input(
-    [dns:rr(), ...], dns:dname(), keytag(), dns:alg(), integer(), integer(), non_neg_integer()
-) ->
-    {dns:rrdata_rrsig(), iodata()}.
-%% RFC4035§5.3.2: the records go into the signed data with the RRSIG's original
-%% TTL, whatever TTL they arrived with, as one from a cache arrives decremented.
-build_sig_input(
-    [#dns_rr{name = Name, class = Class, type = Type} | _] = RRs,
-    SignersName,
-    KeyTag,
-    Alg,
-    Incept,
-    Expire,
-    TTL
-) when is_integer(Alg) ->
     LName = dns_domain:to_lower(Name),
+    Owner = signed_owner(LName, Labels),
+    OwnerBin = dns_domain:to_wire(Owner),
+    RecordBase = <<OwnerBin/binary, Type:16, Class:16, TTL:32>>,
     Datas = lists:sort([canonical_rrdata_bin(RR) || RR <- RRs]),
-    LLabels = dns_domain:split(LName),
-    NameBin = dns_domain:to_wire(LName),
-    RecordBase = <<NameBin/binary, Type:16, Class:16, TTL:32>>,
     RRSetBin = [<<RecordBase/binary, (byte_size(Data)):16, Data/binary>> || Data <- Datas],
-    RRSigData = #dns_rrdata_rrsig{
-        type_covered = Type,
-        alg = Alg,
-        labels = count_labels(LLabels),
-        original_ttl = TTL,
-        inception = Incept,
-        expiration = Expire,
-        keytag = KeyTag,
-        %% RFC4034§3.1.8.1, RFC6840§5.1: the signer's name is signed in canonical
-        %% form, lowercased, and so it is written in the RRSIG too
-        signers_name = dns_domain:to_lower(SignersName)
-    },
-    RRSigRDataBin = rrsig_to_digestable(RRSigData),
-    {RRSigData, [RRSigRDataBin | RRSetBin]}.
+    [rrsig_to_digestable(RRSig) | RRSetBin].
+
+%% RFC4035§5.3.2: an RRset a wildcard was expanded into is signed as the
+%% wildcard, "*" and the last Labels labels of its owner
+-spec signed_owner(dns:dname(), dns:uint8()) -> dns:dname().
+signed_owner(Name, Labels) ->
+    case dns_domain:split(Name) of
+        Split when Labels < length(Split) ->
+            dns_domain:join([~"*" | lists:nthtail(length(Split) - Labels, Split)]);
+        _ ->
+            Name
+    end.
 
 %% RFC3110§3, RFC5702§3: RSASSA-PKCS1-v1_5, whose DigestInfo crypto builds from
 %% the hash it is given. An OpenSSL whose policy refuses SHA-1 signatures, as
@@ -662,7 +671,9 @@ add_keytag_to_key_rr(RR, Data, Type) ->
 
 -spec rrsig_to_digestable(dns:rrdata_rrsig()) -> binary().
 rrsig_to_digestable(#dns_rrdata_rrsig{} = Data) ->
-    dns_encode:encode_rrdata(?DNS_CLASS_IN, Data#dns_rrdata_rrsig{signature = <<>>}).
+    %% RFC4034§6.2, RFC6840§5.1: in canonical form, the signer's name lowercased
+    Canonical = canonical_rrdata_form(Data#dns_rrdata_rrsig{signature = <<>>}),
+    dns_encode:encode_rrdata(?DNS_CLASS_IN, Canonical).
 
 -spec canonical_rrdata_bin(dns:rr()) -> binary().
 canonical_rrdata_bin(#dns_rr{class = Class, data = Data0}) ->
@@ -776,6 +787,12 @@ count_labels([~"*" | Labels]) ->
     length(Labels);
 count_labels(List) when is_list(List) ->
     length(List).
+
+%% Whether a name is Zone or a name under it, both given as labels
+-spec is_at_or_under(dns:labels(), dns:labels()) -> boolean().
+is_at_or_under(Labels, Zone) ->
+    Depth = length(Labels) - length(Zone),
+    Depth >= 0 andalso dns_domain:are_equal_labels(lists:nthtail(Depth, Labels), Zone).
 
 %% A DNSKEY decoded from the wire holds an RSA or DSA key as integers, and one
 %% parsed from a zone file its RDATA bytes, which are read as the decoder reads

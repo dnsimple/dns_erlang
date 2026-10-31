@@ -16,8 +16,11 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - DNSSEC: `dnssec:verify_rrsig/4` verifies RSA and DSA DNSKEYs parsed from zone files.
 - DNSSEC: `dnssec:verify_rrsig/4` only verifies with the zone key whose owner, algorithm and key tag the RRSIG names.
 - DNSSEC: `dnssec:verify_rrsig/4` matches an RRSIG's signer to a DNSKEY's owner with or without a final dot.
-- Wire: a DSA DNSKEY or CDNSKEY with a malformed key decodes with the key as bytes, not crashing.
+- DNSSEC: `dnssec:verify_rrsig/4` verifies RRsets a wildcard was expanded into.
+- DNSSEC: `dnssec:verify_rrsig/4` rejects an RRSIG whose owner or class is not its RRset's.
+- DNSSEC: `dnssec:verify_rrsig/4` rejects an RRSIG whose signer is not its owner or an ancestor of it.
 - DNSSEC: signing with an unknown algorithm raises `{unsupported_algorithm, Alg}`.
+- Wire: a DSA DNSKEY or CDNSKEY with a malformed key decodes with the key as bytes, not crashing.
 - Zone files: read hex split by whitespace in DS, CDS, DLV, TLSA and SMIMEA, and base64 in DHCID, CERT and KEY.
 - Zone files: read TLSA, SMIMEA, DHCID and CERT data unquoted, as their RFCs' examples write it.
 - Zone files: read base64 whose final `=` is alone on a line.
