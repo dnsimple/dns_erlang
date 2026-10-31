@@ -462,7 +462,20 @@ sign(?DNS_ALG_ED448, BaseSigInput, Key) ->
 sign(Alg, _BaseSigInput, _Key) ->
     error({unsupported_algorithm, Alg}).
 
--doc "Provides primitive verification of an RR set.".
+-doc """
+Verifies an RRset against one of its RRSIGs.
+
+Returns `true` if the time `now` in `Opts`, by default the current time, is
+within the RRSIG's validity period, and its signature verifies with one of the
+DNSKEYs it names: a zone key, with the Zone Key flag set, at the RRSIG's
+signer's name, with the RRSIG's algorithm and key tag. Otherwise it returns
+`false`, as it does for an algorithm this module does not implement and for a
+malformed key or signature.
+
+The wire decoder and the zone file parser set a DNSKEY's key tag; set it on
+one built otherwise with `add_keytag_to_dnskey/1`. Whether the DNSKEYs are to
+be trusted is for the caller to decide.
+""".
 -spec verify_rrsig(dns:rr(), [dns:rr()], [dns:rr()], verify_rrsig_opts()) -> boolean().
 verify_rrsig(#dns_rr{type = ?DNS_TYPE_RRSIG, data = Data}, RRs, RRDNSKey, Opts) ->
     Now = maps:get(now, Opts, erlang:system_time(second)),
@@ -475,26 +488,28 @@ verify_rrsig(#dns_rr{type = ?DNS_TYPE_RRSIG, data = Data}, RRs, RRDNSKey, Opts) 
         signers_name = SignersName,
         signature = Signature
     } = Data,
-    Keys0 = [
-        {KeyTag, Alg, PubKey}
+    %% RFC4035§5.3.1: the RRSIG's signer, algorithm and key tag name the DNSKEY,
+    %% which must be a zone key, with bit 7 of its flags set (RFC4034§2.1.1). The
+    %% names compare as names: a zone file's keep their final dot, the wire's not
+    Signer = dns_domain:split(SignersName),
+    Keys = [
+        PubKey
      || #dns_rr{
             name = Name,
             type = ?DNS_TYPE_DNSKEY,
             data = #dns_rrdata_dnskey{
+                flags = Flags,
                 protocol = 3,
                 alg = Alg,
                 keytag = KeyTag,
                 public_key = PubKey
             }
         } <- RRDNSKey,
+        Flags band 16#0100 =/= 0,
         Alg =:= SigAlg,
-        dns_domain:are_equal(Name, SignersName)
+        KeyTag =:= SigKeyTag,
+        dns_domain:are_equal_labels(dns_domain:split(Name), Signer)
     ],
-    Keys =
-        case lists:keytake(SigKeyTag, 1, Keys0) of
-            false -> Keys0;
-            {value, Match, RemKeys} -> [Match | RemKeys]
-        end,
     case RRs of
         [_ | _] when Keys =/= [], Incept =< Now, Now =< Expire ->
             {_SigTuple, SigInput} = build_sig_input(
@@ -507,7 +522,7 @@ verify_rrsig(#dns_rr{type = ?DNS_TYPE_RRSIG, data = Data}, RRs, RRDNSKey, Opts) 
                 OTTL
             ),
             lists:any(
-                fun({_KeyTag, Alg, Key}) -> verify_with_key(Alg, Key, Signature, SigInput) end,
+                fun(Key) -> verify_with_key(SigAlg, Key, Signature, SigInput) end,
                 Keys
             );
         _ ->

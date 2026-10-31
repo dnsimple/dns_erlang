@@ -55,6 +55,8 @@ groups() ->
             unsupported_algorithm,
             malformed_signature,
             malformed_input_does_not_verify,
+            verify_needs_zone_key,
+            verify_needs_rrsig_key_tag,
             verify_with_decremented_ttl,
             signers_name_in_canonical_form,
             ih_custom_hash_test,
@@ -975,6 +977,45 @@ pseudo_random_bytes(Length, Seed) ->
     Blocks = [crypto:hash(sha512, <<Seed:32, I:32>>) || I <- lists:seq(0, Length div 64)],
     binary:part(iolist_to_binary(Blocks), 0, Length).
 
+%% RFC4034§2.1.1: a DNSKEY without the Zone Key flag, bit 7, "MUST NOT be used
+%% to verify RRSIGs". The SEP flag, bit 15, makes no difference. The DNSKEY's key
+%% tag is left as the RRSIG names it, so only the flags differ.
+verify_needs_zone_key(_Config) ->
+    [#{zone := Zone} | _] = [V || #{alg := ?DNS_ALG_ECDSAP256SHA256} = V <- rfc_vectors()],
+    {ok, RRs} = dns_zone:parse_string(Zone),
+    [#dns_rr{data = #dns_rrdata_dnskey{flags = 257} = KeyData} = DNSKey] =
+        [RR || #dns_rr{type = ?DNS_TYPE_DNSKEY} = RR <- RRs],
+    [#dns_rr{data = #dns_rrdata_rrsig{inception = Now}} = RRSig] =
+        [RR || #dns_rr{type = ?DNS_TYPE_RRSIG} = RR <- RRs],
+    RRSet = [RR || #dns_rr{type = ?DNS_TYPE_A} = RR <- RRs],
+    WithFlags = fun(Flags) -> DNSKey#dns_rr{data = KeyData#dns_rrdata_dnskey{flags = Flags}} end,
+    ?assert(dnssec:verify_rrsig(RRSig, RRSet, [WithFlags(257)], #{now => Now})),
+    ?assert(dnssec:verify_rrsig(RRSig, RRSet, [WithFlags(256)], #{now => Now})),
+    ?assertNot(dnssec:verify_rrsig(RRSig, RRSet, [WithFlags(1)], #{now => Now})),
+    ?assertNot(dnssec:verify_rrsig(RRSig, RRSet, [WithFlags(0)], #{now => Now})).
+
+%% RFC4035§5.3.1: an RRSIG verifies only with the DNSKEY its signer's name,
+%% algorithm and key tag name. The RFC6605§6.1 key, a KSK, published as a ZSK as
+%% well has another key tag, and does not verify the KSK's RRSIG.
+verify_needs_rrsig_key_tag(_Config) ->
+    [#{zone := Zone} | _] = [V || #{alg := ?DNS_ALG_ECDSAP256SHA256} = V <- rfc_vectors()],
+    {ok, RRs} = dns_zone:parse_string(Zone),
+    [#dns_rr{data = #dns_rrdata_dnskey{flags = 257} = KeyData} = KSK] =
+        [RR || #dns_rr{type = ?DNS_TYPE_DNSKEY} = RR <- RRs],
+    [#dns_rr{data = #dns_rrdata_rrsig{inception = Now}} = RRSig] =
+        [RR || #dns_rr{type = ?DNS_TYPE_RRSIG} = RR <- RRs],
+    RRSet = [RR || #dns_rr{type = ?DNS_TYPE_A} = RR <- RRs],
+    #dns_rr{data = #dns_rrdata_dnskey{keytag = ZSKTag}} =
+        ZSK = dnssec:add_keytag_to_dnskey(KSK#dns_rr{data = KeyData#dns_rrdata_dnskey{flags = 256}}),
+    ?assertNotEqual(55648, ZSKTag),
+    ?assert(dnssec:verify_rrsig(RRSig, RRSet, [ZSK, KSK], #{now => Now})),
+    ?assertNot(dnssec:verify_rrsig(RRSig, RRSet, [ZSK], #{now => Now})),
+    %% The signer's name names the key whatever its case, and with or without the
+    %% final dot a zone file gives the DNSKEY's owner
+    #dns_rr{data = SigData} = RRSig,
+    Spelled = RRSig#dns_rr{data = SigData#dns_rrdata_rrsig{signers_name = ~"Example.NET"}},
+    ?assert(dnssec:verify_rrsig(Spelled, RRSet, [KSK], #{now => Now})).
+
 rsa_private_key(E, N, D) ->
     [binary:decode_unsigned(base64:decode(B)) || B <- [E, N, D]].
 
@@ -1289,7 +1330,7 @@ ecdsa_p256_wire_format_test(_Config) ->
     RRSig = dnssec:sign_rrset(
         [RR],
         ~"example",
-        12345,
+        zone_key_tag(?DNS_ALG_ECDSAP256SHA256, PubRaw),
         ?DNS_ALG_ECDSAP256SHA256,
         Priv,
         #{inception => 1000000, expiration => 2000000}
@@ -1326,7 +1367,7 @@ ecdsa_p384_wire_format_test(_Config) ->
     RRSig = dnssec:sign_rrset(
         [RR],
         ~"example",
-        12345,
+        zone_key_tag(?DNS_ALG_ECDSAP384SHA384, PubRaw),
         ?DNS_ALG_ECDSAP384SHA384,
         Priv,
         #{inception => 1000000, expiration => 2000000}
@@ -1514,7 +1555,7 @@ ed25519_basic_test(_Config) ->
     Ed25519Sig = dnssec:sign_rrset(
         [Ed25519RR],
         ~"example",
-        12345,
+        zone_key_tag(?DNS_ALG_ED25519, Ed25519Pub),
         ?DNS_ALG_ED25519,
         Ed25519Priv,
         #{inception => 1000000, expiration => 2000000}
@@ -1553,7 +1594,7 @@ ed448_basic_test(_Config) ->
     Ed448Sig = dnssec:sign_rrset(
         [Ed448RR],
         ~"example",
-        12346,
+        zone_key_tag(?DNS_ALG_ED448, Ed448Pub),
         ?DNS_ALG_ED448,
         Ed448Priv,
         #{inception => 1000000, expiration => 2000000}
@@ -1579,6 +1620,17 @@ ed448_basic_test(_Config) ->
             #{now => 1500000}
         )
     ).
+
+%% The key tag of a zone key for example holding Key, which an RRSIG must carry
+%% for the key to verify it (RFC4035§5.3.1)
+zone_key_tag(Alg, Key) ->
+    DNSKey = #dns_rr{
+        name = ~"example",
+        type = ?DNS_TYPE_DNSKEY,
+        data = #dns_rrdata_dnskey{flags = 256, protocol = 3, alg = Alg, public_key = Key}
+    },
+    #dns_rr{data = #dns_rrdata_dnskey{keytag = KeyTag}} = dnssec:add_keytag_to_dnskey(DNSKey),
+    KeyTag.
 
 test_sample_key(Alg, Proplist) ->
     PrivKey = helper_samplekeypl_to_privkey(Proplist),
