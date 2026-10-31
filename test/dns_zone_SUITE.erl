@@ -336,6 +336,10 @@ groups() ->
             parse_sig_record,
             parse_px_record,
             parse_ds_record,
+            parse_ds_digest_split,
+            parse_tlsa_data_split,
+            parse_base64_split,
+            parse_hex_split_never_misread,
             parse_dnskey_record,
             parse_key_record,
             parse_rrsig_record,
@@ -1964,6 +1968,135 @@ parse_px_record(_Config) ->
      || #dns_rr{data = #dns_rrdata_px{map822 = Map822, mapx400 = MapX400} = PX} = RR <- RRs
     ],
     ?assertEqual(lists:sort(Lowered), lists:sort(Reparsed)).
+
+%% RFC 4034 §5.3: whitespace is allowed within a DS digest, as in the examples of
+%% RFC 6605 §6, and CDS (RFC 7344 §3.1) and DLV (RFC 4431 §2) are written as DS
+%% is. A digest in more than one piece failed to parse.
+parse_ds_digest_split(_Config) ->
+    Zone =
+        ~"""
+    example.net. 3600 IN DS 55648 13 2 (
+            b4c8c1fe2e7477127b27115656ad6256f424625bf5c1
+            e2770ce6d6e37df61d17 )
+    example.net. 3600 IN DS 10771 14 4 (
+            72d7b62976ce06438e9c0bf319013cf801f09ecc84b8
+            d7e9495f27e305c6a9b0563a9b5f4d288405c3008a94
+            6df983d6 )
+    example.net. 3600 IN CDS 55648 13 2 ( b4c8c1fe2e7477127b27115656ad6256
+            f424625bf5c1e2770ce6d6e37df61d17 )
+    example.net. 3600 IN DLV 55648 13 2 b4c8c1fe2e7477127b27115656ad6256 (
+            f424625bf5c1e2770ce6d6e37df61d17 )
+
+    """,
+    P256 = binary:decode_hex(~"b4c8c1fe2e7477127b27115656ad6256f424625bf5c1e2770ce6d6e37df61d17"),
+    P384 = binary:decode_hex(
+        ~"72d7b62976ce06438e9c0bf319013cf801f09ecc84b8d7e9495f27e305c6a9b0563a9b5f4d288405c3008a946df983d6"
+    ),
+    ?assertMatch(
+        {ok, [
+            #dns_rr{
+                data = #dns_rrdata_ds{keytag = 55648, alg = 13, digest_type = 2, digest = P256}
+            },
+            #dns_rr{
+                data = #dns_rrdata_ds{keytag = 10771, alg = 14, digest_type = 4, digest = P384}
+            },
+            #dns_rr{
+                data = #dns_rrdata_cds{keytag = 55648, alg = 13, digest_type = 2, digest = P256}
+            },
+            #dns_rr{
+                data = #dns_rrdata_dlv{keytag = 55648, alg = 13, digest_type = 2, digest = P256}
+            }
+        ]},
+        dns_zone:parse_string(Zone)
+    ).
+
+%% RFC 6698 §2.2: whitespace is allowed within TLSA certificate data, as in the
+%% examples of §2.3, and SMIMEA is written as TLSA is (RFC 8162 §2)
+parse_tlsa_data_split(_Config) ->
+    Zone =
+        ~"""
+    _443._tcp.www.example.com. 3600 IN TLSA (
+       0 0 1 d2abde240d7cd3ee6b4b28c54df034b9
+             7983a1d16e8a410e4561cb106618e971 )
+    _443._tcp.www.example.com. 3600 IN TLSA (
+       1 1 2 92003ba34942dc74152e2f2c408d29ec
+             a5a520e7f2e06bb944f4dca346baf63c
+             1b177615d466f6c4b71c216a50292bd5
+             8c9ebdd2f74e38fe51ffd48c43326cbc )
+    example.com. 3600 IN SMIMEA 0 0 1 ( d2abde240d7cd3ee6b4b28c54df034b9
+             7983a1d16e8a410e4561cb106618e971 )
+
+    """,
+    SHA256 = binary:decode_hex(~"d2abde240d7cd3ee6b4b28c54df034b97983a1d16e8a410e4561cb106618e971"),
+    SHA512 = binary:decode_hex(
+        ~"92003ba34942dc74152e2f2c408d29eca5a520e7f2e06bb944f4dca346baf63c1b177615d466f6c4b71c216a50292bd58c9ebdd2f74e38fe51ffd48c43326cbc"
+    ),
+    ?assertMatch(
+        {ok, [
+            #dns_rr{
+                data = #dns_rrdata_tlsa{
+                    usage = 0, selector = 0, matching_type = 1, certificate = SHA256
+                }
+            },
+            #dns_rr{
+                data = #dns_rrdata_tlsa{
+                    usage = 1, selector = 1, matching_type = 2, certificate = SHA512
+                }
+            },
+            #dns_rr{
+                data = #dns_rrdata_smimea{
+                    usage = 0, selector = 0, matching_type = 1, certificate = SHA256
+                }
+            }
+        ]},
+        dns_zone:parse_string(Zone)
+    ).
+
+%% Base64 that its RFC allows to be split into white-space-separated pieces:
+%% DHCID (RFC 4701 §3.2, here the example of §3.6.1, which also gives its RDATA
+%% in hex), CERT (RFC 4398 §2.2) and KEY (RFC 2535 §7.1). Each took one piece,
+%% and DHCID only a quoted one.
+parse_base64_split(_Config) ->
+    Zone =
+        ~"""
+    chi6.example.com. 3600 IN DHCID ( AAIBY2/AuCccgoJbsaxcQc9TUapptP69l
+                                      OjxfNuVAA2kjEA= )
+    example.com. 3600 IN CERT 1 12345 8 ( MIICXAIB AAKBgQC8 )
+    example.com. 3600 IN KEY 256 3 13 ( AQPSKmynfzW4kyBv015MUG2DeIQ3
+            Cbl+BBZH4b/0PY1kxkmvHjcZc8no )
+
+    """,
+    DHCID = binary:decode_hex(
+        ~"000201636fc0b8271c82825bb1ac5c41cf5351aa69b4febd94e8f17cdb95000da48c40"
+    ),
+    Cert = base64:decode(~"MIICXAIBAAKBgQC8"),
+    Key = base64:decode(~"AQPSKmynfzW4kyBv015MUG2DeIQ3Cbl+BBZH4b/0PY1kxkmvHjcZc8no"),
+    ?assertMatch(
+        {ok, [
+            #dns_rr{data = #dns_rrdata_dhcid{data = DHCID}},
+            #dns_rr{data = #dns_rrdata_cert{type = 1, keytag = 12345, alg = 8, cert = Cert}},
+            #dns_rr{data = #dns_rrdata_key{protocol = 3, alg = 13, public_key = Key}}
+        ]},
+        dns_zone:parse_string(Zone)
+    ).
+
+%% A piece of hex made only of digits, or of digits and d, reads as a number or
+%% a time, whose text, with its leading zeros, is gone. Such a piece fails to
+%% parse rather than becoming different bytes.
+parse_hex_split_never_misread(_Config) ->
+    [
+        case
+            dns_zone:parse_string(
+                <<"example.com. 3600 IN DS 1 13 2 ( abcd ", Piece/binary, " )\n">>
+            )
+        of
+            {ok, [#dns_rr{data = #dns_rrdata_ds{digest = Digest}}]} ->
+                ?assertEqual(binary:decode_hex(<<"abcd", Piece/binary>>), Digest, Piece);
+            {error, _} ->
+                ok
+        end
+     || Piece <- [~"0012", ~"1234", ~"3d", ~"12d4"]
+    ].
 
 parse_ds_record(_Config) ->
     %% DS (Delegation Signer) for DNSSEC (RFC 4034)
