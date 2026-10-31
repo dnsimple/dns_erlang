@@ -59,6 +59,7 @@ groups() ->
             verify_needs_rrsig_key_tag,
             verify_rejects_rrsig_not_fitting_rrset,
             verify_wildcard_expansion,
+            dsa_rrsig_t_is_dnskey_t,
             verify_with_decremented_ttl,
             signers_name_in_canonical_form,
             ih_custom_hash_test,
@@ -1125,6 +1126,29 @@ verify_wildcard_expansion(Config) ->
             ?assertNot(Verify(RRSig, RRSet, Keys, Opts, <<"a.not", Parent/binary>>))
         end
      || {RRSig, [#dns_rr{name = Wildcard} | _] = RRSet, Keys, Opts} <- Wildcards
+    ].
+
+%% RFC2536§3: a DSA RRSIG carries the T of its DNSKEY, where P, G and Y take
+%% 64 + 8T octets each. Signing took T from P's size rounded down, so a key
+%% whose P is not 64 + 8T octets, 56 or 65 here, signed with another T than
+%% its DNSKEY's, 255 for 56. OpenSSL only makes keys whose P is 64 + 8T
+%% octets, so only keys made some other way were hit.
+dsa_rrsig_t_is_dnskey_t(_Config) ->
+    %% A 160-bit Q, as RFC2536§2 has it; neither P nor G make a real DSA group,
+    %% which signing does not need
+    Q = 16#E2B4F7B1A4D6E39F7C5A0C0D7B4E3A9C1B2D3E4F,
+    RR = #dns_rr{name = ~"example", type = ?DNS_TYPE_A, data = #dns_rrdata_a{ip = {192, 0, 2, 1}}},
+    [
+        begin
+            P = (1 bsl (8 * PSize - 1)) + 2 * PSize + 1,
+            {G, X} = {2, 16#1234567},
+            Y = binary:decode_unsigned(crypto:mod_pow(G, X, P)),
+            <<KeyT, _/binary>> = dns_encode:encode_dsa_key([P, Q, G, Y]),
+            #dns_rr{data = #dns_rrdata_rrsig{signature = <<SigT, _:40/binary>>}} =
+                dnssec:sign_rrset([RR], ~"example", 1, ?DNS_ALG_DSA, [P, Q, G, X], #{}),
+            ?assertEqual({PSize, KeyT}, {PSize, SigT})
+        end
+     || PSize <- [56, 64, 65, 72, 128]
     ].
 
 rsa_private_key(E, N, D) ->

@@ -445,9 +445,10 @@ sign(Alg, BaseSigInput, Key) when Alg =:= ?DNS_ALG_DSA orelse Alg =:= ?DNS_ALG_N
     %% RFC2536: Key must be [P, Q, G, X] as integers (crypto key format).
     DerSig = crypto:sign(dss, sha, BaseSigInput, Key),
     #'Dss-Sig-Value'{r = R, s = S} = public_key:der_decode('Dss-Sig-Value', DerSig),
-    [P, _Q, _G, _X] = Key,
-    M = byte_size(binary:encode_unsigned(P)),
-    T = (M - 64) div 8,
+    %% RFC2536§3: T is the DNSKEY's. Its Y = G^X mod P is below P, so P and G
+    %% alone fix the width the DNSKEY's encoding takes T from
+    [P, _Q, G, _X] = Key,
+    T = dns_encode:dsa_t([P, G]),
     <<T, R:20/unit:8, S:20/unit:8>>;
 sign(Alg, BaseSigInput, Key) when
     Alg =:= ?DNS_ALG_NSEC3RSASHA1 orelse

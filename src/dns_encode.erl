@@ -15,7 +15,7 @@
 
 -export([encode/1, encode/2]).
 -export([encode_rrdata/2]).
--export([encode_rsa_key/2, encode_dsa_key/1]).
+-export([encode_rsa_key/2, encode_dsa_key/1, dsa_t/1]).
 -export([sig_to_rrsig/1, rrsig_to_sig/1]).
 
 -ifdef(TEST).
@@ -1727,13 +1727,17 @@ encode_dsa_key(PKM) ->
         end
      || X <- PKM
     ],
-    %% RFC2536§2: P, G and Y share one width 64 + 8T; taking it from P alone
-    %% truncated a wider G or Y.
-    S = dsa_field_size(lists:max([unsigned_size(P), unsigned_size(G), unsigned_size(Y)])),
-    T = (S - 64) div 8,
+    T = dsa_t([P, G, Y]),
+    S = 64 + 8 * T,
     QSize = unsigned_size(Q),
     QSize =< 20 orelse erlang:error(badarg, [Q]),
     <<T, Q:20/unit:8, P:S/unit:8, G:S/unit:8, Y:S/unit:8>>.
+
+%% RFC2536§2: P, G and Y share one width 64 + 8T, the narrowest that holds
+%% them all; taking it from P alone truncated a wider G or Y
+-spec dsa_t([non_neg_integer()]) -> 0..8.
+dsa_t(Fields) ->
+    (dsa_field_size(lists:max([unsigned_size(F) || F <- Fields])) - 64) div 8.
 
 -spec unsigned_size(non_neg_integer()) -> pos_integer().
 unsigned_size(I) ->

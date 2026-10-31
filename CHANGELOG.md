@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - DNSSEC: ECDSA signatures (13, 14) hashed the data twice since 4.4.0; re-sign stored ones, which now fail to verify.
 - DNSSEC: DSA signatures (3, 6) signed the data's length along with it; re-sign stored ones as well.
+- DNSSEC: DSA RRSIGs carry their DNSKEY's T even when P is not 64 + 8T octets.
 - DNSSEC: `dnssec:verify_rrsig/4` no longer crashes on RRsets whose TTL is not the RRSIG's original TTL.
 - DNSSEC: `dnssec:verify_rrsig/4` returns `false` for unknown algorithms, malformed keys or signatures, and empty RRsets.
 - DNSSEC: `dnssec:verify_rrsig/4` verifies RSA and DSA DNSKEYs parsed from zone files.
