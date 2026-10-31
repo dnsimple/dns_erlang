@@ -495,9 +495,8 @@ verify_rrsig(#dns_rr{type = ?DNS_TYPE_RRSIG, data = Data}, RRs, RRDNSKey, Opts) 
             false -> Keys0;
             {value, Match, RemKeys} -> [Match | RemKeys]
         end,
-    case Now of
-        Now when Now < Incept; Expire < Now -> false;
-        Now ->
+    case RRs of
+        [_ | _] when Keys =/= [], Incept =< Now, Now =< Expire ->
             {_SigTuple, SigInput} = build_sig_input(
                 RRs,
                 SignersName,
@@ -510,41 +509,58 @@ verify_rrsig(#dns_rr{type = ?DNS_TYPE_RRSIG, data = Data}, RRs, RRDNSKey, Opts) 
             lists:any(
                 fun({_KeyTag, Alg, Key}) -> verify_with_key(Alg, Key, Signature, SigInput) end,
                 Keys
-            )
+            );
+        _ ->
+            false
     end.
 
-%% The key and the signature come off the wire: one that is malformed for its
-%% algorithm, or an algorithm this module does not implement, does not verify.
+%% The key and the signature come off the wire, so key material crypto refuses,
+%% such as an ECDSA key that is no point on its curve, does not verify either.
+%% Any other error, crypto's notsup among them, is raised.
 -spec verify_with_key(dns:uint8(), key(), binary(), iodata()) -> boolean().
 verify_with_key(Alg, Key, Signature, SigInput) ->
     try
         verify(Alg, Key, Signature, SigInput)
     catch
-        error:_ -> false
+        error:{badarg, {_File, _Line}, _Reason} -> false
     end.
 
+%% A key or signature of the wrong shape for its algorithm, or an algorithm this
+%% module does not implement, verifies nothing
 -spec verify(dns:uint8(), key(), binary(), iodata()) -> boolean().
-verify(Alg, Key, Signature, SigInput) when Alg =:= ?DNS_ALG_DSA orelse Alg =:= ?DNS_ALG_NSEC3DSA ->
-    <<_T, R:20/unit:8, S:20/unit:8>> = Signature,
-    AsnSig = public_key:der_encode('Dss-Sig-Value', #'Dss-Sig-Value'{r = R, s = S}),
-    crypto:verify(dss, sha, SigInput, AsnSig, dsa_public_key(Key));
+verify(Alg, Key, <<_T, R:20/unit:8, S:20/unit:8>>, SigInput) when
+    Alg =:= ?DNS_ALG_DSA orelse Alg =:= ?DNS_ALG_NSEC3DSA
+->
+    case dsa_public_key(Key) of
+        [_P, _Q, _G, _Y] = PublicKey ->
+            AsnSig = public_key:der_encode('Dss-Sig-Value', #'Dss-Sig-Value'{r = R, s = S}),
+            crypto:verify(dss, sha, SigInput, AsnSig, PublicKey);
+        _ ->
+            false
+    end;
 verify(Alg, Key, Signature, SigInput) when
     Alg =:= ?DNS_ALG_NSEC3RSASHA1 orelse
         Alg =:= ?DNS_ALG_RSASHA1 orelse
         Alg =:= ?DNS_ALG_RSASHA256 orelse
         Alg =:= ?DNS_ALG_RSASHA512
 ->
-    {Hash, Msg} = rsa_message(Alg, SigInput),
-    crypto:verify(rsa, Hash, Msg, Signature, rsa_public_key(Key), [{rsa_padding, rsa_pkcs1_padding}]);
-verify(?DNS_ALG_ECDSAP256SHA256, Key, Signature, SigInput) ->
+    case rsa_public_key(Key) of
+        [_E, _M] = PublicKey ->
+            {Hash, Msg} = rsa_message(Alg, SigInput),
+            Opts = [{rsa_padding, rsa_pkcs1_padding}],
+            crypto:verify(rsa, Hash, Msg, Signature, PublicKey, Opts);
+        _ ->
+            false
+    end;
+verify(?DNS_ALG_ECDSAP256SHA256, <<_:64/binary>> = Key, <<_:64/binary>> = Signature, SigInput) ->
     DerSig = ecdsa_wire_to_der(Signature, 32),
     crypto:verify(ecdsa, sha256, SigInput, DerSig, [<<4, Key/binary>>, secp256r1]);
-verify(?DNS_ALG_ECDSAP384SHA384, Key, Signature, SigInput) ->
+verify(?DNS_ALG_ECDSAP384SHA384, <<_:96/binary>> = Key, <<_:96/binary>> = Signature, SigInput) ->
     DerSig = ecdsa_wire_to_der(Signature, 48),
     crypto:verify(ecdsa, sha384, SigInput, DerSig, [<<4, Key/binary>>, secp384r1]);
-verify(?DNS_ALG_ED25519, Key, Signature, SigInput) ->
+verify(?DNS_ALG_ED25519, <<_:32/binary>> = Key, <<_:64/binary>> = Signature, SigInput) ->
     crypto:verify(eddsa, none, SigInput, Signature, [Key, ed25519]);
-verify(?DNS_ALG_ED448, Key, Signature, SigInput) ->
+verify(?DNS_ALG_ED448, <<_:57/binary>> = Key, <<_:114/binary>> = Signature, SigInput) ->
     crypto:verify(eddsa, none, SigInput, Signature, [Key, ed448]);
 verify(_Alg, _Key, _Signature, _SigInput) ->
     false.

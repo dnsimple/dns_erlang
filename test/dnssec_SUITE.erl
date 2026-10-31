@@ -54,6 +54,7 @@ groups() ->
             algorithms_checked_against_other_implementations,
             unsupported_algorithm,
             malformed_signature,
+            malformed_input_does_not_verify,
             verify_with_decremented_ttl,
             signers_name_in_canonical_form,
             ih_custom_hash_test,
@@ -900,6 +901,79 @@ malformed_signature(_Config) ->
     #dns_rr{data = KeyData} = DNSKey,
     ShortKey = DNSKey#dns_rr{data = KeyData#dns_rrdata_dnskey{public_key = <<1, 2, 3>>}},
     ?assertNot(dnssec:verify_rrsig(RRSig, RRSet, [ShortKey], #{now => Now})).
+
+%% Keys and signatures off the wire can be any bytes. For every algorithm
+%% dnssec.erl implements, and one it does not, keys and signatures of every
+%% length near the ones the algorithms use, the shapes of DSA's keys among
+%% them, verify nothing, and raise nothing:
+%% a validator must answer false, not crash. So does an empty RRset, or no key.
+malformed_input_does_not_verify(_Config) ->
+    %% 213 and 405 are T, Q, P, G and Y for T = 0 and T = 8, which take DSA's keys
+    %% to crypto
+    Lengths = [
+        0, 1, 3, 20, 21, 31, 32, 33, 41, 56, 57, 63, 64, 65, 95, 96, 97, 114, 128, 213, 404, 405
+    ],
+    RR = #dns_rr{name = ~"example", type = ?DNS_TYPE_A, data = #dns_rrdata_a{ip = {192, 0, 2, 1}}},
+    Results = [
+        {Alg, KeyLength, SigLength,
+            dnssec:verify_rrsig(
+                malformed_rrsig(Alg, pseudo_random_bytes(SigLength, 2)),
+                [RR],
+                [malformed_dnskey(Alg, Key)],
+                #{now => 1000000}
+            )}
+     || Alg <- [Alg || Alg <- lists:seq(0, 255), implemented(Alg)] ++ [200],
+        KeyLength <- Lengths,
+        Key <- [malformed_key(KeyLength)],
+        SigLength <- Lengths
+    ],
+    ?assertEqual([], [Result || {_, _, _, Verified} = Result <- Results, Verified =/= false]),
+    RRSig = malformed_rrsig(?DNS_ALG_RSASHA256, <<1, 2, 3>>),
+    DNSKey = malformed_dnskey(?DNS_ALG_RSASHA256, <<1, 2, 3>>),
+    ?assertNot(dnssec:verify_rrsig(RRSig, [], [DNSKey], #{now => 1000000})),
+    ?assertNot(dnssec:verify_rrsig(RRSig, [RR], [], #{now => 1000000})),
+    ?assertNot(
+        dnssec:verify_rrsig(RRSig, [RR], [malformed_dnskey(?DNS_ALG_RSASHA256, [1, 2, 3])], #{
+            now => 1000000
+        })
+    ).
+
+malformed_rrsig(Alg, Signature) ->
+    #dns_rr{
+        name = ~"example",
+        type = ?DNS_TYPE_RRSIG,
+        data = #dns_rrdata_rrsig{
+            type_covered = ?DNS_TYPE_A,
+            alg = Alg,
+            labels = 1,
+            original_ttl = 3600,
+            inception = 0,
+            expiration = 2000000,
+            keytag = 1,
+            signers_name = ~"example",
+            signature = Signature
+        }
+    }.
+
+malformed_dnskey(Alg, Key) ->
+    #dns_rr{
+        name = ~"example",
+        type = ?DNS_TYPE_DNSKEY,
+        data = #dns_rrdata_dnskey{
+            flags = 257, protocol = 3, alg = Alg, public_key = Key, keytag = 1
+        }
+    }.
+
+%% Random bytes, but a DSA key's T where the length is that of one
+malformed_key(Length) when Length =:= 213; Length =:= 405 ->
+    <<((Length - 213) div 24), (pseudo_random_bytes(Length - 1, 1))/binary>>;
+malformed_key(Length) ->
+    pseudo_random_bytes(Length, 1).
+
+%% The same bytes every run, so a failure here always reproduces
+pseudo_random_bytes(Length, Seed) ->
+    Blocks = [crypto:hash(sha512, <<Seed:32, I:32>>) || I <- lists:seq(0, Length div 64)],
+    binary:part(iolist_to_binary(Blocks), 0, Length).
 
 rsa_private_key(E, N, D) ->
     [binary:decode_unsigned(base64:decode(B)) || B <- [E, N, D]].
