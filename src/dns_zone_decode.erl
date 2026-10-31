@@ -1149,62 +1149,48 @@ build_rdata("SSHFP", RData, Ctx) ->
             {error, make_rdata_error(~"SSHFP", RData, Ctx)}
     end;
 build_rdata("TLSA", RData, Ctx) ->
-    %% TLSA format: usage selector matching-type cert-data(hex string)
-    case RData of
-        [{int, Usage}, {int, Selector}, {int, MatchingType}, {string, CertHex}] when
-            is_integer(Usage), is_integer(Selector), is_integer(MatchingType), is_list(CertHex)
-        ->
-            case hex_to_binary(CertHex) of
-                {ok, Cert} ->
-                    {ok, #dns_rrdata_tlsa{
-                        usage = Usage,
-                        selector = Selector,
-                        matching_type = MatchingType,
-                        certificate = Cert
-                    }};
-                {error, _Reason} ->
-                    {error, make_rdata_error(~"TLSA", RData, Ctx)}
-            end;
-        _ ->
+    %% TLSA format: usage selector matching-type cert-data(hex), RFC 6698 §2.2,
+    %% which allows whitespace within the certificate data
+    case parse_tlsa_rdata(RData) of
+        {ok, Usage, Selector, MatchingType, Cert} ->
+            {ok, #dns_rrdata_tlsa{
+                usage = Usage,
+                selector = Selector,
+                matching_type = MatchingType,
+                certificate = Cert
+            }};
+        error ->
             {error, make_rdata_error(~"TLSA", RData, Ctx)}
     end;
 build_rdata("CERT", RData, Ctx) ->
-    %% CERT format: type keytag algorithm cert-data(base64 or hex string)
-    case RData of
-        [{int, Type}, {int, KeyTag}, {int, Alg}, {string, CertData}] when
-            is_integer(Type), is_integer(KeyTag), is_integer(Alg), is_list(CertData)
-        ->
-            %% Try hex first, fall back to base64
-            Cert =
-                case hex_to_binary(CertData) of
-                    {ok, Binary} ->
-                        Binary;
-                    {error, _} ->
-                        %% Try base64
-                        try
-                            base64:decode(CertData)
-                        catch
-                            error:_ ->
-                                ensure_binary(CertData)
-                        end
-                end,
-            {ok, #dns_rrdata_cert{type = Type, keytag = KeyTag, alg = Alg, cert = Cert}};
-        _ ->
-            {error, make_rdata_error(~"CERT", RData, Ctx)}
+    %% CERT format: type keytag algorithm cert-data, base64 that RFC 4398 §2.2
+    %% allows to be split into any number of white-space-separated substrings.
+    %% Hex is read too, and tried first
+    maybe
+        [{int, Type}, {int, KeyTag}, {int, Alg} | CertParts] ?= RData,
+        true ?= is_integer(Type) andalso is_integer(KeyTag) andalso is_integer(Alg),
+        {ok, CertData} ?= concat_rdata_string_parts(CertParts),
+        Cert =
+            case hex_to_binary(CertData) of
+                {ok, Binary} ->
+                    Binary;
+                {error, _} ->
+                    try
+                        base64:decode(CertData)
+                    catch
+                        error:_ -> CertData
+                    end
+            end,
+        {ok, #dns_rrdata_cert{type = Type, keytag = KeyTag, alg = Alg, cert = Cert}}
+    else
+        _ -> {error, make_rdata_error(~"CERT", RData, Ctx)}
     end;
 build_rdata("DHCID", RData, Ctx) ->
-    %% DHCID format: base64-encoded data (single string)
-    case RData of
-        [{string, Base64Data}] when is_list(Base64Data) ->
-            try
-                Data = base64:decode(Base64Data),
-                {ok, #dns_rrdata_dhcid{data = Data}}
-            catch
-                error:_ ->
-                    {error, make_rdata_error(~"DHCID", RData, Ctx)}
-            end;
-        _ ->
-            {error, make_rdata_error(~"DHCID", RData, Ctx)}
+    %% DHCID format: base64, which RFC 4701 §3.2 allows to be split into any
+    %% number of white-space-separated substrings
+    case parse_base64_pieces(RData) of
+        {ok, Data} -> {ok, #dns_rrdata_dhcid{data = Data}};
+        error -> {error, make_rdata_error(~"DHCID", RData, Ctx)}
     end;
 build_rdata("OPENPGPKEY", RData, Ctx) ->
     %% OPENPGPKEY format: base64-encoded data (single string)
@@ -1276,24 +1262,17 @@ build_rdata("WALLET", RData, Ctx) ->
             {error, make_semantic_error(Reason, Ctx)}
     end;
 build_rdata("SMIMEA", RData, Ctx) ->
-    %% SMIMEA format: usage selector matching-type cert-data(hex string)
-    %% RFC 8162 - S/MIME cert association (similar to TLSA)
-    case RData of
-        [{int, Usage}, {int, Selector}, {int, MatchingType}, {string, CertHex}] when
-            is_integer(Usage), is_integer(Selector), is_integer(MatchingType), is_list(CertHex)
-        ->
-            case hex_to_binary(CertHex) of
-                {ok, Cert} ->
-                    {ok, #dns_rrdata_smimea{
-                        usage = Usage,
-                        selector = Selector,
-                        matching_type = MatchingType,
-                        certificate = Cert
-                    }};
-                {error, _Reason} ->
-                    {error, make_rdata_error(~"SMIMEA", RData, Ctx)}
-            end;
-        _ ->
+    %% SMIMEA format: usage selector matching-type cert-data(hex), RFC 8162 §2, as TLSA,
+    %% which allows whitespace within the certificate data
+    case parse_tlsa_rdata(RData) of
+        {ok, Usage, Selector, MatchingType, Cert} ->
+            {ok, #dns_rrdata_smimea{
+                usage = Usage,
+                selector = Selector,
+                matching_type = MatchingType,
+                certificate = Cert
+            }};
+        error ->
             {error, make_rdata_error(~"SMIMEA", RData, Ctx)}
     end;
 build_rdata("EUI48", RData, Ctx) ->
@@ -1404,114 +1383,45 @@ build_rdata("AMTRELAY", RData, Ctx) ->
             {error, make_rdata_error(~"AMTRELAY", RData, Ctx)}
     end;
 build_rdata("DS", RData, Ctx) ->
-    %% DS format: keytag algorithm digest-type digest(hex string)
-    %% RFC 4034 - Delegation Signer
-    %% Hex strings are often unquoted, so they may be parsed as labels/domains
-    case RData of
-        [{int, KeyTag}, {int, Alg}, {int, DigestType}, {string, DigestHex}] when
-            is_integer(KeyTag), is_integer(Alg), is_integer(DigestType), is_list(DigestHex)
-        ->
-            case hex_to_binary(DigestHex) of
-                {ok, Digest} ->
-                    {ok, #dns_rrdata_ds{
-                        keytag = KeyTag,
-                        alg = Alg,
-                        digest_type = DigestType,
-                        digest = Digest
-                    }};
-                {error, _Reason} ->
-                    {error, make_rdata_error(~"DS", RData, Ctx)}
-            end;
-        [{int, KeyTag}, {int, Alg}, {int, DigestType}, {domain, DigestHex}] when
-            is_integer(KeyTag), is_integer(Alg), is_integer(DigestType), is_list(DigestHex)
-        ->
-            %% Hex strings are unquoted and may be parsed as domain names
-            case hex_to_binary(DigestHex) of
-                {ok, Digest} ->
-                    {ok, #dns_rrdata_ds{
-                        keytag = KeyTag,
-                        alg = Alg,
-                        digest_type = DigestType,
-                        digest = Digest
-                    }};
-                {error, _Reason} ->
-                    {error, make_rdata_error(~"DS", RData, Ctx)}
-            end;
-        _ ->
+    %% DS format: keytag algorithm digest-type digest(hex), RFC 4034 §5.3, which
+    %% allows whitespace within the digest
+    case parse_ds_rdata(RData) of
+        {ok, KeyTag, Alg, DigestType, Digest} ->
+            {ok, #dns_rrdata_ds{
+                keytag = KeyTag,
+                alg = Alg,
+                digest_type = DigestType,
+                digest = Digest
+            }};
+        error ->
             {error, make_rdata_error(~"DS", RData, Ctx)}
     end;
 build_rdata("CDS", RData, Ctx) ->
-    %% CDS format: keytag algorithm digest-type digest(hex string)
-    %% RFC 7344 - Child DS
-    %% Same format as DS
-    case RData of
-        [{int, KeyTag}, {int, Alg}, {int, DigestType}, {string, DigestHex}] when
-            is_integer(KeyTag), is_integer(Alg), is_integer(DigestType), is_list(DigestHex)
-        ->
-            case hex_to_binary(DigestHex) of
-                {ok, Digest} ->
-                    {ok, #dns_rrdata_cds{
-                        keytag = KeyTag,
-                        alg = Alg,
-                        digest_type = DigestType,
-                        digest = Digest
-                    }};
-                {error, _Reason} ->
-                    {error, make_rdata_error(~"CDS", RData, Ctx)}
-            end;
-        [{int, KeyTag}, {int, Alg}, {int, DigestType}, {domain, DigestHex}] when
-            is_integer(KeyTag), is_integer(Alg), is_integer(DigestType), is_list(DigestHex)
-        ->
-            %% Hex strings are unquoted and may be parsed as domain names
-            case hex_to_binary(DigestHex) of
-                {ok, Digest} ->
-                    {ok, #dns_rrdata_cds{
-                        keytag = KeyTag,
-                        alg = Alg,
-                        digest_type = DigestType,
-                        digest = Digest
-                    }};
-                {error, _Reason} ->
-                    {error, make_rdata_error(~"CDS", RData, Ctx)}
-            end;
-        _ ->
+    %% CDS format: keytag algorithm digest-type digest(hex), RFC 7344 §3.1, as DS, which
+    %% allows whitespace within the digest
+    case parse_ds_rdata(RData) of
+        {ok, KeyTag, Alg, DigestType, Digest} ->
+            {ok, #dns_rrdata_cds{
+                keytag = KeyTag,
+                alg = Alg,
+                digest_type = DigestType,
+                digest = Digest
+            }};
+        error ->
             {error, make_rdata_error(~"CDS", RData, Ctx)}
     end;
 build_rdata("DLV", RData, Ctx) ->
-    %% DLV format: keytag algorithm digest-type digest(hex string)
-    %% RFC 4431 - DNSSEC Lookaside Validation
-    %% Same format as DS
-    case RData of
-        [{int, KeyTag}, {int, Alg}, {int, DigestType}, {string, DigestHex}] when
-            is_integer(KeyTag), is_integer(Alg), is_integer(DigestType), is_list(DigestHex)
-        ->
-            case hex_to_binary(DigestHex) of
-                {ok, Digest} ->
-                    {ok, #dns_rrdata_dlv{
-                        keytag = KeyTag,
-                        alg = Alg,
-                        digest_type = DigestType,
-                        digest = Digest
-                    }};
-                {error, _Reason} ->
-                    {error, make_rdata_error(~"DLV", RData, Ctx)}
-            end;
-        [{int, KeyTag}, {int, Alg}, {int, DigestType}, {domain, DigestHex}] when
-            is_integer(KeyTag), is_integer(Alg), is_integer(DigestType), is_list(DigestHex)
-        ->
-            %% Hex strings are unquoted and may be parsed as domain names
-            case hex_to_binary(DigestHex) of
-                {ok, Digest} ->
-                    {ok, #dns_rrdata_dlv{
-                        keytag = KeyTag,
-                        alg = Alg,
-                        digest_type = DigestType,
-                        digest = Digest
-                    }};
-                {error, _Reason} ->
-                    {error, make_rdata_error(~"DLV", RData, Ctx)}
-            end;
-        _ ->
+    %% DLV format: keytag algorithm digest-type digest(hex), RFC 4431 §2, as DS, which
+    %% allows whitespace within the digest
+    case parse_ds_rdata(RData) of
+        {ok, KeyTag, Alg, DigestType, Digest} ->
+            {ok, #dns_rrdata_dlv{
+                keytag = KeyTag,
+                alg = Alg,
+                digest_type = DigestType,
+                digest = Digest
+            }};
+        error ->
             {error, make_rdata_error(~"DLV", RData, Ctx)}
     end;
 build_rdata("DNSKEY", RData, Ctx) ->
@@ -1578,62 +1488,25 @@ build_rdata("CDNSKEY", RData, Ctx) ->
             {error, make_rdata_error(~"CDNSKEY", RData, Ctx)}
     end;
 build_rdata("KEY", RData, Ctx) ->
-    %% KEY format: flags protocol algorithm public-key(base64 string)
-    %% RFC 2535 - DNS Security Extensions
-    %% Similar to DNSKEY but with different flag structure
-    %% Base64 strings are often unquoted, so they may be parsed as labels/domains
-    case RData of
-        [{int, Flags}, {int, Protocol}, {int, Alg}, {string, PublicKeyB64}] when
-            is_integer(Flags), is_integer(Protocol), is_integer(Alg), is_list(PublicKeyB64)
-        ->
-            try
-                PublicKey = base64:decode(PublicKeyB64),
-                %% Extract flag fields from 16-bit flags value
-                %% Type (bits 0-1), XT (bit 3), NameType (bits 6-7), Sig (bits 12-15)
-                Type = (Flags bsr 14) band 16#3,
-                XT = (Flags bsr 12) band 16#1,
-                NameType = (Flags bsr 8) band 16#3,
-                Sig = Flags band 16#F,
-                {ok, #dns_rrdata_key{
-                    type = Type,
-                    xt = XT,
-                    name_type = NameType,
-                    sig = Sig,
-                    protocol = Protocol,
-                    alg = Alg,
-                    public_key = PublicKey
-                }}
-            catch
-                error:_ ->
-                    {error, make_rdata_error(~"KEY", RData, Ctx)}
-            end;
-        [{int, Flags}, {int, Protocol}, {int, Alg}, {domain, PublicKeyB64}] when
-            is_integer(Flags), is_integer(Protocol), is_integer(Alg), is_list(PublicKeyB64)
-        ->
-            %% Base64 strings are unquoted and may be parsed as domain names
-            %% Convert to string and try to decode
-            try
-                PublicKey = base64:decode(PublicKeyB64),
-                %% Extract flag fields from 16-bit flags value
-                Type = (Flags bsr 14) band 16#3,
-                XT = (Flags bsr 12) band 16#1,
-                NameType = (Flags bsr 8) band 16#3,
-                Sig = Flags band 16#F,
-                {ok, #dns_rrdata_key{
-                    type = Type,
-                    xt = XT,
-                    name_type = NameType,
-                    sig = Sig,
-                    protocol = Protocol,
-                    alg = Alg,
-                    public_key = PublicKey
-                }}
-            catch
-                error:_ ->
-                    {error, make_rdata_error(~"KEY", RData, Ctx)}
-            end;
-        _ ->
-            {error, make_rdata_error(~"KEY", RData, Ctx)}
+    %% KEY format: flags protocol algorithm public-key(base64), RFC 2535 §7.1,
+    %% which allows the key to be split into any number of white-space-separated
+    %% substrings. Similar to DNSKEY but with different flag structure
+    maybe
+        [{int, Flags}, {int, Protocol}, {int, Alg} | KeyParts] ?= RData,
+        true ?= is_integer(Flags) andalso is_integer(Protocol) andalso is_integer(Alg),
+        {ok, PublicKey} ?= parse_base64_pieces(KeyParts),
+        %% Type (bits 0-1), XT (bit 3), NameType (bits 6-7), Sig (bits 12-15)
+        {ok, #dns_rrdata_key{
+            type = (Flags bsr 14) band 16#3,
+            xt = (Flags bsr 12) band 16#1,
+            name_type = (Flags bsr 8) band 16#3,
+            sig = Flags band 16#F,
+            protocol = Protocol,
+            alg = Alg,
+            public_key = PublicKey
+        }}
+    else
+        _ -> {error, make_rdata_error(~"KEY", RData, Ctx)}
     end;
 build_rdata("SVCB", RData0, Ctx) ->
     %% RFC 9460 - Service Binding
@@ -2601,6 +2474,42 @@ parse_base64_pieces(RData) ->
             error:_ -> error
         end
     end.
+
+%% Hex that whitespace may split, as in a DS digest (RFC 4034 §5.3) or TLSA
+%% certificate data (RFC 6698 §2.2), whose pieces are concatenated
+-spec parse_hex_pieces([rdata()]) -> {ok, binary()} | error.
+parse_hex_pieces(RData) ->
+    maybe
+        {ok, Hex} ?= concat_rdata_string_parts(RData),
+        {ok, Bin} ?= hex_to_binary(Hex),
+        {ok, Bin}
+    else
+        _ -> error
+    end.
+
+%% The RDATA of DS, CDS and DLV: keytag algorithm digest-type digest
+-spec parse_ds_rdata([rdata()]) -> {ok, integer(), integer(), integer(), binary()} | error.
+parse_ds_rdata([{int, KeyTag}, {int, Alg}, {int, DigestType} | DigestParts]) when
+    is_integer(KeyTag), is_integer(Alg), is_integer(DigestType)
+->
+    maybe
+        {ok, Digest} ?= parse_hex_pieces(DigestParts),
+        {ok, KeyTag, Alg, DigestType, Digest}
+    end;
+parse_ds_rdata(_RData) ->
+    error.
+
+%% The RDATA of TLSA and SMIMEA: usage selector matching-type cert-data
+-spec parse_tlsa_rdata([rdata()]) -> {ok, integer(), integer(), integer(), binary()} | error.
+parse_tlsa_rdata([{int, Usage}, {int, Selector}, {int, MatchingType} | CertParts]) when
+    is_integer(Usage), is_integer(Selector), is_integer(MatchingType)
+->
+    maybe
+        {ok, Cert} ?= parse_hex_pieces(CertParts),
+        {ok, Usage, Selector, MatchingType, Cert}
+    end;
+parse_tlsa_rdata(_RData) ->
+    error.
 
 %% Convert hexadecimal string to binary using OTP 26+ binary:decode_hex/1
 -spec hex_to_binary(binary() | string()) -> {ok, binary()} | {error, term()}.
