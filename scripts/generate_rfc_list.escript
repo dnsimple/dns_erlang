@@ -61,6 +61,7 @@
     ~"7344" => ~"Automating DNSSEC Delegation Trust Maintenance",
     ~"8080" => ~"Ed25519 and Ed448 for DNSSEC",
     ~"9077" => ~"NSEC and NSEC3 TTL Values",
+    ~"9905" => ~"Deprecating the Use of SHA-1 in DNSSEC Signature Algorithms",
     ~"7553" => ~"The Uniform Resource Identifier (URI) DNS Resource Record",
     ~"6742" => ~"DNS Resource Records for the Identifier-Locator Network Protocol (ILNP)",
     ~"7043" => ~"Resource Records for EUI-48 and EUI-64 Addresses in the DNS",

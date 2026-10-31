@@ -59,3 +59,4 @@ functionality such as socket handling or query resolution.
 - **[RFC 9619](https://tools.ietf.org/html/rfc9619)**: In the DNS, QDCOUNT Is (Usually) One
 - **[RFC 9859](https://tools.ietf.org/html/rfc9859)**: Generalized DNS Notifications
 - **[RFC 9886](https://tools.ietf.org/html/rfc9886)**: DRIP Entity Tags (DETs) in the Domain Name System
+- **[RFC 9905](https://tools.ietf.org/html/rfc9905)**: Deprecating the Use of SHA-1 in DNSSEC Signature Algorithms

@@ -108,20 +108,13 @@ Unlike `t:dns:alg/0`, this type is restricted to algorithms valid for zone signi
 -doc "Options for `verify_rrsig/4`.".
 -type verify_rrsig_opts() :: #{now => dns:unix_time()}.
 
--define(RSASHA1_PREFIX,
+-define(SECS_IN_YEAR, (365 * 24 * 60 * 60)).
+
+%% RFC3110§3: the DigestInfo of a SHA-1 hash, which RSA/SHA-1 signs
+-define(SHA1_DIGESTINFO,
     <<16#30, 16#21, 16#30, 16#09, 16#06, 16#05, 16#2B, 16#0E, 16#03, 16#02, 16#1A, 16#05, 16#00,
         16#04, 16#14>>
 ).
--define(RSASHA256_PREFIX,
-    <<16#30, 16#31, 16#30, 16#0d, 16#06, 16#09, 16#60, 16#86, 16#48, 16#01, 16#65, 16#03, 16#04,
-        16#02, 16#01, 16#05, 16#00, 16#04, 16#20>>
-).
--define(RSASHA512_PREFIX,
-    <<16#30, 16#51, 16#30, 16#0d, 16#06, 16#09, 16#60, 16#86, 16#48, 16#01, 16#65, 16#03, 16#04,
-        16#02, 16#03, 16#05, 16#00, 16#04, 16#40>>
-).
-
--define(SECS_IN_YEAR, (365 * 24 * 60 * 60)).
 
 -doc """
 Generate NSEC records from a list of `t:dns:rr/0`.
@@ -430,7 +423,7 @@ sign_rrset(
         data = Data
     }.
 
--spec sign(dns:uint8(), binary(), key()) -> binary().
+-spec sign(dns:uint8(), iodata(), key()) -> binary().
 sign(Alg, BaseSigInput, Key) when Alg =:= ?DNS_ALG_DSA orelse Alg =:= ?DNS_ALG_NSEC3DSA ->
     %% RFC2536: Key must be [P, Q, G, X] as integers (crypto key format).
     DerSig = crypto:sign(dss, sha, BaseSigInput, Key),
@@ -445,13 +438,8 @@ sign(Alg, BaseSigInput, Key) when
         Alg =:= ?DNS_ALG_RSASHA256 orelse
         Alg =:= ?DNS_ALG_RSASHA512
 ->
-    crypto:sign(
-        rsa,
-        none,
-        BaseSigInput,
-        Key,
-        [{rsa_padding, rsa_pkcs1_padding}]
-    );
+    {Hash, Msg} = rsa_message(Alg, BaseSigInput),
+    crypto:sign(rsa, Hash, Msg, Key, [{rsa_padding, rsa_pkcs1_padding}]);
 sign(?DNS_ALG_ECDSAP256SHA256, BaseSigInput, Key) ->
     DerSig = crypto:sign(ecdsa, sha256, BaseSigInput, [Key, secp256r1]),
     %% RFC6605: keys must be r||s of 32 octets each
@@ -520,7 +508,7 @@ verify_rrsig(#dns_rr{type = ?DNS_TYPE_RRSIG, data = Data}, RRs, RRDNSKey, Opts) 
 
 %% The key and the signature come off the wire: one that is malformed for its
 %% algorithm, or an algorithm this module does not implement, does not verify.
--spec verify_with_key(dns:uint8(), key(), binary(), binary()) -> boolean().
+-spec verify_with_key(dns:uint8(), key(), binary(), iodata()) -> boolean().
 verify_with_key(Alg, Key, Signature, SigInput) ->
     try
         verify(Alg, Key, Signature, SigInput)
@@ -528,7 +516,7 @@ verify_with_key(Alg, Key, Signature, SigInput) ->
         error:_ -> false
     end.
 
--spec verify(dns:uint8(), key(), binary(), binary()) -> boolean().
+-spec verify(dns:uint8(), key(), binary(), iodata()) -> boolean().
 verify(Alg, Key, Signature, SigInput) when Alg =:= ?DNS_ALG_DSA orelse Alg =:= ?DNS_ALG_NSEC3DSA ->
     <<_T, R:20/unit:8, S:20/unit:8>> = Signature,
     AsnSig = public_key:der_encode('Dss-Sig-Value', #'Dss-Sig-Value'{r = R, s = S}),
@@ -541,14 +529,8 @@ verify(Alg, Key, Signature, SigInput) when
         Alg =:= ?DNS_ALG_RSASHA256 orelse
         Alg =:= ?DNS_ALG_RSASHA512
 ->
-    crypto:verify(
-        rsa,
-        none,
-        SigInput,
-        Signature,
-        rsa_public_key(Key),
-        [{rsa_padding, rsa_pkcs1_padding}]
-    );
+    {Hash, Msg} = rsa_message(Alg, SigInput),
+    crypto:verify(rsa, Hash, Msg, Signature, rsa_public_key(Key), [{rsa_padding, rsa_pkcs1_padding}]);
 verify(?DNS_ALG_ECDSAP256SHA256, Key, Signature, SigInput) ->
     DerSig = ecdsa_wire_to_der(Signature, 32),
     crypto:verify(ecdsa, sha256, SigInput, DerSig, [<<4, Key/binary>>, secp256r1]);
@@ -563,7 +545,7 @@ verify(_Alg, _Key, _Signature, _SigInput) ->
     false.
 
 -spec build_sig_input([dns:rr(), ...], dns:dname(), keytag(), dns:alg(), integer(), integer()) ->
-    {dns:rrdata_rrsig(), binary()}.
+    {dns:rrdata_rrsig(), iodata()}.
 build_sig_input(
     [#dns_rr{ttl = TTL} | _] = RRs,
     SignersName,
@@ -577,7 +559,7 @@ build_sig_input(
 -spec build_sig_input(
     [dns:rr(), ...], dns:dname(), keytag(), dns:alg(), integer(), integer(), non_neg_integer()
 ) ->
-    {dns:rrdata_rrsig(), binary()}.
+    {dns:rrdata_rrsig(), iodata()}.
 %% RFC4035§5.3.2: the records go into the signed data with the RRSIG's original
 %% TTL, whatever TTL they arrived with, as one from a cache arrives decremented.
 build_sig_input(
@@ -608,34 +590,19 @@ build_sig_input(
         signers_name = dns_domain:to_lower(SignersName)
     },
     RRSigRDataBin = rrsig_to_digestable(RRSigData),
-    SigInput0 = [RRSigRDataBin | RRSetBin],
-    SigInput = preprocess_sig_input(Alg, SigInput0),
-    {RRSigData, SigInput}.
+    {RRSigData, [RRSigRDataBin | RRSetBin]}.
 
-%% RSA signs a DigestInfo built here (RFC3110§3, RFC5702§3). The others take
-%% the signed data as it is: crypto does any hashing they need.
--spec preprocess_sig_input(dns:uint8(), [binary()]) -> binary().
-preprocess_sig_input(Alg, SigInput) when
-    Alg =:= ?DNS_ALG_NSEC3RSASHA1 orelse
-        Alg =:= ?DNS_ALG_RSASHA1 orelse
-        Alg =:= ?DNS_ALG_RSASHA256 orelse
-        Alg =:= ?DNS_ALG_RSASHA512
-->
-    {Prefix, HashType} = choose_sha_prefix_and_type(Alg),
-    Hash = crypto:hash(HashType, SigInput),
-    <<Prefix/binary, Hash/binary>>;
-preprocess_sig_input(_Alg, SigInput) ->
-    iolist_to_binary(SigInput).
-
--spec choose_sha_prefix_and_type(sigalg()) -> {binary(), sha | sha256 | sha512}.
-choose_sha_prefix_and_type(?DNS_ALG_RSASHA1) ->
-    {?RSASHA1_PREFIX, sha};
-choose_sha_prefix_and_type(?DNS_ALG_NSEC3RSASHA1) ->
-    {?RSASHA1_PREFIX, sha};
-choose_sha_prefix_and_type(?DNS_ALG_RSASHA256) ->
-    {?RSASHA256_PREFIX, sha256};
-choose_sha_prefix_and_type(?DNS_ALG_RSASHA512) ->
-    {?RSASHA512_PREFIX, sha512}.
+%% RFC3110§3, RFC5702§3: RSASSA-PKCS1-v1_5, whose DigestInfo crypto builds from
+%% the hash it is given. An OpenSSL whose policy refuses SHA-1 signatures, as
+%% RHEL 9's default does, then refuses RSA/SHA-1, which validators must still
+%% implement (RFC9905), so for SHA-1 the DigestInfo is built here.
+-spec rsa_message(dns:uint8(), iodata()) -> {none | sha256 | sha512, iodata()}.
+rsa_message(Alg, Data) when Alg =:= ?DNS_ALG_RSASHA1 orelse Alg =:= ?DNS_ALG_NSEC3RSASHA1 ->
+    {none, [?SHA1_DIGESTINFO, crypto:hash(sha, Data)]};
+rsa_message(?DNS_ALG_RSASHA256, Data) ->
+    {sha256, Data};
+rsa_message(?DNS_ALG_RSASHA512, Data) ->
+    {sha512, Data}.
 
 -doc "Generates and appends a DNS Key records key tag.".
 -spec add_keytag_to_dnskey(dns:rr()) -> dns:rr().
