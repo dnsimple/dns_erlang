@@ -430,7 +430,7 @@ sign_rrset(
         data = Data
     }.
 
--spec sign(sigalg(), binary(), key()) -> binary().
+-spec sign(dns:uint8(), binary(), key()) -> binary().
 sign(Alg, BaseSigInput, Key) when Alg =:= ?DNS_ALG_DSA orelse Alg =:= ?DNS_ALG_NSEC3DSA ->
     %% RFC2536: Key must be [P, Q, G, X] as integers (crypto key format).
     DerSig = crypto:sign(dss, sha, BaseSigInput, Key),
@@ -463,7 +463,9 @@ sign(?DNS_ALG_ECDSAP384SHA384, BaseSigInput, Key) ->
 sign(?DNS_ALG_ED25519, BaseSigInput, Key) ->
     crypto:sign(eddsa, none, BaseSigInput, [Key, ed25519]);
 sign(?DNS_ALG_ED448, BaseSigInput, Key) ->
-    crypto:sign(eddsa, none, BaseSigInput, [Key, ed448]).
+    crypto:sign(eddsa, none, BaseSigInput, [Key, ed448]);
+sign(Alg, _BaseSigInput, _Key) ->
+    error({unsupported_algorithm, Alg}).
 
 -doc "Provides primitive verification of an RR set.".
 -spec verify_rrsig(dns:rr(), [dns:rr()], [dns:rr()], verify_rrsig_opts()) -> boolean().
@@ -510,10 +512,23 @@ verify_rrsig(#dns_rr{type = ?DNS_TYPE_RRSIG, data = Data}, RRs, RRDNSKey, Opts) 
                 Expire,
                 OTTL
             ),
-            lists:any(fun({_KeyTag, Alg, Key}) -> verify(Alg, Key, Signature, SigInput) end, Keys)
+            lists:any(
+                fun({_KeyTag, Alg, Key}) -> verify_with_key(Alg, Key, Signature, SigInput) end,
+                Keys
+            )
     end.
 
--spec verify(sigalg(), key(), binary(), binary()) -> boolean().
+%% The key and the signature come off the wire: one that is malformed for its
+%% algorithm, or an algorithm this module does not implement, does not verify.
+-spec verify_with_key(dns:uint8(), key(), binary(), binary()) -> boolean().
+verify_with_key(Alg, Key, Signature, SigInput) ->
+    try
+        verify(Alg, Key, Signature, SigInput)
+    catch
+        error:_ -> false
+    end.
+
+-spec verify(dns:uint8(), key(), binary(), binary()) -> boolean().
 verify(Alg, Key, Signature, SigInput) when Alg =:= ?DNS_ALG_DSA orelse Alg =:= ?DNS_ALG_NSEC3DSA ->
     <<_T, R:20/unit:8, S:20/unit:8>> = Signature,
     AsnSig = public_key:der_encode('Dss-Sig-Value', #'Dss-Sig-Value'{r = R, s = S}),
@@ -526,18 +541,14 @@ verify(Alg, Key, Signature, SigInput) when
         Alg =:= ?DNS_ALG_RSASHA256 orelse
         Alg =:= ?DNS_ALG_RSASHA512
 ->
-    try
-        crypto:verify(
-            rsa,
-            none,
-            SigInput,
-            Signature,
-            Key,
-            [{rsa_padding, rsa_pkcs1_padding}]
-        )
-    catch
-        error:decrypt_failed -> false
-    end;
+    crypto:verify(
+        rsa,
+        none,
+        SigInput,
+        Signature,
+        rsa_public_key(Key),
+        [{rsa_padding, rsa_pkcs1_padding}]
+    );
 verify(?DNS_ALG_ECDSAP256SHA256, Key, Signature, SigInput) ->
     DerSig = ecdsa_wire_to_der(Signature, 32),
     crypto:verify(ecdsa, sha256, SigInput, DerSig, [<<4, Key/binary>>, secp256r1]);
@@ -547,7 +558,9 @@ verify(?DNS_ALG_ECDSAP384SHA384, Key, Signature, SigInput) ->
 verify(?DNS_ALG_ED25519, Key, Signature, SigInput) ->
     crypto:verify(eddsa, none, SigInput, Signature, [Key, ed25519]);
 verify(?DNS_ALG_ED448, Key, Signature, SigInput) ->
-    crypto:verify(eddsa, none, SigInput, Signature, [Key, ed448]).
+    crypto:verify(eddsa, none, SigInput, Signature, [Key, ed448]);
+verify(_Alg, _Key, _Signature, _SigInput) ->
+    false.
 
 -spec build_sig_input([dns:rr(), ...], dns:dname(), keytag(), dns:alg(), integer(), integer()) ->
     {dns:rrdata_rrsig(), binary()}.
@@ -565,8 +578,10 @@ build_sig_input(
     [dns:rr(), ...], dns:dname(), keytag(), dns:alg(), integer(), integer(), non_neg_integer()
 ) ->
     {dns:rrdata_rrsig(), binary()}.
+%% RFC4035§5.3.2: the records go into the signed data with the RRSIG's original
+%% TTL, whatever TTL they arrived with, as one from a cache arrives decremented.
 build_sig_input(
-    [#dns_rr{name = Name, class = Class, type = Type, ttl = TTL} | _] = RRs,
+    [#dns_rr{name = Name, class = Class, type = Type} | _] = RRs,
     SignersName,
     KeyTag,
     Alg,
@@ -597,7 +612,7 @@ build_sig_input(
     SigInput = preprocess_sig_input(Alg, SigInput0),
     {RRSigData, SigInput}.
 
--spec preprocess_sig_input(sigalg(), [binary()]) -> binary().
+-spec preprocess_sig_input(dns:uint8(), [binary()]) -> binary().
 preprocess_sig_input(Alg, SigInput) when Alg =:= ?DNS_ALG_DSA orelse Alg =:= ?DNS_ALG_NSEC3DSA ->
     NewSigInput = iolist_to_binary(SigInput),
     NewSigInputSize = byte_size(NewSigInput),
@@ -615,7 +630,7 @@ preprocess_sig_input(?DNS_ALG_ECDSAP256SHA256, SigInput) ->
     crypto:hash(sha256, SigInput);
 preprocess_sig_input(?DNS_ALG_ECDSAP384SHA384, SigInput) ->
     crypto:hash(sha384, SigInput);
-preprocess_sig_input(Alg, SigInput) when Alg =:= ?DNS_ALG_ED25519 orelse Alg =:= ?DNS_ALG_ED448 ->
+preprocess_sig_input(_Alg, SigInput) ->
     iolist_to_binary(SigInput).
 
 -spec choose_sha_prefix_and_type(sigalg()) -> {binary(), sha | sha256 | sha512}.
@@ -764,6 +779,16 @@ count_labels([~"*" | Labels]) ->
     length(Labels);
 count_labels(List) when is_list(List) ->
     length(List).
+
+%% A DNSKEY decoded from the wire holds the RSA key as [E, M]; one parsed from a
+%% zone file, or one the decoder found not canonical, holds the RFC3110§2 bytes.
+-spec rsa_public_key([integer()] | binary()) -> [integer()].
+rsa_public_key([_E, _M] = Key) ->
+    Key;
+rsa_public_key(<<0, Len:16, E:Len/unit:8, M/binary>>) ->
+    [E, binary:decode_unsigned(M)];
+rsa_public_key(<<Len, E:Len/unit:8, M/binary>>) when 0 < Len ->
+    [E, binary:decode_unsigned(M)].
 
 %% Convert DNSKEY public_key [P, Q, G, Y] (binaries from decode) to integers for crypto:verify.
 -spec dsa_pubkey_to_integers([binary() | integer()]) -> [integer()].

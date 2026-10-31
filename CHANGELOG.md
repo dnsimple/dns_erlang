@@ -9,6 +9,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- DNSSEC: `dnssec:verify_rrsig/4` no longer crashes on RRsets whose TTL is not the RRSIG's original TTL.
+- DNSSEC: `dnssec:verify_rrsig/4` returns `false` for unknown algorithms and malformed keys or signatures.
+- DNSSEC: `dnssec:verify_rrsig/4` verifies RSA DNSKEYs parsed from zone files.
+- DNSSEC: signing with an unknown algorithm raises `{unsupported_algorithm, Alg}`.
 - Zone files: read hex split by whitespace in DS, CDS, DLV, TLSA and SMIMEA, and base64 in DHCID, CERT and KEY.
 - Zone files: read TLSA, SMIMEA, DHCID and CERT data unquoted, as their RFCs' examples write it.
 - Zone files: read base64 whose final `=` is alone on a line.

@@ -48,6 +48,9 @@ groups() ->
             keytag_known_answers,
             canonical_rrdata_form_test,
             canonical_form_matches_bind,
+            unsupported_algorithm,
+            malformed_signature,
+            verify_with_decremented_ttl,
             signers_name_in_canonical_form,
             ih_custom_hash_test,
             dsa_sign_verify_test,
@@ -616,6 +619,252 @@ canonical_form_matches_bind(_Config) ->
             )
         end
      || {#dns_rr{type = Type} = Data, Sig} <- Cases
+    ].
+
+%% A signature in an algorithm dnssec.erl does not implement does not verify,
+%% and signing in one fails saying so. Both used to fail with function_clause,
+%% the first even with no key to try.
+unsupported_algorithm(_Config) ->
+    RR = #dns_rr{name = ~"example", type = ?DNS_TYPE_A, data = #dns_rrdata_a{ip = {192, 0, 2, 1}}},
+    RRSig = #dns_rr{
+        name = ~"example",
+        type = ?DNS_TYPE_RRSIG,
+        data = #dns_rrdata_rrsig{
+            type_covered = ?DNS_TYPE_A,
+            alg = 200,
+            labels = 1,
+            original_ttl = 3600,
+            inception = 0,
+            expiration = 2000000,
+            keytag = 1,
+            signers_name = ~"example",
+            signature = <<1, 2, 3>>
+        }
+    },
+    DNSKey = #dns_rr{
+        name = ~"example",
+        type = ?DNS_TYPE_DNSKEY,
+        data = #dns_rrdata_dnskey{
+            flags = 256, protocol = 3, alg = 200, public_key = <<1, 2, 3>>, keytag = 1
+        }
+    },
+    ?assertNot(dnssec:verify_rrsig(RRSig, [RR], [DNSKey], #{now => 1000000})),
+    ?assertNot(dnssec:verify_rrsig(RRSig, [RR], [], #{now => 1000000})),
+    ?assertError(
+        {unsupported_algorithm, 200}, dnssec:sign_rrset([RR], ~"example", 1, 200, <<>>, #{})
+    ).
+
+%% RFC4035§5.3.2: a validator puts the RRset in the signed data with the
+%% RRSIG's original TTL, and an RRset from a cache arrives with less. Any TTL
+%% but the original crashed verify_rrsig/4 with function_clause.
+verify_with_decremented_ttl(_Config) ->
+    [#{zone := Zone} | _] = [V || #{alg := ?DNS_ALG_RSASHA256} = V <- rfc_vectors()],
+    {ok, RRs} = dns_zone:parse_string(Zone),
+    [DNSKey] = [RR || #dns_rr{type = ?DNS_TYPE_DNSKEY} = RR <- RRs],
+    [#dns_rr{data = #dns_rrdata_rrsig{inception = Now}} = RRSig] =
+        [RR || #dns_rr{type = ?DNS_TYPE_RRSIG} = RR <- RRs],
+    Cached = [RR#dns_rr{ttl = 1234} || #dns_rr{type = ?DNS_TYPE_A} = RR <- RRs],
+    ?assert(dnssec:verify_rrsig(RRSig, Cached, [DNSKey], #{now => Now})).
+
+%% Keys and signatures come off the wire: one too short for its algorithm does
+%% not verify, rather than crashing
+malformed_signature(_Config) ->
+    [#{zone := Zone} | _] = [V || #{alg := ?DNS_ALG_RSASHA256} = V <- rfc_vectors()],
+    {ok, RRs} = dns_zone:parse_string(Zone),
+    [DNSKey] = [RR || #dns_rr{type = ?DNS_TYPE_DNSKEY} = RR <- RRs],
+    [#dns_rr{data = #dns_rrdata_rrsig{inception = Now} = Data} = RRSig] =
+        [RR || #dns_rr{type = ?DNS_TYPE_RRSIG} = RR <- RRs],
+    RRSet = [RR || #dns_rr{type = ?DNS_TYPE_A} = RR <- RRs],
+    Short = RRSig#dns_rr{data = Data#dns_rrdata_rrsig{signature = <<1, 2, 3>>}},
+    ?assertNot(dnssec:verify_rrsig(Short, RRSet, [DNSKey], #{now => Now})),
+    #dns_rr{data = KeyData} = DNSKey,
+    ShortKey = DNSKey#dns_rr{data = KeyData#dns_rrdata_dnskey{public_key = <<1, 2, 3>>}},
+    ?assertNot(dnssec:verify_rrsig(RRSig, RRSet, [ShortKey], #{now => Now})).
+
+rsa_private_key(E, N, D) ->
+    [binary:decode_unsigned(base64:decode(B)) || B <- [E, N, D]].
+
+%% The examples of RFC5702§6, RFC6605§6 and RFC8080§6 as the RFCs print them,
+%% but for RFC8080's RRSIGs, which are the ones its verified erratum 4935
+%% corrects: the RFC's own have no algorithm and a label count that counts the
+%% root. The erratum's open a second parenthesis they never close, left out here.
+rfc_vectors() ->
+    [
+        #{
+            source => ~"RFC5702§6.1",
+            alg => ?DNS_ALG_RSASHA256,
+            private_key => rsa_private_key(
+                ~"AQAB",
+                ~"wVwaxrHF2CK64aYKRUibLiH30KpPuPBjel7E8ZydQW1HYWHfoGmidzC2RnhwCC293hCzw+TFR2nqn8OVSY5t2Q==",
+                ~"UR44xX6zB3eaeyvTRzmskHADrPCmPWnr8dxsNwiDGHzrMKLN+i/HAam+97HxIKVWNDH2ba9Mf1SA8xu9dcHZAQ=="
+            ),
+            deterministic => true,
+            zone =>
+                ~"""
+            example.net.     3600  IN  DNSKEY  (256 3 8 AwEAAcFcGsaxxdgiuuGmCkVI
+                my4h99CqT7jwY3pexPGcnUFtR2Fh36BponcwtkZ4cAgtvd4Qs8P
+                kxUdp6p/DlUmObdk= );{id = 9033 (zsk), size = 512b}
+            www.example.net. 3600  IN  A  192.0.2.91
+            www.example.net. 3600  IN  RRSIG  (A 8 3 3600 20300101000000
+                20000101000000 9033 example.net. kRCOH6u7l0QGy9qpC9
+                l1sLncJcOKFLJ7GhiUOibu4teYp5VE9RncriShZNz85mwlMgNEa
+                cFYK/lPtPiVYP4bwg==);{id = 9033}
+            """
+        },
+        #{
+            source => ~"RFC5702§6.2",
+            alg => ?DNS_ALG_RSASHA512,
+            private_key => rsa_private_key(
+                ~"AQAB",
+                ~"0eg1M5b563zoq4k5ZEOnWmd2/BvpjzedJVdfIsDcMuuhE5SQ3pfQ7qmdaeMlC6Nf8DKGoUPGPXe06cP27/WRODtxXquSUytkO0kJDk8KX8PtA0+yBWwy7UnZDyCkynO00Uuk8HPVtZeMO1pHtlAGVnc8VjXZlNKdyit99waaE4s=",
+                ~"rFS1IPbJllFFgFc33B5DDlC1egO8e81P4fFadODbp56V7sphKa6AZQCx8NYAew6VXFFPAKTw41QdHnK5kIYOwxvfFDjDcUGza88qbjyrDPSJenkeZbISMUSSqy7AMFzEolkk6WSn6k3thUVRgSlqDoOV3SEIAsrB043XzGrKIVE="
+            ),
+            deterministic => true,
+            zone =>
+                ~"""
+            example.net.    3600  IN  DNSKEY  (256 3 10 AwEAAdHoNTOW+et86KuJOWRD
+                p1pndvwb6Y83nSVXXyLA3DLroROUkN6X0O6pnWnjJQujX/AyhqFD
+                xj13tOnD9u/1kTg7cV6rklMrZDtJCQ5PCl/D7QNPsgVsMu1J2Q8g
+                pMpztNFLpPBz1bWXjDtaR7ZQBlZ3PFY12ZTSncorffcGmhOL
+                );{id = 3740 (zsk), size = 1024b}
+            www.example.net. 3600  IN  A  192.0.2.91
+            www.example.net. 3600  IN  RRSIG  (A 10 3 3600 20300101000000
+                20000101000000 3740 example.net. tsb4wnjRUDnB1BUi+t
+                6TMTXThjVnG+eCkWqjvvjhzQL1d0YRoOe0CbxrVDYd0xDtsuJRa
+                eUw1ep94PzEWzr0iGYgZBWm/zpq+9fOuagYJRfDqfReKBzMweOL
+                DiNa8iP5g9vMhpuv6OPlvpXwm9Sa9ZXIbNl1MBGk0fthPgxdDLw
+                =);{id = 3740}
+            """
+        },
+        #{
+            source => ~"RFC6605§6.1",
+            alg => ?DNS_ALG_ECDSAP256SHA256,
+            private_key => base64:decode(~"GU6SnQ/Ou+xC5RumuIUIuJZteXT2z0O/ok1s38Et6mQ="),
+            deterministic => false,
+            zone =>
+                ~"""
+            example.net. 3600 IN DNSKEY 257 3 13 (
+                GojIhhXUN/u4v54ZQqGSnyhWJwaubCvTmeexv7bR6edb
+                krSqQpF64cYbcB7wNcP+e+MAnLr+Wi9xMWyQLc8NAA== )
+            example.net. 3600 IN DS 55648 13 2 (
+                b4c8c1fe2e7477127b27115656ad6256f424625bf5c1
+                e2770ce6d6e37df61d17 )
+            www.example.net. 3600 IN A 192.0.2.1
+            www.example.net. 3600 IN RRSIG A 13 3 3600 (
+                20100909100439 20100812100439 55648 example.net.
+                qx6wLYqmh+l9oCKTN6qIc+bw6ya+KJ8oMz0YP107epXA
+                yGmt+3SNruPFKG7tZoLBLlUzGGus7ZwmwWep666VCw== )
+            """
+        },
+        #{
+            source => ~"RFC6605§6.2",
+            alg => ?DNS_ALG_ECDSAP384SHA384,
+            private_key => base64:decode(
+                ~"WURgWHCcYIYUPWgeLmiPY2DJJk02vgrmTfitxgqcL4vwW7BOrbawVmVe0d9V94SR"
+            ),
+            deterministic => false,
+            zone =>
+                ~"""
+            example.net. 3600 IN DNSKEY 257 3 14 (
+                xKYaNhWdGOfJ+nPrL8/arkwf2EY3MDJ+SErKivBVSum1
+                w/egsXvSADtNJhyem5RCOpgQ6K8X1DRSEkrbYQ+OB+v8
+                /uX45NBwY8rp65F6Glur8I/mlVNgF6W/qTI37m40 )
+            example.net. 3600 IN DS 10771 14 4 (
+                72d7b62976ce06438e9c0bf319013cf801f09ecc84b8
+                d7e9495f27e305c6a9b0563a9b5f4d288405c3008a94
+                6df983d6 )
+            www.example.net. 3600 IN A 192.0.2.1
+            www.example.net. 3600 IN RRSIG A 14 3 3600 (
+                20100909102025 20100812102025 10771 example.net.
+                /L5hDKIvGDyI1fcARX3z65qrmPsVz73QD1Mr5CEqOiLP
+                95hxQouuroGCeZOvzFaxsT8Glr74hbavRKayJNuydCuz
+                WTSSPdz7wnqXL5bdcJzusdnI0RSMROxxwGipWcJm )
+            """
+        },
+        #{
+            source => ~"RFC8080§6, erratum 4935, example 1",
+            alg => ?DNS_ALG_ED25519,
+            private_key => base64:decode(~"ODIyNjAzODQ2MjgwODAxMjI2NDUxOTAyMDQxNDIyNjI="),
+            deterministic => true,
+            zone =>
+                ~"""
+            example.com. 3600 IN DNSKEY 257 3 15 (
+                l02Woi0iS8Aa25FQkUd9RMzZHJpBoRQwAQEX1SxZJA4= )
+            example.com. 3600 IN DS 3613 15 2 (
+                3aa5ab37efce57f737fc1627013fee07bdf241bd10f3b1964ab55c78e79
+                a304b )
+            example.com. 3600 IN MX 10 mail.example.com.
+            example.com. 3600 IN RRSIG MX 15 2 3600 (
+                1440021600 1438207200 3613 example.com.
+                oL9krJun7xfBOIWcGHi7mag5/hdZrKWw15jPGrHpjQeRAvTdszaPD+QLs3f
+                x8A4M3e23mRZ9VrbpMngwcrqNAg== )
+            """
+        },
+        #{
+            source => ~"RFC8080§6, erratum 4935, example 2",
+            alg => ?DNS_ALG_ED25519,
+            private_key => base64:decode(~"DSSF3o0s0f+ElWzj9E/Osxw8hLpk55chkmx0LYN5WiY="),
+            deterministic => true,
+            zone =>
+                ~"""
+            example.com. 3600 IN DNSKEY 257 3 15 (
+                zPnZ/QwEe7S8C5SPz2OfS5RR40ATk2/rYnE9xHIEijs= )
+            example.com. 3600 IN DS 35217 15 2 (
+                401781b934e392de492ec77ae2e15d70f6575a1c0bc59c5275c04ebe80c
+                6614c )
+            example.com. 3600 IN MX 10 mail.example.com.
+            example.com. 3600 IN RRSIG MX 15 2 3600 (
+                1440021600 1438207200 35217 example.com.
+                zXQ0bkYgQTEFyfLyi9QoiY6D8ZdYo4wyUhVioYZXFdT410QPRITQSqJSnzQ
+                oSm5poJ7gD7AQR0O7KuI5k2pcBg== )
+            """
+        },
+        #{
+            source => ~"RFC8080§6, erratum 4935, example 3",
+            alg => ?DNS_ALG_ED448,
+            private_key => base64:decode(
+                ~"xZ+5Cgm463xugtkY5B0Jx6erFTXp13rYegst0qRtNsOYnaVpMx0Z/c5EiA9x8wWbDDct/U3FhYWA"
+            ),
+            deterministic => true,
+            zone =>
+                ~"""
+            example.com. 3600 IN DNSKEY 257 3 16 (
+                3kgROaDjrh0H2iuixWBrc8g2EpBBLCdGzHmn+G2MpTPhpj/OiBVHHSfPodx
+                1FYYUcJKm1MDpJtIA )
+            example.com. 3600 IN DS 9713 16 2 (
+                6ccf18d5bc5d7fc2fceb1d59d17321402f2aa8d368048db93dd811f5cb2
+                b19c7 )
+            example.com. 3600 IN MX 10 mail.example.com.
+            example.com. 3600 IN RRSIG MX 16 2 3600 (
+                1440021600 1438207200 9713 example.com.
+                3cPAHkmlnxcDHMyg7vFC34l0blBhuG1qpwLmjInI8w1CMB29FkEAIJUA0am
+                xWndkmnBZ6SKiwZSAxGILn/NBtOXft0+Gj7FSvOKxE/07+4RQvE581N3Aj/
+                JtIyaiYVdnYtyMWbSNyGEY2213WKsJlwEA )
+            """
+        },
+        #{
+            source => ~"RFC8080§6, erratum 4935, example 4",
+            alg => ?DNS_ALG_ED448,
+            private_key => base64:decode(
+                ~"WEykD3ht3MHkU8iH4uVOLz8JLwtRBSqiBoM6fF72+Mrp/u5gjxuB1DV6NnPO2BlZdz4hdSTkOdOA"
+            ),
+            deterministic => true,
+            zone =>
+                ~"""
+            example.com. 3600 IN DNSKEY 257 3 16 (
+                kkreGWoccSDmUBGAe7+zsbG6ZAFQp+syPmYUurBRQc3tDjeMCJcVMRDmgcN
+                Lp5HlHAMy12VoISsA )
+            example.com. 3600 IN DS 38353 16 2 (
+                645ff078b3568f5852b70cb60e8e696cc77b75bfaaffc118cf79cbda1ba
+                28af4 )
+            example.com. 3600 IN MX 10 mail.example.com.
+            example.com. 3600 IN RRSIG MX 16 2 3600 (
+                1440021600 1438207200 38353 example.com.
+                E1/oLjSGIbmLny/4fcgM1z4oL6aqo+izT3urCyHyvEp4Sp8Syg1eI+lJ57C
+                SnZqjJP41O/9l4m0AsQ4f7qI1gVnML8vWWiyW2KXhT9kuAICUSxv5OWbf81
+                Rq7Yu60npabODB0QFPb/rkW3kUZmQ0YQUA )
+            """
+        }
     ].
 
 %% RFC4034§3.1.8.1, RFC6840§5.1: the signer's name goes into the signed data in
