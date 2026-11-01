@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## main
 
+## v5.1.2
+
 ### Fixed
 
 - DNSSEC: ECDSA signatures (13, 14) hashed the data twice since 4.4.0; re-sign stored ones, which now fail to verify.
