@@ -7,8 +7,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## main
 
+## v5.1.2
+
 ### Fixed
 
+- DNSSEC: ECDSA signatures (13, 14) hashed the data twice since 4.4.0; re-sign stored ones, which now fail to verify.
+- DNSSEC: DSA signatures (3, 6) signed the data's length along with it; re-sign stored ones as well.
+- DNSSEC: DSA RRSIGs carry their DNSKEY's T even when P is not 64 + 8T octets.
+- DNSSEC: `dnssec:verify_rrsig/4` no longer crashes on RRsets whose TTL is not the RRSIG's original TTL.
+- DNSSEC: `dnssec:verify_rrsig/4` returns `false` for unknown algorithms, algorithms the local crypto refuses, malformed keys or signatures, and empty RRsets.
+- DNSSEC: `dnssec:verify_rrsig/4` verifies RSA and DSA DNSKEYs parsed from zone files.
+- DNSSEC: `dnssec:verify_rrsig/4` only verifies with the zone key whose owner, algorithm and key tag the RRSIG names.
+- DNSSEC: `dnssec:verify_rrsig/4` matches an RRSIG's signer to a DNSKEY's owner with or without a final dot.
+- DNSSEC: `dnssec:verify_rrsig/4` verifies RRsets a wildcard was expanded into.
+- DNSSEC: `dnssec:verify_rrsig/4` compares an RRSIG's validity period in serial number arithmetic, as RFC 4034 §3.1.5 has it.
+- DNSSEC: `dnssec:verify_rrsig/4` rejects an RRSIG unless every record of the RRset has its owner, class and type covered.
+- DNSSEC: `dnssec:verify_rrsig/4` rejects an RRSIG whose signer is not its owner or an ancestor of it.
+- DNSSEC: signing with an unknown algorithm raises `{unsupported_algorithm, Alg}`.
+- DNSSEC: signing and verifying leave duplicate records out of an RRset, as RFC 4034 §6.3 has it.
+- Wire: a DSA DNSKEY or CDNSKEY with a malformed key decodes with the key as bytes, not crashing.
 - Zone files: read hex split by whitespace in DS, CDS, DLV, TLSA and SMIMEA, and base64 in DHCID, CERT and KEY.
 - Zone files: read TLSA, SMIMEA, DHCID and CERT data unquoted, as their RFCs' examples write it.
 - Zone files: read base64 whose final `=` is alone on a line.

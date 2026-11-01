@@ -101,27 +101,27 @@ Unlike `t:dns:alg/0`, this type is restricted to algorithms valid for zone signi
 -type gen_nsec3_opts() :: gen_nsec_opts().
 -doc "DNSKEY key tag (RFC 4034 Appendix B).".
 -type keytag() :: integer().
--doc "Cryptographic key material for signing or verification.".
--type key() :: [binary()] | binary().
+-doc """
+Cryptographic key material for signing or verification.
+
+RSA and DSA keys are lists of integers, `[E, N, D]` or `[P, Q, G, X]` to sign
+and `[E, M]` or `[P, Q, G, Y]` to verify, which is how the wire decoder gives a
+DNSKEY's key. A DNSKEY parsed from a zone file keeps the RDATA's key bytes,
+which verify as well. Other keys are binaries.
+""".
+-type key() :: [integer()] | binary().
 -doc "Options for `sign_rr/6` and `sign_rrset/6`.".
 -type sign_rr_opts() :: #{inception => dns:unix_time(), expiration => dns:unix_time()}.
 -doc "Options for `verify_rrsig/4`.".
 -type verify_rrsig_opts() :: #{now => dns:unix_time()}.
 
--define(RSASHA1_PREFIX,
+-define(SECS_IN_YEAR, (365 * 24 * 60 * 60)).
+
+%% RFC3110§3: the DigestInfo of a SHA-1 hash, which RSA/SHA-1 signs
+-define(SHA1_DIGESTINFO,
     <<16#30, 16#21, 16#30, 16#09, 16#06, 16#05, 16#2B, 16#0E, 16#03, 16#02, 16#1A, 16#05, 16#00,
         16#04, 16#14>>
 ).
--define(RSASHA256_PREFIX,
-    <<16#30, 16#31, 16#30, 16#0d, 16#06, 16#09, 16#60, 16#86, 16#48, 16#01, 16#65, 16#03, 16#04,
-        16#02, 16#01, 16#05, 16#00, 16#04, 16#20>>
-).
--define(RSASHA512_PREFIX,
-    <<16#30, 16#51, 16#30, 16#0d, 16#06, 16#09, 16#60, 16#86, 16#48, 16#01, 16#65, 16#03, 16#04,
-        16#02, 16#03, 16#05, 16#00, 16#04, 16#40>>
-).
-
--define(SECS_IN_YEAR, (365 * 24 * 60 * 60)).
 
 -doc """
 Generate NSEC records from a list of `t:dns:rr/0`.
@@ -408,7 +408,7 @@ sign_rrset(RRSet, SignerName, KeyTag, Alg, Key) ->
 -spec sign_rrset([dns:rr(), ...], dns:dname(), keytag(), sigalg(), key(), sign_rr_opts()) ->
     dns:rr().
 sign_rrset(
-    [#dns_rr{name = Name, class = Class, ttl = TTL} | _] = RRs,
+    [#dns_rr{name = Name, class = Class, type = Type, ttl = TTL} | _] = RRs,
     SignersName,
     KeyTag,
     Alg,
@@ -419,9 +419,19 @@ sign_rrset(
     Incept = maps:get(inception, Opts, Now),
     %% 1 year
     Expire = maps:get(expiration, Opts, Now + ?SECS_IN_YEAR),
-    {Data0, BaseSigInput} = build_sig_input(RRs, SignersName, KeyTag, Alg, Incept, Expire),
-    Signature = sign(Alg, BaseSigInput, Key),
-    Data = Data0#dns_rrdata_rrsig{signature = Signature},
+    Data0 = #dns_rrdata_rrsig{
+        type_covered = Type,
+        alg = Alg,
+        labels = count_labels(dns_domain:split(Name)),
+        original_ttl = TTL,
+        inception = Incept,
+        expiration = Expire,
+        keytag = KeyTag,
+        %% RFC4034§3.1.8.1, RFC6840§5.1: the signer's name is signed in canonical
+        %% form, lowercased, and so it is written in the RRSIG too
+        signers_name = dns_domain:to_lower(SignersName)
+    },
+    Data = Data0#dns_rrdata_rrsig{signature = sign(Alg, signed_data(Data0, RRs), Key)},
     #dns_rr{
         name = Name,
         type = ?DNS_TYPE_RRSIG,
@@ -430,14 +440,15 @@ sign_rrset(
         data = Data
     }.
 
--spec sign(sigalg(), binary(), key()) -> binary().
+-spec sign(dns:uint8(), iodata(), key()) -> binary().
 sign(Alg, BaseSigInput, Key) when Alg =:= ?DNS_ALG_DSA orelse Alg =:= ?DNS_ALG_NSEC3DSA ->
     %% RFC2536: Key must be [P, Q, G, X] as integers (crypto key format).
     DerSig = crypto:sign(dss, sha, BaseSigInput, Key),
     #'Dss-Sig-Value'{r = R, s = S} = public_key:der_decode('Dss-Sig-Value', DerSig),
-    [P, _Q, _G, _Y] = Key,
-    M = byte_size(binary:encode_unsigned(P)),
-    T = (M - 64) div 8,
+    %% RFC2536§3: T is the DNSKEY's. Its Y = G^X mod P is below P, so P and G
+    %% alone fix the width the DNSKEY's encoding takes T from
+    [P, _Q, G, _X] = Key,
+    T = dns_encode:dsa_t([P, G]),
     <<T, R:20/unit:8, S:20/unit:8>>;
 sign(Alg, BaseSigInput, Key) when
     Alg =:= ?DNS_ALG_NSEC3RSASHA1 orelse
@@ -445,13 +456,8 @@ sign(Alg, BaseSigInput, Key) when
         Alg =:= ?DNS_ALG_RSASHA256 orelse
         Alg =:= ?DNS_ALG_RSASHA512
 ->
-    crypto:sign(
-        rsa,
-        none,
-        BaseSigInput,
-        Key,
-        [{rsa_padding, rsa_pkcs1_padding}]
-    );
+    {Hash, Msg} = rsa_message(Alg, BaseSigInput),
+    crypto:sign(rsa, Hash, Msg, Key, [{rsa_padding, rsa_pkcs1_padding}]);
 sign(?DNS_ALG_ECDSAP256SHA256, BaseSigInput, Key) ->
     DerSig = crypto:sign(ecdsa, sha256, BaseSigInput, [Key, secp256r1]),
     %% RFC6605: keys must be r||s of 32 octets each
@@ -463,14 +469,33 @@ sign(?DNS_ALG_ECDSAP384SHA384, BaseSigInput, Key) ->
 sign(?DNS_ALG_ED25519, BaseSigInput, Key) ->
     crypto:sign(eddsa, none, BaseSigInput, [Key, ed25519]);
 sign(?DNS_ALG_ED448, BaseSigInput, Key) ->
-    crypto:sign(eddsa, none, BaseSigInput, [Key, ed448]).
+    crypto:sign(eddsa, none, BaseSigInput, [Key, ed448]);
+sign(Alg, _BaseSigInput, _Key) ->
+    error({unsupported_algorithm, Alg}).
 
--doc "Provides primitive verification of an RR set.".
+-doc """
+Verifies an RRset against one of its RRSIGs, as RFC 4035 §5.3 has a validator do.
+
+Returns `true` if every record of the RRset has the RRSIG's owner and class and
+the type it covers, the RRSIG's signer is the owner or one of its ancestors, its
+labels field counts no more labels than the owner has and no fewer than the
+signer has, the time `now` in `Opts`, by default the current time, is within its
+validity period, compared in serial number arithmetic (RFC 4034 §3.1.5), and its
+signature verifies with one of the DNSKEYs it names: a zone key, with the Zone
+Key flag set, at the RRSIG's signer's name, with the RRSIG's algorithm and key
+tag. Otherwise it returns `false`, as it does for an algorithm this module does
+not implement or the local crypto cannot verify, and for a malformed key or
+signature.
+
+An RRset a wildcard was expanded into verifies with the wildcard's RRSIG. The
+wire decoder and the zone file parser set a DNSKEY's key tag; set it on one
+built otherwise with `add_keytag_to_dnskey/1`. Whether the DNSKEYs are to be
+trusted is for the caller to decide.
+""".
 -spec verify_rrsig(dns:rr(), [dns:rr()], [dns:rr()], verify_rrsig_opts()) -> boolean().
-verify_rrsig(#dns_rr{type = ?DNS_TYPE_RRSIG, data = Data}, RRs, RRDNSKey, Opts) ->
+verify_rrsig(#dns_rr{type = ?DNS_TYPE_RRSIG, data = Data} = RRSig, RRs, RRDNSKey, Opts) ->
     Now = maps:get(now, Opts, erlang:system_time(second)),
     #dns_rrdata_rrsig{
-        original_ttl = OTTL,
         keytag = SigKeyTag,
         alg = SigAlg,
         inception = Incept,
@@ -478,155 +503,175 @@ verify_rrsig(#dns_rr{type = ?DNS_TYPE_RRSIG, data = Data}, RRs, RRDNSKey, Opts) 
         signers_name = SignersName,
         signature = Signature
     } = Data,
-    Keys0 = [
-        {KeyTag, Alg, PubKey}
+    %% RFC4035§5.3.1: the RRSIG's signer, algorithm and key tag name the DNSKEY,
+    %% which must be a zone key, with bit 7 of its flags set (RFC4034§2.1.1). The
+    %% names compare as names: a zone file's keep their final dot, the wire's not
+    Signer = dns_domain:split(SignersName),
+    Keys = [
+        PubKey
      || #dns_rr{
             name = Name,
             type = ?DNS_TYPE_DNSKEY,
             data = #dns_rrdata_dnskey{
+                flags = Flags,
                 protocol = 3,
                 alg = Alg,
                 keytag = KeyTag,
                 public_key = PubKey
             }
         } <- RRDNSKey,
+        Flags band 16#0100 =/= 0,
         Alg =:= SigAlg,
-        dns_domain:are_equal(Name, SignersName)
+        KeyTag =:= SigKeyTag,
+        dns_domain:are_equal_labels(dns_domain:split(Name), Signer)
     ],
-    Keys =
-        case lists:keytake(SigKeyTag, 1, Keys0) of
-            false -> Keys0;
-            {value, Match, RemKeys} -> [Match | RemKeys]
-        end,
-    case Now of
-        Now when Now < Incept; Expire < Now -> false;
-        Now ->
-            {_SigTuple, SigInput} = build_sig_input(
-                RRs,
-                SignersName,
-                SigKeyTag,
-                SigAlg,
-                Incept,
-                Expire,
-                OTTL
-            ),
-            lists:any(fun({_KeyTag, Alg, Key}) -> verify(Alg, Key, Signature, SigInput) end, Keys)
+    case
+        Keys =/= [] andalso in_validity_period(Incept, Expire, Now) andalso
+            fits_rrset(RRSig, Signer, RRs)
+    of
+        true ->
+            SignedData = signed_data(Data, RRs),
+            lists:any(fun(Key) -> verify_with_key(SigAlg, Key, Signature, SignedData) end, Keys);
+        false ->
+            false
     end.
 
--spec verify(sigalg(), key(), binary(), binary()) -> boolean().
-verify(Alg, Key, Signature, SigInput) when Alg =:= ?DNS_ALG_DSA orelse Alg =:= ?DNS_ALG_NSEC3DSA ->
-    <<_T, R:20/unit:8, S:20/unit:8>> = Signature,
-    AsnSig = public_key:der_encode('Dss-Sig-Value', #'Dss-Sig-Value'{r = R, s = S}),
-    %% DNSKEY public_key from decode is [P, Q, G, Y] as binaries; normalize to integers for crypto.
-    KeyInts = dsa_pubkey_to_integers(Key),
-    crypto:verify(dss, sha, SigInput, AsnSig, KeyInts);
+%% RFC4034§3.1.5: inception and expiration are 32-bit serial numbers, which the
+%% time is compared with in serial number arithmetic (RFC1982): a validity period
+%% can span the 32-bit wrap, and the time can be past 2106
+-spec in_validity_period(non_neg_integer(), non_neg_integer(), integer()) -> boolean().
+in_validity_period(Inception, Expiration, Now) ->
+    serial_at_most(Inception, Now) andalso serial_at_most(Now, Expiration).
+
+%% RFC1982§3.2: whether A is B or before it, as 32-bit serial numbers
+-spec serial_at_most(integer(), integer()) -> boolean().
+serial_at_most(A, B) ->
+    (B - A) band 16#FFFFFFFF < 16#80000000.
+
+%% RFC4035§5.3.1: every record of the RRset has the RRSIG's owner and class and
+%% the type it covers, the labels field counts no more labels than the owner
+%% has, and the signer is the RRset's zone. The zone cut is not known here, so
+%% the signer must be the owner or one of its ancestors, and the labels field
+%% count no fewer labels than the signer has, so that a wildcard it names
+%% (RFC4035§5.3.2) is in the signer's zone too
+-spec fits_rrset(dns:rr(), dns:labels(), [dns:rr()]) -> boolean().
+fits_rrset(_RRSig, _Signer, []) ->
+    false;
+fits_rrset(
+    #dns_rr{
+        name = SigOwner,
+        class = Class,
+        data = #dns_rrdata_rrsig{type_covered = Type, labels = Labels}
+    },
+    Signer,
+    RRs
+) ->
+    Owner = dns_domain:split(SigOwner),
+    InRRset = fun(#dns_rr{name = Name, class = RRClass, type = RRType}) ->
+        RRClass =:= Class andalso RRType =:= Type andalso
+            dns_domain:are_equal_labels(dns_domain:split(Name), Owner)
+    end,
+    lists:all(InRRset, RRs) andalso
+        Labels =< count_labels(Owner) andalso
+        length(Signer) =< Labels andalso
+        is_at_or_under(Owner, Signer).
+
+%% The key and the signature come off the wire, so what crypto cannot verify
+%% does not verify: key material it refuses, such as an ECDSA key that is no
+%% point on its curve (badarg), an algorithm it lacks (notsup), or one its policy
+%% refuses (error), as RHEL 9's default policy refuses DSA's SHA-1. Any error
+%% that is not crypto's is raised.
+-spec verify_with_key(dns:uint8(), key(), binary(), iodata()) -> boolean().
+verify_with_key(Alg, Key, Signature, SigInput) ->
+    try
+        verify(Alg, Key, Signature, SigInput)
+    catch
+        error:{Error, {_File, _Line}, _Reason} when
+            Error =:= badarg; Error =:= notsup; Error =:= error
+        ->
+            false
+    end.
+
+%% A key or signature of the wrong shape for its algorithm, or an algorithm this
+%% module does not implement, verifies nothing
+-spec verify(dns:uint8(), key(), binary(), iodata()) -> boolean().
+verify(Alg, Key, <<_T, R:20/unit:8, S:20/unit:8>>, SigInput) when
+    Alg =:= ?DNS_ALG_DSA orelse Alg =:= ?DNS_ALG_NSEC3DSA
+->
+    case dsa_public_key(Key) of
+        [_P, _Q, _G, _Y] = PublicKey ->
+            AsnSig = public_key:der_encode('Dss-Sig-Value', #'Dss-Sig-Value'{r = R, s = S}),
+            crypto:verify(dss, sha, SigInput, AsnSig, PublicKey);
+        _ ->
+            false
+    end;
 verify(Alg, Key, Signature, SigInput) when
     Alg =:= ?DNS_ALG_NSEC3RSASHA1 orelse
         Alg =:= ?DNS_ALG_RSASHA1 orelse
         Alg =:= ?DNS_ALG_RSASHA256 orelse
         Alg =:= ?DNS_ALG_RSASHA512
 ->
-    try
-        crypto:verify(
-            rsa,
-            none,
-            SigInput,
-            Signature,
-            Key,
-            [{rsa_padding, rsa_pkcs1_padding}]
-        )
-    catch
-        error:decrypt_failed -> false
+    case rsa_public_key(Key) of
+        [_E, _M] = PublicKey ->
+            {Hash, Msg} = rsa_message(Alg, SigInput),
+            Opts = [{rsa_padding, rsa_pkcs1_padding}],
+            crypto:verify(rsa, Hash, Msg, Signature, PublicKey, Opts);
+        _ ->
+            false
     end;
-verify(?DNS_ALG_ECDSAP256SHA256, Key, Signature, SigInput) ->
+verify(?DNS_ALG_ECDSAP256SHA256, <<_:64/binary>> = Key, <<_:64/binary>> = Signature, SigInput) ->
     DerSig = ecdsa_wire_to_der(Signature, 32),
     crypto:verify(ecdsa, sha256, SigInput, DerSig, [<<4, Key/binary>>, secp256r1]);
-verify(?DNS_ALG_ECDSAP384SHA384, Key, Signature, SigInput) ->
+verify(?DNS_ALG_ECDSAP384SHA384, <<_:96/binary>> = Key, <<_:96/binary>> = Signature, SigInput) ->
     DerSig = ecdsa_wire_to_der(Signature, 48),
     crypto:verify(ecdsa, sha384, SigInput, DerSig, [<<4, Key/binary>>, secp384r1]);
-verify(?DNS_ALG_ED25519, Key, Signature, SigInput) ->
+verify(?DNS_ALG_ED25519, <<_:32/binary>> = Key, <<_:64/binary>> = Signature, SigInput) ->
     crypto:verify(eddsa, none, SigInput, Signature, [Key, ed25519]);
-verify(?DNS_ALG_ED448, Key, Signature, SigInput) ->
-    crypto:verify(eddsa, none, SigInput, Signature, [Key, ed448]).
+verify(?DNS_ALG_ED448, <<_:57/binary>> = Key, <<_:114/binary>> = Signature, SigInput) ->
+    crypto:verify(eddsa, none, SigInput, Signature, [Key, ed448]);
+verify(_Alg, _Key, _Signature, _SigInput) ->
+    false.
 
--spec build_sig_input([dns:rr(), ...], dns:dname(), keytag(), dns:alg(), integer(), integer()) ->
-    {dns:rrdata_rrsig(), binary()}.
-build_sig_input(
-    [#dns_rr{ttl = TTL} | _] = RRs,
-    SignersName,
-    KeyTag,
-    Alg,
-    Incept,
-    Expire
+%% RFC4034§3.1.8.1: the RRSIG RDATA without its signature, then the RRset in
+%% canonical form and order, each record once (RFC4034§6.2, §6.3). RFC4035§5.3.2:
+%% each record goes in with the RRSIG's original TTL, whatever TTL it arrived
+%% with, as one from a cache arrives decremented, and with the owner the RRSIG's
+%% labels field gives it.
+-spec signed_data(dns:rrdata_rrsig(), [dns:rr(), ...]) -> iodata().
+signed_data(
+    #dns_rrdata_rrsig{labels = Labels, original_ttl = TTL} = RRSig,
+    [#dns_rr{name = Name, class = Class, type = Type} | _] = RRs
 ) ->
-    build_sig_input(RRs, SignersName, KeyTag, Alg, Incept, Expire, TTL).
-
--spec build_sig_input(
-    [dns:rr(), ...], dns:dname(), keytag(), dns:alg(), integer(), integer(), non_neg_integer()
-) ->
-    {dns:rrdata_rrsig(), binary()}.
-build_sig_input(
-    [#dns_rr{name = Name, class = Class, type = Type, ttl = TTL} | _] = RRs,
-    SignersName,
-    KeyTag,
-    Alg,
-    Incept,
-    Expire,
-    TTL
-) when is_integer(Alg) ->
     LName = dns_domain:to_lower(Name),
-    Datas = lists:sort([canonical_rrdata_bin(RR) || RR <- RRs]),
-    LLabels = dns_domain:split(LName),
-    NameBin = dns_domain:to_wire(LName),
-    RecordBase = <<NameBin/binary, Type:16, Class:16, TTL:32>>,
+    Owner = signed_owner(LName, Labels),
+    OwnerBin = dns_domain:to_wire(Owner),
+    RecordBase = <<OwnerBin/binary, Type:16, Class:16, TTL:32>>,
+    Datas = lists:usort([canonical_rrdata_bin(RR) || RR <- RRs]),
     RRSetBin = [<<RecordBase/binary, (byte_size(Data)):16, Data/binary>> || Data <- Datas],
-    RRSigData = #dns_rrdata_rrsig{
-        type_covered = Type,
-        alg = Alg,
-        labels = count_labels(LLabels),
-        original_ttl = TTL,
-        inception = Incept,
-        expiration = Expire,
-        keytag = KeyTag,
-        %% RFC4034§3.1.8.1, RFC6840§5.1: the signer's name is signed in canonical
-        %% form, lowercased, and so it is written in the RRSIG too
-        signers_name = dns_domain:to_lower(SignersName)
-    },
-    RRSigRDataBin = rrsig_to_digestable(RRSigData),
-    SigInput0 = [RRSigRDataBin | RRSetBin],
-    SigInput = preprocess_sig_input(Alg, SigInput0),
-    {RRSigData, SigInput}.
+    [rrsig_to_digestable(RRSig) | RRSetBin].
 
--spec preprocess_sig_input(sigalg(), [binary()]) -> binary().
-preprocess_sig_input(Alg, SigInput) when Alg =:= ?DNS_ALG_DSA orelse Alg =:= ?DNS_ALG_NSEC3DSA ->
-    NewSigInput = iolist_to_binary(SigInput),
-    NewSigInputSize = byte_size(NewSigInput),
-    <<NewSigInputSize:32, NewSigInput/binary>>;
-preprocess_sig_input(Alg, SigInput) when
-    Alg =:= ?DNS_ALG_NSEC3RSASHA1 orelse
-        Alg =:= ?DNS_ALG_RSASHA1 orelse
-        Alg =:= ?DNS_ALG_RSASHA256 orelse
-        Alg =:= ?DNS_ALG_RSASHA512
-->
-    {Prefix, HashType} = choose_sha_prefix_and_type(Alg),
-    Hash = crypto:hash(HashType, SigInput),
-    <<Prefix/binary, Hash/binary>>;
-preprocess_sig_input(?DNS_ALG_ECDSAP256SHA256, SigInput) ->
-    crypto:hash(sha256, SigInput);
-preprocess_sig_input(?DNS_ALG_ECDSAP384SHA384, SigInput) ->
-    crypto:hash(sha384, SigInput);
-preprocess_sig_input(Alg, SigInput) when Alg =:= ?DNS_ALG_ED25519 orelse Alg =:= ?DNS_ALG_ED448 ->
-    iolist_to_binary(SigInput).
+%% RFC4035§5.3.2: an RRset a wildcard was expanded into is signed as the
+%% wildcard, "*" and the last Labels labels of its owner
+-spec signed_owner(dns:dname(), dns:uint8()) -> dns:dname().
+signed_owner(Name, Labels) ->
+    case dns_domain:split(Name) of
+        Split when Labels < length(Split) ->
+            dns_domain:join([~"*" | lists:nthtail(length(Split) - Labels, Split)]);
+        _ ->
+            Name
+    end.
 
--spec choose_sha_prefix_and_type(sigalg()) -> {binary(), sha | sha256 | sha512}.
-choose_sha_prefix_and_type(?DNS_ALG_RSASHA1) ->
-    {?RSASHA1_PREFIX, sha};
-choose_sha_prefix_and_type(?DNS_ALG_NSEC3RSASHA1) ->
-    {?RSASHA1_PREFIX, sha};
-choose_sha_prefix_and_type(?DNS_ALG_RSASHA256) ->
-    {?RSASHA256_PREFIX, sha256};
-choose_sha_prefix_and_type(?DNS_ALG_RSASHA512) ->
-    {?RSASHA512_PREFIX, sha512}.
+%% RFC3110§3, RFC5702§3: RSASSA-PKCS1-v1_5, whose DigestInfo crypto builds from
+%% the hash it is given. An OpenSSL whose policy refuses SHA-1 signatures, as
+%% RHEL 9's default does, then refuses RSA/SHA-1, which validators must still
+%% implement (RFC9905), so for SHA-1 the DigestInfo is built here.
+-spec rsa_message(dns:uint8(), iodata()) -> {none | sha256 | sha512, iodata()}.
+rsa_message(Alg, Data) when Alg =:= ?DNS_ALG_RSASHA1 orelse Alg =:= ?DNS_ALG_NSEC3RSASHA1 ->
+    {none, [?SHA1_DIGESTINFO, crypto:hash(sha, Data)]};
+rsa_message(?DNS_ALG_RSASHA256, Data) ->
+    {sha256, Data};
+rsa_message(?DNS_ALG_RSASHA512, Data) ->
+    {sha512, Data}.
 
 -doc "Generates and appends a DNS Key records key tag.".
 -spec add_keytag_to_dnskey(dns:rr()) -> dns:rr().
@@ -650,7 +695,9 @@ add_keytag_to_key_rr(RR, Data, Type) ->
 
 -spec rrsig_to_digestable(dns:rrdata_rrsig()) -> binary().
 rrsig_to_digestable(#dns_rrdata_rrsig{} = Data) ->
-    dns_encode:encode_rrdata(?DNS_CLASS_IN, Data#dns_rrdata_rrsig{signature = <<>>}).
+    %% RFC4034§6.2, RFC6840§5.1: in canonical form, the signer's name lowercased
+    Canonical = canonical_rrdata_form(Data#dns_rrdata_rrsig{signature = <<>>}),
+    dns_encode:encode_rrdata(?DNS_CLASS_IN, Canonical).
 
 -spec canonical_rrdata_bin(dns:rr()) -> binary().
 canonical_rrdata_bin(#dns_rr{class = Class, data = Data0}) ->
@@ -765,16 +812,22 @@ count_labels([~"*" | Labels]) ->
 count_labels(List) when is_list(List) ->
     length(List).
 
-%% Convert DNSKEY public_key [P, Q, G, Y] (binaries from decode) to integers for crypto:verify.
--spec dsa_pubkey_to_integers([binary() | integer()]) -> [integer()].
-dsa_pubkey_to_integers([P, Q, G, Y]) ->
-    [dsa_elem_to_int(X) || X <- [P, Q, G, Y]].
+%% Whether a name is Zone or a name under it, both given as labels
+-spec is_at_or_under(dns:labels(), dns:labels()) -> boolean().
+is_at_or_under(Labels, Zone) ->
+    Depth = length(Labels) - length(Zone),
+    Depth >= 0 andalso dns_domain:are_equal_labels(lists:nthtail(Depth, Labels), Zone).
 
--spec dsa_elem_to_int(binary() | integer()) -> integer().
-dsa_elem_to_int(B) when is_binary(B) ->
-    binary:decode_unsigned(B);
-dsa_elem_to_int(I) when is_integer(I) ->
-    I.
+%% A DNSKEY decoded from the wire holds an RSA or DSA key as integers, and one
+%% parsed from a zone file its RDATA bytes, which are read as the decoder reads
+%% them. Bytes that do not parse stay a binary, which verifies nothing.
+-spec rsa_public_key(key()) -> key().
+rsa_public_key(Key) when is_binary(Key) -> dns_decode:rsa_public_key(Key);
+rsa_public_key(Key) -> Key.
+
+-spec dsa_public_key(key()) -> key().
+dsa_public_key(Key) when is_binary(Key) -> dns_decode:dsa_public_key(Key);
+dsa_public_key(Key) -> Key.
 
 %% RFC 6605 §4: ECDSA signatures on the wire are r || s, each padded to FieldSize bytes.
 %% crypto:sign returns DER-encoded ASN.1; crypto:verify expects DER-encoded ASN.1.

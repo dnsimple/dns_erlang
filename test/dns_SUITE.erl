@@ -1600,9 +1600,11 @@ dnskey_dsa_field_width_preserved(_) ->
 dnskey_dsa_alg_short_rdata_reencodes(_) ->
     DsaAlgs = [?DNS_ALG_DSA, ?DNS_ALG_NSEC3DSA],
     Short = fun(Alg) -> <<256:16, 3:8, Alg:8, 1, 2, 3, 4, 5, 6, 7, 8>> end,
+    %% T and Q, but P, G and Y not 64 + 8T octets each, which crashed the decoder
+    Odd = fun(Alg) -> <<256:16, 3:8, Alg:8, 0, 0:160, 1, 2, 3, 4, 5>> end,
     [
         begin
-            Rdata = Short(Alg),
+            Rdata = Shape(Alg),
             Data = dns_decode:decode_rrdata(<<>>, ?DNS_CLASS_IN, Type, Rdata),
             %% too short for the DSA layout, so the key stays opaque ...
             PK =
@@ -1614,7 +1616,7 @@ dnskey_dsa_alg_short_rdata_reencodes(_) ->
             %% ... and re-encoding reproduces the original bytes instead of crashing
             ?assertEqual(Rdata, dns_encode:encode_rrdata(?DNS_CLASS_IN, Data), {Type, Alg})
         end
-     || Type <- [?DNS_TYPE_DNSKEY, ?DNS_TYPE_CDNSKEY], Alg <- DsaAlgs
+     || Type <- [?DNS_TYPE_DNSKEY, ?DNS_TYPE_CDNSKEY], Alg <- DsaAlgs, Shape <- [Short, Odd]
     ],
     %% Reachable through a full message: decode then re-encode must both survive
     Rdata = Short(?DNS_ALG_NSEC3DSA),

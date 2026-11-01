@@ -12,7 +12,9 @@
     decode_message_questions/3,
     decode_message_additional/3,
     decode_message_body/3,
-    decode_rrdata/3
+    decode_rrdata/3,
+    rsa_public_key/1,
+    dsa_public_key/1
 ]).
 
 -ifdef(TEST).
@@ -645,30 +647,24 @@ decode_rrdata(
         AlgNum =:= ?DNS_ALG_RSASHA256 orelse
         AlgNum =:= ?DNS_ALG_RSASHA512
 ->
-    {Key, KeyTag} = decode_rsa_key(PublicKey, Bin),
     #dns_rrdata_dnskey{
         flags = Flags,
         protocol = Protocol,
         alg = AlgNum,
-        public_key = Key,
-        keytag = KeyTag
+        public_key = rsa_public_key(PublicKey),
+        keytag = bin_to_key_tag(Bin)
     };
 decode_rrdata(
-    _MsgBin,
-    _Class,
-    ?DNS_TYPE_DNSKEY,
-    <<Flags:16, Protocol:8, AlgNum:8, T, Q:20/unit:8, KeyBin/binary>> = Bin
+    _MsgBin, _Class, ?DNS_TYPE_DNSKEY, <<Flags:16, Protocol:8, AlgNum:8, PublicKey/binary>> = Bin
 ) when
-    (AlgNum =:= ?DNS_ALG_DSA orelse AlgNum =:= ?DNS_ALG_NSEC3DSA) andalso
-        T =< 8
+    AlgNum =:= ?DNS_ALG_DSA orelse AlgNum =:= ?DNS_ALG_NSEC3DSA
 ->
-    {Key, KeyTag} = decode_dsa_key(T, Q, KeyBin, Bin),
     #dns_rrdata_dnskey{
         flags = Flags,
         protocol = Protocol,
         alg = AlgNum,
-        public_key = Key,
-        keytag = KeyTag
+        public_key = dsa_public_key(PublicKey),
+        keytag = bin_to_key_tag(Bin)
     };
 decode_rrdata(
     _MsgBin, _Class, ?DNS_TYPE_DNSKEY, <<Flags:16, Protocol:8, AlgNum:8, PublicKey/binary>> = Bin
@@ -706,30 +702,24 @@ decode_rrdata(
         AlgNum =:= ?DNS_ALG_RSASHA256 orelse
         AlgNum =:= ?DNS_ALG_RSASHA512
 ->
-    {Key, KeyTag} = decode_rsa_key(PublicKey, Bin),
     #dns_rrdata_cdnskey{
         flags = Flags,
         protocol = Protocol,
         alg = AlgNum,
-        public_key = Key,
-        keytag = KeyTag
+        public_key = rsa_public_key(PublicKey),
+        keytag = bin_to_key_tag(Bin)
     };
 decode_rrdata(
-    _MsgBin,
-    _Class,
-    ?DNS_TYPE_CDNSKEY,
-    <<Flags:16, Protocol:8, AlgNum:8, T, Q:20/unit:8, KeyBin/binary>> = Bin
+    _MsgBin, _Class, ?DNS_TYPE_CDNSKEY, <<Flags:16, Protocol:8, AlgNum:8, PublicKey/binary>> = Bin
 ) when
-    (AlgNum =:= ?DNS_ALG_DSA orelse AlgNum =:= ?DNS_ALG_NSEC3DSA) andalso
-        T =< 8
+    AlgNum =:= ?DNS_ALG_DSA orelse AlgNum =:= ?DNS_ALG_NSEC3DSA
 ->
-    {Key, KeyTag} = decode_dsa_key(T, Q, KeyBin, Bin),
     #dns_rrdata_cdnskey{
         flags = Flags,
         protocol = Protocol,
         alg = AlgNum,
-        public_key = Key,
-        keytag = KeyTag
+        public_key = dsa_public_key(PublicKey),
+        keytag = bin_to_key_tag(Bin)
     };
 decode_rrdata(
     _MsgBin,
@@ -1196,15 +1186,12 @@ decode_dnameonly(MsgBin, Bin) ->
         _ -> error(trailing_garbage)
     end.
 
-%% Helper function to decode RSA keys for DNSKEY and CDNSKEY records
--spec decode_rsa_key(binary(), binary()) -> {list(), dns:uint16()}.
-decode_rsa_key(PublicKey, Bin) ->
-    KeyTag = bin_to_key_tag(Bin),
+%% RFC3110§2: an RSA public key as [E, M], or its bytes as they are if they are not canonical
+-spec rsa_public_key(binary()) -> [non_neg_integer()] | binary().
+rsa_public_key(PublicKey) ->
     case rsa_fields(PublicKey) of
-        {ExpBin, ModBin} ->
-            {[binary:decode_unsigned(ExpBin), binary:decode_unsigned(ModBin)], KeyTag};
-        not_canonical ->
-            {PublicKey, KeyTag}
+        {ExpBin, ModBin} -> [binary:decode_unsigned(ExpBin), binary:decode_unsigned(ModBin)];
+        not_canonical -> PublicKey
     end.
 
 %% RFC3110§2: exponent length in one octet, or zero then two octets.
@@ -1217,14 +1204,15 @@ rsa_fields(<<_/binary>>) -> not_canonical.
 rsa_fields(<<E, _/binary>> = Exp, <<M, _/binary>> = Mod) when 0 < E, 0 < M -> {Exp, Mod};
 rsa_fields(_Exp, _Mod) -> not_canonical.
 
-%% Helper function to decode DSA keys for DNSKEY and CDNSKEY records
--spec decode_dsa_key(byte(), non_neg_integer(), binary(), binary()) -> {list(), dns:uint16()}.
-decode_dsa_key(T, Q, KeyBin, Bin) ->
-    S = 64 + T * 8,
-    <<P:S/unit:8, G:S/unit:8, Y:S/unit:8>> = KeyBin,
-    Key = [P, Q, G, Y],
-    KeyTag = bin_to_key_tag(Bin),
-    {Key, KeyTag}.
+%% RFC2536§2: a DSA public key as [P, Q, G, Y], or its bytes as they are if they
+%% are not laid out as T, Q, P, G and Y, P, G and Y each 64 + 8T octets
+-spec dsa_public_key(binary()) -> [non_neg_integer()] | binary().
+dsa_public_key(<<T, Q:20/unit:8, PGY/binary>>) when T =< 8, byte_size(PGY) =:= 3 * (64 + 8 * T) ->
+    S = 64 + 8 * T,
+    <<P:S/unit:8, G:S/unit:8, Y:S/unit:8>> = PGY,
+    [P, Q, G, Y];
+dsa_public_key(PublicKey) ->
+    PublicKey.
 
 -spec decode_text(binary()) -> [binary()].
 decode_text(<<>>) ->
