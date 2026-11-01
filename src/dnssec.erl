@@ -480,11 +480,12 @@ Returns `true` if every record of the RRset has the RRSIG's owner and class and
 the type it covers, the RRSIG's signer is the owner or one of its ancestors, its
 labels field counts no more labels than the owner has and no fewer than the
 signer has, the time `now` in `Opts`, by default the current time, is within its
-validity period, and its signature verifies with one of the DNSKEYs it names: a
-zone key, with the Zone Key flag set, at the RRSIG's signer's name, with the
-RRSIG's algorithm and key tag. Otherwise it returns `false`, as it does for an
-algorithm this module does not implement or the local crypto cannot verify, and
-for a malformed key or signature.
+validity period, compared in serial number arithmetic (RFC 4034 §3.1.5), and its
+signature verifies with one of the DNSKEYs it names: a zone key, with the Zone
+Key flag set, at the RRSIG's signer's name, with the RRSIG's algorithm and key
+tag. Otherwise it returns `false`, as it does for an algorithm this module does
+not implement or the local crypto cannot verify, and for a malformed key or
+signature.
 
 An RRset a wildcard was expanded into verifies with the wildcard's RRSIG. The
 wire decoder and the zone file parser set a DNSKEY's key tag; set it on one
@@ -525,7 +526,7 @@ verify_rrsig(#dns_rr{type = ?DNS_TYPE_RRSIG, data = Data} = RRSig, RRs, RRDNSKey
         dns_domain:are_equal_labels(dns_domain:split(Name), Signer)
     ],
     case
-        Keys =/= [] andalso Incept =< Now andalso Now =< Expire andalso
+        Keys =/= [] andalso in_validity_period(Incept, Expire, Now) andalso
             fits_rrset(RRSig, Signer, RRs)
     of
         true ->
@@ -534,6 +535,18 @@ verify_rrsig(#dns_rr{type = ?DNS_TYPE_RRSIG, data = Data} = RRSig, RRs, RRDNSKey
         false ->
             false
     end.
+
+%% RFC4034§3.1.5: inception and expiration are 32-bit serial numbers, which the
+%% time is compared with in serial number arithmetic (RFC1982): a validity period
+%% can span the 32-bit wrap, and the time can be past 2106
+-spec in_validity_period(non_neg_integer(), non_neg_integer(), integer()) -> boolean().
+in_validity_period(Inception, Expiration, Now) ->
+    serial_at_most(Inception, Now) andalso serial_at_most(Now, Expiration).
+
+%% RFC1982§3.2: whether A is B or before it, as 32-bit serial numbers
+-spec serial_at_most(integer(), integer()) -> boolean().
+serial_at_most(A, B) ->
+    (B - A) band 16#FFFFFFFF < 16#80000000.
 
 %% RFC4035§5.3.1: every record of the RRset has the RRSIG's owner and class and
 %% the type it covers, the labels field counts no more labels than the owner
