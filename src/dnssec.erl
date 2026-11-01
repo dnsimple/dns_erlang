@@ -483,7 +483,8 @@ labels than the owner has and no fewer than the signer has, the time `now` in
 signature verifies with one of the DNSKEYs it names: a zone key, with the Zone
 Key flag set, at the RRSIG's signer's name, with the RRSIG's algorithm and key
 tag. Otherwise it returns `false`, as it does for an algorithm this module does
-not implement and for a malformed key or signature.
+not implement or the local crypto cannot verify, and for a malformed key or
+signature.
 
 An RRset a wildcard was expanded into verifies with the wildcard's RRSIG. The
 wire decoder and the zone file parser set a DNSKEY's key tag; set it on one
@@ -559,15 +560,20 @@ verify_rrsig(
             false
     end.
 
-%% The key and the signature come off the wire, so key material crypto refuses,
-%% such as an ECDSA key that is no point on its curve, does not verify either.
-%% Any other error, crypto's notsup among them, is raised.
+%% The key and the signature come off the wire, so what crypto cannot verify
+%% does not verify: key material it refuses, such as an ECDSA key that is no
+%% point on its curve (badarg), an algorithm it lacks (notsup), or one its policy
+%% refuses (error), as RHEL 9's default policy refuses DSA's SHA-1. Any error
+%% that is not crypto's is raised.
 -spec verify_with_key(dns:uint8(), key(), binary(), iodata()) -> boolean().
 verify_with_key(Alg, Key, Signature, SigInput) ->
     try
         verify(Alg, Key, Signature, SigInput)
     catch
-        error:{badarg, {_File, _Line}, _Reason} -> false
+        error:{Error, {_File, _Line}, _Reason} when
+            Error =:= badarg; Error =:= notsup; Error =:= error
+        ->
+            false
     end.
 
 %% A key or signature of the wrong shape for its algorithm, or an algorithm this

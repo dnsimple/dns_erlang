@@ -967,7 +967,7 @@ verify_dsa_refused_by_crypto_is_false(Config) ->
         false ->
             {skip, "crypto does not refuse DSA here"};
         true ->
-            ?assertEqual(false, catch dnssec:verify_rrsig(RRSig, RRSet, Keys, Opts))
+            ?assertEqual(false, dnssec:verify_rrsig(RRSig, RRSet, Keys, Opts))
     end.
 
 dsa_key_integers(Key) when is_binary(Key) -> dns_decode:dsa_public_key(Key);
