@@ -61,6 +61,10 @@ groups() ->
             verify_wildcard_expansion,
             dsa_rrsig_t_is_dnskey_t,
             verify_with_decremented_ttl,
+            duplicate_rrs_not_in_signed_data,
+            verify_checks_every_rr_of_rrset,
+            verify_dsa_refused_by_crypto_is_false,
+            verify_uses_serial_number_arithmetic,
             signers_name_in_canonical_form,
             ih_custom_hash_test,
             dsa_sign_verify_test,
@@ -897,6 +901,116 @@ verify_with_decremented_ttl(_Config) ->
         [RR || #dns_rr{type = ?DNS_TYPE_RRSIG} = RR <- RRs],
     Cached = [RR#dns_rr{ttl = 1234} || #dns_rr{type = ?DNS_TYPE_A} = RR <- RRs],
     ?assert(dnssec:verify_rrsig(RRSig, Cached, [DNSKey], #{now => Now})).
+
+%% RFC4034§6.3: remove duplicate RRs from the RRset before you sign or verify it.
+%% Ed25519 signatures are deterministic. Thus an RRset with a duplicate RR must
+%% get the same signature as the RRset without it.
+duplicate_rrs_not_in_signed_data(_Config) ->
+    {Priv, DNSKey, KeyTag} = ed25519_zone_key(~"example"),
+    A = rr_a(~"www.example", {192, 0, 2, 1}),
+    B = rr_a(~"www.example", {192, 0, 2, 2}),
+    Opts = #{inception => 1000000, expiration => 2000000},
+    Sign = fun(RRs) -> dnssec:sign_rrset(RRs, ~"example", KeyTag, ?DNS_ALG_ED25519, Priv, Opts) end,
+    #dns_rr{data = #dns_rrdata_rrsig{signature = Unique}} = RRSig = Sign([A, B]),
+    #dns_rr{data = #dns_rrdata_rrsig{signature = WithDuplicate}} = Sign([A, A, B]),
+    ?assertEqual(Unique, WithDuplicate),
+    ?assert(dnssec:verify_rrsig(RRSig, [A, B, A], [DNSKey], #{now => 1500000})).
+
+%% RFC4035§5.3.1: all RRs of the RRset must have the owner, class and type of
+%% the RRSIG. An RR with a different owner, class or type must not verify,
+%% also when it is not the first RR in the list.
+verify_checks_every_rr_of_rrset(_Config) ->
+    {Priv, DNSKey, KeyTag} = ed25519_zone_key(~"example"),
+    A = rr_a(~"www.example", {192, 0, 2, 1}),
+    B = rr_a(~"www.example", {192, 0, 2, 2}),
+    Opts = #{inception => 1000000, expiration => 2000000},
+    RRSig = dnssec:sign_rrset([A, B], ~"example", KeyTag, ?DNS_ALG_ED25519, Priv, Opts),
+    Verify = fun(RRs) -> dnssec:verify_rrsig(RRSig, RRs, [DNSKey], #{now => 1500000}) end,
+    ?assert(Verify([A, B])),
+    ?assertNot(Verify([A, B#dns_rr{name = ~"evil.example"}])),
+    ?assertNot(Verify([A, B#dns_rr{class = ?DNS_CLASS_CH}])),
+    ?assertNot(
+        Verify([
+            A,
+            B#dns_rr{type = ?DNS_TYPE_AAAA, data = #dns_rrdata_aaaa{ip = {0, 0, 0, 0, 0, 0, 0, 1}}}
+        ])
+    ),
+    %% The same RDATA as B, but in a TXT RR. The RDATA bytes do not agree, but
+    %% the test makes sure that the type is examined
+    ?assertNot(Verify([A, B#dns_rr{type = ?DNS_TYPE_TXT}])).
+
+%% A crypto policy can refuse DSA or SHA-1, as RHEL 9's default policy does.
+%% Then crypto raises an error that is not badarg. verify_rrsig/4 must return
+%% false and not crash. The test runs only where crypto refuses DSA.
+verify_dsa_refused_by_crypto_is_false(Config) ->
+    DsaCases = [
+        Case
+     || {_Zone, Cases} <- helper_verify_rrset_test_cases(Config),
+        {#dns_rr{data = #dns_rrdata_rrsig{alg = Alg}}, _, _, _} = Case <- Cases,
+        Alg =:= ?DNS_ALG_DSA orelse Alg =:= ?DNS_ALG_NSEC3DSA
+    ],
+    [{RRSig, RRSet, Keys, Opts} | _] = DsaCases,
+    [PublicKey | _] = [
+        dsa_key_integers(Key)
+     || #dns_rr{data = #dns_rrdata_dnskey{alg = Alg, public_key = Key}} <- Keys,
+        Alg =:= ?DNS_ALG_DSA orelse Alg =:= ?DNS_ALG_NSEC3DSA
+    ],
+    Der = public_key:der_encode('Dss-Sig-Value', #'Dss-Sig-Value'{r = 1, s = 1}),
+    Refused =
+        try crypto:verify(dss, sha, ~"x", Der, PublicKey) of
+            _ -> false
+        catch
+            error:{badarg, _, _} -> false;
+            error:_ -> true
+        end,
+    case Refused of
+        false ->
+            {skip, "crypto does not refuse DSA here"};
+        true ->
+            ?assertEqual(false, catch dnssec:verify_rrsig(RRSig, RRSet, Keys, Opts))
+    end.
+
+dsa_key_integers(Key) when is_binary(Key) -> dns_decode:dsa_public_key(Key);
+dsa_key_integers(Key) -> Key.
+
+%% RFC4034§3.1.5: the inception and expiration fields are 32-bit serial numbers
+%% (RFC1982). Compare them with the time in serial number arithmetic.
+verify_uses_serial_number_arithmetic(_Config) ->
+    {Priv, DNSKey, KeyTag} = ed25519_zone_key(~"example"),
+    A = rr_a(~"www.example", {192, 0, 2, 1}),
+    Verify = fun(Inception, Expiration, Now) ->
+        RRSig = dnssec:sign_rrset(
+            [A],
+            ~"example",
+            KeyTag,
+            ?DNS_ALG_ED25519,
+            Priv,
+            #{inception => Inception, expiration => Expiration}
+        ),
+        dnssec:verify_rrsig(RRSig, [A], [DNSKey], #{now => Now})
+    end,
+    %% The validity period goes across the 32-bit wrap
+    ?assert(Verify(16#FFFFFF00, 16#00000100, 16#FFFFFFF0)),
+    ?assert(Verify(16#FFFFFF00, 16#00000100, 1 bsl 32 + 16#10)),
+    %% After 2106 the time is more than 32 bits, the fields are not
+    ?assert(Verify(50, 200, 1 bsl 32 + 100)),
+    ?assertNot(Verify(50, 200, 1 bsl 32 + 300)).
+
+ed25519_zone_key(Zone) ->
+    {Pub, Priv} = crypto:generate_key(eddsa, ed25519),
+    DNSKey = dnssec:add_keytag_to_dnskey(#dns_rr{
+        name = Zone,
+        type = ?DNS_TYPE_DNSKEY,
+        ttl = 3600,
+        data = #dns_rrdata_dnskey{
+            flags = 256, protocol = 3, alg = ?DNS_ALG_ED25519, public_key = Pub
+        }
+    }),
+    #dns_rr{data = #dns_rrdata_dnskey{keytag = KeyTag}} = DNSKey,
+    {Priv, DNSKey, KeyTag}.
+
+rr_a(Name, IP) ->
+    #dns_rr{name = Name, type = ?DNS_TYPE_A, ttl = 3600, data = #dns_rrdata_a{ip = IP}}.
 
 %% Keys and signatures come off the wire: one too short for its algorithm does
 %% not verify, rather than crashing
