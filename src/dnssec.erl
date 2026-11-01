@@ -617,9 +617,10 @@ verify(_Alg, _Key, _Signature, _SigInput) ->
     false.
 
 %% RFC4034§3.1.8.1: the RRSIG RDATA without its signature, then the RRset in
-%% canonical form (RFC4034§6.2). RFC4035§5.3.2: each record goes in with the
-%% RRSIG's original TTL, whatever TTL it arrived with, as one from a cache
-%% arrives decremented, and with the owner the RRSIG's labels field gives it.
+%% canonical form and order, each record once (RFC4034§6.2, §6.3). RFC4035§5.3.2:
+%% each record goes in with the RRSIG's original TTL, whatever TTL it arrived
+%% with, as one from a cache arrives decremented, and with the owner the RRSIG's
+%% labels field gives it.
 -spec signed_data(dns:rrdata_rrsig(), [dns:rr(), ...]) -> iodata().
 signed_data(
     #dns_rrdata_rrsig{labels = Labels, original_ttl = TTL} = RRSig,
@@ -629,7 +630,7 @@ signed_data(
     Owner = signed_owner(LName, Labels),
     OwnerBin = dns_domain:to_wire(Owner),
     RecordBase = <<OwnerBin/binary, Type:16, Class:16, TTL:32>>,
-    Datas = lists:sort([canonical_rrdata_bin(RR) || RR <- RRs]),
+    Datas = lists:usort([canonical_rrdata_bin(RR) || RR <- RRs]),
     RRSetBin = [<<RecordBase/binary, (byte_size(Data)):16, Data/binary>> || Data <- Datas],
     [rrsig_to_digestable(RRSig) | RRSetBin].
 

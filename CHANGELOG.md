@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - DNSSEC: `dnssec:verify_rrsig/4` rejects an RRSIG whose owner or class is not its RRset's.
 - DNSSEC: `dnssec:verify_rrsig/4` rejects an RRSIG whose signer is not its owner or an ancestor of it.
 - DNSSEC: signing with an unknown algorithm raises `{unsupported_algorithm, Alg}`.
+- DNSSEC: signing and verifying leave duplicate records out of an RRset, as RFC 4034 §6.3 has it.
 - Wire: a DSA DNSKEY or CDNSKEY with a malformed key decodes with the key as bytes, not crashing.
 - Zone files: read hex split by whitespace in DS, CDS, DLV, TLSA and SMIMEA, and base64 in DHCID, CERT and KEY.
 - Zone files: read TLSA, SMIMEA, DHCID and CERT data unquoted, as their RFCs' examples write it.
