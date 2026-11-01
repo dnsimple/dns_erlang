@@ -476,15 +476,15 @@ sign(Alg, _BaseSigInput, _Key) ->
 -doc """
 Verifies an RRset against one of its RRSIGs, as RFC 4035 §5.3 has a validator do.
 
-Returns `true` if the RRSIG has the RRset's owner and class and covers its type,
-its signer is the owner or one of its ancestors, its labels field counts no more
-labels than the owner has and no fewer than the signer has, the time `now` in
-`Opts`, by default the current time, is within its validity period, and its
-signature verifies with one of the DNSKEYs it names: a zone key, with the Zone
-Key flag set, at the RRSIG's signer's name, with the RRSIG's algorithm and key
-tag. Otherwise it returns `false`, as it does for an algorithm this module does
-not implement or the local crypto cannot verify, and for a malformed key or
-signature.
+Returns `true` if every record of the RRset has the RRSIG's owner and class and
+the type it covers, the RRSIG's signer is the owner or one of its ancestors, its
+labels field counts no more labels than the owner has and no fewer than the
+signer has, the time `now` in `Opts`, by default the current time, is within its
+validity period, and its signature verifies with one of the DNSKEYs it names: a
+zone key, with the Zone Key flag set, at the RRSIG's signer's name, with the
+RRSIG's algorithm and key tag. Otherwise it returns `false`, as it does for an
+algorithm this module does not implement or the local crypto cannot verify, and
+for a malformed key or signature.
 
 An RRset a wildcard was expanded into verifies with the wildcard's RRSIG. The
 wire decoder and the zone file parser set a DNSKEY's key tag; set it on one
@@ -492,16 +492,9 @@ built otherwise with `add_keytag_to_dnskey/1`. Whether the DNSKEYs are to be
 trusted is for the caller to decide.
 """.
 -spec verify_rrsig(dns:rr(), [dns:rr()], [dns:rr()], verify_rrsig_opts()) -> boolean().
-verify_rrsig(
-    #dns_rr{name = SigOwner, class = SigClass, type = ?DNS_TYPE_RRSIG, data = Data},
-    RRs,
-    RRDNSKey,
-    Opts
-) ->
+verify_rrsig(#dns_rr{type = ?DNS_TYPE_RRSIG, data = Data} = RRSig, RRs, RRDNSKey, Opts) ->
     Now = maps:get(now, Opts, erlang:system_time(second)),
     #dns_rrdata_rrsig{
-        type_covered = TypeCovered,
-        labels = Labels,
         keytag = SigKeyTag,
         alg = SigAlg,
         inception = Incept,
@@ -531,34 +524,44 @@ verify_rrsig(
         KeyTag =:= SigKeyTag,
         dns_domain:are_equal_labels(dns_domain:split(Name), Signer)
     ],
-    case RRs of
-        %% RFC4035§5.3.1: the RRSIG has the RRset's owner and class, covers its
-        %% type, its labels field counts no more labels than the owner has, and
-        %% its signer is the RRset's zone. The zone cut is not known here, so the
-        %% signer must be the owner or one of its ancestors, and the labels field
-        %% count no fewer labels than the signer has, so that a wildcard it names
-        %% (RFC4035§5.3.2) is in the signer's zone too
-        [#dns_rr{name = Owner, class = SigClass, type = TypeCovered} | _] when
-            Keys =/= [], Incept =< Now, Now =< Expire
-        ->
-            OwnerLabels = dns_domain:split(Owner),
-            case
-                dns_domain:are_equal_labels(OwnerLabels, dns_domain:split(SigOwner)) andalso
-                    Labels =< count_labels(OwnerLabels) andalso
-                    length(Signer) =< Labels andalso
-                    is_at_or_under(OwnerLabels, Signer)
-            of
-                true ->
-                    SignedData = signed_data(Data, RRs),
-                    lists:any(
-                        fun(Key) -> verify_with_key(SigAlg, Key, Signature, SignedData) end, Keys
-                    );
-                false ->
-                    false
-            end;
-        _ ->
+    case
+        Keys =/= [] andalso Incept =< Now andalso Now =< Expire andalso
+            fits_rrset(RRSig, Signer, RRs)
+    of
+        true ->
+            SignedData = signed_data(Data, RRs),
+            lists:any(fun(Key) -> verify_with_key(SigAlg, Key, Signature, SignedData) end, Keys);
+        false ->
             false
     end.
+
+%% RFC4035§5.3.1: every record of the RRset has the RRSIG's owner and class and
+%% the type it covers, the labels field counts no more labels than the owner
+%% has, and the signer is the RRset's zone. The zone cut is not known here, so
+%% the signer must be the owner or one of its ancestors, and the labels field
+%% count no fewer labels than the signer has, so that a wildcard it names
+%% (RFC4035§5.3.2) is in the signer's zone too
+-spec fits_rrset(dns:rr(), dns:labels(), [dns:rr()]) -> boolean().
+fits_rrset(_RRSig, _Signer, []) ->
+    false;
+fits_rrset(
+    #dns_rr{
+        name = SigOwner,
+        class = Class,
+        data = #dns_rrdata_rrsig{type_covered = Type, labels = Labels}
+    },
+    Signer,
+    RRs
+) ->
+    Owner = dns_domain:split(SigOwner),
+    InRRset = fun(#dns_rr{name = Name, class = RRClass, type = RRType}) ->
+        RRClass =:= Class andalso RRType =:= Type andalso
+            dns_domain:are_equal_labels(dns_domain:split(Name), Owner)
+    end,
+    lists:all(InRRset, RRs) andalso
+        Labels =< count_labels(Owner) andalso
+        length(Signer) =< Labels andalso
+        is_at_or_under(Owner, Signer).
 
 %% The key and the signature come off the wire, so what crypto cannot verify
 %% does not verify: key material it refuses, such as an ECDSA key that is no

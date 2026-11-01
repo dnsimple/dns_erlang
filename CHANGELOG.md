@@ -20,7 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - DNSSEC: `dnssec:verify_rrsig/4` only verifies with the zone key whose owner, algorithm and key tag the RRSIG names.
 - DNSSEC: `dnssec:verify_rrsig/4` matches an RRSIG's signer to a DNSKEY's owner with or without a final dot.
 - DNSSEC: `dnssec:verify_rrsig/4` verifies RRsets a wildcard was expanded into.
-- DNSSEC: `dnssec:verify_rrsig/4` rejects an RRSIG whose owner or class is not its RRset's.
+- DNSSEC: `dnssec:verify_rrsig/4` rejects an RRSIG unless every record of the RRset has its owner, class and type covered.
 - DNSSEC: `dnssec:verify_rrsig/4` rejects an RRSIG whose signer is not its owner or an ancestor of it.
 - DNSSEC: signing with an unknown algorithm raises `{unsupported_algorithm, Alg}`.
 - DNSSEC: signing and verifying leave duplicate records out of an RRset, as RFC 4034 §6.3 has it.
