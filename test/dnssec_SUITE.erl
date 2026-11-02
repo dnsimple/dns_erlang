@@ -301,60 +301,19 @@ dnskeys_as_bytes(DNSKeys) ->
      || #dns_rr{data = Data} = RR <- DNSKeys
     ].
 
+%% RFC4035§5.3.1: an RRSIG verifies from its inception to its expiration, and
+%% not a second outside them. Its signature and key are good, so that only the
+%% time can make it fail.
 verify_rrsig_expiry(_Config) ->
-    %% Build a valid-looking RRSIG with inception in the future -> false
-    Now = erlang:system_time(second),
-    Future = Now + 86400,
-    Past = Now - 86400,
-    RRSigFuture = #dns_rr{
-        name = ~"example",
-        type = ?DNS_TYPE_RRSIG,
-        class = ?DNS_CLASS_IN,
-        ttl = 3600,
-        data = #dns_rrdata_rrsig{
-            type_covered = ?DNS_TYPE_SOA,
-            alg = ?DNS_ALG_RSASHA256,
-            labels = 1,
-            original_ttl = 3600,
-            inception = Future,
-            expiration = Future + 3600,
-            keytag = 12345,
-            signers_name = ~"example",
-            signature = <<0>>
-        }
-    },
-    RRSigExpired = RRSigFuture#dns_rr{
-        data = (RRSigFuture#dns_rr.data)#dns_rrdata_rrsig{
-            inception = Past,
-            expiration = Past
-        }
-    },
-    RR = #dns_rr{
-        name = ~"example",
-        type = ?DNS_TYPE_SOA,
-        class = ?DNS_CLASS_IN,
-        ttl = 3600,
-        data = #dns_rrdata_soa{
-            mname = ~"ns.example",
-            rname = ~"hostmaster.example",
-            serial = 1,
-            refresh = 3600,
-            retry = 600,
-            expire = 86400,
-            minimum = 3600
-        }
-    },
-    DNSKey = #dns_rr{
-        name = ~"example",
-        type = ?DNS_TYPE_DNSKEY,
-        class = ?DNS_CLASS_IN,
-        ttl = 3600,
-        data = #dns_rrdata_dnskey{
-            flags = 256, protocol = 3, alg = ?DNS_ALG_RSASHA256, public_key = <<>>
-        }
-    },
-    ?assertEqual(false, dnssec:verify_rrsig(RRSigFuture, [RR], [DNSKey], #{now => Now})),
-    ?assertEqual(false, dnssec:verify_rrsig(RRSigExpired, [RR], [DNSKey], #{now => Now})).
+    {Priv, DNSKey, KeyTag} = ed25519_zone_key(~"example"),
+    A = rr_a(~"www.example", {192, 0, 2, 1}),
+    Opts = #{inception => 1000000, expiration => 2000000},
+    RRSig = dnssec:sign_rrset([A], ~"example", KeyTag, ?DNS_ALG_ED25519, Priv, Opts),
+    Verify = fun(Now) -> dnssec:verify_rrsig(RRSig, [A], [DNSKey], #{now => Now}) end,
+    ?assert(Verify(1000000)),
+    ?assert(Verify(2000000)),
+    ?assertNot(Verify(999999)),
+    ?assertNot(Verify(2000001)).
 
 sign_rr_and_rrset_5arg(_Config) ->
     %% 5-arg sign_rr and sign_rrset (no opts map)
@@ -1026,7 +985,7 @@ verify_rejects_expiration_before_inception(_Config) ->
     %% The period is longer than 2^31 seconds, thus the expiration is
     %% before the inception in serial number arithmetic
     I = 1700000000,
-    ?assertNot(Verify(I, (I + 1 bsl 31 + 10) band 16#FFFFFFFF, I + 100)).
+    ?assertNot(Verify(I, (I + (1 bsl 31) + 10) band 16#FFFFFFFF, I + 100)).
 
 %% A DNSKEY with a bad owner name is not a key for the RRSIG. verify_rrsig/4
 %% must ignore it and use the other DNSKEYs, and it must not crash.

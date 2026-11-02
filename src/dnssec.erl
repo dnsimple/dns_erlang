@@ -538,10 +538,12 @@ verify_rrsig(#dns_rr{type = ?DNS_TYPE_RRSIG, data = Data} = RRSig, RRs, RRDNSKey
 
 %% RFC4034§3.1.5: inception and expiration are 32-bit serial numbers, which the
 %% time is compared with in serial number arithmetic (RFC1982): a validity period
-%% can span the 32-bit wrap, and the time can be past 2106
+%% can span the 32-bit wrap, and the time can be past 2106. The inception must
+%% not be after the expiration, which a period of 2^31 seconds or more also is
 -spec in_validity_period(non_neg_integer(), non_neg_integer(), integer()) -> boolean().
 in_validity_period(Inception, Expiration, Now) ->
-    serial_at_most(Inception, Now) andalso serial_at_most(Now, Expiration).
+    serial_at_most(Inception, Expiration) andalso serial_at_most(Inception, Now) andalso
+        serial_at_most(Now, Expiration).
 
 %% RFC1982§3.2: whether A is B or before it, as 32-bit serial numbers
 -spec serial_at_most(integer(), integer()) -> boolean().
