@@ -82,6 +82,9 @@ groups() ->
             verify_signer_of_ds_and_nsec3,
             verify_rsa_key_as_binaries,
             rsa_key_encodes_alike_as_integers_and_binaries,
+            sign_folds_case_of_escaped_letters,
+            verify_dnskey_without_key_tag,
+            sign_rrset_rejects_records_of_other_rrsets,
             signers_name_in_canonical_form,
             ih_custom_hash_test,
             dsa_sign_verify_test,
@@ -1339,6 +1342,59 @@ rsa_key_encodes_alike_as_integers_and_binaries(_Config) ->
     Integers = Encode([binary:decode_unsigned(E), binary:decode_unsigned(N)]),
     ?assertEqual(Integers, Encode([E, N])),
     ?assertEqual(Integers, Encode([<<0, E/binary>>, <<0, 0, N/binary>>])).
+
+%% RFC4034§6.2: a name in canonical form has all its letters in lowercase. This
+%% is also true for a letter written as \DDD. sign_rr/6 must put the records of
+%% www.example and \087ww.example in one RRset. The signed data must be the
+%% same for the two names, thus the Ed25519 signatures must be equal.
+sign_folds_case_of_escaped_letters(_Config) ->
+    {Priv, _DNSKey, KeyTag} = ed25519_zone_key(~"example"),
+    Opts = #{inception => 1000000, expiration => 2000000},
+    Plain = rr_a(~"www.example", {192, 0, 2, 1}),
+    Escaped = rr_a(~"\\087ww.example", {192, 0, 2, 1}),
+    Signature = fun(RR) ->
+        #dns_rr{data = #dns_rrdata_rrsig{signature = Sig}} =
+            dnssec:sign_rrset([RR], ~"example", KeyTag, ?DNS_ALG_ED25519, Priv, Opts),
+        Sig
+    end,
+    ?assertEqual(Signature(Plain), Signature(Escaped)),
+    Other = rr_a(~"\\087ww.example", {192, 0, 2, 2}),
+    ?assertMatch(
+        [_],
+        dnssec:sign_rr([Plain, Other], ~"example", KeyTag, ?DNS_ALG_ED25519, Priv, Opts)
+    ).
+
+%% RFC4034 Appendix B: the key tag comes from the DNSKEY RDATA. A DNSKEY without
+%% its key tag is the same key. It verified on v5.1.1. It must verify as the
+%% DNSKEY with its key tag does.
+verify_dnskey_without_key_tag(_Config) ->
+    {Priv, #dns_rr{data = KeyData} = DNSKey, KeyTag} = ed25519_zone_key(~"example"),
+    NoTag = DNSKey#dns_rr{data = KeyData#dns_rrdata_dnskey{keytag = undefined}},
+    A = rr_a(~"www.example", {192, 0, 2, 1}),
+    Opts = #{inception => 1000000, expiration => 2000000},
+    RRSig = dnssec:sign_rrset([A], ~"example", KeyTag, ?DNS_ALG_ED25519, Priv, Opts),
+    ?assert(dnssec:verify_rrsig(RRSig, [A], [DNSKey], #{now => 1500000})),
+    ?assert(dnssec:verify_rrsig(RRSig, [A], [NoTag], #{now => 1500000})).
+
+%% sign_rrset/6 signs one RRset. The signed data uses the owner, class and type
+%% of the first record for all records. Thus a record of another owner, class
+%% or type, or an RRSIG after the first record, must make it raise badarg, as an
+%% RRSIG as the first record does.
+sign_rrset_rejects_records_of_other_rrsets(_Config) ->
+    {Priv, _DNSKey, KeyTag} = ed25519_zone_key(~"example"),
+    Opts = #{inception => 1000000, expiration => 2000000},
+    Sign = fun(RRs) ->
+        dnssec:sign_rrset(RRs, ~"example", KeyTag, ?DNS_ALG_ED25519, Priv, Opts)
+    end,
+    A = rr_a(~"www.example", {192, 0, 2, 1}),
+    RRSig = Sign([A]),
+    AAAA = A#dns_rr{
+        type = ?DNS_TYPE_AAAA, data = #dns_rrdata_aaaa{ip = {16#2001, 16#db8, 0, 0, 0, 0, 0, 1}}
+    },
+    ?assertError(badarg, Sign([A, RRSig])),
+    ?assertError(badarg, Sign([A, rr_a(~"mail.example", {192, 0, 2, 2})])),
+    ?assertError(badarg, Sign([A, A#dns_rr{class = ?DNS_CLASS_CH}])),
+    ?assertError(badarg, Sign([A, AAAA])).
 
 ed25519_zone_key(Zone) ->
     {Pub, Priv} = crypto:generate_key(eddsa, ed25519),
