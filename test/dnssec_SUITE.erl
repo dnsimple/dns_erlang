@@ -76,6 +76,7 @@ groups() ->
             verify_rejects_signer_in_wrong_zone,
             verify_signer_of_ds_and_nsec3,
             verify_rsa_key_as_binaries,
+            rsa_key_encodes_alike_as_integers_and_binaries,
             signers_name_in_canonical_form,
             ih_custom_hash_test,
             dsa_sign_verify_test,
@@ -1228,6 +1229,19 @@ verify_rsa_key_as_binaries(_Config) ->
     Opts = #{inception => 1000000, expiration => 2000000},
     RRSig = dnssec:sign_rrset([A], ~"example", KeyTag, ?DNS_ALG_RSASHA256, Priv, Opts),
     ?assert(dnssec:verify_rrsig(RRSig, [A], [DNSKey], #{now => 1500000})).
+
+%% An RSA key's E and M encode the same in a DNSKEY whether they are integers or
+%% binaries, with or without leading zeros, so the key tag is the same as well
+rsa_key_encodes_alike_as_integers_and_binaries(_Config) ->
+    {[E, N], _Priv} = crypto:generate_key(rsa, {1024, 65537}),
+    Encode = fun(Key) ->
+        dns_encode:encode_rrdata(?DNS_CLASS_IN, #dns_rrdata_dnskey{
+            flags = 256, protocol = 3, alg = ?DNS_ALG_RSASHA256, public_key = Key
+        })
+    end,
+    Integers = Encode([binary:decode_unsigned(E), binary:decode_unsigned(N)]),
+    ?assertEqual(Integers, Encode([E, N])),
+    ?assertEqual(Integers, Encode([<<0, E/binary>>, <<0, 0, N/binary>>])).
 
 ed25519_zone_key(Zone) ->
     {Pub, Priv} = crypto:generate_key(eddsa, ed25519),

@@ -1701,10 +1701,11 @@ rrsig_to_sig(#dns_rrdata_rrsig{
         signature = Signature
     }.
 
--spec encode_rsa_key(integer(), integer()) -> binary().
+%% E and M as integers, or as their big-endian bytes, as crypto:generate_key/2 gives them
+-spec encode_rsa_key(non_neg_integer() | binary(), non_neg_integer() | binary()) -> binary().
 encode_rsa_key(E, M) ->
-    MBin = strip_leading_zeros(binary:encode_unsigned(M)),
-    EBin = strip_leading_zeros(binary:encode_unsigned(E)),
+    MBin = strip_leading_zeros(unsigned_binary(M)),
+    EBin = strip_leading_zeros(unsigned_binary(E)),
     ESize = byte_size(EBin),
     case ESize of
         _ when ESize =< 16#FF ->
@@ -1738,6 +1739,10 @@ encode_dsa_key(PKM) ->
 -spec dsa_t([non_neg_integer()]) -> 0..8.
 dsa_t(Fields) ->
     (dsa_field_size(lists:max([unsigned_size(F) || F <- Fields])) - 64) div 8.
+
+-spec unsigned_binary(non_neg_integer() | binary()) -> binary().
+unsigned_binary(I) when is_integer(I) -> binary:encode_unsigned(I);
+unsigned_binary(B) when is_binary(B) -> B.
 
 -spec unsigned_size(non_neg_integer()) -> pos_integer().
 unsigned_size(I) ->

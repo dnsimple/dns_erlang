@@ -106,10 +106,11 @@ Cryptographic key material for signing or verification.
 
 RSA and DSA keys are lists of integers, `[E, N, D]` or `[P, Q, G, X]` to sign
 and `[E, M]` or `[P, Q, G, Y]` to verify, which is how the wire decoder gives a
-DNSKEY's key. A DNSKEY parsed from a zone file keeps the RDATA's key bytes,
-which verify as well. Other keys are binaries.
+DNSKEY's key. Each integer can also be given as its big-endian bytes, as
+`crypto:generate_key/2` gives an RSA key. A DNSKEY parsed from a zone file
+keeps the RDATA's key bytes, which verify as well. Other keys are binaries.
 """.
--type key() :: [integer()] | binary().
+-type key() :: [non_neg_integer() | binary()] | binary().
 -doc "Options for `sign_rr/6` and `sign_rrset/6`.".
 -type sign_rr_opts() :: #{inception => dns:unix_time(), expiration => dns:unix_time()}.
 -doc "Options for `verify_rrsig/4`.".
@@ -457,7 +458,7 @@ sign(Alg, BaseSigInput, Key) when
         Alg =:= ?DNS_ALG_RSASHA512
 ->
     {Hash, Msg} = rsa_message(Alg, BaseSigInput),
-    crypto:sign(rsa, Hash, Msg, Key, [{rsa_padding, rsa_pkcs1_padding}]);
+    crypto:sign(rsa, Hash, Msg, key_binaries(Key), [{rsa_padding, rsa_pkcs1_padding}]);
 sign(?DNS_ALG_ECDSAP256SHA256, BaseSigInput, Key) ->
     DerSig = crypto:sign(ecdsa, sha256, BaseSigInput, [Key, secp256r1]),
     %% RFC6605: keys must be r||s of 32 octets each
@@ -631,7 +632,7 @@ verify(Alg, Key, <<_T, R:20/unit:8, S:20/unit:8>>, SigInput) when
     case dsa_public_key(Key) of
         [_P, _Q, _G, _Y] = PublicKey ->
             AsnSig = public_key:der_encode('Dss-Sig-Value', #'Dss-Sig-Value'{r = R, s = S}),
-            crypto:verify(dss, sha, SigInput, AsnSig, PublicKey);
+            crypto:verify(dss, sha, SigInput, AsnSig, key_binaries(PublicKey));
         _ ->
             false
     end;
@@ -645,7 +646,7 @@ verify(Alg, Key, Signature, SigInput) when
         [_E, _M] = PublicKey ->
             {Hash, Msg} = rsa_message(Alg, SigInput),
             Opts = [{rsa_padding, rsa_pkcs1_padding}],
-            crypto:verify(rsa, Hash, Msg, Signature, PublicKey, Opts);
+            crypto:verify(rsa, Hash, Msg, Signature, key_binaries(PublicKey), Opts);
         _ ->
             false
     end;
@@ -883,6 +884,20 @@ rsa_public_key(Key) -> Key.
 -spec dsa_public_key(key()) -> key().
 dsa_public_key(Key) when is_binary(Key) -> dns_decode:dsa_public_key(Key);
 dsa_public_key(Key) -> Key.
+
+%% crypto takes a key's integers all as integers or all as binaries, and raises
+%% badarith on a mix. It turns integers into binaries in time quadratic in their
+%% length, which for an RSA modulus of 64 KB is over 100 ms, so it gets binaries.
+-spec key_binaries([non_neg_integer() | binary()]) -> [binary()].
+key_binaries(Key) ->
+    [unsigned_binary(Field) || Field <- Key].
+
+%% An integer of a key, given as an integer or as its big-endian bytes, as its
+%% bytes without leading zeros
+-spec unsigned_binary(non_neg_integer() | binary()) -> binary().
+unsigned_binary(Field) when is_integer(Field) -> binary:encode_unsigned(Field);
+unsigned_binary(<<0, Rest/binary>>) -> unsigned_binary(Rest);
+unsigned_binary(Field) when is_binary(Field) -> Field.
 
 %% RFC 6605 §4: ECDSA signatures on the wire are r || s, each padded to FieldSize bytes.
 %% crypto:sign returns DER-encoded ASN.1; crypto:verify expects DER-encoded ASN.1.
