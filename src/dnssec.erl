@@ -38,6 +38,10 @@ DSA, RSA (SHA1/SHA256/SHA512), ECDSA (P-256/P-384), Ed25519, and Ed448.
 -export([canonical_rrdata_form/1]).
 -export([ih/4]).
 
+-ifdef(TEST).
+-export([refused_as_false/1]).
+-endif.
+
 -include_lib("dns_erlang/include/dns.hrl").
 -include_lib("public_key/include/public_key.hrl").
 
@@ -616,15 +620,19 @@ can_hold(Zone, ?DNS_TYPE_DS, Owner) ->
 can_hold(Zone, _Type, Owner) ->
     is_at_or_under(Owner, Zone).
 
+-spec verify_with_key(dns:uint8(), key(), binary(), iodata()) -> boolean().
+verify_with_key(Alg, Key, Signature, SigInput) ->
+    refused_as_false(fun() -> verify(Alg, Key, Signature, SigInput) end).
+
 %% The key and the signature come off the wire, so what crypto cannot verify
 %% does not verify: key material it refuses, such as an ECDSA key that is no
 %% point on its curve (badarg), an algorithm it lacks (notsup), or one its policy
 %% refuses (error), as RHEL 9's default policy refuses DSA's SHA-1. Any error
 %% that is not crypto's is raised.
--spec verify_with_key(dns:uint8(), key(), binary(), iodata()) -> boolean().
-verify_with_key(Alg, Key, Signature, SigInput) ->
+-spec refused_as_false(fun(() -> boolean())) -> boolean().
+refused_as_false(Verify) ->
     try
-        verify(Alg, Key, Signature, SigInput)
+        Verify()
     catch
         error:{Error, {_File, _Line}, _Reason} when
             Error =:= badarg; Error =:= notsup; Error =:= error

@@ -63,7 +63,7 @@ groups() ->
             verify_with_decremented_ttl,
             duplicate_rrs_not_in_signed_data,
             verify_checks_every_rr_of_rrset,
-            verify_dsa_refused_by_crypto_is_false,
+            crypto_refusal_is_false,
             verify_uses_serial_number_arithmetic,
             verify_rejects_expiration_before_inception,
             verify_skips_dnskey_with_bad_owner,
@@ -910,39 +910,21 @@ verify_checks_every_rr_of_rrset(_Config) ->
     %% the test makes sure that the type is examined
     ?assertNot(Verify([A, B#dns_rr{type = ?DNS_TYPE_TXT}])).
 
-%% A crypto policy can refuse DSA or SHA-1, as RHEL 9's default policy does.
-%% Then crypto raises an error that is not badarg. verify_rrsig/4 must return
-%% false and not crash. The test runs only where crypto refuses DSA.
-verify_dsa_refused_by_crypto_is_false(Config) ->
-    DsaCases = [
-        Case
-     || {_Zone, Cases} <- helper_verify_rrset_test_cases(Config),
-        {#dns_rr{data = #dns_rrdata_rrsig{alg = Alg}}, _, _, _} = Case <- Cases,
-        Alg =:= ?DNS_ALG_DSA orelse Alg =:= ?DNS_ALG_NSEC3DSA
+%% A crypto policy can refuse an algorithm, as RHEL 9's default policy refuses
+%% DSA and RSA/SHA-1. crypto then raises {error, {File, Line}, Reason}, as Rocky
+%% Linux 9 showed, or {notsup, ...}, not badarg. No CI runner refuses any, so
+%% this raises each of crypto's errors in place of a verification: each must be
+%% false, and any other error must still be raised.
+crypto_refusal_is_false(_Config) ->
+    Raise = fun(Reason) -> dnssec:refused_as_false(fun() -> error(Reason) end) end,
+    [
+        ?assertNot(Raise({Tag, {"pkey.c", 769}, "Can't EVP_PKEY_CTX_set_signature_md"}), Tag)
+     || Tag <- [badarg, notsup, error]
     ],
-    [{RRSig, RRSet, Keys, Opts} | _] = DsaCases,
-    [PublicKey | _] = [
-        dsa_key_integers(Key)
-     || #dns_rr{data = #dns_rrdata_dnskey{alg = Alg, public_key = Key}} <- Keys,
-        Alg =:= ?DNS_ALG_DSA orelse Alg =:= ?DNS_ALG_NSEC3DSA
-    ],
-    Der = public_key:der_encode('Dss-Sig-Value', #'Dss-Sig-Value'{r = 1, s = 1}),
-    Refused =
-        try crypto:verify(dss, sha, ~"x", Der, PublicKey) of
-            _ -> false
-        catch
-            error:{badarg, _, _} -> false;
-            error:_ -> true
-        end,
-    case Refused of
-        false ->
-            {skip, "crypto does not refuse DSA here"};
-        true ->
-            ?assertEqual(false, dnssec:verify_rrsig(RRSig, RRSet, Keys, Opts))
-    end.
-
-dsa_key_integers(Key) when is_binary(Key) -> dns_decode:dsa_public_key(Key);
-dsa_key_integers(Key) -> Key.
+    ?assertError(badarith, Raise(badarith)),
+    ?assertError({badarg, oops}, Raise({badarg, oops})),
+    ?assert(dnssec:refused_as_false(fun() -> true end)),
+    ?assertNot(dnssec:refused_as_false(fun() -> false end)).
 
 %% RFC4034§3.1.5: the inception and expiration fields are 32-bit serial numbers
 %% (RFC1982). Compare them with the time in serial number arithmetic.
