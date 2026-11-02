@@ -1379,7 +1379,7 @@ verify_dnskey_without_key_tag(_Config) ->
 %% or type, or an RRSIG after the first record, must make it raise badarg, as an
 %% RRSIG as the first record does.
 sign_rrset_rejects_records_of_other_rrsets(_Config) ->
-    {Priv, _DNSKey, KeyTag} = ed25519_zone_key(~"example"),
+    {Priv, DNSKey, KeyTag} = ed25519_zone_key(~"example"),
     Opts = #{inception => 1000000, expiration => 2000000},
     Sign = fun(RRs) ->
         dnssec:sign_rrset(RRs, ~"example", KeyTag, ?DNS_ALG_ED25519, Priv, Opts)
@@ -1392,7 +1392,10 @@ sign_rrset_rejects_records_of_other_rrsets(_Config) ->
     ?assertError(badarg, Sign([A, RRSig])),
     ?assertError(badarg, Sign([A, rr_a(~"mail.example", {192, 0, 2, 2})])),
     ?assertError(badarg, Sign([A, A#dns_rr{class = ?DNS_CLASS_CH}])),
-    ?assertError(badarg, Sign([A, AAAA])).
+    ?assertError(badarg, Sign([A, AAAA])),
+    %% An owner name that differs only in case or a final dot is the same owner
+    Spelled = rr_a(~"WWW.Example.", {192, 0, 2, 3}),
+    ?assert(dnssec:verify_rrsig(Sign([A, Spelled]), [A, Spelled], [DNSKey], #{now => 1500000})).
 
 ed25519_zone_key(Zone) ->
     {Pub, Priv} = crypto:generate_key(eddsa, ed25519),

@@ -432,19 +432,18 @@ sign_rrset(RRSet, SignerName, KeyTag, Alg, Key) ->
     sign_rrset(RRSet, SignerName, KeyTag, Alg, Key, #{}).
 
 -doc """
-Signs a list of `t:dns:rr/0` of the same class and type.
+Signs one RRset: a list of `t:dns:rr/0` of one owner, class and type.
 
-Raises `{unsupported_algorithm, Alg}` for an algorithm this module does not
-implement, and `{unsupported_key, Alg}` for a DSA key that RFC 2536 cannot carry:
-one whose Q is over 160 bits, or whose P or G is over 1024 bits, and `badarg`
-for an RRSIG RRset, which RFC 4035 §2.2 never signs. It still signs with DSA (3
-and 6) and RSA/SHA-1 (5 and 7), which RFC 9904 and RFC 9905 forbid for new
-signatures.
+Owner names that differ only in case or in a final dot are one owner. Raises
+`badarg` for records of more than one RRset, and for an RRSIG RRset, which
+RFC 4035 §2.2 never signs. Raises `{unsupported_algorithm, Alg}` for an
+algorithm this module does not implement, and `{unsupported_key, Alg}` for a
+DSA key that RFC 2536 cannot carry: one whose Q is over 160 bits, or whose P or
+G is over 1024 bits. It still signs with DSA (3 and 6) and RSA/SHA-1 (5 and 7),
+which RFC 9904 and RFC 9905 forbid for new signatures.
 """.
 -spec sign_rrset([dns:rr(), ...], dns:dname(), keytag(), sigalg(), key(), sign_rr_opts()) ->
     dns:rr().
-sign_rrset([#dns_rr{type = ?DNS_TYPE_RRSIG} | _], _SignersName, _KeyTag, _Alg, _Key, _Opts) ->
-    error(badarg);
 sign_rrset(
     [#dns_rr{name = Name, class = Class, type = Type, ttl = TTL} | _] = RRs,
     SignersName,
@@ -453,6 +452,13 @@ sign_rrset(
     Key,
     Opts
 ) when is_integer(Alg) ->
+    Owner = dns_domain:split(Name),
+    %% RFC4034§3.1.8.1: the records are signed as one RRset, with the first's
+    %% owner, class and type, so a record of another RRset would make an RRSIG
+    %% that never verifies. RFC4035§2.2: an RRSIG RRset is never signed
+    Type =/= ?DNS_TYPE_RRSIG andalso
+        lists:all(fun(RR) -> in_rrset(RR, Name, Owner, Class, Type) end, RRs) orelse
+        error(badarg),
     Now = erlang:system_time(second),
     Incept = maps:get(inception, Opts, Now),
     %% 1 year
@@ -460,7 +466,7 @@ sign_rrset(
     Data0 = #dns_rrdata_rrsig{
         type_covered = Type,
         alg = Alg,
-        labels = count_labels(dns_domain:split(Name)),
+        labels = count_labels(Owner),
         original_ttl = TTL,
         inception = Incept,
         expiration = Expire,
@@ -634,13 +640,21 @@ fits_rrset(
     RRs
 ) ->
     Owner = name_labels(SigOwner),
-    InRRset = fun(#dns_rr{name = Name, class = RRClass, type = RRType}) ->
-        RRClass =:= Class andalso RRType =:= Type andalso is_name(Name, Owner)
-    end,
+    InRRset = fun(RR) -> in_rrset(RR, SigOwner, Owner, Class, Type) end,
     Owner =/= invalid andalso lists:all(InRRset, RRs) andalso
         Labels =< count_labels(Owner) andalso
         length(Signer) =< Labels andalso
         can_hold(Signer, Type, Owner).
+
+%% Whether a record is of the RRset of an owner, class and type, the owner given
+%% as written and as labels. A record whose owner is written alike is, and any
+%% other owner compares as a name: in any case, with or without its final dot
+-spec in_rrset(dns:rr(), dns:dname(), dns:labels() | invalid, dns:class(), dns:type()) ->
+    boolean().
+in_rrset(#dns_rr{name = Name, class = Class, type = Type}, Owner, Labels, Class, Type) ->
+    Name =:= Owner orelse is_name(Name, Labels);
+in_rrset(#dns_rr{}, _Owner, _Labels, _Class, _Type) ->
+    false.
 
 %% Whether a zone can hold an RRset of the type at the owner, as BIND checks it.
 %% NS, SOA and DNSKEY RRsets are at the apex, and NSEC3 RRsets one label under
