@@ -1590,11 +1590,11 @@ dnskey_dsa_field_width_preserved(_) ->
     ?assertError(badarg, dns_encode:encode_rrdata(?DNS_CLASS_IN, Wide(q, 21))).
 
 %% RFC2536§2 lays a DSA DNSKEY out as T, Q, P, G, Y, so rdata shorter than that
-%% cannot be parsed as one and decodes through the generic clause, leaving
-%% public_key a binary. The DSA encode clause matched a bare variable guarded only
-%% on the algorithm, so that binary reached encode_dsa_key/1 and died in a list
-%% comprehension: one crafted rdata made decode succeed and re-encode crash, which
-%% is reachable by anything that decodes then re-encodes.
+%% cannot be parsed as one and decodes with public_key left a binary. The DSA
+%% encode clause matched a bare variable guarded only on the algorithm, so that
+%% binary reached encode_dsa_key/1 and died in a list comprehension: one crafted
+%% rdata made decode succeed and re-encode crash, which is reachable by anything
+%% that decodes then re-encodes.
 dnskey_dsa_alg_short_rdata_reencodes(_) ->
     DsaAlgs = [?DNS_ALG_DSA, ?DNS_ALG_NSEC3DSA],
     Short = fun(Alg) -> <<256:16, 3:8, Alg:8, 1, 2, 3, 4, 5, 6, 7, 8>> end,

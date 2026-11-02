@@ -277,8 +277,25 @@ cycle_nsec_encoding(_Config, RRs) ->
 %% integers, and with their keys as RDATA bytes, as a zone file gives them.
 verify_rrset(Config) ->
     PerZone = helper_verify_rrset_test_cases(Config),
-    ?assertEqual(length(proplists:get_value(dnssec_samples, Config)), length(PerZone)),
     [?assertNotEqual([], Cases, Zone) || {Zone, Cases} <- PerZone],
+    %% The samples sign with these algorithms, so no sample can go missing
+    ?assertEqual(
+        [
+            ?DNS_ALG_DSA,
+            ?DNS_ALG_RSASHA1,
+            ?DNS_ALG_NSEC3DSA,
+            ?DNS_ALG_NSEC3RSASHA1,
+            ?DNS_ALG_RSASHA256,
+            ?DNS_ALG_RSASHA512,
+            ?DNS_ALG_ECDSAP256SHA256,
+            ?DNS_ALG_ECDSAP384SHA384
+        ],
+        lists:usort([
+            Alg
+         || {_Zone, Cases} <- PerZone,
+            {#dns_rr{data = #dns_rrdata_rrsig{alg = Alg}}, _, _, _} <- Cases
+        ])
+    ),
     Failed = [
         {Zone, Form, length(Bad), length(Cases)}
      || {Zone, Cases} <- PerZone,
@@ -709,9 +726,9 @@ ds_digest(DigestType, Owner, KeyData) ->
     crypto:hash(Hash, [Wire, RData]).
 
 %% ECDSA and DSA hash the signed data themselves, once (RFC6605§4, RFC2536§3).
-%% dnssec.erl once hashed it first as well, and so signed the hash of the hash:
-%% its signatures verified with itself and with nothing else, since signing and
-%% verifying shared the mistake. This builds the signed data by hand, from
+%% dnssec.erl once hashed it first for ECDSA, and so signed the hash of the
+%% hash, and put its length in front of it for DSA: its signatures verified with
+%% itself and with nothing else, since signing and verifying shared the mistake. This builds the signed data by hand, from
 %% RFC4034§3.1.8.1 and §6.2, and checks signatures with crypto alone, sharing no
 %% code with dnssec.erl. It accepts the RFC6605 examples' own signatures, which
 %% shows the check itself is right, and must accept the ones signed here.
@@ -1257,10 +1274,11 @@ malformed_signature(_Config) ->
     ?assertNot(dnssec:verify_rrsig(RRSig, RRSet, [ShortKey], #{now => Now})).
 
 %% Keys and signatures off the wire can be any bytes. For every algorithm
-%% dnssec.erl implements, and one it does not, keys and signatures of every
-%% length near the ones the algorithms use, the shapes of DSA's keys among
+%% dnssec.erl implements, and one it does not, random keys and signatures of
+%% every length near the ones the algorithms use, the shapes of DSA's keys among
 %% them, verify nothing, and raise nothing:
 %% a validator must answer false, not crash. So does an empty RRset, or no key.
+%% Not every key does: an all-zero Ed448 key verifies an all-zero signature.
 malformed_input_does_not_verify(_Config) ->
     %% 213 and 405 are T, Q, P, G and Y for T = 0 and T = 8, which take DSA's keys
     %% to crypto

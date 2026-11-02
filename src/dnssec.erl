@@ -507,13 +507,15 @@ Returns `true` if all of these hold:
   and key tag.
 
 Otherwise it returns `false`, as it does for an algorithm this module does not
-implement or the local crypto cannot verify, and for a malformed key or
-signature.
+implement or the local crypto cannot verify, for a key or signature whose size
+is wrong for its algorithm, and for one crypto refuses.
 
 An RRset a wildcard was expanded into verifies with the wildcard's RRSIG. The
 wire decoder and the zone file parser set a DNSKEY's key tag; set it on one
 built otherwise with `add_keytag_to_dnskey/1`. Whether the DNSKEYs are to be
-trusted is for the caller to decide.
+trusted is for the caller to decide: a key is used as it is, and some keys
+verify what their owner never signed, as an all-zero Ed448 key verifies an
+all-zero signature over any data.
 """.
 -spec verify_rrsig(dns:rr(), [dns:rr()], [dns:rr()], verify_rrsig_opts()) -> boolean().
 verify_rrsig(#dns_rr{type = ?DNS_TYPE_RRSIG, data = Data} = RRSig, RRs, RRDNSKey, Opts) ->
