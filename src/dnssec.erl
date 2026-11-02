@@ -414,7 +414,9 @@ Signs a list of `t:dns:rr/0` of the same class and type.
 
 Raises `{unsupported_algorithm, Alg}` for an algorithm this module does not
 implement, and `{unsupported_key, Alg}` for a DSA key that RFC 2536 cannot carry:
-one whose Q is over 160 bits, or whose P or G is over 1024 bits.
+one whose Q is over 160 bits, or whose P or G is over 1024 bits. It still signs
+with DSA (3 and 6) and RSA/SHA-1 (5 and 7), which RFC 9904 and RFC 9905 forbid
+for new signatures.
 """.
 -spec sign_rrset([dns:rr(), ...], dns:dname(), keytag(), sigalg(), key(), sign_rr_opts()) ->
     dns:rr().
@@ -509,6 +511,12 @@ Returns `true` if all of these hold:
 Otherwise it returns `false`, as it does for an algorithm this module does not
 implement or the local crypto cannot verify, for a key or signature whose size
 is wrong for its algorithm, and for one crypto refuses.
+
+It verifies with every algorithm it implements, including DSA (3 and 6), which
+RFC 9904 forbids validators to implement, and RSA/SHA-1 (5 and 7), which RFC 9905
+has validating resolvers treat as unsupported. Which algorithms to accept is the
+caller's policy: an RRset signed only with ones it does not accept is insecure,
+not bogus (RFC 4035 §5.2).
 
 An RRset a wildcard was expanded into verifies with the wildcard's RRSIG. The
 wire decoder and the zone file parser set a DNSKEY's key tag; set it on one

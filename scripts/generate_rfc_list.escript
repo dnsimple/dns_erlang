@@ -63,6 +63,7 @@
     ~"8080" => ~"Ed25519 and Ed448 for DNSSEC",
     ~"8017" => ~"PKCS #1: RSA Cryptography Specifications Version 2.2",
     ~"9077" => ~"NSEC and NSEC3 TTL Values",
+    ~"9904" => ~"DNSSEC Cryptographic Algorithm Recommendation Update Process",
     ~"9905" => ~"Deprecating the Use of SHA-1 in DNSSEC Signature Algorithms",
     ~"7553" => ~"The Uniform Resource Identifier (URI) DNS Resource Record",
     ~"6742" => ~"DNS Resource Records for the Identifier-Locator Network Protocol (ILNP)",
