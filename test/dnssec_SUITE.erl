@@ -1341,22 +1341,30 @@ rsa_key_encodes_alike_as_integers_and_binaries(_Config) ->
     ?assertEqual(Integers, Encode([E, N])),
     ?assertEqual(Integers, Encode([<<0, E/binary>>, <<0, 0, N/binary>>])).
 
-%% RFC4034§6.2: a name in canonical form has all its letters in lowercase. This
-%% is also true for a letter written as \DDD. sign_rr/6 must put the records of
-%% www.example and \087ww.example in one RRset. The signed data must be the
-%% same for the two names, thus the Ed25519 signatures must be equal.
+%% RFC4034§6.2: a name in canonical form has all its letters in lowercase. A
+%% dns:dname() escapes a dot or a backslash in a label, as \. and \\, and
+%% nothing else, as dns_domain:split/1 reads it and from_wire/1 writes it. \DDD
+%% is no escape there: \087ww.example is a name whose first label is the six
+%% octets \087ww, not Www.example, and the zone file lexer refuses it. A name
+%% with escapes folds its case as any other: sign_rr/6 puts the records of
+%% a\.b\\c.example and A\.B\\C.Example. in one RRset, and the signed data is the
+%% same for the two names, thus the Ed25519 signatures are equal.
 sign_folds_case_of_escaped_letters(_Config) ->
     {Priv, _DNSKey, KeyTag} = ed25519_zone_key(~"example"),
     Opts = #{inception => 1000000, expiration => 2000000},
-    Plain = rr_a(~"www.example", {192, 0, 2, 1}),
-    Escaped = rr_a(~"\\087ww.example", {192, 0, 2, 1}),
+    Plain = rr_a(~"a\\.b\\\\c.example", {192, 0, 2, 1}),
+    Escaped = rr_a(~"A\\.B\\\\C.Example.", {192, 0, 2, 1}),
     Signature = fun(RR) ->
         #dns_rr{data = #dns_rrdata_rrsig{signature = Sig}} =
             dnssec:sign_rrset([RR], ~"example", KeyTag, ?DNS_ALG_ED25519, Priv, Opts),
         Sig
     end,
     ?assertEqual(Signature(Plain), Signature(Escaped)),
-    Other = rr_a(~"\\087ww.example", {192, 0, 2, 2}),
+    ?assertNotEqual(
+        Signature(rr_a(~"www.example", {192, 0, 2, 1})),
+        Signature(rr_a(~"\\087ww.example", {192, 0, 2, 1}))
+    ),
+    Other = rr_a(~"A\\.B\\\\C.Example.", {192, 0, 2, 2}),
     ?assertMatch(
         [_],
         dnssec:sign_rr([Plain, Other], ~"example", KeyTag, ?DNS_ALG_ED25519, Priv, Opts)
