@@ -890,6 +890,11 @@ implemented(Alg) ->
 %% the first even with no key to try.
 unsupported_algorithm(_Config) ->
     RR = #dns_rr{name = ~"example", type = ?DNS_TYPE_A, data = #dns_rrdata_a{ip = {192, 0, 2, 1}}},
+    DNSKey = #dns_rr{
+        name = ~"example",
+        type = ?DNS_TYPE_DNSKEY,
+        data = #dns_rrdata_dnskey{flags = 256, protocol = 3, alg = 200, public_key = <<1, 2, 3>>}
+    },
     RRSig = #dns_rr{
         name = ~"example",
         type = ?DNS_TYPE_RRSIG,
@@ -900,16 +905,9 @@ unsupported_algorithm(_Config) ->
             original_ttl = 3600,
             inception = 0,
             expiration = 2000000,
-            keytag = 1,
+            keytag = key_tag_of(DNSKey),
             signers_name = ~"example",
             signature = <<1, 2, 3>>
-        }
-    },
-    DNSKey = #dns_rr{
-        name = ~"example",
-        type = ?DNS_TYPE_DNSKEY,
-        data = #dns_rrdata_dnskey{
-            flags = 256, protocol = 3, alg = 200, public_key = <<1, 2, 3>>, keytag = 1
         }
     },
     ?assertNot(dnssec:verify_rrsig(RRSig, [RR], [DNSKey], #{now => 1000000})),
@@ -1448,7 +1446,9 @@ malformed_signature(_Config) ->
     ?assertNot(dnssec:verify_rrsig(Short, RRSet, [DNSKey], #{now => Now})),
     #dns_rr{data = KeyData} = DNSKey,
     ShortKey = DNSKey#dns_rr{data = KeyData#dns_rrdata_dnskey{public_key = <<1, 2, 3>>}},
-    ?assertNot(dnssec:verify_rrsig(RRSig, RRSet, [ShortKey], #{now => Now})).
+    %% The RRSIG names the short key, so that it is tried
+    ForShortKey = RRSig#dns_rr{data = Data#dns_rrdata_rrsig{keytag = key_tag_of(ShortKey)}},
+    ?assertNot(dnssec:verify_rrsig(ForShortKey, RRSet, [ShortKey], #{now => Now})).
 
 %% Keys and signatures off the wire can be any bytes. For every algorithm
 %% dnssec.erl implements, and one it does not, random keys and signatures of
@@ -1456,6 +1456,7 @@ malformed_signature(_Config) ->
 %% them, verify nothing, and raise nothing:
 %% a validator must answer false, not crash. So does an empty RRset, or no key.
 %% Not every key does: an all-zero Ed448 key verifies an all-zero signature.
+%% Each RRSIG names its key's tag, so that the key is tried.
 malformed_input_does_not_verify(_Config) ->
     %% 213 and 405 are T, Q, P, G and Y for T = 0 and T = 8, which take DSA's keys
     %% to crypto
@@ -1466,28 +1467,30 @@ malformed_input_does_not_verify(_Config) ->
     Results = [
         {Alg, KeyLength, SigLength,
             dnssec:verify_rrsig(
-                malformed_rrsig(Alg, pseudo_random_bytes(SigLength, 2)),
+                malformed_rrsig(Alg, KeyTag, pseudo_random_bytes(SigLength, 2)),
                 [RR],
-                [malformed_dnskey(Alg, Key)],
+                [DNSKey],
                 #{now => 1000000}
             )}
      || Alg <- [Alg || Alg <- lists:seq(0, 255), implemented(Alg)] ++ [200],
         KeyLength <- Lengths,
-        Key <- [malformed_key(KeyLength)],
+        DNSKey <- [malformed_dnskey(Alg, malformed_key(KeyLength))],
+        KeyTag <- [key_tag_of(DNSKey)],
         SigLength <- Lengths
     ],
     ?assertEqual([], [Result || {_, _, _, Verified} = Result <- Results, Verified =/= false]),
-    RRSig = malformed_rrsig(?DNS_ALG_RSASHA256, <<1, 2, 3>>),
     DNSKey = malformed_dnskey(?DNS_ALG_RSASHA256, <<1, 2, 3>>),
+    RRSig = malformed_rrsig(?DNS_ALG_RSASHA256, key_tag_of(DNSKey), <<1, 2, 3>>),
     ?assertNot(dnssec:verify_rrsig(RRSig, [], [DNSKey], #{now => 1000000})),
     ?assertNot(dnssec:verify_rrsig(RRSig, [RR], [], #{now => 1000000})),
+    %% A key that does not encode, such as RSA's of three numbers, has no key tag
     ?assertNot(
         dnssec:verify_rrsig(RRSig, [RR], [malformed_dnskey(?DNS_ALG_RSASHA256, [1, 2, 3])], #{
             now => 1000000
         })
     ).
 
-malformed_rrsig(Alg, Signature) ->
+malformed_rrsig(Alg, KeyTag, Signature) ->
     #dns_rr{
         name = ~"example",
         type = ?DNS_TYPE_RRSIG,
@@ -1498,7 +1501,7 @@ malformed_rrsig(Alg, Signature) ->
             original_ttl = 3600,
             inception = 0,
             expiration = 2000000,
-            keytag = 1,
+            keytag = KeyTag,
             signers_name = ~"example",
             signature = Signature
         }
@@ -1508,10 +1511,13 @@ malformed_dnskey(Alg, Key) ->
     #dns_rr{
         name = ~"example",
         type = ?DNS_TYPE_DNSKEY,
-        data = #dns_rrdata_dnskey{
-            flags = 257, protocol = 3, alg = Alg, public_key = Key, keytag = 1
-        }
+        data = #dns_rrdata_dnskey{flags = 257, protocol = 3, alg = Alg, public_key = Key}
     }.
+
+%% The key tag of a DNSKEY, which an RRSIG names for verify_rrsig/4 to try it
+key_tag_of(DNSKey) ->
+    #dns_rr{data = #dns_rrdata_dnskey{keytag = KeyTag}} = dnssec:add_keytag_to_dnskey(DNSKey),
+    KeyTag.
 
 %% Random bytes, but a DSA key's T where the length is that of one
 malformed_key(Length) when Length =:= 213; Length =:= 405 ->
@@ -1525,21 +1531,30 @@ pseudo_random_bytes(Length, Seed) ->
     binary:part(iolist_to_binary(Blocks), 0, Length).
 
 %% RFC4034§2.1.1: a DNSKEY without the Zone Key flag, bit 7, "MUST NOT be used
-%% to verify RRSIGs". The SEP flag, bit 15, makes no difference. The DNSKEY's key
-%% tag is left as the RRSIG names it, so only the flags differ.
+%% to verify RRSIGs". The SEP flag, bit 15, makes no difference. The flags are in
+%% the RDATA the key tag is computed from, so each RRSIG is signed naming the
+%% DNSKEY with the flags it is checked with, and only the flags differ.
 verify_needs_zone_key(_Config) ->
-    [#{zone := Zone} | _] = [V || #{alg := ?DNS_ALG_ECDSAP256SHA256} = V <- rfc_vectors()],
-    {ok, RRs} = dns_zone:parse_string(Zone),
-    [#dns_rr{data = #dns_rrdata_dnskey{flags = 257} = KeyData} = DNSKey] =
-        [RR || #dns_rr{type = ?DNS_TYPE_DNSKEY} = RR <- RRs],
-    [#dns_rr{data = #dns_rrdata_rrsig{inception = Now}} = RRSig] =
-        [RR || #dns_rr{type = ?DNS_TYPE_RRSIG} = RR <- RRs],
-    RRSet = [RR || #dns_rr{type = ?DNS_TYPE_A} = RR <- RRs],
-    WithFlags = fun(Flags) -> DNSKey#dns_rr{data = KeyData#dns_rrdata_dnskey{flags = Flags}} end,
-    ?assert(dnssec:verify_rrsig(RRSig, RRSet, [WithFlags(257)], #{now => Now})),
-    ?assert(dnssec:verify_rrsig(RRSig, RRSet, [WithFlags(256)], #{now => Now})),
-    ?assertNot(dnssec:verify_rrsig(RRSig, RRSet, [WithFlags(1)], #{now => Now})),
-    ?assertNot(dnssec:verify_rrsig(RRSig, RRSet, [WithFlags(0)], #{now => Now})).
+    {Pub, Priv} = crypto:generate_key(eddsa, ed25519),
+    A = rr_a(~"www.example", {192, 0, 2, 1}),
+    Opts = #{inception => 1000000, expiration => 2000000},
+    Verify = fun(Flags) ->
+        DNSKey = #dns_rr{
+            name = ~"example",
+            type = ?DNS_TYPE_DNSKEY,
+            ttl = 3600,
+            data = #dns_rrdata_dnskey{
+                flags = Flags, protocol = 3, alg = ?DNS_ALG_ED25519, public_key = Pub
+            }
+        },
+        KeyTag = key_tag_of(DNSKey),
+        RRSig = dnssec:sign_rrset([A], ~"example", KeyTag, ?DNS_ALG_ED25519, Priv, Opts),
+        dnssec:verify_rrsig(RRSig, [A], [DNSKey], #{now => 1500000})
+    end,
+    ?assert(Verify(257)),
+    ?assert(Verify(256)),
+    ?assertNot(Verify(1)),
+    ?assertNot(Verify(0)).
 
 %% RFC4035§5.3.1: an RRSIG verifies only with the DNSKEY its signer's name,
 %% algorithm and key tag name. The RFC6605§6.1 key, a KSK, published as a ZSK as
@@ -1557,6 +1572,14 @@ verify_needs_rrsig_key_tag(_Config) ->
     ?assertNotEqual(55648, ZSKTag),
     ?assert(dnssec:verify_rrsig(RRSig, RRSet, [ZSK, KSK], #{now => Now})),
     ?assertNot(dnssec:verify_rrsig(RRSig, RRSet, [ZSK], #{now => Now})),
+    %% RFC4034 Appendix B: the key tag comes from the RDATA, whatever the keytag
+    %% field holds. The KSK with the ZSK's tag in it still verifies, and the ZSK,
+    %% the same public key with other flags, does not with the KSK's tag in it
+    Retag = fun(#dns_rr{data = Key} = DNSKey, Tag) ->
+        DNSKey#dns_rr{data = Key#dns_rrdata_dnskey{keytag = Tag}}
+    end,
+    ?assert(dnssec:verify_rrsig(RRSig, RRSet, [Retag(KSK, ZSKTag)], #{now => Now})),
+    ?assertNot(dnssec:verify_rrsig(RRSig, RRSet, [Retag(ZSK, 55648)], #{now => Now})),
     %% The signer's name names the key whatever its case, and with or without the
     %% final dot a zone file gives the DNSKEY's owner
     #dns_rr{data = SigData} = RRSig,

@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - DNSSEC: `dnssec:verify_rrsig/4` no longer crashes on RRsets whose TTL is not the RRSIG's original TTL.
 - DNSSEC: `dnssec:verify_rrsig/4` returns `false` for unknown algorithms, algorithms the local crypto refuses, keys or signatures of the wrong size, RRSIGs whose RDATA did not decode, and empty RRsets.
 - DNSSEC: `dnssec:verify_rrsig/4` verifies RSA and DSA DNSKEYs parsed from zone files.
-- DNSSEC: `dnssec:verify_rrsig/4` only verifies with the zone key of the RRSIG's class whose owner, algorithm and key tag the RRSIG names.
+- DNSSEC: `dnssec:verify_rrsig/4` only tries the zone keys of the RRSIG's class it names by owner, algorithm and key tag, computed from their RDATA, not every key of the signer.
 - DNSSEC: `dnssec:verify_rrsig/4` matches an RRSIG's signer to a DNSKEY's owner with or without a final dot.
 - DNSSEC: `dnssec:verify_rrsig/4` verifies RRsets a wildcard was expanded into.
 - DNSSEC: `dnssec:verify_rrsig/4` compares an RRSIG's validity period in serial number arithmetic, as RFC 4034 §3.1.5 has it.

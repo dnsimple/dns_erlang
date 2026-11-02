@@ -531,7 +531,8 @@ Returns `true` if all of these hold:
   period, compared in serial number arithmetic (RFC 4034 §3.1.5).
 - Its signature verifies with one of the DNSKEYs it names: a zone key, with the
   Zone Key flag set, of the RRSIG's class, at the RRSIG's signer's name, with
-  the RRSIG's algorithm and key tag.
+  the RRSIG's algorithm and key tag. The key tag is computed from the DNSKEY's
+  RDATA (RFC 4034 Appendix B), whatever its `keytag` field holds.
 
 Otherwise it returns `false`, as it does for an algorithm this module does not
 implement or the local crypto cannot verify, for a key or signature whose size
@@ -543,12 +544,10 @@ has validating resolvers treat as unsupported. Which algorithms to accept is the
 caller's policy: an RRset signed only with ones it does not accept is insecure,
 not bogus (RFC 4035 §5.2).
 
-An RRset a wildcard was expanded into verifies with the wildcard's RRSIG. The
-wire decoder and the zone file parser set a DNSKEY's key tag; set it on one
-built otherwise with `add_keytag_to_dnskey/1`. Whether the DNSKEYs are to be
-trusted is for the caller to decide: a key is used as it is, and some keys
-verify what their owner never signed, as an all-zero Ed448 key verifies an
-all-zero signature over any data.
+An RRset a wildcard was expanded into verifies with the wildcard's RRSIG.
+Whether the DNSKEYs are to be trusted is for the caller to decide: a key is used
+as it is, and some keys verify what their owner never signed, as an all-zero
+Ed448 key verifies an all-zero signature over any data.
 """.
 -spec verify_rrsig(dns:rr(), [dns:rr()], [dns:rr()], verify_rrsig_opts()) -> boolean().
 verify_rrsig(
@@ -569,7 +568,8 @@ verify_rrsig(
     %% RFC4035§5.3.1: the RRSIG's signer, algorithm and key tag name the DNSKEY,
     %% which must be a zone key, with bit 7 of its flags set (RFC4034§2.1.1), in
     %% the zone's apex DNSKEY RRset, so of the RRSIG's class. The names compare
-    %% as names: a zone file's keep their final dot, the wire's not
+    %% as names: a zone file's keep their final dot, the wire's not. Only the
+    %% keys the RRSIG names are tried, never every key of the zone
     Signer = name_labels(SignersName),
     Keys = [
         PubKey
@@ -577,19 +577,13 @@ verify_rrsig(
             name = Name,
             class = KeyClass,
             type = ?DNS_TYPE_DNSKEY,
-            data = #dns_rrdata_dnskey{
-                flags = Flags,
-                protocol = 3,
-                alg = Alg,
-                keytag = KeyTag,
-                public_key = PubKey
-            }
-        } <- RRDNSKey,
+            data = #dns_rrdata_dnskey{flags = Flags, protocol = 3, alg = Alg, public_key = PubKey}
+        } = DNSKey <- RRDNSKey,
         KeyClass =:= Class,
         Flags band 16#0100 =/= 0,
         Alg =:= SigAlg,
-        KeyTag =:= SigKeyTag,
-        is_name(Name, Signer)
+        is_name(Name, Signer),
+        key_tag(DNSKey) =:= SigKeyTag
     ],
     case
         Keys =/= [] andalso in_validity_period(Incept, Expire, Now) andalso
@@ -790,6 +784,17 @@ add_keytag_to_key_rr(RR, Data, Type) ->
     KeyBin = dns_encode:encode_rrdata(?DNS_CLASS_IN, Data),
     NewData = dns_decode:decode_rrdata(KeyBin, ?DNS_CLASS_IN, Type),
     RR#dns_rr{data = NewData}.
+
+%% RFC4034 Appendix B: a DNSKEY's key tag, computed from its RDATA, as its keytag
+%% field may be unset or out of date in a DNSKEY built by hand. A key that does
+%% not encode, such as one given as iodata, has none
+-spec key_tag(dns:rr()) -> dns:uint16() | undefined.
+key_tag(DNSKey) ->
+    try add_keytag_to_dnskey(DNSKey) of
+        #dns_rr{data = #dns_rrdata_dnskey{keytag = KeyTag}} -> KeyTag
+    catch
+        error:_ -> undefined
+    end.
 
 -spec rrsig_to_digestable(dns:rrdata_rrsig()) -> binary().
 rrsig_to_digestable(#dns_rrdata_rrsig{} = Data) ->
