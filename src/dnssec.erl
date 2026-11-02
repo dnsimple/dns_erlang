@@ -503,8 +503,8 @@ Returns `true` if all of these hold:
 - The time `now` in `Opts`, by default the current time, is within its validity
   period, compared in serial number arithmetic (RFC 4034 §3.1.5).
 - Its signature verifies with one of the DNSKEYs it names: a zone key, with the
-  Zone Key flag set, at the RRSIG's signer's name, with the RRSIG's algorithm
-  and key tag.
+  Zone Key flag set, of the RRSIG's class, at the RRSIG's signer's name, with
+  the RRSIG's algorithm and key tag.
 
 Otherwise it returns `false`, as it does for an algorithm this module does not
 implement or the local crypto cannot verify, for a key or signature whose size
@@ -519,7 +519,10 @@ all-zero signature over any data.
 """.
 -spec verify_rrsig(dns:rr(), [dns:rr()], [dns:rr()], verify_rrsig_opts()) -> boolean().
 verify_rrsig(
-    #dns_rr{type = ?DNS_TYPE_RRSIG, data = #dns_rrdata_rrsig{} = Data} = RRSig, RRs, RRDNSKey, Opts
+    #dns_rr{type = ?DNS_TYPE_RRSIG, class = Class, data = #dns_rrdata_rrsig{} = Data} = RRSig,
+    RRs,
+    RRDNSKey,
+    Opts
 ) ->
     Now = maps:get(now, Opts, erlang:system_time(second)),
     #dns_rrdata_rrsig{
@@ -531,13 +534,15 @@ verify_rrsig(
         signature = Signature
     } = Data,
     %% RFC4035§5.3.1: the RRSIG's signer, algorithm and key tag name the DNSKEY,
-    %% which must be a zone key, with bit 7 of its flags set (RFC4034§2.1.1). The
-    %% names compare as names: a zone file's keep their final dot, the wire's not
+    %% which must be a zone key, with bit 7 of its flags set (RFC4034§2.1.1), in
+    %% the zone's apex DNSKEY RRset, so of the RRSIG's class. The names compare
+    %% as names: a zone file's keep their final dot, the wire's not
     Signer = name_labels(SignersName),
     Keys = [
         PubKey
      || #dns_rr{
             name = Name,
+            class = KeyClass,
             type = ?DNS_TYPE_DNSKEY,
             data = #dns_rrdata_dnskey{
                 flags = Flags,
@@ -547,6 +552,7 @@ verify_rrsig(
                 public_key = PubKey
             }
         } <- RRDNSKey,
+        KeyClass =:= Class,
         Flags band 16#0100 =/= 0,
         Alg =:= SigAlg,
         KeyTag =:= SigKeyTag,

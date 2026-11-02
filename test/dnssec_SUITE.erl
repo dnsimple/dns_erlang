@@ -69,6 +69,7 @@ groups() ->
             verify_skips_dnskey_with_bad_owner,
             verify_rrsig_with_bad_names_is_false,
             verify_rrsig_with_undecoded_rdata_is_false,
+            verify_needs_dnskey_of_rrsig_class,
             verify_short_rsa_signature_same_for_all_algorithms,
             verify_dsa_key_with_binary_field,
             sign_rejects_dsa_q_over_160_bits,
@@ -1051,6 +1052,22 @@ verify_rrsig_with_undecoded_rdata_is_false(_Config) ->
     #dns_message{answers = [A | Decoded]} = dns:decode_message(dns:encode_message(Msg)),
     ?assertEqual(Bad, Decoded),
     [?assertNot(dnssec:verify_rrsig(RRSig, [A], [DNSKey], #{now => 1500000})) || RRSig <- Decoded].
+
+%% RFC4035§5.3.1: the DNSKEY is in the zone's apex DNSKEY RRset, of the RRSIG's
+%% class, so a DNSKEY of another class does not verify it
+verify_needs_dnskey_of_rrsig_class(_Config) ->
+    {Priv, DNSKey, KeyTag} = ed25519_zone_key(~"example"),
+    A = rr_a(~"www.example", {192, 0, 2, 1}),
+    Opts = #{inception => 1000000, expiration => 2000000},
+    RRSig = dnssec:sign_rrset([A], ~"example", KeyTag, ?DNS_ALG_ED25519, Priv, Opts),
+    Verify = fun(Class) ->
+        dnssec:verify_rrsig(RRSig, [A], [DNSKey#dns_rr{class = Class}], #{now => 1500000})
+    end,
+    ?assert(Verify(?DNS_CLASS_IN)),
+    [
+        ?assertNot(Verify(Class), Class)
+     || Class <- [?DNS_CLASS_CH, ?DNS_CLASS_HS, ?DNS_CLASS_NONE, ?DNS_CLASS_ANY]
+    ].
 
 %% RFC8017§8.2.2: an RSA signature has the length of the modulus. A signature
 %% without its first zero octet is shorter. RSA/SHA-256 and RSA/SHA-512 reject
