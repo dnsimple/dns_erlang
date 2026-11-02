@@ -644,9 +644,13 @@ verify(Alg, Key, Signature, SigInput) when
 ->
     case rsa_public_key(Key) of
         [_E, _M] = PublicKey ->
+            [_, Modulus] = Binaries = key_binaries(PublicKey),
             {Hash, Msg} = rsa_message(Alg, SigInput),
             Opts = [{rsa_padding, rsa_pkcs1_padding}],
-            crypto:verify(rsa, Hash, Msg, Signature, key_binaries(PublicKey), Opts);
+            %% RFC8017§8.2.2: the signature is as long as the modulus. crypto checks
+            %% that when it hashes, but not for SHA-1, whose DigestInfo is built here
+            byte_size(Signature) =:= byte_size(Modulus) andalso
+                crypto:verify(rsa, Hash, Msg, Signature, Binaries, Opts);
         _ ->
             false
     end;

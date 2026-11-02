@@ -61,6 +61,7 @@
     ~"6605" => ~"Elliptic Curve Digital Signature Algorithm (DSA) for DNSSEC",
     ~"7344" => ~"Automating DNSSEC Delegation Trust Maintenance",
     ~"8080" => ~"Ed25519 and Ed448 for DNSSEC",
+    ~"8017" => ~"PKCS #1: RSA Cryptography Specifications Version 2.2",
     ~"9077" => ~"NSEC and NSEC3 TTL Values",
     ~"9905" => ~"Deprecating the Use of SHA-1 in DNSSEC Signature Algorithms",
     ~"7553" => ~"The Uniform Resource Identifier (URI) DNS Resource Record",
