@@ -1546,9 +1546,10 @@ dnskey_dsa_field_width_preserved(_) ->
             {8, 16#00, 16#00}
         ]
     ],
-    %% When every field has leading zeros the original T cannot be recovered, since
-    %% the record does not carry it. The result must still be a valid, decodable
-    %% record with the same key values -- just at the minimal width.
+    %% When every field has leading zeros, T is wider than the key needs, which
+    %% RFC2536§2 does not allow, and the encoder would write the narrowest T. So
+    %% the key stays bytes, and the record re-encodes as it came: its RDATA, key
+    %% tag and any RRSIG over it stay the same.
     Narrow = <<
         256:16,
         3:8,
@@ -1563,13 +1564,10 @@ dnskey_dsa_field_width_preserved(_) ->
         (binary:copy(<<0>>, 8))/binary,
         (binary:copy(<<16#CC>>, 64))/binary
     >>,
+    <<_:4/binary, NarrowKey/binary>> = Narrow,
     NarrowDecoded = Decode(Narrow),
-    Reencoded = dns_encode:encode_rrdata(?DNS_CLASS_IN, NarrowDecoded),
-    ?assertNotEqual(Narrow, Reencoded),
-    ?assertEqual(
-        NarrowDecoded#dns_rrdata_dnskey.public_key,
-        (Decode(Reencoded))#dns_rrdata_dnskey.public_key
-    ),
+    ?assertEqual(NarrowKey, NarrowDecoded#dns_rrdata_dnskey.public_key),
+    ?assertEqual(Narrow, dns_encode:encode_rrdata(?DNS_CLASS_IN, NarrowDecoded)),
     %% Values too wide for the field, or a Q past its fixed 20 bytes, are rejected
     %% rather than silently truncated
     Wide = fun(Field, Bytes) ->

@@ -28,7 +28,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - DNSSEC: signing with an unknown algorithm raises `{unsupported_algorithm, Alg}`.
 - DNSSEC: signing with a DSA key RFC 2536 cannot carry, a Q over 160 bits or a P over 1024, raises `{unsupported_key, Alg}`.
 - DNSSEC: signing and verifying leave duplicate records out of an RRset, as RFC 4034 §6.3 has it.
-- Wire: a DSA DNSKEY or CDNSKEY with a malformed key decodes with the key as bytes, not crashing.
+- Wire: a DSA DNSKEY or CDNSKEY with a malformed key, or a T wider than its key needs, decodes with the key as bytes, so it neither crashes nor re-encodes differently.
 - Zone files: read hex split by whitespace in DS, CDS, DLV, TLSA and SMIMEA, and base64 in DHCID, CERT and KEY.
 - Zone files: read TLSA, SMIMEA, DHCID and CERT data unquoted, as their RFCs' examples write it.
 - Zone files: read base64 whose final `=` is alone on a line.

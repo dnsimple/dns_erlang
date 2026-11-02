@@ -1205,12 +1205,20 @@ rsa_fields(<<E, _/binary>> = Exp, <<M, _/binary>> = Mod) when 0 < E, 0 < M -> {E
 rsa_fields(_Exp, _Mod) -> not_canonical.
 
 %% RFC2536§2: a DSA public key as [P, Q, G, Y], or its bytes as they are if they
-%% are not laid out as T, Q, P, G and Y, P, G and Y each 64 + 8T octets
+%% are not laid out as T, Q, P, G and Y, P, G and Y each 64 + 8T octets, or if T
+%% is wider than P, G and Y need: the encoder writes the narrowest T, so the
+%% RDATA, and an RRSIG over it, would change. RFC2536§2 puts P's top octet in
+%% use, so no real key has such a T.
 -spec dsa_public_key(binary()) -> [non_neg_integer()] | binary().
-dsa_public_key(<<T, Q:20/unit:8, PGY/binary>>) when T =< 8, byte_size(PGY) =:= 3 * (64 + 8 * T) ->
+dsa_public_key(<<T, Q:20/unit:8, PGY/binary>> = PublicKey) when
+    T =< 8, byte_size(PGY) =:= 3 * (64 + 8 * T)
+->
     S = 64 + 8 * T,
     <<P:S/unit:8, G:S/unit:8, Y:S/unit:8>> = PGY,
-    [P, Q, G, Y];
+    case dns_encode:dsa_t([P, G, Y]) of
+        T -> [P, Q, G, Y];
+        _ -> PublicKey
+    end;
 dsa_public_key(PublicKey) ->
     PublicKey.
 
