@@ -1107,11 +1107,11 @@ verify_needs_dnskey_of_rrsig_class(_Config) ->
 
 %% RFC4034§6.2: owner names compare in lower case, and a final dot only marks a
 %% name as absolute: records whose owner is written in different ways are one
-%% RRset, signed once, under the owner name its first record has
+%% RRset, signed once, under the owner name its first record has, in lowercase
 sign_rr_groups_owner_names_as_names(_Config) ->
     {Priv, DNSKey, KeyTag} = ed25519_zone_key(~"example"),
     RRs = [
-        rr_a(~"www.example.", {192, 0, 2, 1}),
+        rr_a(~"WWW.Example.", {192, 0, 2, 1}),
         rr_a(~"WWW.example", {192, 0, 2, 2}),
         rr_a(~"www.example", {192, 0, 2, 3})
     ],

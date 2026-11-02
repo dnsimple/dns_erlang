@@ -312,7 +312,8 @@ normalise_rr(#dns_rr{name = Name} = RR) ->
 name_key(Name) ->
     dns_domain:join(dns_domain:split(dns_domain:to_lower(Name))).
 
-%% Each owner, by its name_key/1, with the name it was first given and its types
+%% Each owner, by its name_key/1, with the name it was first given, lowercased,
+%% and its types
 -type rrtype_map() :: #{{dns:dname(), dns:class()} => {dns:dname(), [integer()]}}.
 
 -spec build_rrmap([dns:rr()], [integer()], dns:dname()) -> rrtype_map().
@@ -380,7 +381,7 @@ rrs_to_rrsets([#dns_rr{} = RR | RRs], TTLMap, RRSets) ->
         ttl = TTL,
         data = Data
     } = normalise_rr(RR),
-    %% The RRset takes the owner name its first record was given
+    %% The RRset takes the owner name its first record was given, lowercased
     Key = {name_key(Name), Class, Type},
     NewTTLMap = maps:update_with(Key, fun(OldTTL) -> max(OldTTL, TTL) end, TTL, TTLMap),
     NewRRSets = maps:update_with(
@@ -414,8 +415,8 @@ sign_rr(RR, SignerName, KeyTag, Alg, Key) ->
 Signs each RRset in a list of `t:dns:rr/0`, raising as `sign_rrset/6` does.
 
 Records whose owner names differ only in case or in a final dot are one RRset,
-which keeps the owner name its first record has. RRSIG records are left out, as
-RFC 4035 §2.2 never signs them.
+signed under the owner name of its first record in lowercase. RRSIG records are
+left out, as RFC 4035 §2.2 never signs them.
 """.
 -spec sign_rr([dns:rr()], dns:dname(), keytag(), sigalg(), key(), sign_rr_opts()) -> [dns:rr()].
 sign_rr(RR, SignerName, KeyTag, Alg, Key, Opts) when is_map(Opts) ->
