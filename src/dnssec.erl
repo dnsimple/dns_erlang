@@ -390,7 +390,7 @@ finalise_rrs_to_rrsets(TTLMap, {Name, Class, Type} = Key, Datas) ->
 sign_rr(RR, SignerName, KeyTag, Alg, Key) ->
     sign_rr(RR, SignerName, KeyTag, Alg, Key, #{}).
 
--doc "Signs a list of `t:dns:rr/0`.".
+-doc "Signs a list of `t:dns:rr/0`, raising as `sign_rrset/6` does.".
 -spec sign_rr([dns:rr()], dns:dname(), keytag(), sigalg(), key(), sign_rr_opts()) -> [dns:rr()].
 sign_rr(RR, SignerName, KeyTag, Alg, Key, Opts) when is_map(Opts) ->
     RRSets = rrs_to_rrsets(RR),
@@ -405,7 +405,13 @@ sign_rr(RR, SignerName, KeyTag, Alg, Key, Opts) when is_map(Opts) ->
 sign_rrset(RRSet, SignerName, KeyTag, Alg, Key) ->
     sign_rrset(RRSet, SignerName, KeyTag, Alg, Key, #{}).
 
--doc "Signs a list of `t:dns:rr/0` of the same class and type.".
+-doc """
+Signs a list of `t:dns:rr/0` of the same class and type.
+
+Raises `{unsupported_algorithm, Alg}` for an algorithm this module does not
+implement, and `{unsupported_key, Alg}` for a DSA key that RFC 2536 cannot carry:
+one whose Q is over 160 bits, or whose P or G is over 1024 bits.
+""".
 -spec sign_rrset([dns:rr(), ...], dns:dname(), keytag(), sigalg(), key(), sign_rr_opts()) ->
     dns:rr().
 sign_rrset(
@@ -443,12 +449,15 @@ sign_rrset(
 
 -spec sign(dns:uint8(), iodata(), key()) -> binary().
 sign(Alg, BaseSigInput, Key) when Alg =:= ?DNS_ALG_DSA orelse Alg =:= ?DNS_ALG_NSEC3DSA ->
-    %% RFC2536: Key must be [P, Q, G, X] as integers (crypto key format).
-    DerSig = crypto:sign(dss, sha, BaseSigInput, Key),
+    [P, Q, G, _X] = Integers = [key_integer(Field) || Field <- Key],
+    %% RFC2536§2, §3: R and S, which are below Q, take 20 octets each, and T, 0 to
+    %% 8, makes P, G and Y 64 + 8T octets: a wider Q or P cannot be carried
+    (Q < 1 bsl 160 andalso P < 1 bsl 1024 andalso G < 1 bsl 1024) orelse
+        error({unsupported_key, Alg}),
+    DerSig = crypto:sign(dss, sha, BaseSigInput, Integers),
     #'Dss-Sig-Value'{r = R, s = S} = public_key:der_decode('Dss-Sig-Value', DerSig),
     %% RFC2536§3: T is the DNSKEY's. Its Y = G^X mod P is below P, so P and G
     %% alone fix the width the DNSKEY's encoding takes T from
-    [P, _Q, G, _X] = Key,
     T = dns_encode:dsa_t([P, G]),
     <<T, R:20/unit:8, S:20/unit:8>>;
 sign(Alg, BaseSigInput, Key) when
@@ -895,6 +904,11 @@ dsa_public_key(Key) -> Key.
 -spec key_binaries([non_neg_integer() | binary()]) -> [binary()].
 key_binaries(Key) ->
     [unsigned_binary(Field) || Field <- Key].
+
+%% An integer of a key, given as an integer or as its big-endian bytes
+-spec key_integer(non_neg_integer() | binary()) -> non_neg_integer().
+key_integer(Field) when is_integer(Field) -> Field;
+key_integer(Field) when is_binary(Field) -> binary:decode_unsigned(Field).
 
 %% An integer of a key, given as an integer or as its big-endian bytes, as its
 %% bytes without leading zeros

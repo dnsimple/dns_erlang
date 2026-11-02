@@ -1098,9 +1098,10 @@ verify_dsa_key_with_binary_field(Config) ->
     ?assert(dnssec:verify_rrsig(RRSig, [RR], [Mixed], #{now => 1500000})).
 
 %% RFC2536§3: R and S of a DSA signature have 20 octets each, thus Q has
-%% 160 bits. With a wider Q, crypto makes a wider R and S. sign_rrset/6 cuts
-%% them to 20 octets, and the RRSIG never verifies. dns_encode refuses this Q
-%% for the DNSKEY. sign_rrset/6 must refuse it too.
+%% 160 bits. With a wider Q, crypto makes a wider R and S. sign_rrset/6 cut
+%% them to 20 octets, and the RRSIG never verified. dns_encode refuses this Q
+%% for the DNSKEY. sign_rrset/6 must refuse it too, before crypto, which may
+%% sign or fail with this group.
 sign_rejects_dsa_q_over_160_bits(_Config) ->
     %% Not a real DSA group, which signing does not need
     P = (1 bsl 1023) + 257,
@@ -1108,23 +1109,22 @@ sign_rejects_dsa_q_over_160_bits(_Config) ->
     {G, X} = {2, 16#1234567},
     ?assertError(badarg, dns_encode:encode_dsa_key([P, Q, G, 16#89ABCDEF])),
     RR = rr_a(~"www.example", {192, 0, 2, 1}),
-    ?assertError(_, dnssec:sign_rrset([RR], ~"example", 1, ?DNS_ALG_DSA, [P, Q, G, X], #{})).
+    ?assertError(
+        {unsupported_key, ?DNS_ALG_DSA},
+        dnssec:sign_rrset([RR], ~"example", 1, ?DNS_ALG_DSA, [P, Q, G, X], #{})
+    ).
 
 %% RFC2536§2: T is 0 to 8, thus P has at most 128 octets. For a wider P,
-%% sign_rrset/6 raises a bare badarg from dns_encode after crypto signed. The
+%% sign_rrset/6 raised a bare badarg from dns_encode after crypto signed. The
 %% error must tell the cause, as {unsupported_algorithm, Alg} does.
 sign_dsa_p_over_1024_bits_names_cause(_Config) ->
     P = (1 bsl 2047) + 257,
     Q = 16#E2B4F7B1A4D6E39F7C5A0C0D7B4E3A9C1B2D3E4F,
     RR = rr_a(~"www.example", {192, 0, 2, 1}),
-    Reason =
-        try dnssec:sign_rrset([RR], ~"example", 1, ?DNS_ALG_DSA, [P, Q, 2, 16#1234567], #{}) of
-            _ -> no_error
-        catch
-            error:R -> R
-        end,
-    ?assertNotEqual(no_error, Reason),
-    ?assertNotEqual(badarg, Reason).
+    ?assertError(
+        {unsupported_key, ?DNS_ALG_DSA},
+        dnssec:sign_rrset([RR], ~"example", 1, ?DNS_ALG_DSA, [P, Q, 2, 16#1234567], #{})
+    ).
 
 %% RFC2536§2: a DSA DNSKEY can have a T that is wider than P, G and Y need.
 %% The decoder makes integers of the key, and the encoder writes them with the
