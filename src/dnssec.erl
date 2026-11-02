@@ -506,7 +506,7 @@ verify_rrsig(#dns_rr{type = ?DNS_TYPE_RRSIG, data = Data} = RRSig, RRs, RRDNSKey
     %% RFC4035§5.3.1: the RRSIG's signer, algorithm and key tag name the DNSKEY,
     %% which must be a zone key, with bit 7 of its flags set (RFC4034§2.1.1). The
     %% names compare as names: a zone file's keep their final dot, the wire's not
-    Signer = dns_domain:split(SignersName),
+    Signer = name_labels(SignersName),
     Keys = [
         PubKey
      || #dns_rr{
@@ -523,7 +523,7 @@ verify_rrsig(#dns_rr{type = ?DNS_TYPE_RRSIG, data = Data} = RRSig, RRs, RRDNSKey
         Flags band 16#0100 =/= 0,
         Alg =:= SigAlg,
         KeyTag =:= SigKeyTag,
-        dns_domain:are_equal_labels(dns_domain:split(Name), Signer)
+        is_name(Name, Signer)
     ],
     case
         Keys =/= [] andalso in_validity_period(Incept, Expire, Now) andalso
@@ -556,7 +556,9 @@ serial_at_most(A, B) ->
 %% the signer must be the owner or one of its ancestors, and the labels field
 %% count no fewer labels than the signer has, so that a wildcard it names
 %% (RFC4035§5.3.2) is in the signer's zone too
--spec fits_rrset(dns:rr(), dns:labels(), [dns:rr()]) -> boolean().
+-spec fits_rrset(dns:rr(), dns:labels() | invalid, [dns:rr()]) -> boolean().
+fits_rrset(_RRSig, invalid, _RRs) ->
+    false;
 fits_rrset(_RRSig, _Signer, []) ->
     false;
 fits_rrset(
@@ -568,12 +570,11 @@ fits_rrset(
     Signer,
     RRs
 ) ->
-    Owner = dns_domain:split(SigOwner),
+    Owner = name_labels(SigOwner),
     InRRset = fun(#dns_rr{name = Name, class = RRClass, type = RRType}) ->
-        RRClass =:= Class andalso RRType =:= Type andalso
-            dns_domain:are_equal_labels(dns_domain:split(Name), Owner)
+        RRClass =:= Class andalso RRType =:= Type andalso is_name(Name, Owner)
     end,
-    lists:all(InRRset, RRs) andalso
+    Owner =/= invalid andalso lists:all(InRRset, RRs) andalso
         Labels =< count_labels(Owner) andalso
         length(Signer) =< Labels andalso
         is_at_or_under(Owner, Signer).
@@ -813,6 +814,31 @@ count_labels([~"*" | Labels]) ->
     length(Labels);
 count_labels(List) when is_list(List) ->
     length(List).
+
+%% A name's labels, or invalid for a name no decoder or zone file gives: one with
+%% an empty label, a label over 63 octets, or over 255 octets in all (RFC1035§2.3.4)
+-spec name_labels(dns:dname()) -> dns:labels() | invalid.
+name_labels(Name) ->
+    try dns_domain:split(Name) of
+        Labels ->
+            case lists:sum([1 + byte_size(Label) || Label <- Labels]) < 255 of
+                true -> Labels;
+                false -> invalid
+            end
+    catch
+        error:{invalid_dname, empty_label} -> invalid;
+        error:{label_too_long, _} -> invalid
+    end.
+
+%% Whether a name is the one given as labels, which no invalid name is
+-spec is_name(dns:dname(), dns:labels() | invalid) -> boolean().
+is_name(_Name, invalid) ->
+    false;
+is_name(Name, Labels) ->
+    case name_labels(Name) of
+        invalid -> false;
+        NameLabels -> dns_domain:are_equal_labels(NameLabels, Labels)
+    end.
 
 %% Whether a name is Zone or a name under it, both given as labels
 -spec is_at_or_under(dns:labels(), dns:labels()) -> boolean().

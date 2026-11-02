@@ -67,6 +67,7 @@ groups() ->
             verify_uses_serial_number_arithmetic,
             verify_rejects_expiration_before_inception,
             verify_skips_dnskey_with_bad_owner,
+            verify_rrsig_with_bad_names_is_false,
             verify_short_rsa_signature_same_for_all_algorithms,
             verify_dsa_key_with_binary_field,
             sign_rejects_dsa_q_over_160_bits,
@@ -999,6 +1000,41 @@ verify_skips_dnskey_with_bad_owner(_Config) ->
     ?assert(Verify([DNSKey#dns_rr{name = ~"bad..example"}, DNSKey])),
     TooLong = <<(binary:copy(~"a", 64))/binary, ".example">>,
     ?assert(Verify([DNSKey#dns_rr{name = TooLong}, DNSKey])).
+
+%% Names off the wire are valid, but verify_rrsig/4 must not crash on ones built
+%% in code either: an RRSIG whose signer, or whose owner and RRset's, has an
+%% empty label, a label over 63 octets, or over 255 octets in all, verifies
+%% nothing.
+verify_rrsig_with_bad_names_is_false(_Config) ->
+    {Priv, DNSKey, KeyTag} = ed25519_zone_key(~"example"),
+    A = rr_a(~"www.example", {192, 0, 2, 1}),
+    Opts = #{inception => 1000000, expiration => 2000000},
+    #dns_rr{data = Data} =
+        RRSig = dnssec:sign_rrset([A], ~"example", KeyTag, ?DNS_ALG_ED25519, Priv, Opts),
+    Verify = fun(Sig, RR) -> dnssec:verify_rrsig(Sig, [RR], [DNSKey], #{now => 1500000}) end,
+    ?assert(Verify(RRSig, A)),
+    [
+        ?assertNot(Verify(RRSig#dns_rr{data = Data#dns_rrdata_rrsig{signers_name = Bad}}, A))
+     || Bad <- [~"bad..example", <<(binary:copy(~"a", 64))/binary, ".example">>]
+    ],
+    Label63 = binary:copy(~"a", 63),
+    [
+        ?assertNot(
+            Verify(
+                RRSig#dns_rr{name = Owner, data = Data#dns_rrdata_rrsig{labels = Labels}},
+                A#dns_rr{name = Owner}
+            )
+        )
+     || {Owner, Labels} <- [
+            {~"www..example", 2},
+            {<<"a", Label63/binary, ".example">>, 2},
+            {
+                <<Label63/binary, ".", Label63/binary, ".", Label63/binary, ".", Label63/binary,
+                    ".example">>,
+                5
+            }
+        ]
+    ].
 
 %% RFC8017§8.2.2: an RSA signature has the length of the modulus. A signature
 %% without its first zero octet is shorter. RSA/SHA-256 and RSA/SHA-512 reject
