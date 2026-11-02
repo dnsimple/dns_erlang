@@ -518,7 +518,9 @@ verify what their owner never signed, as an all-zero Ed448 key verifies an
 all-zero signature over any data.
 """.
 -spec verify_rrsig(dns:rr(), [dns:rr()], [dns:rr()], verify_rrsig_opts()) -> boolean().
-verify_rrsig(#dns_rr{type = ?DNS_TYPE_RRSIG, data = Data} = RRSig, RRs, RRDNSKey, Opts) ->
+verify_rrsig(
+    #dns_rr{type = ?DNS_TYPE_RRSIG, data = #dns_rrdata_rrsig{} = Data} = RRSig, RRs, RRDNSKey, Opts
+) ->
     Now = maps:get(now, Opts, erlang:system_time(second)),
     #dns_rrdata_rrsig{
         keytag = SigKeyTag,
@@ -559,7 +561,10 @@ verify_rrsig(#dns_rr{type = ?DNS_TYPE_RRSIG, data = Data} = RRSig, RRs, RRDNSKey
             lists:any(fun(Key) -> verify_with_key(SigAlg, Key, Signature, SignedData) end, Keys);
         false ->
             false
-    end.
+    end;
+%% An RRSIG whose RDATA the decoder could not read, which it keeps as bytes
+verify_rrsig(#dns_rr{type = ?DNS_TYPE_RRSIG}, _RRs, _RRDNSKey, _Opts) ->
+    false.
 
 %% RFC4034§3.1.5: inception and expiration are 32-bit serial numbers, which the
 %% time is compared with in serial number arithmetic (RFC1982): a validity period

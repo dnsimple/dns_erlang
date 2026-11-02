@@ -68,6 +68,7 @@ groups() ->
             verify_rejects_expiration_before_inception,
             verify_skips_dnskey_with_bad_owner,
             verify_rrsig_with_bad_names_is_false,
+            verify_rrsig_with_undecoded_rdata_is_false,
             verify_short_rsa_signature_same_for_all_algorithms,
             verify_dsa_key_with_binary_field,
             sign_rejects_dsa_q_over_160_bits,
@@ -1036,6 +1037,20 @@ verify_rrsig_with_bad_names_is_false(_Config) ->
             }
         ]
     ].
+
+%% The decoder keeps RDATA it cannot read as bytes: an RRSIG under 18 octets, or
+%% one of class NONE with none, as an UPDATE has. Such an RRSIG verifies nothing.
+verify_rrsig_with_undecoded_rdata_is_false(_Config) ->
+    {_Priv, DNSKey, _KeyTag} = ed25519_zone_key(~"example"),
+    A = rr_a(~"www.example", {192, 0, 2, 1}),
+    Bad = [
+        #dns_rr{name = ~"www.example", type = ?DNS_TYPE_RRSIG, ttl = 3600, data = <<1, 2, 3>>},
+        #dns_rr{name = ~"www.example", type = ?DNS_TYPE_RRSIG, class = ?DNS_CLASS_NONE, data = <<>>}
+    ],
+    Msg = #dns_message{qr = true, anc = 3, answers = [A | Bad]},
+    #dns_message{answers = [A | Decoded]} = dns:decode_message(dns:encode_message(Msg)),
+    ?assertEqual(Bad, Decoded),
+    [?assertNot(dnssec:verify_rrsig(RRSig, [A], [DNSKey], #{now => 1500000})) || RRSig <- Decoded].
 
 %% RFC8017§8.2.2: an RSA signature has the length of the modulus. A signature
 %% without its first zero octet is shorter. RSA/SHA-256 and RSA/SHA-512 reject
