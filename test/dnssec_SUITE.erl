@@ -72,6 +72,7 @@ groups() ->
             verify_rrsig_with_undecoded_rdata_is_false,
             verify_needs_dnskey_of_rrsig_class,
             sign_rr_groups_owner_names_as_names,
+            sign_leaves_rrsigs_unsigned,
             verify_short_rsa_signature_same_for_all_algorithms,
             verify_dsa_key_with_binary_field,
             sign_rejects_dsa_q_over_160_bits,
@@ -1118,6 +1119,21 @@ sign_rr_groups_owner_names_as_names(_Config) ->
         dnssec:sign_rr(RRs, ~"example", KeyTag, ?DNS_ALG_ED25519, Priv, Opts),
     ?assertEqual(~"www.example.", Owner),
     ?assert(dnssec:verify_rrsig(RRSig, RRs, [DNSKey], #{now => 1500000})).
+
+%% RFC4035§2.2: an RRSIG RR is never signed. sign_rr/6 leaves the RRSIGs among
+%% its records out, and sign_rrset/6 refuses an RRSIG RRset.
+sign_leaves_rrsigs_unsigned(_Config) ->
+    {Priv, DNSKey, KeyTag} = ed25519_zone_key(~"example"),
+    A = rr_a(~"www.example", {192, 0, 2, 1}),
+    Opts = #{inception => 1000000, expiration => 2000000},
+    Sign = fun(RRs) -> dnssec:sign_rr(RRs, ~"example", KeyTag, ?DNS_ALG_ED25519, Priv, Opts) end,
+    [RRSig] = Sign([A]),
+    [#dns_rr{data = #dns_rrdata_rrsig{type_covered = ?DNS_TYPE_A}} = Again] = Sign([A, RRSig]),
+    ?assert(dnssec:verify_rrsig(Again, [A], [DNSKey], #{now => 1500000})),
+    ?assertEqual([], Sign([RRSig])),
+    ?assertError(
+        badarg, dnssec:sign_rrset([RRSig], ~"example", KeyTag, ?DNS_ALG_ED25519, Priv, Opts)
+    ).
 
 %% RFC8017§8.2.2: an RSA signature has the length of the modulus. A signature
 %% without its first zero octet is shorter. RSA/SHA-256 and RSA/SHA-512 reject

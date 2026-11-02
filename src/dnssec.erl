@@ -414,14 +414,15 @@ sign_rr(RR, SignerName, KeyTag, Alg, Key) ->
 Signs each RRset in a list of `t:dns:rr/0`, raising as `sign_rrset/6` does.
 
 Records whose owner names differ only in case or in a final dot are one RRset,
-which keeps the owner name its first record has.
+which keeps the owner name its first record has. RRSIG records are left out, as
+RFC 4035 §2.2 never signs them.
 """.
 -spec sign_rr([dns:rr()], dns:dname(), keytag(), sigalg(), key(), sign_rr_opts()) -> [dns:rr()].
 sign_rr(RR, SignerName, KeyTag, Alg, Key, Opts) when is_map(Opts) ->
-    RRSets = rrs_to_rrsets(RR),
+    Signable = [Record || #dns_rr{type = Type} = Record <- RR, Type =/= ?DNS_TYPE_RRSIG],
     [
         sign_rrset(RRSet, SignerName, KeyTag, Alg, Key, Opts)
-     || RRSet <- RRSets
+     || RRSet <- rrs_to_rrsets(Signable)
     ].
 
 -doc #{equiv => sign_rrset(RRSet, SignerName, KeyTag, Alg, Key, [])}.
@@ -435,12 +436,15 @@ Signs a list of `t:dns:rr/0` of the same class and type.
 
 Raises `{unsupported_algorithm, Alg}` for an algorithm this module does not
 implement, and `{unsupported_key, Alg}` for a DSA key that RFC 2536 cannot carry:
-one whose Q is over 160 bits, or whose P or G is over 1024 bits. It still signs
-with DSA (3 and 6) and RSA/SHA-1 (5 and 7), which RFC 9904 and RFC 9905 forbid
-for new signatures.
+one whose Q is over 160 bits, or whose P or G is over 1024 bits, and `badarg`
+for an RRSIG RRset, which RFC 4035 §2.2 never signs. It still signs with DSA (3
+and 6) and RSA/SHA-1 (5 and 7), which RFC 9904 and RFC 9905 forbid for new
+signatures.
 """.
 -spec sign_rrset([dns:rr(), ...], dns:dname(), keytag(), sigalg(), key(), sign_rr_opts()) ->
     dns:rr().
+sign_rrset([#dns_rr{type = ?DNS_TYPE_RRSIG} | _], _SignersName, _KeyTag, _Alg, _Key, _Opts) ->
+    error(badarg);
 sign_rrset(
     [#dns_rr{name = Name, class = Class, type = Type, ttl = TTL} | _] = RRs,
     SignersName,
