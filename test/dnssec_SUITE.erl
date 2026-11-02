@@ -74,6 +74,7 @@ groups() ->
             sign_dsa_p_over_1024_bits_names_cause,
             verify_dsa_dnskey_after_wire_round_trip,
             verify_rejects_signer_in_wrong_zone,
+            verify_signer_of_ds_and_nsec3,
             verify_rsa_key_as_binaries,
             signers_name_in_canonical_form,
             ih_custom_hash_test,
@@ -1172,6 +1173,42 @@ verify_rejects_signer_in_wrong_zone(_Config) ->
         [ChildKey], ~"example", ParentTag, ?DNS_ALG_ED25519, ParentPriv, Opts
     ),
     ?assertNot(dnssec:verify_rrsig(KeySig, [ChildKey], [ParentKey], #{now => 1500000})).
+
+%% A DS RRset verifies when a zone above its owner signed it, and an NSEC3
+%% RRset when the zone one label above its owner did (RFC5155§3), and only then
+verify_signer_of_ds_and_nsec3(_Config) ->
+    {Priv, Key, Tag} = ed25519_zone_key(~"example"),
+    Opts = #{inception => 1000000, expiration => 2000000},
+    Verify = fun(RR) ->
+        RRSig = dnssec:sign_rrset([RR], ~"example", Tag, ?DNS_ALG_ED25519, Priv, Opts),
+        dnssec:verify_rrsig(RRSig, [RR], [Key], #{now => 1500000})
+    end,
+    DS = #dns_rr{
+        name = ~"child.example",
+        type = ?DNS_TYPE_DS,
+        ttl = 3600,
+        data = #dns_rrdata_ds{
+            keytag = 1, alg = ?DNS_ALG_ED25519, digest_type = 2, digest = <<0:256>>
+        }
+    },
+    ?assert(Verify(DS)),
+    ?assert(Verify(DS#dns_rr{name = ~"a.child.example"})),
+    NSEC3 = #dns_rr{
+        name = ~"2t7b4g4vsa5smi47k61mv5bv1a22bojr.example",
+        type = ?DNS_TYPE_NSEC3,
+        ttl = 3600,
+        data = #dns_rrdata_nsec3{
+            hash_alg = 1,
+            opt_out = false,
+            iterations = 0,
+            salt = <<>>,
+            hash = <<0:160>>,
+            types = [?DNS_TYPE_A]
+        }
+    },
+    ?assert(Verify(NSEC3)),
+    ?assertNot(Verify(NSEC3#dns_rr{name = ~"2t7b4g4vsa5smi47k61mv5bv1a22bojr.sub.example"})),
+    ?assertNot(Verify(NSEC3#dns_rr{name = ~"example"})).
 
 %% crypto:generate_key(rsa, _) gives the public key as [E, N] binaries. The
 %% key() type on main allowed this form. The doc of verify_rrsig/4 tells to

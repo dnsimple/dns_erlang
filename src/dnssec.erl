@@ -476,15 +476,24 @@ sign(Alg, _BaseSigInput, _Key) ->
 -doc """
 Verifies an RRset against one of its RRSIGs, as RFC 4035 §5.3 has a validator do.
 
-Returns `true` if every record of the RRset has the RRSIG's owner and class and
-the type it covers, the RRSIG's signer is the owner or one of its ancestors, its
-labels field counts no more labels than the owner has and no fewer than the
-signer has, the time `now` in `Opts`, by default the current time, is within its
-validity period, compared in serial number arithmetic (RFC 4034 §3.1.5), and its
-signature verifies with one of the DNSKEYs it names: a zone key, with the Zone
-Key flag set, at the RRSIG's signer's name, with the RRSIG's algorithm and key
-tag. Otherwise it returns `false`, as it does for an algorithm this module does
-not implement or the local crypto cannot verify, and for a malformed key or
+Returns `true` if all of these hold:
+
+- Every record of the RRset has the RRSIG's owner and class and the type it
+  covers.
+- The RRSIG's signer can be the zone the RRset is in, as BIND checks it: for an
+  NS, SOA or DNSKEY RRset its owner, for an NSEC3 RRset its owner's parent, for
+  a DS RRset a zone above its owner, and for any other the owner or one of its
+  ancestors.
+- Its labels field counts no more labels than the owner has and no fewer than
+  the signer has.
+- The time `now` in `Opts`, by default the current time, is within its validity
+  period, compared in serial number arithmetic (RFC 4034 §3.1.5).
+- Its signature verifies with one of the DNSKEYs it names: a zone key, with the
+  Zone Key flag set, at the RRSIG's signer's name, with the RRSIG's algorithm
+  and key tag.
+
+Otherwise it returns `false`, as it does for an algorithm this module does not
+implement or the local crypto cannot verify, and for a malformed key or
 signature.
 
 An RRset a wildcard was expanded into verifies with the wildcard's RRSIG. The
@@ -553,9 +562,9 @@ serial_at_most(A, B) ->
 %% RFC4035§5.3.1: every record of the RRset has the RRSIG's owner and class and
 %% the type it covers, the labels field counts no more labels than the owner
 %% has, and the signer is the RRset's zone. The zone cut is not known here, so
-%% the signer must be the owner or one of its ancestors, and the labels field
-%% count no fewer labels than the signer has, so that a wildcard it names
-%% (RFC4035§5.3.2) is in the signer's zone too
+%% the signer must be a zone the RRset can be in, and the labels field count no
+%% fewer labels than the signer has, so that a wildcard it names (RFC4035§5.3.2)
+%% is in the signer's zone too
 -spec fits_rrset(dns:rr(), dns:labels() | invalid, [dns:rr()]) -> boolean().
 fits_rrset(_RRSig, invalid, _RRs) ->
     false;
@@ -577,7 +586,25 @@ fits_rrset(
     Owner =/= invalid andalso lists:all(InRRset, RRs) andalso
         Labels =< count_labels(Owner) andalso
         length(Signer) =< Labels andalso
-        is_at_or_under(Owner, Signer).
+        can_hold(Signer, Type, Owner).
+
+%% Whether a zone can hold an RRset of the type at the owner, as BIND checks it.
+%% NS, SOA and DNSKEY RRsets are at the apex, and NSEC3 RRsets one label under
+%% it (RFC5155§3). A DS RRset is in the zone above the delegation (RFC4034§5),
+%% never in the zone it delegates to. Any other RRset is at the apex or under it.
+-spec can_hold(dns:labels(), dns:type(), dns:labels()) -> boolean().
+can_hold(Zone, Type, Owner) when
+    Type =:= ?DNS_TYPE_NS orelse Type =:= ?DNS_TYPE_SOA orelse Type =:= ?DNS_TYPE_DNSKEY
+->
+    dns_domain:are_equal_labels(Owner, Zone);
+can_hold(Zone, ?DNS_TYPE_NSEC3, [_Hash | Parent]) ->
+    dns_domain:are_equal_labels(Parent, Zone);
+can_hold(_Zone, ?DNS_TYPE_NSEC3, []) ->
+    false;
+can_hold(Zone, ?DNS_TYPE_DS, Owner) ->
+    length(Zone) < length(Owner) andalso is_at_or_under(Owner, Zone);
+can_hold(Zone, _Type, Owner) ->
+    is_at_or_under(Owner, Zone).
 
 %% The key and the signature come off the wire, so what crypto cannot verify
 %% does not verify: key material it refuses, such as an ECDSA key that is no
