@@ -65,6 +65,15 @@ groups() ->
             verify_checks_every_rr_of_rrset,
             verify_dsa_refused_by_crypto_is_false,
             verify_uses_serial_number_arithmetic,
+            verify_rejects_expiration_before_inception,
+            verify_skips_dnskey_with_bad_owner,
+            verify_short_rsa_signature_same_for_all_algorithms,
+            verify_dsa_key_with_binary_field,
+            sign_rejects_dsa_q_over_160_bits,
+            sign_dsa_p_over_1024_bits_names_cause,
+            verify_dsa_dnskey_after_wire_round_trip,
+            verify_rejects_signer_in_wrong_zone,
+            verify_rsa_key_as_binaries,
             signers_name_in_canonical_form,
             ih_custom_hash_test,
             dsa_sign_verify_test,
@@ -995,6 +1004,198 @@ verify_uses_serial_number_arithmetic(_Config) ->
     %% After 2106 the time is more than 32 bits, the fields are not
     ?assert(Verify(50, 200, 1 bsl 32 + 100)),
     ?assertNot(Verify(50, 200, 1 bsl 32 + 300)).
+
+%% RFC4034§3.1.5: the inception must be before the expiration in serial number
+%% arithmetic. BIND, Unbound and ldns reject an RRSIG when this is not true.
+verify_rejects_expiration_before_inception(_Config) ->
+    {Priv, DNSKey, KeyTag} = ed25519_zone_key(~"example"),
+    A = rr_a(~"www.example", {192, 0, 2, 1}),
+    Verify = fun(Inception, Expiration, Now) ->
+        RRSig = dnssec:sign_rrset(
+            [A],
+            ~"example",
+            KeyTag,
+            ?DNS_ALG_ED25519,
+            Priv,
+            #{inception => Inception, expiration => Expiration}
+        ),
+        dnssec:verify_rrsig(RRSig, [A], [DNSKey], #{now => Now})
+    end,
+    %% The expiration is 100 seconds before the inception
+    ?assertNot(Verify(200, 100, 1 bsl 31 + 150)),
+    %% The period is longer than 2^31 seconds, thus the expiration is
+    %% before the inception in serial number arithmetic
+    I = 1700000000,
+    ?assertNot(Verify(I, (I + 1 bsl 31 + 10) band 16#FFFFFFFF, I + 100)).
+
+%% A DNSKEY with a bad owner name is not a key for the RRSIG. verify_rrsig/4
+%% must ignore it and use the other DNSKEYs, and it must not crash.
+verify_skips_dnskey_with_bad_owner(_Config) ->
+    {Priv, DNSKey, KeyTag} = ed25519_zone_key(~"example"),
+    A = rr_a(~"www.example", {192, 0, 2, 1}),
+    Opts = #{inception => 1000000, expiration => 2000000},
+    RRSig = dnssec:sign_rrset([A], ~"example", KeyTag, ?DNS_ALG_ED25519, Priv, Opts),
+    Verify = fun(Keys) -> dnssec:verify_rrsig(RRSig, [A], Keys, #{now => 1500000}) end,
+    ?assert(Verify([DNSKey])),
+    ?assert(Verify([DNSKey#dns_rr{name = ~"bad..example"}, DNSKey])),
+    TooLong = <<(binary:copy(~"a", 64))/binary, ".example">>,
+    ?assert(Verify([DNSKey#dns_rr{name = TooLong}, DNSKey])).
+
+%% RFC8017§8.2.2: an RSA signature has the length of the modulus. A signature
+%% without its first zero octet is shorter. RSA/SHA-256 and RSA/SHA-512 reject
+%% it, but RSA/SHA-1 accepts it. All RSA algorithms must give the same result.
+verify_short_rsa_signature_same_for_all_algorithms(_Config) ->
+    {[E, N], Priv} = crypto:generate_key(rsa, {1024, 65537}),
+    PublicKey = [binary:decode_unsigned(E), binary:decode_unsigned(N)],
+    Results = [
+        begin
+            DNSKey = dnssec:add_keytag_to_dnskey(#dns_rr{
+                name = ~"example",
+                type = ?DNS_TYPE_DNSKEY,
+                ttl = 3600,
+                data = #dns_rrdata_dnskey{
+                    flags = 256, protocol = 3, alg = Alg, public_key = PublicKey
+                }
+            }),
+            #dns_rr{data = #dns_rrdata_dnskey{keytag = KeyTag}} = DNSKey,
+            {RR, RRSig} = rsa_rrsig_with_leading_zero(Alg, KeyTag, Priv, 0),
+            #dns_rr{data = #dns_rrdata_rrsig{signature = <<0, Short/binary>>} = Data} = RRSig,
+            Verify = fun(Sig) -> dnssec:verify_rrsig(Sig, [RR], [DNSKey], #{now => 1500000}) end,
+            ?assert(Verify(RRSig), Alg),
+            {Alg, Verify(RRSig#dns_rr{data = Data#dns_rrdata_rrsig{signature = Short}})}
+        end
+     || Alg <- [
+            ?DNS_ALG_RSASHA1, ?DNS_ALG_NSEC3RSASHA1, ?DNS_ALG_RSASHA256, ?DNS_ALG_RSASHA512
+        ]
+    ],
+    ?assertEqual([{Alg, false} || {Alg, _} <- Results], Results).
+
+%% Sign A RRs with different owners until the signature starts with a zero
+%% octet. About 1 signature in 256 does.
+rsa_rrsig_with_leading_zero(Alg, KeyTag, Priv, I) when I < 100000 ->
+    RR = rr_a(<<"h", (integer_to_binary(I))/binary, ".example">>, {192, 0, 2, 1}),
+    Opts = #{inception => 1000000, expiration => 2000000},
+    case dnssec:sign_rrset([RR], ~"example", KeyTag, Alg, Priv, Opts) of
+        #dns_rr{data = #dns_rrdata_rrsig{signature = <<0, _/binary>>}} = RRSig -> {RR, RRSig};
+        _ -> rsa_rrsig_with_leading_zero(Alg, KeyTag, Priv, I + 1)
+    end.
+
+%% crypto accepts DSA key fields as integers or as binaries. A key with one
+%% field as a binary must verify as the key with integers does. On main it
+%% verified. Now crypto raises badarith and verify_rrsig/4 crashes.
+verify_dsa_key_with_binary_field(Config) ->
+    Samples = proplists:get_value(dnssec_samples, Config),
+    [#dnssec_test_sample{zonename = Zone, zsk_pl = ZskProps} | _] =
+        [S || #dnssec_test_sample{alg = dsa} = S <- Samples],
+    #key_info{tag = KeyTag, alg = Alg, rr = DNSKey} = generate_key_struct(ZskProps, dsa, Zone),
+    RR = rr_a(<<"test.", Zone/binary>>, {192, 0, 2, 1}),
+    Opts = #{inception => 1000000, expiration => 2000000},
+    RRSig = dnssec:sign_rrset(
+        [RR], Zone, KeyTag, Alg, helper_samplekeypl_to_privkey(ZskProps), Opts
+    ),
+    #dns_rr{data = #dns_rrdata_dnskey{public_key = [P, Q, G, Y]} = KeyData} = DNSKey,
+    Mixed = DNSKey#dns_rr{
+        data = KeyData#dns_rrdata_dnskey{public_key = [P, binary:encode_unsigned(Q), G, Y]}
+    },
+    ?assert(dnssec:verify_rrsig(RRSig, [RR], [DNSKey], #{now => 1500000})),
+    ?assert(dnssec:verify_rrsig(RRSig, [RR], [Mixed], #{now => 1500000})).
+
+%% RFC2536§3: R and S of a DSA signature have 20 octets each, thus Q has
+%% 160 bits. With a wider Q, crypto makes a wider R and S. sign_rrset/6 cuts
+%% them to 20 octets, and the RRSIG never verifies. dns_encode refuses this Q
+%% for the DNSKEY. sign_rrset/6 must refuse it too.
+sign_rejects_dsa_q_over_160_bits(_Config) ->
+    %% Not a real DSA group, which signing does not need
+    P = (1 bsl 1023) + 257,
+    Q = (1 bsl 223) + 12345,
+    {G, X} = {2, 16#1234567},
+    ?assertError(badarg, dns_encode:encode_dsa_key([P, Q, G, 16#89ABCDEF])),
+    RR = rr_a(~"www.example", {192, 0, 2, 1}),
+    ?assertError(_, dnssec:sign_rrset([RR], ~"example", 1, ?DNS_ALG_DSA, [P, Q, G, X], #{})).
+
+%% RFC2536§2: T is 0 to 8, thus P has at most 128 octets. For a wider P,
+%% sign_rrset/6 raises a bare badarg from dns_encode after crypto signed. The
+%% error must tell the cause, as {unsupported_algorithm, Alg} does.
+sign_dsa_p_over_1024_bits_names_cause(_Config) ->
+    P = (1 bsl 2047) + 257,
+    Q = 16#E2B4F7B1A4D6E39F7C5A0C0D7B4E3A9C1B2D3E4F,
+    RR = rr_a(~"www.example", {192, 0, 2, 1}),
+    Reason =
+        try dnssec:sign_rrset([RR], ~"example", 1, ?DNS_ALG_DSA, [P, Q, 2, 16#1234567], #{}) of
+            _ -> no_error
+        catch
+            error:R -> R
+        end,
+    ?assertNotEqual(no_error, Reason),
+    ?assertNotEqual(badarg, Reason).
+
+%% RFC2536§2: a DSA DNSKEY can have a T that is wider than P, G and Y need.
+%% The decoder makes integers of the key, and the encoder writes them with the
+%% narrowest T. Thus the canonical RDATA changes, and an RRSIG over the DNSKEY
+%% RRset does not verify after a wire round trip.
+verify_dsa_dnskey_after_wire_round_trip(_Config) ->
+    {Priv, ZoneKey, KeyTag} = ed25519_zone_key(~"example"),
+    Q = 16#E2B4F7B1A4D6E39F7C5A0C0D7B4E3A9C1B2D3E4F,
+    %% T = 1, thus P, G and Y have 72 octets. Their values fit in 64 octets.
+    KeyBytes = <<1, Q:160, (1 bsl 511 + 3):72/unit:8, 2:72/unit:8, (1 bsl 500 + 7):72/unit:8>>,
+    Raw = #dns_rr{
+        name = ~"example",
+        type = ?DNS_TYPE_DNSKEY,
+        ttl = 3600,
+        data = #dns_rrdata_dnskey{
+            flags = 256, protocol = 3, alg = ?DNS_ALG_DSA, public_key = KeyBytes
+        }
+    },
+    Wire = dns_encode:encode_rrdata(?DNS_CLASS_IN, Raw#dns_rr.data),
+    Decoded = Raw#dns_rr{
+        data = dns_decode:decode_rrdata(<<>>, ?DNS_CLASS_IN, ?DNS_TYPE_DNSKEY, Wire)
+    },
+    Opts = #{inception => 1000000, expiration => 2000000},
+    RRSig = dnssec:sign_rrset([Raw], ~"example", KeyTag, ?DNS_ALG_ED25519, Priv, Opts),
+    ?assert(dnssec:verify_rrsig(RRSig, [Raw], [ZoneKey], #{now => 1500000})),
+    ?assertEqual(Wire, dns_encode:encode_rrdata(?DNS_CLASS_IN, Decoded#dns_rr.data)),
+    ?assert(dnssec:verify_rrsig(RRSig, [Decoded], [ZoneKey], #{now => 1500000})).
+
+%% RFC4035§5.3.1: the signer must be the zone that holds the RRset. RFC4034§5:
+%% a DS RRset is in the parent zone, thus its own zone cannot sign it. The
+%% DNSKEY RRset at a zone apex is in that zone, thus the parent cannot sign it.
+verify_rejects_signer_in_wrong_zone(_Config) ->
+    {ChildPriv, ChildKey, ChildTag} = ed25519_zone_key(~"child.example"),
+    {ParentPriv, ParentKey, ParentTag} = ed25519_zone_key(~"example"),
+    Opts = #{inception => 1000000, expiration => 2000000},
+    DS = #dns_rr{
+        name = ~"child.example",
+        type = ?DNS_TYPE_DS,
+        ttl = 3600,
+        data = #dns_rrdata_ds{
+            keytag = ChildTag, alg = ?DNS_ALG_ED25519, digest_type = 2, digest = <<0:256>>
+        }
+    },
+    DSSig = dnssec:sign_rrset([DS], ~"child.example", ChildTag, ?DNS_ALG_ED25519, ChildPriv, Opts),
+    ?assertNot(dnssec:verify_rrsig(DSSig, [DS], [ChildKey], #{now => 1500000})),
+    KeySig = dnssec:sign_rrset(
+        [ChildKey], ~"example", ParentTag, ?DNS_ALG_ED25519, ParentPriv, Opts
+    ),
+    ?assertNot(dnssec:verify_rrsig(KeySig, [ChildKey], [ParentKey], #{now => 1500000})).
+
+%% crypto:generate_key(rsa, _) gives the public key as [E, N] binaries. The
+%% key() type on main allowed this form. The doc of verify_rrsig/4 tells to
+%% set the key tag with add_keytag_to_dnskey/1. It must accept this form.
+verify_rsa_key_as_binaries(_Config) ->
+    {[_E, _N] = PublicKey, Priv} = crypto:generate_key(rsa, {1024, 65537}),
+    DNSKey = dnssec:add_keytag_to_dnskey(#dns_rr{
+        name = ~"example",
+        type = ?DNS_TYPE_DNSKEY,
+        ttl = 3600,
+        data = #dns_rrdata_dnskey{
+            flags = 256, protocol = 3, alg = ?DNS_ALG_RSASHA256, public_key = PublicKey
+        }
+    }),
+    #dns_rr{data = #dns_rrdata_dnskey{keytag = KeyTag}} = DNSKey,
+    A = rr_a(~"www.example", {192, 0, 2, 1}),
+    Opts = #{inception => 1000000, expiration => 2000000},
+    RRSig = dnssec:sign_rrset([A], ~"example", KeyTag, ?DNS_ALG_RSASHA256, Priv, Opts),
+    ?assert(dnssec:verify_rrsig(RRSig, [A], [DNSKey], #{now => 1500000})).
 
 ed25519_zone_key(Zone) ->
     {Pub, Priv} = crypto:generate_key(eddsa, ed25519),
