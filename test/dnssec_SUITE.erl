@@ -41,6 +41,7 @@ groups() ->
             gen_nsec3_validation,
             gen_nsec_name_order,
             gen_nsec_name_order_fqdn_and_relative,
+            gen_nsec3_takes_names_however_written,
             pubkey_gen,
             verify_rrset,
             verify_rrsig_expiry,
@@ -70,6 +71,7 @@ groups() ->
             verify_rrsig_with_bad_names_is_false,
             verify_rrsig_with_undecoded_rdata_is_false,
             verify_needs_dnskey_of_rrsig_class,
+            sign_rr_groups_owner_names_as_names,
             verify_short_rsa_signature_same_for_all_algorithms,
             verify_dsa_key_with_binary_field,
             sign_rejects_dsa_q_over_160_bits,
@@ -238,8 +240,9 @@ gen_nsec_name_order(_Config) ->
     NSECs = [RR || #dns_rr{type = ?DNS_TYPE_NSEC} = RR <- Generated],
     ?assertEqual(3, length(NSECs)).
 
-%% One name spelled both as an FQDN and relatively is two distinct binaries that split to the same
-%% labels, so it slips past name_order/2's equality clauses and into the label comparison.
+%% One name spelled both as an FQDN and relatively is one owner, so gen_nsec makes one NSEC for
+%% it, with the types of both spellings' records. #146 stopped this crashing in name_order/2, but
+%% grouping by spelling then made two NSECs, the first pointing at the second.
 gen_nsec_name_order_fqdn_and_relative(_Config) ->
     RRs = [
         #dns_rr{
@@ -257,7 +260,38 @@ gen_nsec_name_order_fqdn_and_relative(_Config) ->
             data = #dns_rrdata_txt{txt = [~"v=1"]}
         }
     ],
-    ?assertEqual(2, length(dnssec:gen_nsec(~"example", RRs, 3600))).
+    [#dns_rr{name = Owner, data = #dns_rrdata_nsec{next_dname = Next, types = Types}}] =
+        dnssec:gen_nsec(~"example", RRs, 3600),
+    ?assertEqual({~"a.example", ~"example"}, {Owner, Next}),
+    ?assertEqual(
+        lists:sort([?DNS_TYPE_A, ?DNS_TYPE_TXT, ?DNS_TYPE_NSEC, ?DNS_TYPE_RRSIG]), lists:sort(Types)
+    ).
+
+%% gen_nsec3 compares names with the zone's as names: a zone whose SOA has its
+%% final dot and whose records have none gives the chain it gives written one
+%% way, where it crashed. An empty non-terminal is hashed with the dot its label
+%% holds, which split/1 unescapes and the ancestors are built from.
+gen_nsec3_takes_names_however_written(_Config) ->
+    Chain = fun(Soa, Records) ->
+        lists:sort([
+            {hd(dns_domain:split(Name)), Next, lists:sort(Types)}
+         || #dns_rr{name = Name, data = #dns_rrdata_nsec3{hash = Next, types = Types}} <-
+                dnssec:gen_nsec3([soa_rr(Soa), nsec3param_rr(~"example") | Records])
+        ])
+    end,
+    Www = [rr_a(~"www.sub.example", {192, 0, 2, 1})],
+    ?assertEqual(3, length(Chain(~"example", Www))),
+    ?assertEqual(Chain(~"example", Www), Chain(~"example.", Www)),
+    Hash = fun(Name) ->
+        Wire = dns_domain:to_wire(Name),
+        base32:encode(dnssec:ih(?DNSSEC_NSEC3_ALG_SHA1, <<>>, Wire, 0), [hex, nopad])
+    end,
+    Owners = [
+        Owner
+     || {Owner, _, _} <- Chain(~"example", [rr_a(~"x.a\\.b.example", {192, 0, 2, 1})])
+    ],
+    ?assert(lists:member(Hash(~"a\\.b.example"), Owners)),
+    ?assertNot(lists:member(Hash(~"a.b.example"), Owners)).
 
 %% Simulates wire encoding/decoding to ensure the 'data' field
 %% matches the format expected by the test comparison.
@@ -1069,6 +1103,22 @@ verify_needs_dnskey_of_rrsig_class(_Config) ->
      || Class <- [?DNS_CLASS_CH, ?DNS_CLASS_HS, ?DNS_CLASS_NONE, ?DNS_CLASS_ANY]
     ].
 
+%% RFC4034§6.2: owner names compare in lower case, and a final dot only marks a
+%% name as absolute: records whose owner is written in different ways are one
+%% RRset, signed once, under the owner name its first record has
+sign_rr_groups_owner_names_as_names(_Config) ->
+    {Priv, DNSKey, KeyTag} = ed25519_zone_key(~"example"),
+    RRs = [
+        rr_a(~"www.example.", {192, 0, 2, 1}),
+        rr_a(~"WWW.example", {192, 0, 2, 2}),
+        rr_a(~"www.example", {192, 0, 2, 3})
+    ],
+    Opts = #{inception => 1000000, expiration => 2000000},
+    [#dns_rr{name = Owner} = RRSig] =
+        dnssec:sign_rr(RRs, ~"example", KeyTag, ?DNS_ALG_ED25519, Priv, Opts),
+    ?assertEqual(~"www.example.", Owner),
+    ?assert(dnssec:verify_rrsig(RRSig, RRs, [DNSKey], #{now => 1500000})).
+
 %% RFC8017§8.2.2: an RSA signature has the length of the modulus. A signature
 %% without its first zero octet is shorter. RSA/SHA-256 and RSA/SHA-512 reject
 %% it, but RSA/SHA-1 accepts it. All RSA algorithms must give the same result.
@@ -1289,6 +1339,29 @@ ed25519_zone_key(Zone) ->
 
 rr_a(Name, IP) ->
     #dns_rr{name = Name, type = ?DNS_TYPE_A, ttl = 3600, data = #dns_rrdata_a{ip = IP}}.
+
+soa_rr(Zone) ->
+    #dns_rr{
+        name = Zone,
+        type = ?DNS_TYPE_SOA,
+        ttl = 3600,
+        data = #dns_rrdata_soa{
+            mname = ~"ns.example",
+            rname = ~"hostmaster.example",
+            serial = 1,
+            refresh = 3600,
+            retry = 600,
+            expire = 86400,
+            minimum = 300
+        }
+    }.
+
+nsec3param_rr(Zone) ->
+    #dns_rr{
+        name = Zone,
+        type = ?DNS_TYPE_NSEC3PARAM,
+        data = #dns_rrdata_nsec3param{hash_alg = 1, flags = 0, iterations = 0, salt = <<>>}
+    }.
 
 %% Keys and signatures come off the wire: one too short for its algorithm does
 %% not verify, rather than crashing

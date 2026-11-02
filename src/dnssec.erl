@@ -162,7 +162,7 @@ gen_nsec(ZoneNameM, RR, TTL, Opts) ->
             ttl = TTL,
             data = #dns_rrdata_nsec{next_dname = Name, types = Types}
         }
-     || {Name, Class} := Types <- Map
+     || {_Key, Class} := {Name, Types} <- Map
     ],
     Sorted = name_order(Unsorted),
     add_next_dname([], Sorted, ZoneName).
@@ -225,7 +225,7 @@ gen_nsec3(RRs, ZoneName, Alg, Salt, Iterations, TTL, Class, Opts) ->
     Map = build_rrmap(RRs, BaseTypes, ZoneName),
     Unsorted = maps:fold(
         fun
-            ({Name, SClass}, Types, Acc) when SClass =:= Class ->
+            ({_Key, SClass}, {Name, Types}, Acc) when SClass =:= Class ->
                 DName = dns_domain:to_wire(Name),
                 HashedName = ih(Alg, Salt, DName, Iterations),
                 HexdHashName = base32:encode(HashedName, [hex, nopad]),
@@ -304,7 +304,16 @@ add_next_hash(
 normalise_rr(#dns_rr{name = Name} = RR) ->
     RR#dns_rr{name = dns_domain:to_lower(Name)}.
 
--type rrtype_map() :: #{{dns:dname(), dns:class()} => [integer()]}.
+%% A name as a key that is the same however it is written, in any case and with
+%% or without its final dot, as RFC4034§6.2 compares names: records under one
+%% owner are one RRset, and an owner gets one NSEC or NSEC3, whichever way each
+%% record writes it
+-spec name_key(dns:dname()) -> dns:dname().
+name_key(Name) ->
+    dns_domain:join(dns_domain:split(dns_domain:to_lower(Name))).
+
+%% Each owner, by its name_key/1, with the name it was first given and its types
+-type rrtype_map() :: #{{dns:dname(), dns:class()} => {dns:dname(), [integer()]}}.
 
 -spec build_rrmap([dns:rr()], [integer()], dns:dname()) -> rrtype_map().
 build_rrmap(RR, BaseTypes, ZoneName) ->
@@ -325,7 +334,7 @@ add_nonterm_ancestors(_, [], Map) ->
     Map;
 add_nonterm_ancestors(Class, [Name | Rest], Map) ->
     Key = {Name, Class},
-    NewMap = maps:update_with(Key, fun(V) -> V end, [], Map),
+    NewMap = maps:update_with(Key, fun(V) -> V end, {Name, []}, Map),
     add_nonterm_ancestors(Class, Rest, NewMap).
 
 -spec build_rrmap_gbt([dns:rr()], [dns:type()]) -> rrtype_map().
@@ -337,16 +346,16 @@ build_rrmap_gbt([], _BaseTypes, Map) ->
     Map;
 build_rrmap_gbt([#dns_rr{} = RR | Rest], BaseTypes, Map) ->
     #dns_rr{name = Name, class = Class, type = Type} = normalise_rr(RR),
-    Key = {Name, Class},
+    Key = {name_key(Name), Class},
     NewMap = maps:update_with(
         Key,
-        fun(Types) ->
+        fun({First, Types}) ->
             case lists:member(Type, Types) of
-                true -> Types;
-                false -> [Type | Types]
+                true -> {First, Types};
+                false -> {First, [Type | Types]}
             end
         end,
-        [Type | BaseTypes],
+        {Name, [Type | BaseTypes]},
         Map
     ),
     build_rrmap_gbt(Rest, BaseTypes, NewMap).
@@ -357,10 +366,12 @@ build_rrmap_gbt([#dns_rr{} = RR | Rest], BaseTypes, Map) ->
 rrs_to_rrsets(RR) when is_list(RR) ->
     rrs_to_rrsets(RR, #{}, #{}).
 
--spec rrs_to_rrsets([dns:rr()], #{tree_key() => dns:ttl()}, #{tree_key() => [dns:rrdata()]}) ->
+-spec rrs_to_rrsets(
+    [dns:rr()], #{tree_key() => dns:ttl()}, #{tree_key() => {dns:dname(), [dns:rrdata()]}}
+) ->
     [[dns:rr()]].
 rrs_to_rrsets([], TTLMap, RRSets) ->
-    [finalise_rrs_to_rrsets(TTLMap, Key, Datas) || Key := Datas <- RRSets];
+    [finalise_rrs_to_rrsets(TTLMap, Key, Name, Datas) || Key := {Name, Datas} <- RRSets];
 rrs_to_rrsets([#dns_rr{} = RR | RRs], TTLMap, RRSets) ->
     #dns_rr{
         name = Name,
@@ -369,14 +380,19 @@ rrs_to_rrsets([#dns_rr{} = RR | RRs], TTLMap, RRSets) ->
         ttl = TTL,
         data = Data
     } = normalise_rr(RR),
-    Key = {Name, Class, Type},
+    %% The RRset takes the owner name its first record was given
+    Key = {name_key(Name), Class, Type},
     NewTTLMap = maps:update_with(Key, fun(OldTTL) -> max(OldTTL, TTL) end, TTL, TTLMap),
-    NewRRSets = maps:update_with(Key, fun(OldData) -> [Data | OldData] end, [Data], RRSets),
+    NewRRSets = maps:update_with(
+        Key, fun({First, OldData}) -> {First, [Data | OldData]} end, {Name, [Data]}, RRSets
+    ),
     rrs_to_rrsets(RRs, NewTTLMap, NewRRSets).
 
--spec finalise_rrs_to_rrsets(#{tree_key() => dns:ttl()}, tree_key(), [dns:rrdata()]) ->
+-spec finalise_rrs_to_rrsets(
+    #{tree_key() => dns:ttl()}, tree_key(), dns:dname(), [dns:rrdata()]
+) ->
     [dns:rr()].
-finalise_rrs_to_rrsets(TTLMap, {Name, Class, Type} = Key, Datas) ->
+finalise_rrs_to_rrsets(TTLMap, {_Key, Class, Type} = Key, Name, Datas) ->
     TTL = maps:get(Key, TTLMap),
     [
         #dns_rr{
@@ -394,7 +410,12 @@ finalise_rrs_to_rrsets(TTLMap, {Name, Class, Type} = Key, Datas) ->
 sign_rr(RR, SignerName, KeyTag, Alg, Key) ->
     sign_rr(RR, SignerName, KeyTag, Alg, Key, #{}).
 
--doc "Signs a list of `t:dns:rr/0`, raising as `sign_rrset/6` does.".
+-doc """
+Signs each RRset in a list of `t:dns:rr/0`, raising as `sign_rrset/6` does.
+
+Records whose owner names differ only in case or in a final dot are one RRset,
+which keeps the owner name its first record has.
+""".
 -spec sign_rr([dns:rr()], dns:dname(), keytag(), sigalg(), key(), sign_rr_opts()) -> [dns:rr()].
 sign_rr(RR, SignerName, KeyTag, Alg, Key, Opts) when is_map(Opts) ->
     RRSets = rrs_to_rrsets(RR),
@@ -837,11 +858,11 @@ canonical_rrdata_form(#dns_rrdata_srv{target = Target} = Data) ->
 canonical_rrdata_form(X) ->
     X.
 
+%% The names between a name and its zone, each by its name_key/1, which both are
+%% compared by, so that the zone's name can be written as the records' are not
 -spec name_ancestors(dns:dname(), dns:dname()) -> [binary()].
 name_ancestors(Name, ZoneName) ->
-    NameLwr = dns_domain:to_lower(Name),
-    ZoneNameLwr = dns_domain:to_lower(ZoneName),
-    gen_name_ancestors(NameLwr, ZoneNameLwr).
+    gen_name_ancestors(name_key(Name), name_key(ZoneName)).
 
 -spec gen_name_ancestors(binary(), binary()) -> [binary()].
 gen_name_ancestors(ZoneName, ZoneName) ->
@@ -854,7 +875,11 @@ gen_name_ancestors(Name, ZoneName) when byte_size(Name) > byte_size(ZoneName) + 
                 [_] ->
                     [];
                 [_ | Labels0] ->
-                    [FirstLabel | Labels] = lists:reverse(Labels0),
+                    %% split/1 unescapes the labels, so a dot in one is escaped again
+                    [FirstLabel | Labels] = [
+                        dns_domain:escape_label(Label)
+                     || Label <- lists:reverse(Labels0)
+                    ],
                     gen_name_ancestors_labels(Labels, [<<FirstLabel/binary, $., ZoneName/binary>>])
             end;
         _ ->
