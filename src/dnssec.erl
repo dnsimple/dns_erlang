@@ -580,39 +580,48 @@ verify_rrsig(
         signers_name = SignersName,
         signature = Signature
     } = Data,
-    %% RFC4035§5.3.1: the RRSIG's signer, algorithm and key tag name the DNSKEY,
-    %% which must be a zone key, with bit 7 of its flags set (RFC4034§2.1.1), in
-    %% the zone's apex DNSKEY RRset, so of the RRSIG's class. The names compare
-    %% as names: a zone file's keep their final dot, the wire's not. Only the
-    %% keys the RRSIG names are tried, never every key of the zone
     Signer = name_labels(SignersName),
-    Keys = [
-        PubKey
-     || #dns_rr{
-            name = Name,
-            class = KeyClass,
-            type = ?DNS_TYPE_DNSKEY,
-            data = #dns_rrdata_dnskey{flags = Flags, protocol = 3, alg = Alg, public_key = PubKey}
-        } = DNSKey <- RRDNSKey,
-        KeyClass =:= Class,
-        Flags band 16#0100 =/= 0,
-        Alg =:= SigAlg,
-        is_name(Name, Signer),
-        key_tag(DNSKey) =:= SigKeyTag
-    ],
-    case
-        Keys =/= [] andalso in_validity_period(Incept, Expire, Now) andalso
-            fits_rrset(RRSig, Signer, RRs)
-    of
+    %% The validity period and the RRset are checked before the keys, whose key
+    %% tags cost an encoding and a decoding each
+    case in_validity_period(Incept, Expire, Now) andalso fits_rrset(RRSig, Signer, RRs) of
         true ->
-            SignedData = signed_data(Data, RRs),
-            lists:any(fun(Key) -> verify_with_key(SigAlg, Key, Signature, SignedData) end, Keys);
+            %% RFC4035§5.3.1: the RRSIG's signer, algorithm and key tag name the
+            %% DNSKEY, which must be a zone key, with bit 7 of its flags set
+            %% (RFC4034§2.1.1), in the zone's apex DNSKEY RRset, so of the RRSIG's
+            %% class. The names compare as names: a zone file's keep their final
+            %% dot, the wire's not. Only the keys the RRSIG names are tried, never
+            %% every key of the zone
+            Keys = [
+                PubKey
+             || #dns_rr{
+                    name = Name,
+                    class = KeyClass,
+                    type = ?DNS_TYPE_DNSKEY,
+                    data = #dns_rrdata_dnskey{
+                        flags = Flags, protocol = 3, alg = Alg, public_key = PubKey
+                    }
+                } = DNSKey <- RRDNSKey,
+                KeyClass =:= Class,
+                Flags band 16#0100 =/= 0,
+                Alg =:= SigAlg,
+                is_name(Name, Signer),
+                key_tag(DNSKey) =:= SigKeyTag
+            ],
+            verify_with_keys(SigAlg, Keys, Signature, Data, RRs);
         false ->
             false
     end;
 %% An RRSIG whose RDATA the decoder could not read, which it keeps as bytes
 verify_rrsig(#dns_rr{type = ?DNS_TYPE_RRSIG}, _RRs, _RRDNSKey, _Opts) ->
     false.
+
+-spec verify_with_keys(dns:uint8(), [key()], binary(), dns:rrdata_rrsig(), [dns:rr(), ...]) ->
+    boolean().
+verify_with_keys(_SigAlg, [], _Signature, _Data, _RRs) ->
+    false;
+verify_with_keys(SigAlg, Keys, Signature, Data, RRs) ->
+    SignedData = signed_data(Data, RRs),
+    lists:any(fun(Key) -> verify_with_key(SigAlg, Key, Signature, SignedData) end, Keys).
 
 %% RFC4034§3.1.5: inception and expiration are 32-bit serial numbers, which the
 %% time is compared with in serial number arithmetic (RFC1982): a validity period
