@@ -934,6 +934,20 @@ test_dnskey_formats(_Config) ->
         }
     },
     ?assertError(badarg, dns_json:to_map(EcdsaList)),
+    %% Nor is an RSA key in a list of other than two, nor a DSA key in bytes,
+    %% which the wire encoder reads otherwise
+    RsaThree = DnskeyBytes#dns_rr{
+        data = (DnskeyBytes#dns_rr.data)#dns_rrdata_dnskey{
+            public_key = [<<3, 1, 0>>, <<1, 200>>, <<7>>]
+        }
+    },
+    ?assertError(badarg, dns_json:to_map(RsaThree)),
+    DsaBytes = DnskeyBytes#dns_rr{
+        data = (DnskeyBytes#dns_rr.data)#dns_rrdata_dnskey{
+            alg = ?DNS_ALG_DSA, public_key = [<<0, 0, 0, 1, 7>>, <<5>>, <<2>>, <<3>>]
+        }
+    },
+    ?assertError(badarg, dns_json:to_map(DsaBytes)),
 
     %% Test CDNSKEY with binary public_key
     CdnskeyBinary = #dns_rr{
@@ -963,7 +977,13 @@ test_dnskey_formats(_Config) ->
             keytag = 12345
         }
     },
-    assert_transcode(CdnskeyList).
+    assert_transcode(CdnskeyList),
+    CdnskeyBytes = CdnskeyList#dns_rr{
+        data = (CdnskeyList#dns_rr.data)#dns_rrdata_cdnskey{
+            public_key = [<<1, 0, 1>>, <<1, 9, 50>>]
+        }
+    },
+    ?assertEqual(dns_json:to_map(CdnskeyList), dns_json:to_map(CdnskeyBytes)).
 
 test_nsec3_salt(_Config) ->
     %% RRDATA records must be wrapped in dns_rr
