@@ -472,10 +472,6 @@ from_map_field(dns_rrdata_aaaa, ip, Value) when is_binary(Value) ->
         {ok, Tuple} -> Tuple;
         {error, _} -> erlang:error({invalid_ip, Value})
     end;
-from_map_field(dns_rrdata_dnskey, public_key, Value) when is_binary(Value) ->
-    base64:decode(Value);
-from_map_field(dns_rrdata_cdnskey, public_key, Value) when is_binary(Value) ->
-    base64:decode(Value);
 from_map_field(Tag, salt, ~"-") when
     Tag =:= dns_rrdata_nsec3 orelse Tag =:= dns_rrdata_nsec3param
 ->
@@ -503,7 +499,7 @@ from_map_field(_Tag, _Field, Value) ->
     Value.
 
 %% Decode binary fields based on tag and field name
--spec decode_field(atom(), atom(), binary()) -> binary() | [integer()].
+-spec decode_field(atom(), atom(), binary()) -> binary().
 decode_field(dns_rrdata_cert, cert, Value) ->
     base64:decode(Value);
 decode_field(dns_rrdata_dhcid, data, Value) ->
@@ -513,6 +509,10 @@ decode_field(dns_rrdata_openpgpkey, data, Value) ->
 decode_field(dns_rrdata_hhit, data, Value) ->
     base64:decode(Value);
 decode_field(dns_rrdata_brid, data, Value) ->
+    base64:decode(Value);
+decode_field(dns_rrdata_dnskey, public_key, Value) ->
+    base64:decode(Value);
+decode_field(dns_rrdata_cdnskey, public_key, Value) ->
     base64:decode(Value);
 decode_field(dns_rrdata_key, public_key, Value) ->
     base64:decode(Value);

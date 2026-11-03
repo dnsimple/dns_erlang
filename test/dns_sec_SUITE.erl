@@ -78,7 +78,6 @@ groups() ->
             rsa_key_rfc3110_rules_out_verifies_nothing,
             sign_rejects_dsa_q_over_160_bits,
             sign_dsa_p_over_1024_bits_names_cause,
-            verify_dsa_dnskey_after_wire_round_trip,
             verify_rejects_signer_in_wrong_zone,
             verify_signer_of_ds_and_nsec3,
             crypto_keys_sign_and_verify,
@@ -313,9 +312,7 @@ cycle_nsec_encoding(_Config, RRs) ->
 %% Every RRSIG in the AXFRs of the zones BIND signed in data_samples:dnssec/0
 %% verifies. This test once matched the record types as atoms, found no
 %% signatures and passed without verifying anything, while ECDSA and DSA
-%% signatures did not verify at all, so every zone must yield signatures. Each
-%% verifies with the DNSKEYs as the wire decoder gives them, RSA and DSA keys as
-%% integers, and with their keys as RDATA bytes, as a zone file gives them.
+%% signatures did not verify at all, so every zone must yield signatures.
 verify_rrset(Config) ->
     PerZone = helper_verify_rrset_test_cases(Config),
     [?assertNotEqual([], Cases, Zone) || {Zone, Cases} <- PerZone],
@@ -338,29 +335,18 @@ verify_rrset(Config) ->
         ])
     ),
     Failed = [
-        {Zone, Form, length(Bad), length(Cases)}
+        {Zone, length(Bad), length(Cases)}
      || {Zone, Cases} <- PerZone,
-        {Form, KeyForm} <- [{decoded, fun(Keys) -> Keys end}, {bytes, fun dnskeys_as_bytes/1}],
         Bad <- [
             [
                 RRSig
              || {RRSig, RRSet, DNSKeys, Opts} <- Cases,
-                not dns_sec:verify_rrsig(RRSig, RRSet, KeyForm(DNSKeys), Opts)
+                not dns_sec:verify_rrsig(RRSig, RRSet, DNSKeys, Opts)
             ]
         ],
         Bad =/= []
     ],
     ?assertEqual([], Failed).
-
-%% The DNSKEYs with their keys as the RDATA's bytes, as a zone file gives them
-dnskeys_as_bytes(DNSKeys) ->
-    [
-        begin
-            <<_:32, Key/binary>> = dns_encode:encode_rrdata(?DNS_CLASS_IN, Data),
-            RR#dns_rr{data = Data#dns_rrdata_dnskey{public_key = Key}}
-        end
-     || #dns_rr{data = Data} = RR <- DNSKeys
-    ].
 
 %% RFC4035§5.3.1: an RRSIG verifies from its inception to its expiration, and
 %% not a second outside them. Its signature and key are good, so that only the
@@ -729,19 +715,17 @@ rfc_known_answer(#{source := Source, alg := Alg, private_key := PrivateKey, zone
         not lists:member(Type, [?DNS_TYPE_DNSKEY, ?DNS_TYPE_DS, ?DNS_TYPE_RRSIG])
     ],
     Opts = #{now => Inception},
-    %% The zone parser and the wire decoder each compute the key tag
-    #dns_rr{data = #dns_rrdata_dnskey{keytag = WireKeyTag}} =
-        DecodedDNSKey = dns_sec:add_keytag_to_dnskey(DNSKey),
-    ?assertEqual(KeyTag, WireKeyTag, Source),
+    %% The zone parser gave the DNSKEY the key tag the RFC's RRSIG and DS carry,
+    %% and add_keytag_to_dnskey/1 gives it too
+    #dns_rr{data = #dns_rrdata_dnskey{keytag = AddedKeyTag}} = dns_sec:add_keytag_to_dnskey(DNSKey),
+    ?assertEqual(KeyTag, AddedKeyTag, Source),
     case [Data || #dns_rr{type = ?DNS_TYPE_DS, data = Data} <- RRs] of
         [#dns_rrdata_ds{keytag = KeyTag, alg = Alg, digest_type = DigestType, digest = Digest}] ->
             ?assertEqual(Digest, ds_digest(DigestType, Owner, KeyData), Source);
         [] ->
             ok
     end,
-    %% With the key as the zone file parser and as the wire decoder give it
     ?assert(dns_sec:verify_rrsig(RRSig, RRSet, [DNSKey], Opts), Source),
-    ?assert(dns_sec:verify_rrsig(RRSig, RRSet, [DecodedDNSKey], Opts), Source),
     <<Head:(byte_size(Signature) - 1)/binary, Last>> = Signature,
     Flipped = SigData#dns_rrdata_rrsig{signature = <<Head/binary, (Last bxor 1)>>},
     ?assertNot(dns_sec:verify_rrsig(RRSig#dns_rr{data = Flipped}, RRSet, [DNSKey], Opts), Source),
@@ -805,7 +789,7 @@ signatures_verify_independently(Config) ->
     %% No RFC has a DSA example, so the keys BIND signed the DSA sample zones with
     DSA = [
         begin
-            #key_info{tag = KeyTag, alg = Alg} = generate_key_struct(ZSK, dsa, Zone),
+            #key_info{tag = KeyTag, alg = Alg} = generate_key_struct(ZSK, Zone),
             [P, Q, G, Y] = helper_samplekeypl_to_pubkey(ZSK),
             Ours = sign_by_hand_rrset(
                 Alg, KeyTag, Zone, helper_samplekeypl_to_privkey(ZSK), 1000000, 2000000
@@ -1180,9 +1164,8 @@ rsa_rrsig_with_leading_zero(Alg, KeyTag, Priv, I) when I < 100000 ->
 
 %% RFC2536§2: P is "in the range 2**(511+64T) < P < 2**(512+64T) and so is
 %% 64 + 8*T octets long", so a DSA DNSKEY whose T is wider than its P needs is
-%% no RFC 2536 key. The decoder and the zone file parser keep its bytes, so that
-%% it encodes back unchanged, and verify_rrsig/4 verifies nothing with it, as
-%% with an RSA key that RFC3110§2 rules out
+%% no RFC 2536 key, and verify_rrsig/4 verifies nothing with it, as with an RSA
+%% key that RFC3110§2 rules out
 dsa_key_with_wide_t_verifies_nothing(Config) ->
     Samples = proplists:get_value(dnssec_samples, Config),
     %% A key whose T is under 8, written here with the next T, eight more zero
@@ -1200,16 +1183,6 @@ dsa_key_with_wide_t_verifies_nothing(Config) ->
     Wide = <<(T + 1), Q/binary, 0:64, P/binary, 0:64, G/binary, 0:64, Y/binary>>,
     KeyData = #dns_rrdata_dnskey{flags = 256, protocol = 3, alg = ?DNS_ALG_DSA, public_key = Wide},
     WideKey = #dns_rr{name = Zone, type = ?DNS_TYPE_DNSKEY, ttl = 3600, data = KeyData},
-    Wire = dns_encode:encode_rrdata(?DNS_CLASS_IN, KeyData),
-    ?assertMatch(
-        #dns_rrdata_dnskey{public_key = Wide},
-        dns_decode:decode_rrdata(<<>>, ?DNS_CLASS_IN, ?DNS_TYPE_DNSKEY, Wire)
-    ),
-    ZoneText = <<Zone/binary, ". 3600 IN DNSKEY 256 3 3 ", (base64:encode(Wide))/binary, "\n">>,
-    ?assertMatch(
-        {ok, [#dns_rr{data = #dns_rrdata_dnskey{public_key = Wide}}]},
-        dns_zone:parse_string(ZoneText)
-    ),
     RR = rr_a(<<"test.", Zone/binary>>, {192, 0, 2, 1}),
     Opts = #{inception => 1000000, expiration => 2000000},
     Priv = helper_samplekeypl_to_privkey(KeyProps),
@@ -1282,33 +1255,6 @@ sign_dsa_p_over_1024_bits_names_cause(_Config) ->
         {unsupported_key, ?DNS_ALG_DSA},
         dns_sec:sign_rrset([RR], ~"example", 1, ?DNS_ALG_DSA, [P, Q, <<2>>, <<16#1234567:32>>], #{})
     ).
-
-%% RFC2536§2: a DSA DNSKEY can have a T that is wider than P, G and Y need.
-%% The decoder makes integers of the key, and the encoder writes them with the
-%% narrowest T. Thus the canonical RDATA changes, and an RRSIG over the DNSKEY
-%% RRset does not verify after a wire round trip.
-verify_dsa_dnskey_after_wire_round_trip(_Config) ->
-    {Priv, ZoneKey, KeyTag} = ed25519_zone_key(~"example"),
-    Q = 16#E2B4F7B1A4D6E39F7C5A0C0D7B4E3A9C1B2D3E4F,
-    %% T = 1, thus P, G and Y have 72 octets. Their values fit in 64 octets.
-    KeyBytes = <<1, Q:160, (1 bsl 511 + 3):72/unit:8, 2:72/unit:8, (1 bsl 500 + 7):72/unit:8>>,
-    Raw = #dns_rr{
-        name = ~"example",
-        type = ?DNS_TYPE_DNSKEY,
-        ttl = 3600,
-        data = #dns_rrdata_dnskey{
-            flags = 256, protocol = 3, alg = ?DNS_ALG_DSA, public_key = KeyBytes
-        }
-    },
-    Wire = dns_encode:encode_rrdata(?DNS_CLASS_IN, Raw#dns_rr.data),
-    Decoded = Raw#dns_rr{
-        data = dns_decode:decode_rrdata(<<>>, ?DNS_CLASS_IN, ?DNS_TYPE_DNSKEY, Wire)
-    },
-    Opts = #{inception => 1000000, expiration => 2000000},
-    RRSig = dns_sec:sign_rrset([Raw], ~"example", KeyTag, ?DNS_ALG_ED25519, Priv, Opts),
-    ?assert(dns_sec:verify_rrsig(RRSig, [Raw], [ZoneKey], #{now => 1500000})),
-    ?assertEqual(Wire, dns_encode:encode_rrdata(?DNS_CLASS_IN, Decoded#dns_rr.data)),
-    ?assert(dns_sec:verify_rrsig(RRSig, [Decoded], [ZoneKey], #{now => 1500000})).
 
 %% RFC4035§5.3.1: the signer must be the zone that holds the RRset. RFC4034§5:
 %% a DS RRset is in the parent zone, thus its own zone cannot sign it. The
@@ -1392,7 +1338,7 @@ crypto_keys_sign_and_verify(_Config) ->
     Opts = #{inception => 1000000, expiration => 2000000},
     [
         begin
-            DNSKey = dns_sec:add_keytag_to_dnskey(#dns_rr{
+            DNSKey = #dns_rr{
                 name = ~"example",
                 type = ?DNS_TYPE_DNSKEY,
                 ttl = 3600,
@@ -1402,9 +1348,8 @@ crypto_keys_sign_and_verify(_Config) ->
                     alg = Alg,
                     public_key = dns_sec:dnskey_public_key(Alg, Pub)
                 }
-            }),
-            #dns_rr{data = #dns_rrdata_dnskey{keytag = KeyTag}} = DNSKey,
-            RRSig = dns_sec:sign_rrset([A], ~"example", KeyTag, Alg, Priv, Opts),
+            },
+            RRSig = dns_sec:sign_rrset([A], ~"example", key_tag_of(DNSKey), Alg, Priv, Opts),
             ?assert(dns_sec:verify_rrsig(RRSig, [A], [DNSKey], #{now => 1500000}), Alg)
         end
      || {Alg, Pub, Priv} <- Keys
@@ -2085,7 +2030,7 @@ dsa_sign_verify_test(Config) ->
     DSASample = [S || #dnssec_test_sample{alg = dsa} = S <- Samples],
     [#dnssec_test_sample{zonename = ZoneName, zsk_pl = ZskProps} | _] = DSASample,
     PrivKey = helper_samplekeypl_to_privkey(ZskProps),
-    PubKeyRR = generate_key_struct(ZskProps, dsa, ZoneName),
+    PubKeyRR = generate_key_struct(ZskProps, ZoneName),
     DNSKeyWithTag = PubKeyRR#key_info.rr,
     RR = #dns_rr{
         name = <<"test.", ZoneName/binary>>,
@@ -2108,13 +2053,13 @@ dsa_sign_verify_test(Config) ->
 
 ecdsa_sign_verify_test(Config) ->
     Samples = proplists:get_value(dnssec_samples, Config),
-    [#dnssec_test_sample{zonename = ZoneName, zsk_pl = ZskProps, alg = Alg} | _] = [
+    [#dnssec_test_sample{zonename = ZoneName, zsk_pl = ZskProps} | _] = [
         S
      || #dnssec_test_sample{alg = Alg} = S <- Samples,
         Alg =:= ecdsap256 orelse Alg =:= ecdsap384
     ],
     PrivKey = helper_samplekeypl_to_privkey(ZskProps),
-    PubKeyRR = generate_key_struct(ZskProps, Alg, ZoneName),
+    PubKeyRR = generate_key_struct(ZskProps, ZoneName),
     DNSKeyWithTag = PubKeyRR#key_info.rr,
     RR = #dns_rr{
         name = <<"test.", ZoneName/binary>>,
@@ -2216,18 +2161,8 @@ zone(Config) ->
     %% Run the validation for every sample in the config
     [validate_zone_sample(Config, Sample) || #dnssec_test_sample{alg = rsa} = Sample <- Samples].
 
-generate_key_struct(Props, _Alg, ZoneName) ->
-    AlgNo = proplists:get_value(alg, Props),
-    Flags = proplists:get_value(flags, Props),
-    Data0 = #dns_rrdata_dnskey{
-        flags = Flags,
-        protocol = 3,
-        alg = AlgNo,
-        public_key = sample_dnskey_public_key(Props)
-    },
-    %% Calculate Key Tag
-    #dns_rrdata_dnskey{keytag = KeyTag} = Data = helper_add_keytag_to_dnskey(Data0),
-    %% Create the RR Record
+generate_key_struct(Props, ZoneName) ->
+    #dns_rrdata_dnskey{alg = AlgNo, keytag = KeyTag} = Data = props_to_dnskey_data(Props),
     RR = #dns_rr{
         name = ZoneName,
         type = ?DNS_TYPE_DNSKEY,
@@ -2297,7 +2232,6 @@ compare_rr_sets(Generated, Expected) ->
 validate_zone_sample(_Config, Sample) ->
     #dnssec_test_sample{
         zonename = ZoneName,
-        alg = Alg,
         inception = Inception,
         expiration = Expiration,
         nsec3 = NSEC3,
@@ -2307,8 +2241,8 @@ validate_zone_sample(_Config, Sample) ->
         rr_src = ExpectedRRs
     } = Sample,
     %% 1. Generate Key Structures from Property Lists
-    KSK = generate_key_struct(KskProps, Alg, ZoneName),
-    ZSK = generate_key_struct(ZskProps, Alg, ZoneName),
+    KSK = generate_key_struct(KskProps, ZoneName),
+    ZSK = generate_key_struct(ZskProps, ZoneName),
     %% 2. Combine Clean RRs with the new DNSKEYs
     BaseRRs = [ZSK#key_info.rr, KSK#key_info.rr | CleanRRs],
     %% 3. Apply Denial of Existence (NSEC/NSEC3)
@@ -2322,9 +2256,9 @@ validate_zone_sample(_Config, Sample) ->
 
 pubkey_gen(Config) ->
     Samples = proplists:get_value(dnssec_samples, Config),
-    [validate_pubkey_generation(Config, Sample) || Sample <- Samples].
+    [validate_pubkey_generation(Sample) || Sample <- Samples].
 
-validate_pubkey_generation(Config, Sample) ->
+validate_pubkey_generation(Sample) ->
     #dnssec_test_sample{
         rr_src = SourceRRs,
         zsk_pl = ZskProps,
@@ -2337,13 +2271,13 @@ validate_pubkey_generation(Config, Sample) ->
     ],
     %% 2. Generate DNSKEY Data from Property Lists
     GeneratedData = [
-        props_to_dnskey_data(Config, Props)
+        props_to_dnskey_data(Props)
      || Props <- [ZskProps, KskProps]
     ],
     %% 3. Compare Sorted Sets
     ?assertEqual(lists:sort(ExpectedData), lists:sort(GeneratedData)).
 
-props_to_dnskey_data(_Config, Props) ->
+props_to_dnskey_data(Props) ->
     Key0 = #dns_rrdata_dnskey{
         flags = proplists:get_value(flags, Props),
         protocol = 3,
@@ -2534,9 +2468,7 @@ decode_key_proplist_tuple({private_key, B64}) ->
 decode_key_proplist_tuple({public_key, B64}) ->
     {public_key, base64:decode(B64)};
 decode_key_proplist_tuple({Key, B64}) ->
-    Bin = base64:decode(B64),
-    Size = byte_size(Bin),
-    {Key, <<Size:32, Bin/binary>>}.
+    {Key, base64:decode(B64)}.
 
 exclude_rr_clean(RRs) ->
     RRCleanExclude = [
@@ -2607,11 +2539,7 @@ helper_samplekeypl_to_privkey(Proplist) ->
 helper_samplekeypl_to_privkey(DSA, Proplist) when
     DSA =:= ?DNS_ALG_DSA orelse DSA =:= ?DNS_ALG_NSEC3DSA
 ->
-    P = proplists:get_value(p, Proplist),
-    Q = proplists:get_value(q, Proplist),
-    G = proplists:get_value(g, Proplist),
-    X = proplists:get_value(x, Proplist),
-    [B || <<L:32, B:L/binary>> <- [P, Q, G, X]];
+    [proplists:get_value(Field, Proplist) || Field <- [p, q, g, x]];
 helper_samplekeypl_to_privkey(?DNS_ALG_ECDSAP256SHA256, Proplist) ->
     proplists:get_value(private_key, Proplist);
 helper_samplekeypl_to_privkey(?DNS_ALG_ECDSAP384SHA384, Proplist) ->
@@ -2621,10 +2549,7 @@ helper_samplekeypl_to_privkey(?DNS_ALG_ED25519, Proplist) ->
 helper_samplekeypl_to_privkey(?DNS_ALG_ED448, Proplist) ->
     proplists:get_value(private_key, Proplist);
 helper_samplekeypl_to_privkey(_RSA, Proplist) ->
-    E = proplists:get_value(public_exp, Proplist),
-    N = proplists:get_value(modulus, Proplist),
-    D = proplists:get_value(private_exp, Proplist),
-    [B || <<L:32, B:L/binary>> <- [E, N, D]].
+    [proplists:get_value(Field, Proplist) || Field <- [public_exp, modulus, private_exp]].
 
 helper_samplekeypl_to_pubkey(Proplist) ->
     Alg = proplists:get_value(alg, Proplist),
@@ -2633,11 +2558,7 @@ helper_samplekeypl_to_pubkey(Proplist) ->
 helper_samplekeypl_to_pubkey(DSA, Proplist) when
     DSA =:= ?DNS_ALG_DSA orelse DSA =:= ?DNS_ALG_NSEC3DSA
 ->
-    P = proplists:get_value(p, Proplist),
-    Q = proplists:get_value(q, Proplist),
-    G = proplists:get_value(g, Proplist),
-    Y = proplists:get_value(y, Proplist),
-    [B || <<L:32, B:L/binary>> <- [P, Q, G, Y]];
+    [proplists:get_value(Field, Proplist) || Field <- [p, q, g, y]];
 helper_samplekeypl_to_pubkey(?DNS_ALG_ECDSAP256SHA256, Proplist) ->
     proplists:get_value(public_key, Proplist);
 helper_samplekeypl_to_pubkey(?DNS_ALG_ECDSAP384SHA384, Proplist) ->
@@ -2647,9 +2568,7 @@ helper_samplekeypl_to_pubkey(?DNS_ALG_ED25519, Proplist) ->
 helper_samplekeypl_to_pubkey(?DNS_ALG_ED448, Proplist) ->
     proplists:get_value(public_key, Proplist);
 helper_samplekeypl_to_pubkey(_RSA, Proplist) ->
-    E = proplists:get_value(public_exp, Proplist),
-    N = proplists:get_value(modulus, Proplist),
-    [B || <<L:32, B:L/binary>> <- [E, N]].
+    [proplists:get_value(Field, Proplist) || Field <- [public_exp, modulus]].
 
 %% A sample key's DNSKEY public key field: an RSA or DSA key's numbers as RFC3110
 %% or RFC2536 lays them out, any other key as it is

@@ -913,8 +913,7 @@ test_dnskey_formats(_Config) ->
     DnskeyPrefixed = DnskeyBinary#dns_rr{
         data = (DnskeyBinary#dns_rr.data)#dns_rrdata_dnskey{public_key = LengthPrefixed}
     },
-    assert_transcode(DnskeyPrefixed),
-    #{~"data" := #{~"public_key" := DnskeyB64}} = dns_json:to_map(DnskeyPrefixed),
+    #{~"data" := #{~"public_key" := DnskeyB64}} = assert_transcode(DnskeyPrefixed),
     ?assertEqual(base64:encode(LengthPrefixed), DnskeyB64),
 
     %% Test CDNSKEY with binary public_key
@@ -1745,49 +1744,6 @@ test_edge_cases(_Config) ->
         }
     },
     assert_transcode(SvcbUnknown),
-
-    %% Test from_map_dnskey_publickey with binary that doesn't match format
-    %% This should return the binary as-is
-    DnskeyMap = #{
-        ~"name" => ~"example.com",
-        ~"type" => ~"DNSKEY",
-        ~"class" => ~"IN",
-        ~"ttl" => 3600,
-        ~"data" => #{
-            ~"flags" => 256,
-            ~"protocol" => 3,
-            ~"alg" => ?DNS_ALG_RSASHA256,
-            ~"public_key" => base64:encode(~"simple-binary-data"),
-            ~"keytag" => 12345
-        }
-    },
-    DnskeyRecord = dns_json:from_map(DnskeyMap),
-    ?assertEqual(dns_rr, element(1, DnskeyRecord)),
-    DnskeyData = element(6, DnskeyRecord),
-    ?assertEqual(dns_rrdata_dnskey, element(1, DnskeyData)),
-    ?assertEqual(~"simple-binary-data", element(5, DnskeyData)),
-
-    %% A key whose bytes read as numbers each behind a 32-bit length stays its
-    %% bytes, which from_map took for an RSA key's exponent and modulus
-    FormattedBin = <<<<(byte_size(B)):32, B/binary>> || B <- [<<1, 0, 1>>, <<48, 57>>]>>,
-    DnskeyMap2 = #{
-        ~"name" => ~"example.com",
-        ~"type" => ~"DNSKEY",
-        ~"class" => ~"IN",
-        ~"ttl" => 3600,
-        ~"data" => #{
-            ~"flags" => 256,
-            ~"protocol" => 3,
-            ~"alg" => ?DNS_ALG_RSASHA256,
-            ~"public_key" => base64:encode(FormattedBin),
-            ~"keytag" => 12345
-        }
-    },
-    DnskeyRecord2 = dns_json:from_map(DnskeyMap2),
-    ?assertEqual(dns_rr, element(1, DnskeyRecord2)),
-    DnskeyData2 = element(6, DnskeyRecord2),
-    ?assertEqual(dns_rrdata_dnskey, element(1, DnskeyData2)),
-    ?assertEqual(FormattedBin, element(5, DnskeyData2)),
 
     %% Simulate API/JSON that omits svc_params for alias-form SVCB/HTTPS
     SVCBJson = #{

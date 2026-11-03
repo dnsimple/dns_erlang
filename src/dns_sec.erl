@@ -122,6 +122,12 @@ carries is its RDATA's key field, which `dnskey_public_key/2` makes.
 
 -define(SECS_IN_YEAR, (365 * 24 * 60 * 60)).
 
+-define(IS_RSA_ALG(Alg),
+    (Alg =:= ?DNS_ALG_RSASHA1 orelse Alg =:= ?DNS_ALG_NSEC3RSASHA1 orelse
+        Alg =:= ?DNS_ALG_RSASHA256 orelse Alg =:= ?DNS_ALG_RSASHA512)
+).
+-define(IS_DSA_ALG(Alg), (Alg =:= ?DNS_ALG_DSA orelse Alg =:= ?DNS_ALG_NSEC3DSA)).
+
 %% RFC3110§3: the DigestInfo of a SHA-1 hash, which RSA/SHA-1 signs
 -define(SHA1_DIGESTINFO,
     <<16#30, 16#21, 16#30, 16#09, 16#06, 16#05, 16#2B, 16#0E, 16#03, 16#02, 16#1A, 16#05, 16#00,
@@ -486,23 +492,19 @@ sign_rrset(
     }.
 
 -spec sign(dns:uint8(), iodata(), key()) -> binary().
-sign(Alg, BaseSigInput, Key) when Alg =:= ?DNS_ALG_DSA orelse Alg =:= ?DNS_ALG_NSEC3DSA ->
+sign(Alg, BaseSigInput, Key) when ?IS_DSA_ALG(Alg) ->
     [P, Q, G, _X] = Key,
-    %% RFC2536§2, §3: R and S, which are below Q, take 20 octets each, and T, 0 to
-    %% 8, makes P, G and Y 64 + 8T octets: a wider Q or P cannot be carried
-    (unsigned_size(Q) =< 20 andalso unsigned_size(P) =< 128 andalso unsigned_size(G) =< 128) orelse
-        error({unsupported_key, Alg}),
-    DerSig = crypto:sign(dss, sha, BaseSigInput, Key),
-    #'Dss-Sig-Value'{r = R, s = S} = public_key:der_decode('Dss-Sig-Value', DerSig),
-    %% RFC2536§3: T is the DNSKEY's. Its Y = G^X mod P is below P, so P and G
-    %% alone fix the width dnskey_public_key/2 takes T from
-    <<(dsa_t([P, G])), R:20/unit:8, S:20/unit:8>>;
-sign(Alg, BaseSigInput, Key) when
-    Alg =:= ?DNS_ALG_NSEC3RSASHA1 orelse
-        Alg =:= ?DNS_ALG_RSASHA1 orelse
-        Alg =:= ?DNS_ALG_RSASHA256 orelse
-        Alg =:= ?DNS_ALG_RSASHA512
-->
+    %% RFC2536§3: R and S, which are below Q, take 20 octets each, and T is the
+    %% DNSKEY's. Its Y = G^X mod P is below P, so P and G alone fix T
+    case dsa_t(Q, [P, G]) of
+        too_wide ->
+            error({unsupported_key, Alg});
+        T ->
+            DerSig = crypto:sign(dss, sha, BaseSigInput, Key),
+            #'Dss-Sig-Value'{r = R, s = S} = public_key:der_decode('Dss-Sig-Value', DerSig),
+            <<T, R:20/unit:8, S:20/unit:8>>
+    end;
+sign(Alg, BaseSigInput, Key) when ?IS_RSA_ALG(Alg) ->
     {Hash, Msg} = rsa_message(Alg, BaseSigInput),
     crypto:sign(rsa, Hash, Msg, Key, [{rsa_padding, rsa_pkcs1_padding}]);
 sign(?DNS_ALG_ECDSAP256SHA256, BaseSigInput, Key) ->
@@ -617,7 +619,7 @@ verify_rrsig(
 verify_rrsig(#dns_rr{type = ?DNS_TYPE_RRSIG}, _RRs, _RRDNSKey, _Opts) ->
     false.
 
--spec verify_with_keys(dns:uint8(), [key()], binary(), dns:rrdata_rrsig(), [dns:rr(), ...]) ->
+-spec verify_with_keys(dns:uint8(), [binary()], binary(), dns:rrdata_rrsig(), [dns:rr(), ...]) ->
     boolean().
 verify_with_keys(_SigAlg, [], _Signature, _Data, _RRs) ->
     false;
@@ -694,7 +696,7 @@ can_hold(Zone, ?DNS_TYPE_DS, Owner) ->
 can_hold(Zone, _Type, Owner) ->
     is_at_or_under(Owner, Zone).
 
--spec verify_with_key(dns:uint8(), key(), binary(), iodata()) -> boolean().
+-spec verify_with_key(dns:uint8(), binary(), binary(), iodata()) -> boolean().
 verify_with_key(Alg, Key, Signature, SigInput) ->
     refused_as_false(fun() -> verify(Alg, Key, Signature, SigInput) end).
 
@@ -716,10 +718,8 @@ refused_as_false(Verify) ->
 
 %% A key or signature of the wrong shape for its algorithm, or an algorithm this
 %% module does not implement, verifies nothing
--spec verify(dns:uint8(), key(), binary(), iodata()) -> boolean().
-verify(Alg, Key, <<_T, R:20/unit:8, S:20/unit:8>>, SigInput) when
-    Alg =:= ?DNS_ALG_DSA orelse Alg =:= ?DNS_ALG_NSEC3DSA
-->
+-spec verify(dns:uint8(), binary(), binary(), iodata()) -> boolean().
+verify(Alg, Key, <<_T, R:20/unit:8, S:20/unit:8>>, SigInput) when ?IS_DSA_ALG(Alg) ->
     case dsa_public_key(Key) of
         [_P, _Q, _G, _Y] = PublicKey ->
             AsnSig = public_key:der_encode('Dss-Sig-Value', #'Dss-Sig-Value'{r = R, s = S}),
@@ -727,12 +727,7 @@ verify(Alg, Key, <<_T, R:20/unit:8, S:20/unit:8>>, SigInput) when
         invalid ->
             false
     end;
-verify(Alg, Key, Signature, SigInput) when
-    Alg =:= ?DNS_ALG_NSEC3RSASHA1 orelse
-        Alg =:= ?DNS_ALG_RSASHA1 orelse
-        Alg =:= ?DNS_ALG_RSASHA256 orelse
-        Alg =:= ?DNS_ALG_RSASHA512
-->
+verify(Alg, Key, Signature, SigInput) when ?IS_RSA_ALG(Alg) ->
     case rsa_public_key(Key) of
         [_E, Modulus] = PublicKey ->
             {Hash, Msg} = rsa_message(Alg, SigInput),
@@ -839,11 +834,7 @@ EdDSA key is as it is (RFC 8080 §3). Raises `badarg` for a key the algorithm's
 DNSKEY cannot carry.
 """.
 -spec dnskey_public_key(sigalg(), [binary()] | binary()) -> binary().
-dnskey_public_key(Alg, [E0, N0]) when
-    (Alg =:= ?DNS_ALG_RSASHA1 orelse Alg =:= ?DNS_ALG_NSEC3RSASHA1 orelse
-        Alg =:= ?DNS_ALG_RSASHA256 orelse Alg =:= ?DNS_ALG_RSASHA512) andalso
-        is_binary(E0) andalso is_binary(N0)
-->
+dnskey_public_key(Alg, [E0, N0]) when ?IS_RSA_ALG(Alg) ->
     %% RFC3110§2: no leading zero octets, and the exponent's length in one octet,
     %% or for one over 255 octets in a zero octet and two more
     E = strip_leading_zeros(E0),
@@ -854,18 +845,17 @@ dnskey_public_key(Alg, [E0, N0]) when
         Len when Len =< 16#FFFF -> <<0, Len:16, E/binary, N/binary>>;
         _ -> error(badarg)
     end;
-dnskey_public_key(Alg, [P0, Q0, G0, Y0]) when
-    (Alg =:= ?DNS_ALG_DSA orelse Alg =:= ?DNS_ALG_NSEC3DSA) andalso
-        is_binary(P0) andalso is_binary(Q0) andalso is_binary(G0) andalso is_binary(Y0)
-->
-    %% RFC2536§2: T, 0 to 8, then Q in 20 octets, and P, G and Y in 64 + 8T each
+dnskey_public_key(Alg, [P0, Q0, G0, Y0]) when ?IS_DSA_ALG(Alg) ->
+    %% RFC2536§2: T, then Q in 20 octets, and P, G and Y in 64 + 8T each
     [P, Q, G, Y] = [strip_leading_zeros(F) || F <- [P0, Q0, G0, Y0]],
-    (byte_size(Q) =< 20 andalso byte_size(P) =< 128 andalso byte_size(G) =< 128 andalso
-        byte_size(Y) =< 128) orelse error(badarg),
-    T = dsa_t([P, G, Y]),
-    S = 64 + 8 * T,
-    <<T, (pad_unsigned(Q, 20))/binary, (pad_unsigned(P, S))/binary, (pad_unsigned(G, S))/binary,
-        (pad_unsigned(Y, S))/binary>>;
+    case dsa_t(Q, [P, G, Y]) of
+        too_wide ->
+            error(badarg);
+        T ->
+            S = 64 + 8 * T,
+            <<T, (pad_unsigned(Q, 20))/binary, (pad_unsigned(P, S))/binary,
+                (pad_unsigned(G, S))/binary, (pad_unsigned(Y, S))/binary>>
+    end;
 dnskey_public_key(?DNS_ALG_ECDSAP256SHA256, <<4, Point:64/binary>>) ->
     Point;
 dnskey_public_key(?DNS_ALG_ECDSAP384SHA384, <<4, Point:96/binary>>) ->
@@ -1060,10 +1050,15 @@ dsa_public_key(<<T, Q:20/binary, PGY/binary>>) when T =< 8, byte_size(PGY) =:= 3
 dsa_public_key(_Key) ->
     invalid.
 
-%% RFC2536§2: the narrowest T, 0 to 8, whose 64 + 8T octets hold each number
--spec dsa_t([binary()]) -> 0..8.
-dsa_t(Numbers) ->
-    max(0, (lists:max([unsigned_size(Number) || Number <- Numbers]) - 57) div 8).
+%% RFC2536§2: the narrowest T whose 64 + 8T octets hold each number, or too_wide
+%% if that T is over 8 or Q takes over the 20 octets a DSA key has for it
+-spec dsa_t(binary(), [binary()]) -> 0..8 | too_wide.
+dsa_t(Q, Numbers) ->
+    T = max(0, (lists:max([unsigned_size(Number) || Number <- Numbers]) - 57) div 8),
+    case unsigned_size(Q) =< 20 andalso T =< 8 of
+        true -> T;
+        false -> too_wide
+    end.
 
 %% The octets of a number given as its big-endian bytes, leading zeros left out
 -spec unsigned_size(binary()) -> non_neg_integer().

@@ -1437,8 +1437,10 @@ build_rdata("DNSKEY", RData, Ctx) ->
                 {ok, PublicKeyB64Bin} ->
                     try
                         PublicKey = base64:decode(PublicKeyB64Bin),
-                        %% Calculate keytag (RFC 4034 Appendix B)
-                        KeyTag = calculate_keytag(Flags, Protocol, Alg, PublicKey),
+                        %% RFC4034 Appendix B: the key tag is a sum over the RDATA
+                        KeyTag = dns_decode:bin_to_key_tag(
+                            <<Flags:16, Protocol:8, Alg:8, PublicKey/binary>>
+                        ),
                         {ok, #dns_rrdata_dnskey{
                             flags = Flags,
                             protocol = Protocol,
@@ -1468,8 +1470,10 @@ build_rdata("CDNSKEY", RData, Ctx) ->
                 {ok, PublicKeyB64Bin} ->
                     try
                         PublicKey = base64:decode(PublicKeyB64Bin),
-                        %% Calculate keytag (RFC 4034 Appendix B)
-                        KeyTag = calculate_keytag(Flags, Protocol, Alg, PublicKey),
+                        %% RFC4034 Appendix B: the key tag is a sum over the RDATA
+                        KeyTag = dns_decode:bin_to_key_tag(
+                            <<Flags:16, Protocol:8, Alg:8, PublicKey/binary>>
+                        ),
                         {ok, #dns_rrdata_cdnskey{
                             flags = Flags,
                             protocol = Protocol,
@@ -1964,27 +1968,6 @@ build_rdata(Type, _RData, Ctx) ->
     %% Unsupported or complex record types
     %% These are typically auto-generated or use RFC 3597 format
     {error, make_semantic_error({unsupported_type, Type}, Ctx)}.
-
-%% Calculate DNSKEY keytag (RFC 4034 Appendix B)
--spec calculate_keytag(integer(), integer(), integer(), binary()) -> integer().
-calculate_keytag(Flags, Protocol, Alg, PublicKey) ->
-    %% Build RDATA in wire format
-    RData = <<Flags:16, Protocol:8, Alg:8, PublicKey/binary>>,
-    %% Calculate sum of 16-bit words
-    Sum = calculate_keytag_sum(RData, 0),
-    %% Add the carry bits and return modulo 65536
-    ((Sum band 16#FFFF) + (Sum bsr 16)) band 16#FFFF.
-
-%% Sum 16-bit words for keytag calculation
--spec calculate_keytag_sum(binary(), integer()) -> integer().
-calculate_keytag_sum(<<A:8, B:8, Rest/binary>>, Acc) ->
-    %% Add 16-bit word (big-endian)
-    calculate_keytag_sum(Rest, Acc + (A bsl 8) + B);
-calculate_keytag_sum(<<A:8>>, Acc) ->
-    %% Odd byte at end
-    Acc + (A bsl 8);
-calculate_keytag_sum(<<>>, Acc) ->
-    Acc.
 
 %% RFC4034§3.2: a signature time is written either as seconds since the epoch or
 %% as a UTC date YYYYMMDDHHmmSS. The date is always 14 digits and a 32-bit number
