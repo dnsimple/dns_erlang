@@ -317,7 +317,9 @@ normalise_rr(#dns_rr{name = Name} = RR) ->
 %% record writes it
 -spec name_key(dns:dname()) -> dns:dname().
 name_key(Name) ->
-    dns_domain:join(dns_domain:split(dns_domain:to_lower(Name))).
+    Lower = dns_domain:to_lower(Name),
+    Labels = dns_domain:split(Lower),
+    dns_domain:join(Labels).
 
 %% Each owner, by its name_key/1, with the name it was first given, lowercased, and its types
 -type rrtype_map() :: #{{dns:dname(), dns:class()} => {dns:dname(), [integer()]}}.
@@ -348,7 +350,8 @@ build_rrmap(RRs, BaseTypes) ->
 -spec build_rrmap([dns:rr()], [dns:type()], dns:dname()) -> rrtype_map().
 build_rrmap(RR, BaseTypes, ZoneName) ->
     Base = build_rrmap(RR, BaseTypes),
-    build_rrmap_nonterm(ZoneName, maps:keys(Base), Base).
+    Owners = maps:keys(Base),
+    build_rrmap_nonterm(ZoneName, Owners, Base).
 
 -spec build_rrmap_nonterm(dns:dname(), [{dns:dname(), dns:class()} | binary()], rrtype_map()) ->
     rrtype_map().
@@ -464,9 +467,8 @@ sign_rrset(
     %% RFC4034§3.1.8.1: the records are signed as one RRset, with the first's
     %% owner, class and type, so a record of another RRset would make an RRSIG
     %% that never verifies. RFC4035§2.2: an RRSIG RRset is never signed
-    Type =/= ?DNS_TYPE_RRSIG andalso
-        lists:all(fun(RR) -> in_rrset(RR, Name, Owner, Class, Type) end, RRs) orelse
-        error(badarg),
+    InRRset = fun(RR) -> in_rrset(RR, Name, Owner, Class, Type) end,
+    Type =/= ?DNS_TYPE_RRSIG andalso lists:all(InRRset, RRs) orelse error(badarg),
     Now = erlang:system_time(second),
     Incept = maps:get(inception, Opts, Now),
     %% 1 year
@@ -483,7 +485,9 @@ sign_rrset(
         %% form, lowercased, and so it is written in the RRSIG too
         signers_name = dns_domain:to_lower(SignersName)
     },
-    Data = Data0#dns_rrdata_rrsig{signature = sign(Alg, signed_data(Data0, RRs), Key)},
+    SignedData = signed_data(Data0, RRs),
+    Signature = sign(Alg, SignedData, Key),
+    Data = Data0#dns_rrdata_rrsig{signature = Signature},
     #dns_rr{
         name = Name,
         type = ?DNS_TYPE_RRSIG,
@@ -723,7 +727,8 @@ refused_as_false(Verify) ->
 verify(Alg, Key, <<_T, R:20/unit:8, S:20/unit:8>>, SigInput) when ?IS_DSA_ALG(Alg) ->
     case dsa_public_key(Key) of
         [_P, _Q, _G, _Y] = PublicKey ->
-            AsnSig = public_key:der_encode('Dss-Sig-Value', #'Dss-Sig-Value'{r = R, s = S}),
+            SigValue = #'Dss-Sig-Value'{r = R, s = S},
+            AsnSig = public_key:der_encode('Dss-Sig-Value', SigValue),
             crypto:verify(dss, sha, SigInput, AsnSig, PublicKey);
         invalid ->
             false
@@ -767,7 +772,8 @@ signed_data(
     Owner = signed_owner(LName, Labels),
     OwnerBin = dns_domain:to_wire(Owner),
     RecordBase = <<OwnerBin/binary, Type:16, Class:16, TTL:32>>,
-    Datas = lists:usort([canonical_rrdata_bin(RR) || RR <- RRs]),
+    Canonical = [canonical_rrdata_bin(RR) || RR <- RRs],
+    Datas = lists:usort(Canonical),
     RRSetBin = [<<RecordBase/binary, (byte_size(Data)):16, Data/binary>> || Data <- Datas],
     [rrsig_to_digestable(RRSig) | RRSetBin].
 
@@ -777,7 +783,9 @@ signed_data(
 signed_owner(Name, Labels) ->
     case dns_domain:split(Name) of
         Split when Labels < length(Split) ->
-            dns_domain:join([~"*" | lists:nthtail(length(Split) - Labels, Split)]);
+            Drop = length(Split) - Labels,
+            Last = lists:nthtail(Drop, Split),
+            dns_domain:join([~"*" | Last]);
         _ ->
             Name
     end.
@@ -804,7 +812,9 @@ add_keytag_to_dnskey(
                 Data
     } = RR
 ) ->
-    RR#dns_rr{data = Data#dns_rrdata_dnskey{keytag = key_tag(Flags, Protocol, Alg, Key)}}.
+    KeyTag = key_tag(Flags, Protocol, Alg, Key),
+    Keyed = Data#dns_rrdata_dnskey{keytag = KeyTag},
+    RR#dns_rr{data = Keyed}.
 
 -doc "Sets a CDNSKEY record's key tag, computed from its RDATA (RFC 4034 Appendix B).".
 -spec add_keytag_to_cdnskey(dns:rr()) -> dns:rr().
@@ -816,13 +826,16 @@ add_keytag_to_cdnskey(
                 Data
     } = RR
 ) ->
-    RR#dns_rr{data = Data#dns_rrdata_cdnskey{keytag = key_tag(Flags, Protocol, Alg, Key)}}.
+    KeyTag = key_tag(Flags, Protocol, Alg, Key),
+    Keyed = Data#dns_rrdata_cdnskey{keytag = KeyTag},
+    RR#dns_rr{data = Keyed}.
 
 %% RFC4034 Appendix B: a DNSKEY's key tag, computed from its RDATA, as its keytag
 %% field may be unset or out of date in a DNSKEY built by hand
 -spec key_tag(dns:uint16(), dns:uint8(), dns:uint8(), binary()) -> dns:uint16().
 key_tag(Flags, Protocol, Alg, Key) ->
-    dns_decode:bin_to_key_tag(<<Flags:16, Protocol:8, Alg:8, Key/binary>>).
+    RData = <<Flags:16, Protocol:8, Alg:8, Key/binary>>,
+    dns_decode:bin_to_key_tag(RData).
 
 -doc """
 Returns the public key field of a DNSKEY's RDATA for a public key in the form
@@ -854,8 +867,11 @@ dnskey_public_key(Alg, [P0, Q0, G0, Y0]) when ?IS_DSA_ALG(Alg) ->
             error(badarg);
         T ->
             S = 64 + 8 * T,
-            <<T, (pad_unsigned(Q, 20))/binary, (pad_unsigned(P, S))/binary,
-                (pad_unsigned(G, S))/binary, (pad_unsigned(Y, S))/binary>>
+            QField = pad_unsigned(Q, 20),
+            PField = pad_unsigned(P, S),
+            GField = pad_unsigned(G, S),
+            YField = pad_unsigned(Y, S),
+            <<T, QField/binary, PField/binary, GField/binary, YField/binary>>
     end;
 dnskey_public_key(?DNS_ALG_ECDSAP256SHA256, <<4, Point:64/binary>>) ->
     Point;
@@ -871,12 +887,14 @@ dnskey_public_key(_Alg, _Key) ->
 -spec rrsig_to_digestable(dns:rrdata_rrsig()) -> binary().
 rrsig_to_digestable(#dns_rrdata_rrsig{} = Data) ->
     %% RFC4034§6.2, RFC6840§5.1: in canonical form, the signer's name lowercased
-    Canonical = canonical_rrdata_form(Data#dns_rrdata_rrsig{signature = <<>>}),
+    Unsigned = Data#dns_rrdata_rrsig{signature = <<>>},
+    Canonical = canonical_rrdata_form(Unsigned),
     dns_encode:encode_rrdata(?DNS_CLASS_IN, Canonical).
 
 -spec canonical_rrdata_bin(dns:rr()) -> binary().
 canonical_rrdata_bin(#dns_rr{class = Class, data = Data0}) ->
-    dns_encode:encode_rrdata(Class, canonical_rrdata_form(Data0)).
+    Data = canonical_rrdata_form(Data0),
+    dns_encode:encode_rrdata(Class, Data).
 
 -doc "Converts a resource record data record to DNSSEC canonical form.".
 -spec canonical_rrdata_form(dns:rrdata()) -> dns:rrdata().
@@ -943,7 +961,9 @@ canonical_rrdata_form(X) ->
 %% compared by, so that the zone's name can be written as the records' are not
 -spec name_ancestors(dns:dname(), dns:dname()) -> [binary()].
 name_ancestors(Name, ZoneName) ->
-    gen_name_ancestors(name_key(Name), name_key(ZoneName)).
+    NameKey = name_key(Name),
+    ZoneKey = name_key(ZoneName),
+    gen_name_ancestors(NameKey, ZoneKey).
 
 -spec gen_name_ancestors(binary(), binary()) -> [binary()].
 gen_name_ancestors(ZoneName, ZoneName) ->
@@ -983,7 +1003,9 @@ name_order(X, X) ->
 name_order(#dns_rr{name = X}, #dns_rr{name = X}) ->
     true;
 name_order(#dns_rr{name = A}, #dns_rr{name = B}) ->
-    lists:reverse(dns_domain:split(A)) =< lists:reverse(dns_domain:split(B)).
+    LabelsA = dns_domain:split(A),
+    LabelsB = dns_domain:split(B),
+    lists:reverse(LabelsA) =< lists:reverse(LabelsB).
 
 -spec count_labels([binary()]) -> non_neg_integer().
 count_labels([~"*" | Labels]) ->
@@ -997,7 +1019,9 @@ count_labels(List) when is_list(List) ->
 name_labels(Name) ->
     try dns_domain:split(Name) of
         Labels ->
-            case lists:sum([1 + byte_size(Label) || Label <- Labels]) < 255 of
+            Sizes = [1 + byte_size(Label) || Label <- Labels],
+            Length = lists:sum(Sizes),
+            case Length < 255 of
                 true -> Labels;
                 false -> invalid
             end
@@ -1019,8 +1043,13 @@ is_name(Name, Labels) ->
 %% Whether a name is Zone or a name under it, both given as labels
 -spec is_at_or_under(dns:labels(), dns:labels()) -> boolean().
 is_at_or_under(Labels, Zone) ->
-    Depth = length(Labels) - length(Zone),
-    Depth >= 0 andalso dns_domain:are_equal_labels(lists:nthtail(Depth, Labels), Zone).
+    case length(Labels) - length(Zone) of
+        Depth when Depth >= 0 ->
+            Last = lists:nthtail(Depth, Labels),
+            dns_domain:are_equal_labels(Last, Zone);
+        _ ->
+            false
+    end.
 
 %% RFC3110§2: a DNSKEY's RSA key is the exponent's length in one octet, or for
 %% one over 255 octets in a zero octet and two more, then the exponent and the
@@ -1055,7 +1084,9 @@ dsa_public_key(_Key) ->
 %% if that T is over 8 or Q takes over the 20 octets a DSA key has for it
 -spec dsa_t(binary(), [binary()]) -> 0..8 | too_wide.
 dsa_t(Q, Numbers) ->
-    T = max(0, (lists:max([unsigned_size(Number) || Number <- Numbers]) - 57) div 8),
+    Sizes = [unsigned_size(Number) || Number <- Numbers],
+    Widest = lists:max(Sizes),
+    T = max(0, (Widest - 57) div 8),
     case unsigned_size(Q) =< 20 andalso T =< 8 of
         true -> T;
         false -> too_wide
@@ -1064,7 +1095,8 @@ dsa_t(Q, Numbers) ->
 %% The octets of a number given as its big-endian bytes, leading zeros left out
 -spec unsigned_size(binary()) -> non_neg_integer().
 unsigned_size(Number) ->
-    byte_size(strip_leading_zeros(Number)).
+    Stripped = strip_leading_zeros(Number),
+    byte_size(Stripped).
 
 -spec strip_leading_zeros(binary()) -> binary().
 strip_leading_zeros(<<0, Rest/binary>>) -> strip_leading_zeros(Rest);
@@ -1075,8 +1107,10 @@ strip_leading_zeros(Number) -> Number.
 -spec ecdsa_der_to_wire(binary(), pos_integer()) -> binary().
 ecdsa_der_to_wire(DerSig, FieldSize) ->
     #'ECDSA-Sig-Value'{r = R, s = S} = public_key:der_decode('ECDSA-Sig-Value', DerSig),
-    RBin = pad_unsigned(binary:encode_unsigned(R), FieldSize),
-    SBin = pad_unsigned(binary:encode_unsigned(S), FieldSize),
+    RBytes = binary:encode_unsigned(R),
+    SBytes = binary:encode_unsigned(S),
+    RBin = pad_unsigned(RBytes, FieldSize),
+    SBin = pad_unsigned(SBytes, FieldSize),
     <<RBin/binary, SBin/binary>>.
 
 -spec ecdsa_wire_to_der(binary(), pos_integer()) -> binary().
@@ -1084,7 +1118,8 @@ ecdsa_wire_to_der(WireSig, FieldSize) ->
     <<RBin:FieldSize/binary, SBin:FieldSize/binary>> = WireSig,
     R = binary:decode_unsigned(RBin),
     S = binary:decode_unsigned(SBin),
-    public_key:der_encode('ECDSA-Sig-Value', #'ECDSA-Sig-Value'{r = R, s = S}).
+    SigValue = #'ECDSA-Sig-Value'{r = R, s = S},
+    public_key:der_encode('ECDSA-Sig-Value', SigValue).
 
 -spec pad_unsigned(binary(), pos_integer()) -> binary().
 pad_unsigned(Bin, Size) when byte_size(Bin) >= Size ->
