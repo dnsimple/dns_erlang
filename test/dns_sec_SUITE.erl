@@ -82,6 +82,7 @@ groups() ->
             verify_signer_of_ds_and_nsec3,
             crypto_keys_sign_and_verify,
             dnskey_public_key_layout,
+            rsa_key_sizes_rfcs_allow,
             sign_folds_case_of_escaped_letters,
             verify_dnskey_without_key_tag,
             sign_rrset_rejects_records_of_other_rrsets,
@@ -1428,6 +1429,87 @@ dnskey_public_key_layout(_Config) ->
             {200, Ed25519}
         ]
     ].
+
+%% RFC3110§2 limits an RSA key's exponent and modulus to 4096 bits each, and
+%% RFC3110§3 and RFC5702§2 its modulus to 512 bits or more, 1024 for
+%% RSA/SHA-512, as BIND has them. A signature crypto makes and verifies over
+%% signed data built by hand verifies with its DNSKEY only for a key of a size
+%% they allow, and dnskey_public_key/2 and signing refuse any other
+rsa_key_sizes_rfcs_allow(_Config) ->
+    Keys = #{Bits => crypto:generate_key(rsa, {Bits, 65537}) || Bits <- [512, 1016, 1024, 4104]},
+    A = rr_a(~"www.example", {192, 0, 2, 1}),
+    Opts = #{inception => 1000000, expiration => 2000000},
+    Cases = [
+        {?DNS_ALG_RSASHA256, 512, true},
+        {?DNS_ALG_RSASHA256, 4104, false},
+        {?DNS_ALG_RSASHA512, 1016, false},
+        {?DNS_ALG_RSASHA512, 1024, true}
+    ],
+    [
+        begin
+            #{Bits := {[E, N], Priv}} = Keys,
+            Field = <<(byte_size(E)), E/binary, N/binary>>,
+            DNSKey = dns_sec:add_keytag_to_dnskey(#dns_rr{
+                name = ~"example",
+                type = ?DNS_TYPE_DNSKEY,
+                ttl = 3600,
+                data = #dns_rrdata_dnskey{flags = 256, protocol = 3, alg = Alg, public_key = Field}
+            }),
+            KeyTag = key_tag_of(DNSKey),
+            Hash = maps:get(Alg, #{?DNS_ALG_RSASHA256 => sha256, ?DNS_ALG_RSASHA512 => sha512}),
+            SignedData = signed_data_by_hand(Alg, KeyTag, ~"example", 1000000, 2000000),
+            Signature = crypto:sign(rsa, Hash, SignedData, Priv),
+            ?assert(crypto:verify(rsa, Hash, SignedData, Signature, [E, N])),
+            RRSig = #dns_rr{
+                name = ~"www.example",
+                type = ?DNS_TYPE_RRSIG,
+                ttl = 3600,
+                data = #dns_rrdata_rrsig{
+                    type_covered = ?DNS_TYPE_A,
+                    alg = Alg,
+                    labels = 2,
+                    original_ttl = 3600,
+                    expiration = 2000000,
+                    inception = 1000000,
+                    keytag = KeyTag,
+                    signers_name = ~"example",
+                    signature = Signature
+                }
+            },
+            Verified = dns_sec:verify_rrsig(RRSig, [A], [DNSKey], #{now => 1500000}),
+            ?assertEqual({Alg, Bits, Fits}, {Alg, Bits, Verified}),
+            Sign = fun() -> dns_sec:sign_rrset([A], ~"example", KeyTag, Alg, Priv, Opts) end,
+            case Fits of
+                true ->
+                    ?assertEqual(Field, dns_sec:dnskey_public_key(Alg, [E, N])),
+                    ?assertEqual(RRSig, Sign());
+                false ->
+                    ?assertError(badarg, dns_sec:dnskey_public_key(Alg, [E, N])),
+                    ?assertError({unsupported_key, Alg}, Sign())
+            end
+        end
+     || {Alg, Bits, Fits} <- Cases
+    ],
+    %% The limits on the exponent, and on the modulus for RSA/SHA-1
+    #{1024 := {[E, N1024], _}} = Keys,
+    #{4104 := {[E, N4104], Priv4104}} = Keys,
+    E4096 = <<16#80, 0:(511 * 8)>>,
+    ?assertEqual(
+        <<0, 512:16, E4096/binary, N1024/binary>>,
+        dns_sec:dnskey_public_key(?DNS_ALG_RSASHA1, [E4096, N1024])
+    ),
+    [
+        ?assertError(badarg, dns_sec:dnskey_public_key(Alg, Key))
+     || {Alg, Key} <- [
+            {?DNS_ALG_RSASHA1, [<<1, 0:4096>>, N1024]},
+            {?DNS_ALG_RSASHA1, [E, N4104]},
+            {?DNS_ALG_NSEC3RSASHA1, [E, <<16#40, 0:(63 * 8)>>]}
+        ]
+    ],
+    ?assertError(
+        {unsupported_key, ?DNS_ALG_RSASHA1},
+        dns_sec:sign_rrset([A], ~"example", 1, ?DNS_ALG_RSASHA1, Priv4104, Opts)
+    ).
 
 %% RFC4034§6.2: a name in canonical form has all its letters in lowercase. A
 %% dns:dname() escapes a dot or a backslash in a label, as \. and \\, and

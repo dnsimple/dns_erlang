@@ -471,11 +471,13 @@ Owner names that differ only in case or in a final dot are one owner. Raises
 RRset, for an RRSIG RRset, which RFC 4035 §2.2 never signs, and for an owner or
 signer that is not a name: one with an empty label, a label over 63 octets, or
 over 255 octets in all. Raises `{unsupported_algorithm, Alg}` for an algorithm
-this module does not implement, and `{unsupported_key, Alg}` for a DSA key that
-RFC 2536 §2 rules out: one whose Q is not 160 bits long, whose P is not
-512 + 64T bits long for a T of 0 to 8, or whose G is longer than P. It still
-signs with DSA (3 and 6) and RSA/SHA-1 (5 and 7), which RFC 9904 and RFC 9905
-forbid for new signatures.
+this module does not implement, and `{unsupported_key, Alg}` for a key whose
+DNSKEY `verify_rrsig/4` refuses: an RSA key whose modulus is not 512 to 4096
+bits long, or 1024 to 4096 for RSA/SHA-512, or whose exponent is over 4096 bits
+long (RFC 3110 §2, §3, RFC 5702 §2), and a DSA key that RFC 2536 §2 rules out,
+whose Q is not 160 bits long, whose P is not 512 + 64T bits long for a T of 0
+to 8, or whose G is longer than P. It still signs with DSA (3 and 6) and
+RSA/SHA-1 (5 and 7), which RFC 9904 and RFC 9905 forbid for new signatures.
 """.
 -spec sign_rrset([dns:rr(), ...], dns:dname(), keytag(), sigalg(), key(), sign_rr_opts()) ->
     dns:rr().
@@ -540,6 +542,10 @@ sign(Alg, BaseSigInput, Key) when ?IS_DSA_ALG(Alg) ->
             <<T, R:20/unit:8, S:20/unit:8>>
     end;
 sign(Alg, BaseSigInput, Key) when ?IS_RSA_ALG(Alg) ->
+    [E0, N0 | _] = Key,
+    E = unsigned_bytes(E0),
+    N = unsigned_bytes(N0),
+    rsa_key_fits(Alg, E, N) orelse error({unsupported_key, Alg}),
     {Hash, Msg} = rsa_message(Alg, BaseSigInput),
     crypto:sign(rsa, Hash, Msg, Key, [{rsa_padding, rsa_pkcs1_padding}]);
 sign(?DNS_ALG_ECDSAP256SHA256, BaseSigInput, Key) ->
@@ -765,7 +771,7 @@ verify(Alg, Key, <<_T, R:20/unit:8, S:20/unit:8>>, SigInput) when ?IS_DSA_ALG(Al
             false
     end;
 verify(Alg, Key, Signature, SigInput) when ?IS_RSA_ALG(Alg) ->
-    case rsa_public_key(Key) of
+    case rsa_public_key(Alg, Key) of
         [_E, Modulus] = PublicKey ->
             {Hash, Msg} = rsa_message(Alg, SigInput),
             Opts = [{rsa_padding, rsa_pkcs1_padding}],
@@ -878,20 +884,22 @@ An RSA key `[E, N]` is laid out as RFC 3110 §2 has it, and a DSA key
 `crypto:generate_key(ecdh, Curve)` gives, loses the octet 4 in front that marks
 it uncompressed (RFC 6605 §4), and an EdDSA key, as `crypto:generate_key/2`
 gives it, is as it is (RFC 8080 §3). Raises `badarg` for a key the algorithm's
-DNSKEY cannot carry, such as a DSA key whose Q is not 160 bits long, or whose P
-is not 512 + 64T bits long for a T of 0 to 8.
+DNSKEY cannot carry: an RSA key whose modulus is not 512 to 4096 bits long, or
+1024 to 4096 for RSA/SHA-512, or whose exponent is empty or over 4096 bits long
+(RFC 3110 §2, §3, RFC 5702 §2), and a DSA key whose Q is not 160 bits long, or
+whose P is not 512 + 64T bits long for a T of 0 to 8.
 """.
 -spec dnskey_public_key(sigalg(), [binary() | non_neg_integer()] | binary()) -> binary().
 dnskey_public_key(Alg, [E0, N0]) when ?IS_RSA_ALG(Alg) ->
     %% RFC3110§2: no leading zero octets, and the exponent's length in one octet,
-    %% or for one over 255 octets in a zero octet and two more
+    %% or for one over 255 octets in a zero octet and two more, which the 4096
+    %% bits of rsa_key_fits/3 hold in two
     E = unsigned_bytes(E0),
     N = unsigned_bytes(N0),
-    (E =/= <<>> andalso N =/= <<>>) orelse error(badarg),
+    E =/= <<>> andalso rsa_key_fits(Alg, E, N) orelse error(badarg),
     case byte_size(E) of
         Len when Len =< 255 -> <<Len, E/binary, N/binary>>;
-        Len when Len =< 16#FFFF -> <<0, Len:16, E/binary, N/binary>>;
-        _ -> error(badarg)
+        Len -> <<0, Len:16, E/binary, N/binary>>
     end;
 dnskey_public_key(Alg, [_, _, _, _] = Key) when ?IS_DSA_ALG(Alg) ->
     %% RFC2536§2: T, then Q in 20 octets, and P, G and Y in 64 + 8T each
@@ -1076,18 +1084,47 @@ is_at_or_under(Labels, Zone) ->
 
 %% RFC3110§2: a DNSKEY's RSA key is the exponent's length in one octet, or for
 %% one over 255 octets in a zero octet and two more, then the exponent and the
-%% modulus, neither with leading zero octets. A key laid out otherwise verifies
-%% nothing
--spec rsa_public_key(binary()) -> [binary()] | invalid.
-rsa_public_key(<<0, Len:16, E:Len/binary, N/binary>>) when Len > 255 -> rsa_public_key(E, N);
-rsa_public_key(<<Len, E:Len/binary, N/binary>>) when Len > 0 -> rsa_public_key(E, N);
-rsa_public_key(_Key) -> invalid.
-
--spec rsa_public_key(binary(), binary()) -> [binary()] | invalid.
-rsa_public_key(<<EFirst, _/binary>> = E, <<NFirst, _/binary>> = N) when EFirst > 0, NFirst > 0 ->
-    [E, N];
-rsa_public_key(_E, _N) ->
+%% modulus, neither with leading zero octets. A key laid out otherwise, or of a
+%% size rsa_key_fits/3 rules out for the algorithm, verifies nothing
+-spec rsa_public_key(dns:uint8(), binary()) -> [binary()] | invalid.
+rsa_public_key(Alg, <<0, Len:16, E:Len/binary, N/binary>>) when Len > 255 ->
+    rsa_public_key(Alg, E, N);
+rsa_public_key(Alg, <<Len, E:Len/binary, N/binary>>) when Len > 0 ->
+    rsa_public_key(Alg, E, N);
+rsa_public_key(_Alg, _Key) ->
     invalid.
+
+-spec rsa_public_key(dns:uint8(), binary(), binary()) -> [binary()] | invalid.
+rsa_public_key(Alg, <<EFirst, _/binary>> = E, <<NFirst, _/binary>> = N) when
+    EFirst > 0, NFirst > 0
+->
+    case rsa_key_fits(Alg, E, N) of
+        true -> [E, N];
+        false -> invalid
+    end;
+rsa_public_key(_Alg, _E, _N) ->
+    invalid.
+
+%% RFC3110§2, §3, RFC5702§2: an RSA key's exponent is at most 4096 bits long, and
+%% its modulus 512 to 4096 bits, or 1024 to 4096 for RSA/SHA-512. Both are given
+%% without leading zeros
+-spec rsa_key_fits(dns:uint8(), binary(), binary()) -> boolean().
+rsa_key_fits(Alg, E, N) ->
+    MinBits =
+        case Alg of
+            ?DNS_ALG_RSASHA512 -> 1024;
+            _ -> 512
+        end,
+    ModulusBits = bit_length(N),
+    bit_length(E) =< 4096 andalso MinBits =< ModulusBits andalso ModulusBits =< 4096.
+
+%% The bits of a number given as its big-endian bytes without leading zeros
+-spec bit_length(binary()) -> non_neg_integer().
+bit_length(<<>>) ->
+    0;
+bit_length(<<First, Rest/binary>>) ->
+    FirstBits = length(integer_to_list(First, 2)),
+    8 * byte_size(Rest) + FirstBits.
 
 %% RFC2536§2: a DNSKEY's DSA key is T, 0 to 8, then Q in 20 octets, and P, G and
 %% Y in 64 + 8T each, laid out as dsa_t/3 has it. A key laid out otherwise

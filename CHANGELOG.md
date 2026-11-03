@@ -25,7 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - DNSSEC: DSA signatures (3, 6) signed the data's length along with it; re-sign stored ones, or move off DSA, which RFC 9904 forbids.
 - DNSSEC: `dns_sec:verify_rrsig/4` no longer crashes on RRsets whose TTL is not the RRSIG's original TTL.
 - DNSSEC: `dns_sec:verify_rrsig/4` returns `false` for unknown algorithms, algorithms the local crypto refuses, keys or signatures of the wrong size, RRSIGs whose RDATA did not decode, and empty RRsets.
-- DNSSEC: `dns_sec:verify_rrsig/4` verifies RSA and DSA DNSKEYs parsed from zone files, and nothing with a key RFC 3110 §2 or RFC 2536 §2 rules out.
+- DNSSEC: `dns_sec:verify_rrsig/4` verifies RSA and DSA DNSKEYs parsed from zone files, and nothing with a key whose layout or size RFC 3110, RFC 5702 or RFC 2536 rules out.
 - DNSSEC: `dns_sec:verify_rrsig/4` only tries the zone keys of the RRSIG's class it names by owner, algorithm and key tag, computed from their RDATA, not every key of the signer.
 - DNSSEC: `dns_sec:verify_rrsig/4` matches an RRSIG's signer to a DNSKEY's owner with or without a final dot.
 - DNSSEC: `dns_sec:verify_rrsig/4` verifies RRsets a wildcard was expanded into, leaving the proof that no closer name exists to the caller (RFC 4035 §5.3.4).
@@ -34,7 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - DNSSEC: `dns_sec:verify_rrsig/4` rejects an RRSIG whose signer cannot be the zone of its RRset, as BIND does.
 - DNSSEC: `dns_sec:verify_rrsig/4` rejects an RSA signature that is not as long as the modulus, as RFC 8017 §8.2.2 has it.
 - DNSSEC: signing with an unknown algorithm raises `{unsupported_algorithm, Alg}`.
-- DNSSEC: signing with a DSA key RFC 2536 §2 rules out, whose Q is not 160 bits or whose P is not 512 + 64T bits, raises `{unsupported_key, Alg}`.
+- DNSSEC: signing with an RSA key whose size RFC 3110 or RFC 5702 rules out, or a DSA key RFC 2536 §2 rules out, raises `{unsupported_key, Alg}`.
 - DNSSEC: signing and verifying leave duplicate records out of an RRset, as RFC 4034 §6.3 has it.
 - DNSSEC: `dns_sec:sign_rr/6` and the NSEC and NSEC3 generators take owner names that differ only in a final dot as one owner, where they split an RRset or crashed.
 - DNSSEC: `dns_sec:gen_nsec3/1,2` finds empty non-terminals by labels, so a label holding a dot neither hides one nor makes one up, and raises `name_mismatch` for any record outside the zone.
