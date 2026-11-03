@@ -466,18 +466,26 @@ sign_rrset(RRSet, SignerName, KeyTag, Alg, Key) ->
 -doc """
 Signs one RRset: a list of `t:dns:rr/0` of one owner, class and type.
 
-Owner names that differ only in case or in a final dot are one owner. Raises
-`badarg` for an empty list, for anything in it that is not a record of the
-RRset, for an RRSIG RRset, which RFC 4035 §2.2 never signs, and for an owner or
-signer that is not a name: one with an empty label, a label over 63 octets, or
-over 255 octets in all. Raises `{unsupported_algorithm, Alg}` for an algorithm
-this module does not implement, and `{unsupported_key, Alg}` for a key whose
-DNSKEY `verify_rrsig/4` refuses: an RSA key whose modulus is not 512 to 4096
-bits long, or 1024 to 4096 for RSA/SHA-512, or whose exponent is over 4096 bits
-long (RFC 3110 §2, §3, RFC 5702 §2), and a DSA key that RFC 2536 §2 rules out,
-whose Q is not 160 bits long, whose P is not 512 + 64T bits long for a T of 0
-to 8, or whose G is longer than P. It still signs with DSA (3 and 6) and
-RSA/SHA-1 (5 and 7), which RFC 9904 and RFC 9905 forbid for new signatures.
+Owner names that differ only in case or in a final dot are one owner. The
+validity period is `inception` and `expiration` in `Opts`, by default the
+current time and a year after it. Raises `badarg` for:
+
+- an empty list, or anything in it that is not a record of the RRset;
+- an RRSIG RRset, which RFC 4035 §2.2 never signs;
+- an owner or signer that is not a name: one with an empty label, a label over
+  63 octets, or over 255 octets in all;
+- a validity period that never verifies, whose expiration is before its
+  inception, or 2^31 seconds or more after it, in serial number arithmetic
+  (RFC 4034 §3.1.5).
+
+Raises `{unsupported_algorithm, Alg}` for an algorithm this module does not
+implement, and `{unsupported_key, Alg}` for a key whose DNSKEY `verify_rrsig/4`
+refuses: an RSA key whose modulus is not 512 to 4096 bits long, or 1024 to 4096
+for RSA/SHA-512, or whose exponent is over 4096 bits long (RFC 3110 §2, §3,
+RFC 5702 §2), and a DSA key that RFC 2536 §2 rules out, whose Q is not 160 bits
+long, whose P is not 512 + 64T bits long for a T of 0 to 8, or whose G is
+longer than P. It still signs with DSA (3 and 6) and RSA/SHA-1 (5 and 7), which
+RFC 9904 and RFC 9905 forbid for new signatures.
 """.
 -spec sign_rrset([dns:rr(), ...], dns:dname(), keytag(), sigalg(), key(), sign_rr_opts()) ->
     dns:rr().
@@ -502,6 +510,9 @@ sign_rrset(
     Incept = maps:get(inception, Opts, Now),
     %% 1 year
     Expire = maps:get(expiration, Opts, Now + ?SECS_IN_YEAR),
+    %% RFC4034§3.1.5: verify_rrsig/4, BIND and ldns refuse a period whose
+    %% expiration is not at or after its inception in serial number arithmetic
+    serial_at_most(Incept, Expire) orelse error(badarg),
     Data0 = #dns_rrdata_rrsig{
         type_covered = Type,
         alg = Alg,

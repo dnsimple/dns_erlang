@@ -29,7 +29,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - DNSSEC: `dns_sec:verify_rrsig/4` only tries the zone keys of the RRSIG's class it names by owner, algorithm and key tag, computed from their RDATA, not every key of the signer.
 - DNSSEC: `dns_sec:verify_rrsig/4` matches an RRSIG's signer to a DNSKEY's owner with or without a final dot.
 - DNSSEC: `dns_sec:verify_rrsig/4` verifies RRsets a wildcard was expanded into, leaving the proof that no closer name exists to the caller (RFC 4035 §5.3.4).
-- DNSSEC: `dns_sec:verify_rrsig/4` compares an RRSIG's validity period in serial number arithmetic, as RFC 4034 §3.1.5 has it.
+- DNSSEC: `dns_sec:verify_rrsig/4` compares an RRSIG's validity period in serial number arithmetic, as RFC 4034 §3.1.5 has it, so, as BIND does, it refuses one of 2^31 seconds or more, which 5.1.1 verified.
+- DNSSEC: `dns_sec:sign_rrset/6` raises `badarg` for a validity period that ends before it starts or lasts 2^31 seconds or more.
 - DNSSEC: `dns_sec:verify_rrsig/4` rejects an RRSIG unless every record of the RRset has its owner, class and type covered.
 - DNSSEC: `dns_sec:verify_rrsig/4` rejects an RRSIG whose signer cannot be the zone of its RRset, as BIND does.
 - DNSSEC: `dns_sec:verify_rrsig/4` rejects an RSA signature that is not as long as the modulus, as RFC 8017 §8.2.2 has it.

@@ -1004,26 +1004,65 @@ verify_uses_serial_number_arithmetic(_Config) ->
 
 %% RFC4034§3.1.5: the inception must be before the expiration in serial number
 %% arithmetic. BIND, Unbound and ldns reject an RRSIG when this is not true.
+%% sign_rrset/6 raises badarg for such a period, so these RRSIGs are signed by
+%% hand, and one with a period that verifies shows that the others fail only
+%% for theirs.
 verify_rejects_expiration_before_inception(_Config) ->
     {Priv, DNSKey, KeyTag} = ed25519_zone_key(~"example"),
     A = rr_a(~"www.example", {192, 0, 2, 1}),
     Verify = fun(Inception, Expiration, Now) ->
-        RRSig = dns_sec:sign_rrset(
-            [A],
-            ~"example",
-            KeyTag,
-            ?DNS_ALG_ED25519,
-            Priv,
-            #{inception => Inception, expiration => Expiration}
+        SignedData = signed_data_by_hand(
+            ?DNS_ALG_ED25519, KeyTag, ~"example", Inception, Expiration
         ),
+        Signature = crypto:sign(eddsa, none, SignedData, [Priv, ed25519]),
+        RRSig = rrsig_by_hand(?DNS_ALG_ED25519, KeyTag, Inception, Expiration, Signature),
         dns_sec:verify_rrsig(RRSig, [A], [DNSKey], #{now => Now})
     end,
+    Sign = fun(Inception, Expiration) ->
+        Opts = #{inception => Inception, expiration => Expiration},
+        dns_sec:sign_rrset([A], ~"example", KeyTag, ?DNS_ALG_ED25519, Priv, Opts)
+    end,
+    ?assert(Verify(100, 200, 150)),
     %% The expiration is 100 seconds before the inception
     ?assertNot(Verify(200, 100, 1 bsl 31 + 150)),
+    ?assertError(badarg, Sign(200, 100)),
     %% The period is longer than 2^31 seconds, thus the expiration is
     %% before the inception in serial number arithmetic
     I = 1700000000,
-    ?assertNot(Verify(I, (I + (1 bsl 31) + 10) band 16#FFFFFFFF, I + 100)).
+    Late = (I + (1 bsl 31) + 10) band 16#FFFFFFFF,
+    ?assertNot(Verify(I, Late, I + 100)),
+    ?assertError(badarg, Sign(I, Late)),
+    ?assertError(badarg, Sign(0, 16#FFFFFFFF)),
+    %% The longest period that verifies, 2^31 - 1 seconds
+    Last = I + (1 bsl 31) - 1,
+    ?assertEqual(Sign(I, Last), rrsig_by_hand_signed(Priv, KeyTag, I, Last)),
+    [?assert(Verify(I, Last, Now)) || Now <- [I, Last]],
+    ?assertNot(Verify(I, Last, Last + 1)).
+
+rrsig_by_hand_signed(Priv, KeyTag, Inception, Expiration) ->
+    SignedData = signed_data_by_hand(?DNS_ALG_ED25519, KeyTag, ~"example", Inception, Expiration),
+    Signature = crypto:sign(eddsa, none, SignedData, [Priv, ed25519]),
+    rrsig_by_hand(?DNS_ALG_ED25519, KeyTag, Inception, Expiration, Signature).
+
+%% An RRSIG over www.example. 3600 IN A 192.0.2.1, signed by example, whose signed
+%% data signed_data_by_hand/5 gives
+rrsig_by_hand(Alg, KeyTag, Inception, Expiration, Signature) ->
+    #dns_rr{
+        name = ~"www.example",
+        type = ?DNS_TYPE_RRSIG,
+        ttl = 3600,
+        data = #dns_rrdata_rrsig{
+            type_covered = ?DNS_TYPE_A,
+            alg = Alg,
+            labels = 2,
+            original_ttl = 3600,
+            expiration = Expiration,
+            inception = Inception,
+            keytag = KeyTag,
+            signers_name = ~"example",
+            signature = Signature
+        }
+    }.
 
 %% A DNSKEY with a bad owner name is not a key for the RRSIG. verify_rrsig/4
 %% must ignore it and use the other DNSKEYs, and it must not crash.
@@ -1460,22 +1499,7 @@ rsa_key_sizes_rfcs_allow(_Config) ->
             SignedData = signed_data_by_hand(Alg, KeyTag, ~"example", 1000000, 2000000),
             Signature = crypto:sign(rsa, Hash, SignedData, Priv),
             ?assert(crypto:verify(rsa, Hash, SignedData, Signature, [E, N])),
-            RRSig = #dns_rr{
-                name = ~"www.example",
-                type = ?DNS_TYPE_RRSIG,
-                ttl = 3600,
-                data = #dns_rrdata_rrsig{
-                    type_covered = ?DNS_TYPE_A,
-                    alg = Alg,
-                    labels = 2,
-                    original_ttl = 3600,
-                    expiration = 2000000,
-                    inception = 1000000,
-                    keytag = KeyTag,
-                    signers_name = ~"example",
-                    signature = Signature
-                }
-            },
+            RRSig = rrsig_by_hand(Alg, KeyTag, 1000000, 2000000, Signature),
             Verified = dns_sec:verify_rrsig(RRSig, [A], [DNSKey], #{now => 1500000}),
             ?assertEqual({Alg, Bits, Fits}, {Alg, Bits, Verified}),
             Sign = fun() -> dns_sec:sign_rrset([A], ~"example", KeyTag, Alg, Priv, Opts) end,
