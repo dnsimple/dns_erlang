@@ -19,7 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - DNSSEC: `dnssec:verify_rrsig/4` verifies RSA and DSA DNSKEYs parsed from zone files.
 - DNSSEC: `dnssec:verify_rrsig/4` only tries the zone keys of the RRSIG's class it names by owner, algorithm and key tag, computed from their RDATA, not every key of the signer.
 - DNSSEC: `dnssec:verify_rrsig/4` matches an RRSIG's signer to a DNSKEY's owner with or without a final dot.
-- DNSSEC: `dnssec:verify_rrsig/4` verifies RRsets a wildcard was expanded into.
+- DNSSEC: `dnssec:verify_rrsig/4` verifies RRsets a wildcard was expanded into, leaving the proof that no closer name exists to the caller (RFC 4035 §5.3.4).
 - DNSSEC: `dnssec:verify_rrsig/4` compares an RRSIG's validity period in serial number arithmetic, as RFC 4034 §3.1.5 has it.
 - DNSSEC: `dnssec:verify_rrsig/4` rejects an RRSIG unless every record of the RRset has its owner, class and type covered.
 - DNSSEC: `dnssec:verify_rrsig/4` rejects an RRSIG whose signer cannot be the zone of its RRset, as BIND does.

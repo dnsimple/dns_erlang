@@ -554,7 +554,12 @@ has validating resolvers treat as unsupported. Which algorithms to accept is the
 caller's policy: an RRset signed only with ones it does not accept is insecure,
 not bogus (RFC 4035 §5.2).
 
-An RRset a wildcard was expanded into verifies with the wildcard's RRSIG.
+An RRset a wildcard was expanded into verifies with the wildcard's RRSIG, which
+only proves that the wildcard's RRset was signed. Such an RRSIG's labels field
+counts fewer labels than its owner has, not counting a leading `*`, and before
+it accepts the answer the caller must prove that no closer name exists
+(RFC 4035 §5.3.4).
+
 Whether the DNSKEYs are to be trusted is for the caller to decide: a key is used
 as it is, and some keys verify what their owner never signed, as an all-zero
 Ed448 key verifies an all-zero signature over any data.
