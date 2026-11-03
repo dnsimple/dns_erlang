@@ -1416,7 +1416,14 @@ rsa_key_encodes_alike_as_integers_and_binaries(_Config) ->
     end,
     Integers = Encode([binary:decode_unsigned(E), binary:decode_unsigned(N)]),
     ?assertEqual(Integers, Encode([E, N])),
-    ?assertEqual(Integers, Encode([<<0, E/binary>>, <<0, 0, N/binary>>])).
+    ?assertEqual(Integers, Encode([<<0, E/binary>>, <<0, 0, N/binary>>])),
+    %% An empty exponent would be written as the zero octet that says a
+    %% two-octet length follows (RFC3110§2), and an empty modulus as none, so
+    %% neither encodes
+    [
+        ?assertError(badarg, Encode(Key))
+     || Key <- [[0, N], [<<>>, N], [<<0>>, N], [E, 0], [E, <<>>], [E, <<0, 0>>]]
+    ].
 
 %% RFC4034§6.2: a name in canonical form has all its letters in lowercase. A
 %% dns:dname() escapes a dot or a backslash in a label, as \. and \\, and

@@ -1710,6 +1710,11 @@ encode_rsa_key(E, M) ->
     EBin = strip_leading_zeros(unsigned_binary(E)),
     ESize = byte_size(EBin),
     case ESize of
+        %% RFC3110§2: a zero first octet says the exponent's length takes the two
+        %% octets after it, so an empty exponent would not read back, nor would a
+        %% key whose modulus is empty
+        _ when ESize =:= 0; MBin =:= <<>> ->
+            erlang:error(badarg);
         _ when ESize =< 16#FF ->
             <<ESize:8, EBin:ESize/binary, MBin/binary>>;
         _ when ESize =< 16#FFFF ->
