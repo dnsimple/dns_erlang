@@ -563,6 +563,11 @@ it accepts the answer the caller must prove that no closer name exists
 Whether the DNSKEYs are to be trusted is for the caller to decide: a key is used
 as it is, and some keys verify what their owner never signed, as an all-zero
 Ed448 key verifies an all-zero signature over any data.
+
+Key tags are not unique, and whoever makes a zone can give many of its keys the
+same one, so an RRSIG can name many DNSKEYs, each of which is tried in turn
+(KeyTrap, CVE-2023-50387). A caller that verifies data it does not trust should
+limit the number of DNSKEYs it passes.
 """.
 -spec verify_rrsig(dns:rr(), [dns:rr()], [dns:rr()], verify_rrsig_opts()) -> boolean().
 verify_rrsig(
@@ -590,7 +595,7 @@ verify_rrsig(
             %% (RFC4034§2.1.1), in the zone's apex DNSKEY RRset, so of the RRSIG's
             %% class. The names compare as names: a zone file's keep their final
             %% dot, the wire's not. Only the keys the RRSIG names are tried, never
-            %% every key of the zone
+            %% every key of the zone, though key tags collide and these can be many
             Keys = [
                 PubKey
              || #dns_rr{
