@@ -1508,7 +1508,37 @@ dnskey_key_kept_as_rdata_bytes(_) ->
         <<3, $f, $o, $o, 0, (?DNS_TYPE_DNSKEY):16, (?DNS_CLASS_IN):16, 300:32,
             (byte_size(Rdata)):16, Rdata/binary>>,
     Wire = <<Header/binary, Answer/binary>>,
-    ?assertEqual(Wire, dns:encode_message(dns:decode_message(Wire))).
+    ?assertEqual(Wire, dns:encode_message(dns:decode_message(Wire))),
+    %% A DNSKEY response as an authoritative server sends one: an RSA KSK and
+    %% ZSK, the RRSIG over them and an OPT, the owner names compressed and the
+    %% signer's name not (RFC4034§3.1.7). It must decode with the keys as their
+    %% bytes and encode back byte for byte
+    Ksk = <<3, 1, 0, 1, 255, (binary:copy(<<16#AB>>, 255))/binary>>,
+    Zsk = <<3, 1, 0, 1, Modulus/binary>>,
+    Owner = <<7, "example", 3, "com", 0>>,
+    RRSig =
+        <<(?DNS_TYPE_DNSKEY):16, (?DNS_ALG_RSASHA256), 2, 3600:32, 1100000000:32, 1000000000:32,
+            4242:16, Owner/binary, (binary:copy(<<16#5A>>, 256))/binary>>,
+    RR = fun(Type, RData) ->
+        <<16#C00C:16, Type:16, (?DNS_CLASS_IN):16, 3600:32, (byte_size(RData)):16, RData/binary>>
+    end,
+    Response =
+        <<16#1234:16, 16#8400:16, 1:16, 3:16, 0:16, 1:16, Owner/binary, (?DNS_TYPE_DNSKEY):16,
+            (?DNS_CLASS_IN):16,
+            (RR(?DNS_TYPE_DNSKEY, <<257:16, 3, (?DNS_ALG_RSASHA256), Ksk/binary>>))/binary,
+            (RR(?DNS_TYPE_DNSKEY, <<256:16, 3, (?DNS_ALG_RSASHA256), Zsk/binary>>))/binary,
+            (RR(?DNS_TYPE_RRSIG, RRSig))/binary, 0, (?DNS_TYPE_OPT):16, 1232:16, 0, 0, 16#8000:16,
+            0:16>>,
+    #dns_message{answers = Answers} = Message = dns:decode_message(Response),
+    ?assertMatch(
+        [
+            #dns_rr{data = #dns_rrdata_dnskey{flags = 257, public_key = Ksk}},
+            #dns_rr{data = #dns_rrdata_dnskey{flags = 256, public_key = Zsk}},
+            #dns_rr{data = #dns_rrdata_rrsig{type_covered = ?DNS_TYPE_DNSKEY, keytag = 4242}}
+        ],
+        Answers
+    ),
+    ?assertEqual(Response, dns:encode_message(Message)).
 
 %% RFC6891§6.1.1: an OPT RR "MUST be the only OPT RR in that message". The
 %% decoder rejects a second one, but the encoder would happily emit two, so a
