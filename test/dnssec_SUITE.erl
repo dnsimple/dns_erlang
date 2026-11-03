@@ -768,10 +768,11 @@ ds_digest(DigestType, Owner, KeyData) ->
 %% ECDSA and DSA hash the signed data themselves, once (RFC6605§4, RFC2536§3).
 %% dnssec.erl once hashed it first for ECDSA, and so signed the hash of the
 %% hash, and put its length in front of it for DSA: its signatures verified with
-%% itself and with nothing else, since signing and verifying shared the mistake. This builds the signed data by hand, from
-%% RFC4034§3.1.8.1 and §6.2, and checks signatures with crypto alone, sharing no
-%% code with dnssec.erl. It accepts the RFC6605 examples' own signatures, which
-%% shows the check itself is right, and must accept the ones signed here.
+%% itself and with nothing else, since signing and verifying shared the mistake.
+%% This builds the signed data by hand, from RFC4034§3.1.8.1 and §6.2, and
+%% checks signatures with crypto alone, sharing no code with dnssec.erl. It
+%% accepts the RFC6605 examples' own signatures, which shows the check itself is
+%% right, and must accept the ones signed here.
 signatures_verify_independently(Config) ->
     [
         begin
