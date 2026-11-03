@@ -459,13 +459,14 @@ sign_rrset(RRSet, SignerName, KeyTag, Alg, Key) ->
 Signs one RRset: a list of `t:dns:rr/0` of one owner, class and type.
 
 Owner names that differ only in case or in a final dot are one owner. Raises
-`badarg` for records of more than one RRset, and for an RRSIG RRset, which
-RFC 4035 §2.2 never signs. Raises `{unsupported_algorithm, Alg}` for an
-algorithm this module does not implement, and `{unsupported_key, Alg}` for a
-DSA key that RFC 2536 §2 rules out: one whose Q is not 160 bits long, whose P
-is not 512 + 64T bits long for a T of 0 to 8, or whose G is longer than P. It
-still signs with DSA (3 and 6) and RSA/SHA-1 (5 and 7), which RFC 9904 and
-RFC 9905 forbid for new signatures.
+`badarg` for records of more than one RRset, for an RRSIG RRset, which
+RFC 4035 §2.2 never signs, and for an owner or signer that is not a name: one
+with an empty label, a label over 63 octets, or over 255 octets in all. Raises
+`{unsupported_algorithm, Alg}` for an algorithm this module does not implement,
+and `{unsupported_key, Alg}` for a DSA key that RFC 2536 §2 rules out: one
+whose Q is not 160 bits long, whose P is not 512 + 64T bits long for a T of 0
+to 8, or whose G is longer than P. It still signs with DSA (3 and 6) and
+RSA/SHA-1 (5 and 7), which RFC 9904 and RFC 9905 forbid for new signatures.
 """.
 -spec sign_rrset([dns:rr(), ...], dns:dname(), keytag(), sigalg(), key(), sign_rr_opts()) ->
     dns:rr().
@@ -477,7 +478,10 @@ sign_rrset(
     Key,
     Opts
 ) when is_integer(Alg) ->
-    Owner = dns_domain:split(Name),
+    Owner = name_labels(Name),
+    Signer = name_labels(SignersName),
+    %% A name verify_rrsig/4 refuses makes an RRSIG that never verifies
+    Owner =/= invalid andalso Signer =/= invalid orelse error(badarg),
     %% RFC4034§3.1.8.1: the records are signed as one RRset, with the first's
     %% owner, class and type, so a record of another RRset would make an RRSIG
     %% that never verifies. RFC4035§2.2: an RRSIG RRset is never signed
@@ -1013,14 +1017,16 @@ count_labels(List) when is_list(List) ->
     length(List).
 
 %% A name's labels, or invalid for a name no decoder or zone file gives: one with
-%% an empty label, a label over 63 octets, or over 255 octets in all (RFC1035§2.3.4)
+%% an empty label, a label over 63 octets, or over 255 octets in all (RFC1035§2.3.4).
+%% split/1 raises for an empty label inside the name, but gives the one a leading
+%% dot makes, so each label is checked here
 -spec name_labels(dns:dname()) -> dns:labels() | invalid.
 name_labels(Name) ->
     try dns_domain:split(Name) of
         Labels ->
             Sizes = [1 + byte_size(Label) || Label <- Labels],
             Length = lists:sum(Sizes),
-            case Length < 255 of
+            case Length < 255 andalso lists:all(fun is_label_size/1, Sizes) of
                 true -> Labels;
                 false -> invalid
             end
@@ -1028,6 +1034,11 @@ name_labels(Name) ->
         error:{invalid_dname, empty_label} -> invalid;
         error:{label_too_long, _} -> invalid
     end.
+
+%% RFC1035§2.3.4: a label, with its length octet, of 1 to 63 octets
+-spec is_label_size(pos_integer()) -> boolean().
+is_label_size(Size) ->
+    Size > 1 andalso Size =< 64.
 
 %% Whether a name is the one given as labels, which no invalid name is
 -spec is_name(dns:dname(), dns:labels() | invalid) -> boolean().

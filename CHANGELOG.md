@@ -41,6 +41,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - DNSSEC: `dns_sec:gen_nsec3/1,2` makes NSEC3 records for the root zone, where it raised `name_mismatch`.
 - DNSSEC: `dns_sec:sign_rr/6` leaves RRSIG records unsigned, and `dns_sec:sign_rrset/6` raises `badarg` for an RRSIG RRset, as RFC 4035 §2.2 has it.
 - DNSSEC: `dns_sec:sign_rrset/6` raises `badarg` for records of more than one RRset, where it signed them all under the first's owner, class and type.
+- DNSSEC: `dns_sec:sign_rrset/6` raises `badarg` for an owner or signer that is not a name, and `dns_sec:verify_rrsig/4` returns `false` for one.
 - JSON: `dns_json:from_map/1` computes a DNSKEY's or CDNSKEY's key tag from its RDATA, as the wire and zone file decoders do, whatever the JSON's `keytag` is.
 - Zone files: read hex split by whitespace in DS, CDS, DLV, TLSA and SMIMEA, and base64 in DHCID, CERT and KEY.
 - Zone files: read TLSA, SMIMEA, DHCID and CERT data unquoted, as their RFCs' examples write it.

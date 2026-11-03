@@ -92,6 +92,7 @@ groups() ->
             gen_nsec3_makes_no_ent_from_escaped_dot,
             verify_owner_with_leading_dot_is_false,
             sign_rr_rejects_what_is_not_a_record,
+            sign_and_verify_only_names,
             gen_nsec3_root_zone,
             gen_nsec3_rejects_names_outside_the_zone,
             ih_custom_hash_test,
@@ -1597,6 +1598,39 @@ sign_rr_rejects_what_is_not_a_record(_Config) ->
     Sign = fun(RRs) -> dns_sec:sign_rr(RRs, ~"example", KeyTag, ?DNS_ALG_ED25519, Priv, Opts) end,
     ?assertError(_, Sign([A, {dns_rr, ~"x.example"}])),
     ?assertError(_, Sign([A, #dns_query{name = ~"www.example", type = ?DNS_TYPE_A}])).
+
+%% A name with an empty label, a label over 63 octets or over 255 octets in all
+%% is not a name (RFC1035§2.3.4). sign_rrset/6 raises badarg for such an owner
+%% or signer, rather than make an RRSIG that verify_rrsig/4 refuses, and
+%% verify_rrsig/4 returns false for one, which the wire never gives
+sign_and_verify_only_names(_Config) ->
+    {Priv, DNSKey, KeyTag} = ed25519_zone_key(~"example"),
+    Opts = #{inception => 1000000, expiration => 2000000},
+    Sign = fun(RRs, Signer) ->
+        dns_sec:sign_rrset(RRs, Signer, KeyTag, ?DNS_ALG_ED25519, Priv, Opts)
+    end,
+    A = rr_a(~"www.example", {192, 0, 2, 1}),
+    #dns_rr{data = Data} = RRSig = Sign([A], ~"example"),
+    Verify = fun(Sig, RRs) -> dns_sec:verify_rrsig(Sig, RRs, [DNSKey], #{now => 1500000}) end,
+    ?assert(Verify(RRSig, [A])),
+    Long = binary:copy(~"a", 64),
+    NotNames = [
+        ~".www.example",
+        <<"www..example">>,
+        <<Long/binary, ".example">>,
+        <<(binary:copy(~"a.", 124))/binary, "www.example">>
+    ],
+    [
+        begin
+            ?assertError(badarg, Sign([A#dns_rr{name = NotName}], ~"example")),
+            ?assertError(badarg, Sign([A], NotName)),
+            Moved = RRSig#dns_rr{name = NotName},
+            ?assertNot(Verify(Moved, [A#dns_rr{name = NotName}])),
+            Signer = RRSig#dns_rr{data = Data#dns_rrdata_rrsig{signers_name = NotName}},
+            ?assertNot(Verify(Signer, [A]))
+        end
+     || NotName <- NotNames
+    ].
 
 %% RFC5155§3: an NSEC3's owner is its hash as one label under the zone, for the
 %% root zone too, written as "." or as <<>>, whose empty non-terminals are found
