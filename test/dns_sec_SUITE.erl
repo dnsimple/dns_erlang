@@ -86,6 +86,12 @@ groups() ->
             verify_dnskey_without_key_tag,
             sign_rrset_rejects_records_of_other_rrsets,
             signers_name_in_canonical_form,
+            dsa_key_signs_only_if_it_verifies,
+            sign_dsa_key_as_integers,
+            dnskey_from_json_verifies_with_its_key_tag,
+            gen_nsec3_makes_no_ent_from_escaped_dot,
+            verify_owner_with_leading_dot_is_false,
+            sign_rr_rejects_what_is_not_a_record,
             ih_custom_hash_test,
             dsa_sign_verify_test,
             ecdsa_sign_verify_test,
@@ -1463,6 +1469,144 @@ sign_rrset_rejects_records_of_other_rrsets(_Config) ->
     %% An owner name that differs only in case or a final dot is the same owner
     Spelled = rr_a(~"WWW.Example.", {192, 0, 2, 3}),
     ?assert(dns_sec:verify_rrsig(Sign([A, Spelled]), [A, Spelled], [DNSKey], #{now => 1500000})).
+
+%% verify_rrsig/4 uses a DSA key only if P has its top bit set in 64 + 8T
+%% octets. This DSA group has a P of 520 bits, thus T is 1 and P does not fill
+%% its 72 octets. dnskey_public_key/2 and sign_rrset/6 must refuse this key, or
+%% the RRSIG that they make must verify. Now both accept the key, crypto accepts
+%% the signature, and verify_rrsig/4 returns false.
+dsa_key_signs_only_if_it_verifies(_Config) ->
+    [P, Q, G, Y, X] = [hex_unsigned(H) || H <- dsa_group_p520()],
+    A = rr_a(~"www.example", {192, 0, 2, 1}),
+    Opts = #{inception => 1000000, expiration => 2000000},
+    Made =
+        try
+            Field = dns_sec:dnskey_public_key(?DNS_ALG_DSA, [P, Q, G, Y]),
+            DNSKey = dsa_dnskey(Field),
+            KeyTag = key_tag_of(DNSKey),
+            RRSig = dns_sec:sign_rrset([A], ~"example", KeyTag, ?DNS_ALG_DSA, [P, Q, G, X], Opts),
+            {DNSKey, RRSig}
+        catch
+            error:badarg -> refused;
+            error:{unsupported_key, ?DNS_ALG_DSA} -> refused
+        end,
+    case Made of
+        refused -> ok;
+        {Key, Sig} -> ?assert(dns_sec:verify_rrsig(Sig, [A], [Key], #{now => 1500000}))
+    end.
+
+%% The public_key application gives the numbers of a DSA private key as
+%% integers. v5.1.1 signed with such a key. crypto signs with it, and
+%% sign_rrset/6 signs with an RSA key as integers. Now a DSA key as integers
+%% raises a badarg from erlang:byte_size/1.
+sign_dsa_key_as_integers(_Config) ->
+    [P, Q, G, Y, X] = [binary_to_integer(H, 16) || H <- dsa_group_p512()],
+    Bin = fun binary:encode_unsigned/1,
+    DNSKey = dsa_dnskey(dns_sec:dnskey_public_key(?DNS_ALG_DSA, [Bin(N) || N <- [P, Q, G, Y]])),
+    KeyTag = key_tag_of(DNSKey),
+    A = rr_a(~"www.example", {192, 0, 2, 1}),
+    Opts = #{inception => 1000000, expiration => 2000000},
+    RRSig = dns_sec:sign_rrset([A], ~"example", KeyTag, ?DNS_ALG_DSA, [P, Q, G, X], Opts),
+    ?assert(dns_sec:verify_rrsig(RRSig, [A], [DNSKey], #{now => 1500000})).
+
+%% verify_rrsig/4 computes the key tag of a DNSKEY from its RDATA. dns_json
+%% keeps the keytag field of the JSON, 0 in the example of JSON_FORMAT.md. A
+%% caller signs with the key tag of the DNSKEY that it loaded. That RRSIG must
+%% verify with the same DNSKEY. It verified on v5.1.1.
+dnskey_from_json_verifies_with_its_key_tag(_Config) ->
+    {Priv, DNSKey, _KeyTag} = ed25519_zone_key(~"example"),
+    #{~"data" := Data} = Map = dns_json:to_map(DNSKey),
+    Loaded = dns_json:from_map(Map#{~"data" := Data#{~"keytag" := 0}}),
+    #dns_rr{data = #dns_rrdata_dnskey{keytag = LoadedTag}} = Loaded,
+    A = rr_a(~"www.example", {192, 0, 2, 1}),
+    Opts = #{inception => 1000000, expiration => 2000000},
+    RRSig = dns_sec:sign_rrset([A], ~"example", LoadedTag, ?DNS_ALG_ED25519, Priv, Opts),
+    ?assert(dns_sec:verify_rrsig(RRSig, [A], [Loaded], #{now => 1500000})).
+
+%% The owner x.a\.example.com has the labels x, a.example and com. It is not
+%% under example.com, and a\\.example.com (the label a\ under example.com) is
+%% not one of its ancestors. gen_nsec3/1 finds ancestors by the bytes of the
+%% escaped name, so it reads the escaped dot as the end of a label. It then
+%% makes an NSEC3 for a\\.example.com. main hashed a\.example.com.
+gen_nsec3_makes_no_ent_from_escaped_dot(_Config) ->
+    Hash = fun(Name) ->
+        Wire = dns_domain:to_wire(Name),
+        dns_sec:ih(?DNSSEC_NSEC3_ALG_SHA1, <<>>, Wire, 0)
+    end,
+    Result =
+        try
+            dns_sec:gen_nsec3([
+                soa_rr(~"example.com"),
+                nsec3param_rr(~"example.com"),
+                rr_a(~"x.a\\.example.com", {192, 0, 2, 1})
+            ])
+        catch
+            error:_ -> []
+        end,
+    Owners = [hd(dns_domain:split(Name)) || #dns_rr{name = Name} <- Result],
+    Bogus = base32:encode(Hash(~"a\\\\.example.com"), [hex, nopad]),
+    ?assertNot(lists:member(Bogus, Owners)).
+
+%% A name with a leading dot has an empty first label, and is not a name
+%% (RFC1035§3.1). The doc of verify_rrsig/4 and the comment of name_labels/1
+%% say that it returns false for such a name. dns_domain:split/1 gives the
+%% empty label and raises no error, thus the RRSIG verifies.
+verify_owner_with_leading_dot_is_false(_Config) ->
+    {Priv, DNSKey, KeyTag} = ed25519_zone_key(~"example"),
+    A = rr_a(~".www.example", {192, 0, 2, 1}),
+    Opts = #{inception => 1000000, expiration => 2000000},
+    RRSig =
+        try
+            dns_sec:sign_rrset([A], ~"example", KeyTag, ?DNS_ALG_ED25519, Priv, Opts)
+        catch
+            error:_ -> not_signed
+        end,
+    case RRSig of
+        not_signed -> ok;
+        _ -> ?assertNot(dns_sec:verify_rrsig(RRSig, [A], [DNSKey], #{now => 1500000}))
+    end.
+
+%% sign_rr/6 takes a list of records. An item that is not a #dns_rr{} gets no
+%% RRSIG and causes no error, thus a caller serves it unsigned. On main the
+%% call raised function_clause.
+sign_rr_rejects_what_is_not_a_record(_Config) ->
+    {Priv, _DNSKey, KeyTag} = ed25519_zone_key(~"example"),
+    A = rr_a(~"www.example", {192, 0, 2, 1}),
+    Opts = #{inception => 1000000, expiration => 2000000},
+    Sign = fun(RRs) -> dns_sec:sign_rr(RRs, ~"example", KeyTag, ?DNS_ALG_ED25519, Priv, Opts) end,
+    ?assertError(_, Sign([A, {dns_rr, ~"x.example"}])),
+    ?assertError(_, Sign([A, #dns_query{name = ~"www.example", type = ?DNS_TYPE_A}])).
+
+dsa_dnskey(Field) ->
+    #dns_rr{
+        name = ~"example",
+        type = ?DNS_TYPE_DNSKEY,
+        ttl = 3600,
+        data = #dns_rrdata_dnskey{flags = 256, protocol = 3, alg = ?DNS_ALG_DSA, public_key = Field}
+    }.
+
+hex_unsigned(Hex) ->
+    binary:encode_unsigned(binary_to_integer(Hex, 16)).
+
+%% A DSA group with a P of 520 bits and a Q of 160 bits, then Y and X
+dsa_group_p520() ->
+    [
+        ~"8000000000000000000000000000000000000000000000000000000000000000000000000000000000000000E0897D8FB7B602BB37342851C5068B6B5B49C5AC07",
+        ~"ED047E69A46CF2B2DCBAEAB2ABC09C28D5362E55",
+        ~"490085034A9638249C13E1F2656DE5A4D62D6EB3F836EB32A484F0967625963066B252C491A92B7B853A517785B6EC846005B434E3C46F13DB87656E2490E2FC27",
+        ~"1255B42FEFE5F1E1F00B7BA2C84C03B7BFCDC6CDC84A2B5A9A2A5760142FA4E1BDA2557EFCAEB561D1032294E529DEC4243BE456153097993B2F7AFC8B906F052F",
+        ~"29D42B64E76714244CB"
+    ].
+
+%% A DSA group with a P of 512 bits and a Q of 160 bits, then Y and X
+dsa_group_p512() ->
+    [
+        ~"80000000000000000000000000000000000000000000000000000000000000000000000000000000000008387915B8066C2F9F32C59C3E86A28400CA7B22C74F",
+        ~"ED047E69A46CF2B2DCBAEAB2ABC09C28D5362E55",
+        ~"2788353179EF64DE7A45EFC7EFC63F6AA1B1C303AC1E9CF1B47A1F24533B66D73F450C20C501A0D5F5BF6F752119BF8ECC8A0CA5D47853A427EB65C3D798F5D1",
+        ~"56D0CA6DA1B60F74E518FDC658C725447628E7622D46D379EF75FE005A081F315EBEBD6F818D190D93E79E64E79BC397E76521C71BF6DD26F85D0A0EEC05398C",
+        ~"29D42B64E76714244CB"
+    ].
 
 ed25519_zone_key(Zone) ->
     {Pub, Priv} = crypto:generate_key(eddsa, ed25519),
