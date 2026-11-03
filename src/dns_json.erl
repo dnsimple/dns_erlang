@@ -239,9 +239,9 @@ key_numbers_as_integers(#dns_rrdata_cdnskey{alg = Alg, public_key = [E, M]} = Da
 key_numbers_as_integers(Data) ->
     Data.
 
--spec key_number(term()) -> term().
+-spec key_number(term()) -> non_neg_integer().
 key_number(Number) when is_binary(Number) -> binary:decode_unsigned(Number);
-key_number(Number) -> Number.
+key_number(Number) when is_integer(Number), 0 =< Number -> Number.
 
 %% Check if a tag is an RRDATA record
 %% RRDATA records must be wrapped in dns_rr
