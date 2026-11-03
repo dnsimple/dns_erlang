@@ -1464,11 +1464,10 @@ optrr_must_be_root_named_and_singular(_) ->
     ).
 
 %% A DNSKEY's or CDNSKEY's key is its RDATA's key field, kept as bytes whatever
-%% its algorithm and shape. RSA and DSA keys were parsed into integers, with
-%% special cases so that a key RFC3110 or RFC2536 rules out, one too short for
-%% its layout, or a DSA key with a T wider than it needs, re-encoded as it came,
-%% and a short DSA key crashed the encoder. Every key decodes as its bytes and
-%% re-encodes byte for byte, in an RDATA and in a message.
+%% its algorithm and shape. 5.1.1 parsed RSA and DSA keys into integers, so it
+%% re-encoded a DSA key with a T wider than it needs with the narrowest T, and
+%% crashed decoding a DSA key too short for its T. Every key decodes as its
+%% bytes and re-encodes byte for byte, in an RDATA and in a message.
 dnskey_key_kept_as_rdata_bytes(_) ->
     Modulus = <<255, (binary:copy(<<16#AB>>, 127))/binary>>,
     Dsa = fun(T, Fill) ->

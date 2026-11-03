@@ -17,7 +17,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - DNSSEC: the `dnssec` module is now `dns_sec`, with the `dns_` prefix of every other module.
 - DNSKEY and CDNSKEY: `public_key` is always the RDATA's key field, a `binary()`; RSA and DSA keys no longer decode to `[E, M]` and `[P, Q, G, Y]` integers, nor encode from them.
-- JSON: a DNSKEY's or CDNSKEY's `public_key` is base64 of its bytes, for RSA and DSA too, where it was base64 of each number behind a 32-bit length.
+- JSON: a DNSKEY's or CDNSKEY's `public_key` is base64 of its bytes, where an RSA or DSA key decoded from the wire was base64 of each number behind a 32-bit length.
 
 ### Fixed
 

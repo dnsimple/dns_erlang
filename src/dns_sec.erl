@@ -869,16 +869,17 @@ key_tag(Flags, Protocol, Alg, Key) ->
     dns_decode:bin_to_key_tag(RData).
 
 -doc """
-Returns the public key field of a DNSKEY's RDATA for a public key in the form
-`crypto:generate_key/2` gives it.
+Returns the public key field of a DNSKEY's RDATA for a public key.
 
-An RSA key's `[E, N]` is laid out as RFC 3110 §2 has it, and a DSA key's
-`[P, Q, G, Y]` as RFC 2536 §2 has it, each number as its big-endian bytes or as
-an integer, as the `public_key` application gives it. An ECDSA key loses the
-octet 4 in front that marks the point uncompressed (RFC 6605 §4), and an EdDSA
-key is as it is (RFC 8080 §3). Raises `badarg` for a key the algorithm's DNSKEY
-cannot carry, such as a DSA key whose Q is not 160 bits long, or whose P is not
-512 + 64T bits long for a T of 0 to 8.
+An RSA key `[E, N]` is laid out as RFC 3110 §2 has it, and a DSA key
+`[P, Q, G, Y]` as RFC 2536 §2 has it, each number as its big-endian bytes, as
+`crypto:generate_key/2` gives an RSA key's, or as an integer, as the
+`public_key` application gives them. An ECDSA key, the point that
+`crypto:generate_key(ecdh, Curve)` gives, loses the octet 4 in front that marks
+it uncompressed (RFC 6605 §4), and an EdDSA key, as `crypto:generate_key/2`
+gives it, is as it is (RFC 8080 §3). Raises `badarg` for a key the algorithm's
+DNSKEY cannot carry, such as a DSA key whose Q is not 160 bits long, or whose P
+is not 512 + 64T bits long for a T of 0 to 8.
 """.
 -spec dnskey_public_key(sigalg(), [binary() | non_neg_integer()] | binary()) -> binary().
 dnskey_public_key(Alg, [E0, N0]) when ?IS_RSA_ALG(Alg) ->

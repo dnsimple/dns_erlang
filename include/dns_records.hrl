@@ -105,8 +105,8 @@
     protocol :: dns:uint8(),
     alg :: dns:uint8(),
     %% The RDATA's public key field, as the algorithm lays it out: RFC 3110 for
-    %% RSA, RFC 2536 for DSA. dns_sec:dnskey_public_key/2 makes it from a key
-    %% that crypto:generate_key/2 gives
+    %% RSA, RFC 2536 for DSA. dns_sec:dnskey_public_key/2 makes it from a public
+    %% key as crypto or the public_key application gives it
     public_key :: binary(),
     keytag :: integer()
 }).
