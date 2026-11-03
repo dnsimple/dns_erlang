@@ -160,7 +160,7 @@ gen_nsec(ZoneName, RR, TTL) ->
 gen_nsec(ZoneNameM, RR, TTL, Opts) ->
     ZoneName = dns_domain:to_lower(ZoneNameM),
     BaseTypes = maps:get(base_types, Opts, [?DNS_TYPE_NSEC, ?DNS_TYPE_RRSIG]),
-    Map = build_rrmap_gbt(RR, BaseTypes),
+    Map = build_rrmap(RR, BaseTypes),
     Unsorted = [
         #dns_rr{
             name = Name,
@@ -319,13 +319,35 @@ normalise_rr(#dns_rr{name = Name} = RR) ->
 name_key(Name) ->
     dns_domain:join(dns_domain:split(dns_domain:to_lower(Name))).
 
-%% Each owner, by its name_key/1, with the name it was first given, lowercased,
-%% and its types
+%% Each owner, by its name_key/1, with the name it was first given, lowercased, and its types
 -type rrtype_map() :: #{{dns:dname(), dns:class()} => {dns:dname(), [integer()]}}.
 
--spec build_rrmap([dns:rr()], [integer()], dns:dname()) -> rrtype_map().
+%% The types at each owner, with BaseTypes added to them
+-spec build_rrmap([dns:rr()], [dns:type()]) -> rrtype_map().
+build_rrmap(RRs, BaseTypes) ->
+    lists:foldl(
+        fun(#dns_rr{} = RR, Map) ->
+            #dns_rr{name = Name, class = Class, type = Type} = normalise_rr(RR),
+            maps:update_with(
+                {name_key(Name), Class},
+                fun({First, Types}) ->
+                    case lists:member(Type, Types) of
+                        true -> {First, Types};
+                        false -> {First, [Type | Types]}
+                    end
+                end,
+                {Name, [Type | BaseTypes]},
+                Map
+            )
+        end,
+        #{},
+        RRs
+    ).
+
+%% The same, with the zone's empty non-terminals, which have no types
+-spec build_rrmap([dns:rr()], [dns:type()], dns:dname()) -> rrtype_map().
 build_rrmap(RR, BaseTypes, ZoneName) ->
-    Base = build_rrmap_gbt(RR, BaseTypes),
+    Base = build_rrmap(RR, BaseTypes),
     build_rrmap_nonterm(ZoneName, maps:keys(Base), Base).
 
 -spec build_rrmap_nonterm(dns:dname(), [{dns:dname(), dns:class()} | binary()], rrtype_map()) ->
@@ -345,37 +367,15 @@ add_nonterm_ancestors(Class, [Name | Rest], Map) ->
     NewMap = maps:update_with(Key, fun(V) -> V end, {Name, []}, Map),
     add_nonterm_ancestors(Class, Rest, NewMap).
 
--spec build_rrmap_gbt([dns:rr()], [dns:type()]) -> rrtype_map().
-build_rrmap_gbt(RR, BaseTypes) ->
-    build_rrmap_gbt(RR, BaseTypes, #{}).
-
--spec build_rrmap_gbt([dns:rr()], [dns:type()], rrtype_map()) -> rrtype_map().
-build_rrmap_gbt([], _BaseTypes, Map) ->
-    Map;
-build_rrmap_gbt([#dns_rr{} = RR | Rest], BaseTypes, Map) ->
-    #dns_rr{name = Name, class = Class, type = Type} = normalise_rr(RR),
-    Key = {name_key(Name), Class},
-    NewMap = maps:update_with(
-        Key,
-        fun({First, Types}) ->
-            case lists:member(Type, Types) of
-                true -> {First, Types};
-                false -> {First, [Type | Types]}
-            end
-        end,
-        {Name, [Type | BaseTypes]},
-        Map
-    ),
-    build_rrmap_gbt(Rest, BaseTypes, NewMap).
-
--type tree_key() :: {dns:dname(), dns:class(), dns:type()}.
+%% The key of an RRset: its owner, by its name_key/1, its class and its type
+-type rrset_key() :: {dns:dname(), dns:class(), dns:type()}.
 
 -spec rrs_to_rrsets([dns:rr()]) -> [[dns:rr()]].
 rrs_to_rrsets(RR) when is_list(RR) ->
     rrs_to_rrsets(RR, #{}, #{}).
 
 -spec rrs_to_rrsets(
-    [dns:rr()], #{tree_key() => dns:ttl()}, #{tree_key() => {dns:dname(), [dns:rrdata()]}}
+    [dns:rr()], #{rrset_key() => dns:ttl()}, #{rrset_key() => {dns:dname(), [dns:rrdata()]}}
 ) ->
     [[dns:rr()]].
 rrs_to_rrsets([], TTLMap, RRSets) ->
@@ -397,7 +397,7 @@ rrs_to_rrsets([#dns_rr{} = RR | RRs], TTLMap, RRSets) ->
     rrs_to_rrsets(RRs, NewTTLMap, NewRRSets).
 
 -spec finalise_rrs_to_rrsets(
-    #{tree_key() => dns:ttl()}, tree_key(), dns:dname(), [dns:rrdata()]
+    #{rrset_key() => dns:ttl()}, rrset_key(), dns:dname(), [dns:rrdata()]
 ) ->
     [dns:rr()].
 finalise_rrs_to_rrsets(TTLMap, {_Key, Class, Type} = Key, Name, Datas) ->
