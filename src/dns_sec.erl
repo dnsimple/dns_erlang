@@ -430,7 +430,7 @@ finalise_rrs_to_rrsets(TTLMap, {_Key, Class, Type} = Key, Name, Datas) ->
      || Data <- Datas
     ].
 
--doc #{equiv => sign_rr(RR, SignerName, KeyTag, Alg, Key, [])}.
+-doc #{equiv => sign_rr(RR, SignerName, KeyTag, Alg, Key, #{})}.
 -spec sign_rr([dns:rr()], dns:dname(), keytag(), sigalg(), key()) -> [dns:rr()].
 sign_rr(RR, SignerName, KeyTag, Alg, Key) ->
     sign_rr(RR, SignerName, KeyTag, Alg, Key, #{}).
@@ -458,7 +458,7 @@ is_signable(#dns_rr{type = Type}) ->
 is_signable(_Item) ->
     error(badarg).
 
--doc #{equiv => sign_rrset(RRSet, SignerName, KeyTag, Alg, Key, [])}.
+-doc #{equiv => sign_rrset(RRSet, SignerName, KeyTag, Alg, Key, #{})}.
 -spec sign_rrset([dns:rr(), ...], dns:dname(), keytag(), sigalg(), key()) ->
     dns:rr().
 sign_rrset(RRSet, SignerName, KeyTag, Alg, Key) ->
