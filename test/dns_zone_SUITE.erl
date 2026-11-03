@@ -6791,6 +6791,11 @@ encode_dnskey_rsa_public_key_list(_Config) ->
     },
     Encoded = dns_zone:encode_rdata(?DNS_TYPE_DNSKEY, Data),
     LineStr = iolist_to_binary(Encoded),
+    %% E and M as their big-endian bytes, as crypto:generate_key/2 gives them
+    Bytes = Data#dns_rrdata_dnskey{
+        public_key = [binary:encode_unsigned(E), binary:encode_unsigned(M)]
+    },
+    ?assertEqual(LineStr, iolist_to_binary(dns_zone:encode_rdata(?DNS_TYPE_DNSKEY, Bytes))),
     ?assertNotEqual(nomatch, string:find(LineStr, "256")),
     ?assertNotEqual(nomatch, string:find(LineStr, "3")),
     ?assertNotEqual(nomatch, string:find(LineStr, "8")),
@@ -6809,6 +6814,10 @@ encode_cdnskey_rsa_public_key_list(_Config) ->
     },
     Encoded = dns_zone:encode_rdata(?DNS_TYPE_CDNSKEY, Data),
     LineStr = iolist_to_binary(Encoded),
+    Bytes = Data#dns_rrdata_cdnskey{
+        public_key = [binary:encode_unsigned(E), binary:encode_unsigned(M)]
+    },
+    ?assertEqual(LineStr, iolist_to_binary(dns_zone:encode_rdata(?DNS_TYPE_CDNSKEY, Bytes))),
     ?assertNotEqual(nomatch, string:find(LineStr, "0")),
     ?assertNotEqual(nomatch, string:find(LineStr, "3")),
     ?assertNotEqual(nomatch, string:find(LineStr, "8")),

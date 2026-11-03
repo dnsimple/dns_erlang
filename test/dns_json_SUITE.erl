@@ -921,6 +921,19 @@ test_dnskey_formats(_Config) ->
         }
     },
     assert_transcode(DnskeyList),
+    %% E and M as their big-endian bytes, as crypto:generate_key/2 gives them
+    DnskeyBytes = DnskeyList#dns_rr{
+        data = (DnskeyList#dns_rr.data)#dns_rrdata_dnskey{public_key = [<<1, 0, 1>>, <<1, 9, 50>>]}
+    },
+    ?assertEqual(dns_json:to_map(DnskeyList), dns_json:to_map(DnskeyBytes)),
+    %% Another algorithm's key in a list is no list of numbers, and must not map
+    %% as one, which JSON could not give back
+    EcdsaList = DnskeyList#dns_rr{
+        data = (DnskeyList#dns_rr.data)#dns_rrdata_dnskey{
+            alg = ?DNS_ALG_ECDSAP256SHA256, public_key = [<<1:256>>, <<2:256>>]
+        }
+    },
+    ?assertError(badarg, dns_json:to_map(EcdsaList)),
 
     %% Test CDNSKEY with binary public_key
     CdnskeyBinary = #dns_rr{

@@ -200,7 +200,8 @@ record_type_from_key(_) -> undefined.
 
 %% Convert RRDATA record to a flat map
 -spec to_map_rrdata(tuple() | binary()) -> map().
-to_map_rrdata(Record) when is_tuple(Record) ->
+to_map_rrdata(Record0) when is_tuple(Record0) ->
+    Record = key_numbers_as_integers(Record0),
     Tag = element(1, Record),
     Fields = record_fields(Tag),
     Values = tl(tuple_to_list(Record)),
@@ -217,6 +218,33 @@ to_map_rrdata(Binary) when is_binary(Binary) ->
     %% For unknown/unsupported record types, data is a raw binary
     %% Encode as base64 for JSON representation
     #{~"data" => base64:encode(Binary)}.
+
+%% An RSA or DSA key's numbers can be given as their big-endian bytes, as
+%% crypto:generate_key/2 gives them, and map as the integers do. Only these
+%% algorithms have keys of numbers, so another's key in a list is left as it is
+-spec key_numbers_as_integers(tuple()) -> tuple().
+key_numbers_as_integers(#dns_rrdata_dnskey{alg = Alg, public_key = [_ | _] = Key} = Data) ->
+    Data#dns_rrdata_dnskey{public_key = key_numbers_as_integers(Alg, Key)};
+key_numbers_as_integers(#dns_rrdata_cdnskey{alg = Alg, public_key = [_ | _] = Key} = Data) ->
+    Data#dns_rrdata_cdnskey{public_key = key_numbers_as_integers(Alg, Key)};
+key_numbers_as_integers(Data) ->
+    Data.
+
+-spec key_numbers_as_integers(dns:uint8(), list()) -> list().
+key_numbers_as_integers(Alg, Key) when
+    Alg =:= ?DNS_ALG_RSASHA1 orelse Alg =:= ?DNS_ALG_NSEC3RSASHA1 orelse
+        Alg =:= ?DNS_ALG_RSASHA256 orelse Alg =:= ?DNS_ALG_RSASHA512 orelse
+        Alg =:= ?DNS_ALG_DSA orelse Alg =:= ?DNS_ALG_NSEC3DSA
+->
+    [
+        case Number of
+            _ when is_binary(Number) -> binary:decode_unsigned(Number);
+            _ -> Number
+        end
+     || Number <- Key
+    ];
+key_numbers_as_integers(_Alg, Key) ->
+    Key.
 
 %% Check if a tag is an RRDATA record
 %% RRDATA records must be wrapped in dns_rr

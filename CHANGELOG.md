@@ -24,7 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - DNSSEC: `dnssec:verify_rrsig/4` rejects an RRSIG unless every record of the RRset has its owner, class and type covered.
 - DNSSEC: `dnssec:verify_rrsig/4` rejects an RRSIG whose signer cannot be the zone of its RRset, as BIND does.
 - DNSSEC: `dnssec:verify_rrsig/4` rejects an RSA signature that is not as long as the modulus, as RFC 8017 §8.2.2 has it.
-- DNSSEC: `dnssec:add_keytag_to_dnskey/1` takes an RSA key as binaries, as `crypto:generate_key/2` gives it.
+- DNSSEC: `dnssec:add_keytag_to_dnskey/1` and the zone file and JSON encoders take an RSA key as binaries, as `crypto:generate_key/2` gives it.
 - DNSSEC: signing with an unknown algorithm raises `{unsupported_algorithm, Alg}`.
 - DNSSEC: signing with a DSA key RFC 2536 cannot carry, a Q over 160 bits or a P over 1024, raises `{unsupported_key, Alg}`.
 - DNSSEC: signing and verifying leave duplicate records out of an RRset, as RFC 4034 §6.3 has it.

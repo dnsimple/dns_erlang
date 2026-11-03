@@ -364,12 +364,13 @@ join_rdata_fields(Fields, Separator) ->
 
 %% Helper: Convert DNSKEY/CDNSKEY public_key (algorithm-specific form) to wire-format binary.
 %% Mirrors dns_encode logic: RSA uses [E, M], DSA uses list [P,Q,G,Y], others use binary.
+%% E and M can be integers or their big-endian bytes, as crypto:generate_key/2 gives them.
 -spec public_key_to_wire_binary(dns:uint8(), iodata() | [integer()]) -> binary().
 public_key_to_wire_binary(Alg, [E, M]) when
     (Alg =:= ?DNS_ALG_RSASHA1 orelse Alg =:= ?DNS_ALG_NSEC3RSASHA1 orelse
         Alg =:= ?DNS_ALG_RSASHA256 orelse Alg =:= ?DNS_ALG_RSASHA512) andalso
-        is_integer(E) andalso
-        is_integer(M)
+        (is_integer(E) orelse is_binary(E)) andalso
+        (is_integer(M) orelse is_binary(M))
 ->
     dns_encode:encode_rsa_key(E, M);
 public_key_to_wire_binary(Alg, PKM) when
