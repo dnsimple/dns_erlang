@@ -439,15 +439,23 @@ Signs each RRset in a list of `t:dns:rr/0`, raising as `sign_rrset/6` does.
 
 Records whose owner names differ only in case or in a final dot are one RRset,
 signed under the owner name of its first record in lowercase. RRSIG records are
-left out, as RFC 4035 §2.2 never signs them.
+left out, as RFC 4035 §2.2 never signs them. Raises `badarg` for an item of the
+list that is not a `t:dns:rr/0`, which would otherwise go out unsigned.
 """.
 -spec sign_rr([dns:rr()], dns:dname(), keytag(), sigalg(), key(), sign_rr_opts()) -> [dns:rr()].
 sign_rr(RR, SignerName, KeyTag, Alg, Key, Opts) when is_map(Opts) ->
-    Signable = [Record || #dns_rr{type = Type} = Record <- RR, Type =/= ?DNS_TYPE_RRSIG],
+    Signable = [Record || Record <- RR, is_signable(Record)],
     [
         sign_rrset(RRSet, SignerName, KeyTag, Alg, Key, Opts)
      || RRSet <- rrs_to_rrsets(Signable)
     ].
+
+%% Whether sign_rr/6 signs an item: any record but an RRSIG, and nothing else
+-spec is_signable(dns:rr()) -> boolean().
+is_signable(#dns_rr{type = Type}) ->
+    Type =/= ?DNS_TYPE_RRSIG;
+is_signable(_Item) ->
+    error(badarg).
 
 -doc #{equiv => sign_rrset(RRSet, SignerName, KeyTag, Alg, Key, [])}.
 -spec sign_rrset([dns:rr(), ...], dns:dname(), keytag(), sigalg(), key()) ->
@@ -459,14 +467,15 @@ sign_rrset(RRSet, SignerName, KeyTag, Alg, Key) ->
 Signs one RRset: a list of `t:dns:rr/0` of one owner, class and type.
 
 Owner names that differ only in case or in a final dot are one owner. Raises
-`badarg` for records of more than one RRset, for an RRSIG RRset, which
-RFC 4035 §2.2 never signs, and for an owner or signer that is not a name: one
-with an empty label, a label over 63 octets, or over 255 octets in all. Raises
-`{unsupported_algorithm, Alg}` for an algorithm this module does not implement,
-and `{unsupported_key, Alg}` for a DSA key that RFC 2536 §2 rules out: one
-whose Q is not 160 bits long, whose P is not 512 + 64T bits long for a T of 0
-to 8, or whose G is longer than P. It still signs with DSA (3 and 6) and
-RSA/SHA-1 (5 and 7), which RFC 9904 and RFC 9905 forbid for new signatures.
+`badarg` for an empty list, for anything in it that is not a record of the
+RRset, for an RRSIG RRset, which RFC 4035 §2.2 never signs, and for an owner or
+signer that is not a name: one with an empty label, a label over 63 octets, or
+over 255 octets in all. Raises `{unsupported_algorithm, Alg}` for an algorithm
+this module does not implement, and `{unsupported_key, Alg}` for a DSA key that
+RFC 2536 §2 rules out: one whose Q is not 160 bits long, whose P is not
+512 + 64T bits long for a T of 0 to 8, or whose G is longer than P. It still
+signs with DSA (3 and 6) and RSA/SHA-1 (5 and 7), which RFC 9904 and RFC 9905
+forbid for new signatures.
 """.
 -spec sign_rrset([dns:rr(), ...], dns:dname(), keytag(), sigalg(), key(), sign_rr_opts()) ->
     dns:rr().
@@ -512,7 +521,9 @@ sign_rrset(
         class = Class,
         ttl = TTL,
         data = Data
-    }.
+    };
+sign_rrset(_RRs, _SignersName, _KeyTag, _Alg, _Key, _Opts) ->
+    error(badarg).
 
 -spec sign(dns:uint8(), iodata(), key()) -> binary().
 sign(Alg, BaseSigInput, Key) when ?IS_DSA_ALG(Alg) ->
@@ -694,12 +705,13 @@ fits_rrset(
 
 %% Whether a record is of the RRset of an owner, class and type, the owner given
 %% as written and as labels. A record whose owner is written alike is, and any
-%% other owner compares as a name: in any case, with or without its final dot
+%% other owner compares as a name: in any case, with or without its final dot.
+%% Anything that is not a record is not
 -spec in_rrset(dns:rr(), dns:dname(), dns:labels() | invalid, dns:class(), dns:type()) ->
     boolean().
 in_rrset(#dns_rr{name = Name, class = Class, type = Type}, Owner, Labels, Class, Type) ->
     Name =:= Owner orelse is_name(Name, Labels);
-in_rrset(#dns_rr{}, _Owner, _Labels, _Class, _Type) ->
+in_rrset(_RR, _Owner, _Labels, _Class, _Type) ->
     false.
 
 %% Whether a zone can hold an RRset of the type at the owner, as BIND checks it.

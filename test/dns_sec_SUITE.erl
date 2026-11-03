@@ -92,6 +92,7 @@ groups() ->
             gen_nsec3_makes_no_ent_from_escaped_dot,
             verify_owner_with_leading_dot_is_false,
             sign_rr_rejects_what_is_not_a_record,
+            sign_only_records,
             sign_and_verify_only_names,
             gen_nsec3_root_zone,
             gen_nsec3_rejects_names_outside_the_zone,
@@ -1598,6 +1599,29 @@ sign_rr_rejects_what_is_not_a_record(_Config) ->
     Sign = fun(RRs) -> dns_sec:sign_rr(RRs, ~"example", KeyTag, ?DNS_ALG_ED25519, Priv, Opts) end,
     ?assertError(_, Sign([A, {dns_rr, ~"x.example"}])),
     ?assertError(_, Sign([A, #dns_query{name = ~"www.example", type = ?DNS_TYPE_A}])).
+
+%% sign_rrset/6 raises badarg for an empty list and for anything in it that is
+%% not a record of the RRset, as sign_rr/6 does for what is not a record. Such
+%% an item in the RRset makes verify_rrsig/4 return false, as a record of
+%% another RRset does
+sign_only_records(_Config) ->
+    {Priv, DNSKey, KeyTag} = ed25519_zone_key(~"example"),
+    Opts = #{inception => 1000000, expiration => 2000000},
+    Sign = fun(RRs) ->
+        dns_sec:sign_rrset(RRs, ~"example", KeyTag, ?DNS_ALG_ED25519, Priv, Opts)
+    end,
+    A = rr_a(~"www.example", {192, 0, 2, 1}),
+    Query = #dns_query{name = ~"www.example", type = ?DNS_TYPE_A},
+    NotRRsets = [[], [A, {dns_rr, ~"x.example"}], [A, Query], [Query], [not_a_record]],
+    [?assertError(badarg, Sign(RRs)) || RRs <- NotRRsets],
+    ?assertError(
+        badarg, dns_sec:sign_rr([A, Query], ~"example", KeyTag, ?DNS_ALG_ED25519, Priv, Opts)
+    ),
+    RRSig = Sign([A]),
+    Verify = fun(RRs) -> dns_sec:verify_rrsig(RRSig, RRs, [DNSKey], #{now => 1500000}) end,
+    ?assert(Verify([A])),
+    ?assertNot(Verify([A, Query])),
+    ?assertNot(Verify([A, {dns_rr, ~"www.example"}])).
 
 %% A name with an empty label, a label over 63 octets or over 255 octets in all
 %% is not a name (RFC1035§2.3.4). sign_rrset/6 raises badarg for such an owner
