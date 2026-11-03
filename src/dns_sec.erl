@@ -196,8 +196,9 @@ Generate NSEC3 records from a list of `t:dns:rr/0`.
 
 The list must contain a SOA `t:dns:rr/0` to source the zone name and
 TTL from as well as as an NSEC3Param `t:dns:rr/0` to source the
-hash algorithm, iterations and salt from. Raises `name_mismatch` for a
-record outside the zone.
+hash algorithm, iterations and salt from. The chain is of the NSEC3Param's
+class, and records of other classes are left out. Raises `name_mismatch` for a
+record of that class outside the zone.
 """.
 -spec gen_nsec3([dns:rr()], gen_nsec3_opts()) -> [dns:rr()].
 gen_nsec3(RRs, Opts) ->
@@ -233,32 +234,32 @@ gen_nsec3(RRs, Opts) ->
 ) -> [dns:rr()].
 gen_nsec3(RRs, ZoneName, Alg, Salt, Iterations, TTL, Class, Opts) ->
     BaseTypes = maps:get(base_types, Opts, [?DNS_TYPE_RRSIG]),
-    Map = build_rrmap(RRs, BaseTypes, ZoneName),
+    %% The chain is the zone's, of one class: a record of another class has no
+    %% owner in it, nor empty non-terminals, whether or not it is under the zone
+    InClass = lists:filter(fun(#dns_rr{class = RRClass}) -> RRClass =:= Class end, RRs),
+    Map = build_rrmap(InClass, BaseTypes, ZoneName),
     Unsorted = maps:fold(
-        fun
-            ({_Key, SClass}, {Name, Types}, Acc) when SClass =:= Class ->
-                DName = dns_domain:to_wire(Name),
-                HashedName = ih(Alg, Salt, DName, Iterations),
-                HexdHashName = base32:encode(HashedName, [hex, nopad]),
-                NewName = nsec3_owner(HexdHashName, ZoneName),
-                Data = #dns_rrdata_nsec3{
-                    hash_alg = Alg,
-                    opt_out = false,
-                    iterations = Iterations,
-                    salt = Salt,
-                    hash = HashedName,
-                    types = Types
-                },
-                NewRR = #dns_rr{
-                    name = NewName,
-                    class = Class,
-                    type = ?DNS_TYPE_NSEC3,
-                    ttl = TTL,
-                    data = Data
-                },
-                [{HashedName, NewRR} | Acc];
-            (_, _, Acc) ->
-                Acc
+        fun(_Key, {Name, Types}, Acc) ->
+            DName = dns_domain:to_wire(Name),
+            HashedName = ih(Alg, Salt, DName, Iterations),
+            HexdHashName = base32:encode(HashedName, [hex, nopad]),
+            NewName = nsec3_owner(HexdHashName, ZoneName),
+            Data = #dns_rrdata_nsec3{
+                hash_alg = Alg,
+                opt_out = false,
+                iterations = Iterations,
+                salt = Salt,
+                hash = HashedName,
+                types = Types
+            },
+            NewRR = #dns_rr{
+                name = NewName,
+                class = Class,
+                type = ?DNS_TYPE_NSEC3,
+                ttl = TTL,
+                data = Data
+            },
+            [{HashedName, NewRR} | Acc]
         end,
         [],
         Map

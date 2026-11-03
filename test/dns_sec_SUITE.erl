@@ -1789,7 +1789,20 @@ gen_nsec3_rejects_names_outside_the_zone(_Config) ->
     [
         ?assertError(name_mismatch, dns_sec:gen_nsec3([rr_a(Name, {192, 0, 2, 1}) | Zone]))
      || Name <- Outside
-    ].
+    ],
+    %% The chain is of the NSEC3PARAM's class, so a record of another class is
+    %% left out, under the zone or not, as version.bind in class CH
+    Chaos = [
+        #dns_rr{
+            name = Name,
+            class = ?DNS_CLASS_CH,
+            type = ?DNS_TYPE_TXT,
+            ttl = 0,
+            data = #dns_rrdata_txt{txt = [~"x"]}
+        }
+     || Name <- [~"version.bind", ~"a.b.example"]
+    ],
+    ?assertEqual(dns_sec:gen_nsec3(Zone), dns_sec:gen_nsec3(Chaos ++ Zone)).
 
 dsa_dnskey(Field) ->
     #dns_rr{
