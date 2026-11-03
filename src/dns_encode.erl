@@ -1723,7 +1723,7 @@ encode_rsa_key(E, M) ->
 
 %% Helper function to encode DSA keys for DNSKEY and CDNSKEY records.
 %% Only reachable with the [P, Q, G, Y] list (RFC2536§2); an opaque key is emitted verbatim.
--spec encode_dsa_key(list()) -> binary().
+-spec encode_dsa_key([non_neg_integer() | binary()]) -> binary().
 encode_dsa_key(PKM) ->
     [P, Q, G, Y] = [
         case X of
