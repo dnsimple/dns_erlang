@@ -587,7 +587,7 @@ verify_rrsig(
     } = Data,
     Signer = name_labels(SignersName),
     %% The validity period and the RRset are checked before the keys, whose key
-    %% tags cost an encoding and a decoding each
+    %% tags cost an encoding each
     case in_validity_period(Incept, Expire, Now) andalso fits_rrset(RRSig, Signer, RRs) of
         true ->
             %% RFC4035§5.3.1: the RRSIG's signer, algorithm and key tag name the
@@ -824,11 +824,12 @@ add_keytag_to_key_rr(RR, Data, Type) ->
 
 %% RFC4034 Appendix B: a DNSKEY's key tag, computed from its RDATA, as its keytag
 %% field may be unset or out of date in a DNSKEY built by hand. A key that does
-%% not encode, such as one given as iodata, has none
+%% not encode, such as one given as iodata, has none. The RDATA is not decoded,
+%% which would only turn an RSA or DSA key into integers to throw away
 -spec key_tag(dns:rr()) -> dns:uint16() | undefined.
-key_tag(DNSKey) ->
-    try add_keytag_to_dnskey(DNSKey) of
-        #dns_rr{data = #dns_rrdata_dnskey{keytag = KeyTag}} -> KeyTag
+key_tag(#dns_rr{data = #dns_rrdata_dnskey{} = Data}) ->
+    try dns_encode:encode_rrdata(?DNS_CLASS_IN, Data) of
+        RData -> dns_decode:bin_to_key_tag(RData)
     catch
         error:_ -> undefined
     end.
