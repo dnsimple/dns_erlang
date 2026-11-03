@@ -11,20 +11,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- DNSSEC: `dns_sec:dnskey_public_key/2` makes a DNSKEY's public key field from a key `crypto:generate_key/2` gives.
+- DNSSEC: `dns_sec:dnskey_public_key/2` makes a DNSKEY's public key field from a public key, as crypto or `public_key` gives it.
 
 ### Changed
 
 - DNSSEC: the `dnssec` module is now `dns_sec`, with the `dns_` prefix of every other module.
 - DNSKEY and CDNSKEY: `public_key` is always the RDATA's key field, a `binary()`; RSA and DSA keys no longer decode to `[E, M]` and `[P, Q, G, Y]` integers, nor encode from them.
 - JSON: a DNSKEY's or CDNSKEY's `public_key` is base64 of its bytes, for RSA and DSA too, where it was base64 of each number behind a 32-bit length.
-- DNSSEC: `dns_sec:sign_rr/6` and `dns_sec:sign_rrset/6` take RSA and DSA private keys as the binaries `crypto:generate_key/2` gives.
 
 ### Fixed
 
 - DNSSEC: ECDSA signatures (13, 14) hashed the data twice since 4.4.0; re-sign stored ones, which now fail to verify.
 - DNSSEC: DSA signatures (3, 6) signed the data's length along with it; re-sign stored ones, or move off DSA, which RFC 9904 forbids.
-- DNSSEC: DSA RRSIGs carry their DNSKEY's T even when P is not 64 + 8T octets.
 - DNSSEC: `dns_sec:verify_rrsig/4` no longer crashes on RRsets whose TTL is not the RRSIG's original TTL.
 - DNSSEC: `dns_sec:verify_rrsig/4` returns `false` for unknown algorithms, algorithms the local crypto refuses, keys or signatures of the wrong size, RRSIGs whose RDATA did not decode, and empty RRsets.
 - DNSSEC: `dns_sec:verify_rrsig/4` verifies RSA and DSA DNSKEYs parsed from zone files, and nothing with a key RFC 3110 §2 or RFC 2536 §2 rules out.
@@ -36,7 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - DNSSEC: `dns_sec:verify_rrsig/4` rejects an RRSIG whose signer cannot be the zone of its RRset, as BIND does.
 - DNSSEC: `dns_sec:verify_rrsig/4` rejects an RSA signature that is not as long as the modulus, as RFC 8017 §8.2.2 has it.
 - DNSSEC: signing with an unknown algorithm raises `{unsupported_algorithm, Alg}`.
-- DNSSEC: signing with a DSA key RFC 2536 cannot carry, a Q over 160 bits or a P over 1024, raises `{unsupported_key, Alg}`.
+- DNSSEC: signing with a DSA key RFC 2536 §2 rules out, whose Q is not 160 bits or whose P is not 512 + 64T bits, raises `{unsupported_key, Alg}`.
 - DNSSEC: signing and verifying leave duplicate records out of an RRset, as RFC 4034 §6.3 has it.
 - DNSSEC: `dns_sec:sign_rr/6` and the NSEC and NSEC3 generators take owner names that differ only in a final dot as one owner, where they split an RRset or crashed.
 - DNSSEC: `dns_sec:gen_nsec3/1,2` hashes an empty non-terminal whose label holds a dot with the dot escaped.

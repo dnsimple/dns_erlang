@@ -1363,33 +1363,52 @@ crypto_keys_sign_and_verify(_Config) ->
 
 %% dnskey_public_key/2 lays a key out as its DNSKEY carries it: an RSA key as
 %% RFC3110§2 has it, with no leading zeros and the exponent's length in one
-%% octet, or in three past 255 octets; a DSA key as RFC2536§2 has it, with the
-%% narrowest T; an ECDSA point without the octet 4 that marks it uncompressed
-%% (RFC6605§4); and an EdDSA key as it is (RFC8080§3). A key the DNSKEY cannot
-%% carry raises badarg, an empty RSA exponent among them, which would be written
-%% as the zero octet that says a two-octet length follows
+%% octet, or in three past 255 octets; a DSA key as RFC2536§2 has it, with the T
+%% its P's size gives; an ECDSA point without the octet 4 that marks it
+%% uncompressed (RFC6605§4); and an EdDSA key as it is (RFC8080§3). An RSA or DSA
+%% key's numbers can be integers, as the public_key application gives them. A
+%% key the DNSKEY cannot carry raises badarg: an empty RSA exponent, which would
+%% be written as the zero octet that says a two-octet length follows, and a DSA
+%% key whose Q is not 160 bits long, whose P is not 512 + 64T bits long for a T
+%% of 0 to 8, or whose G or Y is longer than P
 dnskey_public_key_layout(_Config) ->
     Rsa = fun(Key) -> dns_sec:dnskey_public_key(?DNS_ALG_RSASHA256, Key) end,
     {[E, N], _} = crypto:generate_key(rsa, {1024, 65537}),
     ?assertEqual(<<3, 1, 0, 1, N/binary>>, Rsa([E, N])),
     ?assertEqual(Rsa([E, N]), Rsa([<<0, E/binary>>, <<0, 0, N/binary>>])),
+    ?assertEqual(Rsa([E, N]), Rsa([binary:decode_unsigned(E), binary:decode_unsigned(N)])),
     LongE = <<1, 0:(255 * 8)>>,
     ?assertEqual(<<0, 256:16, LongE/binary, N/binary>>, Rsa([LongE, N])),
-    [?assertError(badarg, Rsa(Key)) || Key <- [[<<>>, N], [<<0>>, N], [E, <<>>], [E, <<0, 0>>]]],
+    BadRsa = [[<<>>, N], [<<0>>, N], [0, N], [E, <<>>], [E, <<0, 0>>], [-1, N], [E, N, N]],
+    [?assertError(badarg, Rsa(Key)) || Key <- BadRsa],
     Dsa = fun(Key) -> dns_sec:dnskey_public_key(?DNS_ALG_DSA, Key) end,
     Q = <<16#E2B4F7B1A4D6E39F7C5A0C0D7B4E3A9C1B2D3E4F:160>>,
     P = <<16#80, 0:(63 * 8)>>,
     ?assertEqual(
         <<0, Q/binary, P/binary, 0:(63 * 8), 2, 0:(63 * 8), 3>>, Dsa([P, Q, <<2>>, <<3>>])
     ),
-    P65 = <<16#80, 0:(64 * 8)>>,
+    ?assertEqual(Dsa([P, Q, <<2>>, <<3>>]), Dsa([<<0, P/binary>>, <<0, Q/binary>>, <<0, 2>>, 3])),
+    Int = fun binary:decode_unsigned/1,
+    ?assertEqual(Dsa([P, Q, <<2>>, <<3>>]), Dsa([Int(P), Int(Q), 2, 3])),
+    P1024 = <<16#80, 0:(127 * 8)>>,
     ?assertEqual(
-        <<1, Q/binary, 0:56, P65/binary, 0:(71 * 8), 2, 0:(71 * 8), 3>>, Dsa([P65, Q, <<2>>, <<3>>])
+        <<8, Q/binary, P1024/binary, 0:(127 * 8), 2, 0:(127 * 8), 3>>,
+        Dsa([P1024, Q, <<2>>, <<3>>])
     ),
-    [
-        ?assertError(badarg, Dsa(Key))
-     || Key <- [[P, <<1, Q/binary>>, <<2>>, <<3>>], [<<1, 0:(128 * 8)>>, Q, <<2>>, <<3>>]]
+    %% P of 520 and 1032 bits, which no T gives, and of 511 and 504 bits, short
+    %% of T = 0; Q of 159 and 161 bits; G and Y longer than P
+    BadDsa = [
+        [<<16#80, 0:(64 * 8)>>, Q, <<2>>, <<3>>],
+        [<<1, 0:(128 * 8)>>, Q, <<2>>, <<3>>],
+        [<<16#7F, 0:(63 * 8)>>, Q, <<2>>, <<3>>],
+        [<<16#80, 0:(62 * 8)>>, Q, <<2>>, <<3>>],
+        [P, <<16#7F, 0:(19 * 8)>>, <<2>>, <<3>>],
+        [P, <<1, Q/binary>>, <<2>>, <<3>>],
+        [P, Q, <<1, 0:(64 * 8)>>, <<3>>],
+        [P, Q, <<2>>, <<1, 0:(64 * 8)>>],
+        [P, Q, <<2>>]
     ],
+    [?assertError(badarg, Dsa(Key)) || Key <- BadDsa],
     {<<4, Point256:64/binary>> = Pub256, _} = crypto:generate_key(ecdh, secp256r1),
     ?assertEqual(Point256, dns_sec:dnskey_public_key(?DNS_ALG_ECDSAP256SHA256, Pub256)),
     {<<4, Point384:96/binary>> = Pub384, _} = crypto:generate_key(ecdh, secp384r1),
@@ -1906,25 +1925,38 @@ verify_wildcard_expansion(Config) ->
 %% RFC2536§3: a DSA RRSIG carries the T of its DNSKEY, where P, G and Y take
 %% 64 + 8T octets each. Signing took T from P's size rounded down, so a key
 %% whose P is not 64 + 8T octets, 56 or 65 here, signed with another T than
-%% its DNSKEY's, 255 for 56. OpenSSL only makes keys whose P is 64 + 8T
+%% its DNSKEY's, 255 for 56. RFC2536§2 rules such a key out, so neither its
+%% DNSKEY nor an RRSIG is made. OpenSSL only makes keys whose P is 64 + 8T
 %% octets, so only keys made some other way were hit.
 dsa_rrsig_t_is_dnskey_t(_Config) ->
     %% A 160-bit Q, as RFC2536§2 has it; neither P nor G make a real DSA group,
     %% which signing does not need
     Q = <<16#E2B4F7B1A4D6E39F7C5A0C0D7B4E3A9C1B2D3E4F:160>>,
     RR = #dns_rr{name = ~"example", type = ?DNS_TYPE_A, data = #dns_rrdata_a{ip = {192, 0, 2, 1}}},
+    Sign = fun(Key) -> dns_sec:sign_rrset([RR], ~"example", 1, ?DNS_ALG_DSA, Key, #{}) end,
     [
         begin
             P = binary:encode_unsigned((1 bsl (8 * PSize - 1)) + 2 * PSize + 1),
             {G, X} = {<<2>>, <<16#1234567:32>>},
             Y = crypto:mod_pow(G, X, P),
-            <<KeyT, _/binary>> = dns_sec:dnskey_public_key(?DNS_ALG_DSA, [P, Q, G, Y]),
-            #dns_rr{data = #dns_rrdata_rrsig{signature = <<SigT, _:40/binary>>}} =
-                dns_sec:sign_rrset([RR], ~"example", 1, ?DNS_ALG_DSA, [P, Q, G, X], #{}),
-            ?assertEqual({PSize, KeyT}, {PSize, SigT})
+            case PSize of
+                _ when PSize =:= 56; PSize =:= 65 ->
+                    ?assertError(badarg, dns_sec:dnskey_public_key(?DNS_ALG_DSA, [P, Q, G, Y])),
+                    ?assertError({unsupported_key, ?DNS_ALG_DSA}, Sign([P, Q, G, X]));
+                _ ->
+                    <<KeyT, _/binary>> = dns_sec:dnskey_public_key(?DNS_ALG_DSA, [P, Q, G, Y]),
+                    #dns_rr{data = #dns_rrdata_rrsig{signature = <<SigT, _:40/binary>>}} =
+                        Sign([P, Q, G, X]),
+                    ?assertEqual({PSize, (PSize - 64) div 8}, {PSize, KeyT}),
+                    ?assertEqual({PSize, KeyT}, {PSize, SigT})
+            end
         end
      || PSize <- [56, 64, 65, 72, 128]
-    ].
+    ],
+    %% A Q of 159 bits, which RFC2536§2 rules out too
+    P = binary:encode_unsigned((1 bsl 511) + 129),
+    Q159 = <<16#72B4F7B1A4D6E39F7C5A0C0D7B4E3A9C1B2D3E4F:160>>,
+    ?assertError({unsupported_key, ?DNS_ALG_DSA}, Sign([P, Q159, <<2>>, <<16#1234567:32>>])).
 
 rsa_private_key(E, N, D) ->
     [base64:decode(B) || B <- [E, N, D]].

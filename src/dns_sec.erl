@@ -108,14 +108,17 @@ Unlike `t:dns:alg/0`, this type is restricted to algorithms valid for zone signi
 -doc "DNSKEY key tag (RFC 4034 Appendix B).".
 -type keytag() :: integer().
 -doc """
-A private key to sign with, in the binaries `crypto:generate_key/2` gives.
+A private key to sign with.
 
-An RSA key is `[E, N, D]`, or the whole list crypto gives, and a DSA key
-`[P, Q, G, X]`, each number as its big-endian bytes. An ECDSA key is its
-private scalar and an EdDSA key its private key. The public key a DNSKEY
-carries is its RDATA's key field, which `dnskey_public_key/2` makes.
+An RSA key is `[E, N, D]`, or the whole list `crypto:generate_key/2` gives, and
+a DSA key `[P, Q, G, X]`, which crypto cannot generate, as the `public_key`
+application reads it from a PEM file. Each number is its big-endian bytes, as
+crypto gives it, or an integer, as `public_key` gives it, which crypto converts
+on every signature, so bytes sign faster. An ECDSA key is its private scalar and
+an EdDSA key its private key. The public key a DNSKEY carries is its RDATA's key
+field, which `dnskey_public_key/2` makes.
 """.
--type key() :: [binary()] | binary().
+-type key() :: [binary() | non_neg_integer()] | binary().
 -doc "Options for `sign_rr/6` and `sign_rrset/6`.".
 -type sign_rr_opts() :: #{inception => dns:unix_time(), expiration => dns:unix_time()}.
 -doc "Options for `verify_rrsig/4`.".
@@ -449,9 +452,10 @@ Owner names that differ only in case or in a final dot are one owner. Raises
 `badarg` for records of more than one RRset, and for an RRSIG RRset, which
 RFC 4035 §2.2 never signs. Raises `{unsupported_algorithm, Alg}` for an
 algorithm this module does not implement, and `{unsupported_key, Alg}` for a
-DSA key that RFC 2536 cannot carry: one whose Q is over 160 bits, or whose P or
-G is over 1024 bits. It still signs with DSA (3 and 6) and RSA/SHA-1 (5 and 7),
-which RFC 9904 and RFC 9905 forbid for new signatures.
+DSA key that RFC 2536 §2 rules out: one whose Q is not 160 bits long, whose P
+is not 512 + 64T bits long for a T of 0 to 8, or whose G is longer than P. It
+still signs with DSA (3 and 6) and RSA/SHA-1 (5 and 7), which RFC 9904 and
+RFC 9905 forbid for new signatures.
 """.
 -spec sign_rrset([dns:rr(), ...], dns:dname(), keytag(), sigalg(), key(), sign_rr_opts()) ->
     dns:rr().
@@ -498,14 +502,15 @@ sign_rrset(
 
 -spec sign(dns:uint8(), iodata(), key()) -> binary().
 sign(Alg, BaseSigInput, Key) when ?IS_DSA_ALG(Alg) ->
-    [P, Q, G, _X] = Key,
+    Numbers = [unsigned_bytes(Number) || Number <- Key],
+    [P, Q, G, _X] = Numbers,
     %% RFC2536§3: R and S, which are below Q, take 20 octets each, and T is the
-    %% DNSKEY's. Its Y = G^X mod P is below P, so P and G alone fix T
-    case dsa_t(Q, [P, G]) of
-        too_wide ->
+    %% DNSKEY's. Its Y = G^X mod P is below P, so P, Q and G alone fix T
+    case dsa_t(P, Q, [G]) of
+        invalid ->
             error({unsupported_key, Alg});
         T ->
-            DerSig = crypto:sign(dss, sha, BaseSigInput, Key),
+            DerSig = crypto:sign(dss, sha, BaseSigInput, Numbers),
             #'Dss-Sig-Value'{r = R, s = S} = public_key:der_decode('Dss-Sig-Value', DerSig),
             <<T, R:20/unit:8, S:20/unit:8>>
     end;
@@ -842,36 +847,36 @@ Returns the public key field of a DNSKEY's RDATA for a public key in the form
 `crypto:generate_key/2` gives it.
 
 An RSA key's `[E, N]` is laid out as RFC 3110 §2 has it, and a DSA key's
-`[P, Q, G, Y]` as RFC 2536 §2 has it, with the narrowest T. An ECDSA key loses
-the octet 4 in front that marks the point uncompressed (RFC 6605 §4), and an
-EdDSA key is as it is (RFC 8080 §3). Raises `badarg` for a key the algorithm's
-DNSKEY cannot carry.
+`[P, Q, G, Y]` as RFC 2536 §2 has it, each number as its big-endian bytes or as
+an integer, as the `public_key` application gives it. An ECDSA key loses the
+octet 4 in front that marks the point uncompressed (RFC 6605 §4), and an EdDSA
+key is as it is (RFC 8080 §3). Raises `badarg` for a key the algorithm's DNSKEY
+cannot carry, such as a DSA key whose Q is not 160 bits long, or whose P is not
+512 + 64T bits long for a T of 0 to 8.
 """.
--spec dnskey_public_key(sigalg(), [binary()] | binary()) -> binary().
+-spec dnskey_public_key(sigalg(), [binary() | non_neg_integer()] | binary()) -> binary().
 dnskey_public_key(Alg, [E0, N0]) when ?IS_RSA_ALG(Alg) ->
     %% RFC3110§2: no leading zero octets, and the exponent's length in one octet,
     %% or for one over 255 octets in a zero octet and two more
-    E = strip_leading_zeros(E0),
-    N = strip_leading_zeros(N0),
+    E = unsigned_bytes(E0),
+    N = unsigned_bytes(N0),
     (E =/= <<>> andalso N =/= <<>>) orelse error(badarg),
     case byte_size(E) of
         Len when Len =< 255 -> <<Len, E/binary, N/binary>>;
         Len when Len =< 16#FFFF -> <<0, Len:16, E/binary, N/binary>>;
         _ -> error(badarg)
     end;
-dnskey_public_key(Alg, [P0, Q0, G0, Y0]) when ?IS_DSA_ALG(Alg) ->
+dnskey_public_key(Alg, [_, _, _, _] = Key) when ?IS_DSA_ALG(Alg) ->
     %% RFC2536§2: T, then Q in 20 octets, and P, G and Y in 64 + 8T each
-    [P, Q, G, Y] = [strip_leading_zeros(F) || F <- [P0, Q0, G0, Y0]],
-    case dsa_t(Q, [P, G, Y]) of
-        too_wide ->
+    [P, Q, G, Y] = [unsigned_bytes(Number) || Number <- Key],
+    case dsa_t(P, Q, [G, Y]) of
+        invalid ->
             error(badarg);
         T ->
             S = 64 + 8 * T,
-            QField = pad_unsigned(Q, 20),
-            PField = pad_unsigned(P, S),
             GField = pad_unsigned(G, S),
             YField = pad_unsigned(Y, S),
-            <<T, QField/binary, PField/binary, GField/binary, YField/binary>>
+            <<T, Q/binary, P/binary, GField/binary, YField/binary>>
     end;
 dnskey_public_key(?DNS_ALG_ECDSAP256SHA256, <<4, Point:64/binary>>) ->
     Point;
@@ -1067,36 +1072,46 @@ rsa_public_key(_E, _N) ->
     invalid.
 
 %% RFC2536§2: a DNSKEY's DSA key is T, 0 to 8, then Q in 20 octets, and P, G and
-%% Y in 64 + 8T each, where 2^159 < Q < 2^160 and 2^(511+64T) < P < 2^(512+64T),
-%% so that both have their top bit set. A key laid out otherwise verifies nothing
+%% Y in 64 + 8T each, laid out as dsa_t/3 has it. A key laid out otherwise
+%% verifies nothing
 -spec dsa_public_key(binary()) -> [binary()] | invalid.
 dsa_public_key(<<T, Q:20/binary, PGY/binary>>) when T =< 8, byte_size(PGY) =:= 3 * (64 + 8 * T) ->
     S = 64 + 8 * T,
     <<P:S/binary, G:S/binary, Y:S/binary>> = PGY,
-    case {Q, P} of
-        {<<1:1, _/bitstring>>, <<1:1, _/bitstring>>} -> [P, Q, G, Y];
+    case dsa_t(P, Q, [G, Y]) of
+        T -> [P, Q, G, Y];
         _ -> invalid
     end;
 dsa_public_key(_Key) ->
     invalid.
 
-%% RFC2536§2: the narrowest T whose 64 + 8T octets hold each number, or too_wide
-%% if that T is over 8 or Q takes over the 20 octets a DSA key has for it
--spec dsa_t(binary(), [binary()]) -> 0..8 | too_wide.
-dsa_t(Q, Numbers) ->
-    Sizes = [unsigned_size(Number) || Number <- Numbers],
-    Widest = lists:max(Sizes),
-    T = max(0, (Widest - 57) div 8),
-    case unsigned_size(Q) =< 20 andalso T =< 8 of
-        true -> T;
-        false -> too_wide
-    end.
+%% RFC2536§2: the T of a DSA key, or invalid for a key no DNSKEY can carry. Its Q
+%% is 160 bits long, 2^159 < Q < 2^160, and its P is 512 + 64T bits long for a T
+%% of 0 to 8, 2^(511+64T) < P < 2^(512+64T), so that both have their top bit set
+%% in their fields. Its other numbers fit in the 64 + 8T octets of P. P and Q are
+%% given without leading zeros
+-spec dsa_t(binary(), binary(), [binary()]) -> 0..8 | invalid.
+dsa_t(<<1:1, _/bitstring>> = P, <<1:1, _:159>>, Numbers) when
+    byte_size(P) >= 64, byte_size(P) =< 128, byte_size(P) rem 8 =:= 0
+->
+    Size = byte_size(P),
+    case lists:all(fun(Number) -> byte_size(Number) =< Size end, Numbers) of
+        true -> (Size - 64) div 8;
+        false -> invalid
+    end;
+dsa_t(_P, _Q, _Numbers) ->
+    invalid.
 
-%% The octets of a number given as its big-endian bytes, leading zeros left out
--spec unsigned_size(binary()) -> non_neg_integer().
-unsigned_size(Number) ->
-    Stripped = strip_leading_zeros(Number),
-    byte_size(Stripped).
+%% A number as its big-endian bytes, leading zeros left out, given as bytes or as
+%% an integer
+-spec unsigned_bytes(binary() | non_neg_integer()) -> binary().
+unsigned_bytes(Number) when is_integer(Number), Number >= 0 ->
+    Bytes = binary:encode_unsigned(Number),
+    strip_leading_zeros(Bytes);
+unsigned_bytes(Number) when is_binary(Number) ->
+    strip_leading_zeros(Number);
+unsigned_bytes(_Number) ->
+    error(badarg).
 
 -spec strip_leading_zeros(binary()) -> binary().
 strip_leading_zeros(<<0, Rest/binary>>) -> strip_leading_zeros(Rest);
