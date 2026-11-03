@@ -362,24 +362,14 @@ encode_svcb_record(Priority, Target, Params, Origin, RelativeNames, Separator) -
 join_rdata_fields(Fields, Separator) ->
     lists:join(Separator, Fields).
 
-%% Helper: Convert DNSKEY/CDNSKEY public_key (algorithm-specific form) to wire-format binary.
-%% Mirrors dns_encode logic: RSA uses [E, M], DSA uses list [P,Q,G,Y], others use binary.
-%% E and M can be integers or their big-endian bytes, as crypto:generate_key/2 gives them.
--spec public_key_to_wire_binary(dns:uint8(), iodata() | [integer()]) -> binary().
-public_key_to_wire_binary(Alg, [E, M]) when
-    (Alg =:= ?DNS_ALG_RSASHA1 orelse Alg =:= ?DNS_ALG_NSEC3RSASHA1 orelse
-        Alg =:= ?DNS_ALG_RSASHA256 orelse Alg =:= ?DNS_ALG_RSASHA512) andalso
-        (is_integer(E) orelse is_binary(E)) andalso
-        (is_integer(M) orelse is_binary(M))
-->
-    dns_encode:encode_rsa_key(E, M);
-public_key_to_wire_binary(Alg, PKM) when
-    (Alg =:= ?DNS_ALG_DSA orelse Alg =:= ?DNS_ALG_NSEC3DSA) andalso
-        is_list(PKM)
-->
-    dns_encode:encode_dsa_key(PKM);
-public_key_to_wire_binary(_Alg, PK) when is_binary(PK) ->
-    PK.
+%% Helper: a DNSKEY's or CDNSKEY's key as the wire encoder writes it, in whatever
+%% form it is given, an RSA or DSA key as its numbers among them, so that a zone
+%% file and the wire always carry the same key
+-spec public_key_to_wire_binary(dns:rrdata()) -> binary().
+public_key_to_wire_binary(Data) ->
+    <<_Flags:16, _Protocol:8, _Alg:8, Key/binary>> =
+        dns_encode:encode_rrdata(?DNS_CLASS_IN, Data),
+    Key.
 
 %% Helper: Encode DS/CDS/DLV/DNSKEY/CDNSKEY record
 %% Encodes 3 integer fields and a data field (hex or base64 encoded)
@@ -675,28 +665,26 @@ encode_rdata(
     #dns_rrdata_dnskey{
         flags = Flags,
         protocol = Protocol,
-        alg = Alg,
-        public_key = PublicKey
-    },
+        alg = Alg
+    } = Data,
     _Origin,
     _RelativeNames,
     Separator
 ) ->
-    PublicKeyBin = public_key_to_wire_binary(Alg, PublicKey),
+    PublicKeyBin = public_key_to_wire_binary(Data),
     encode_key_record(Flags, Protocol, Alg, PublicKeyBin, base64, Separator);
 encode_rdata(
     ?DNS_TYPE_CDNSKEY,
     #dns_rrdata_cdnskey{
         flags = Flags,
         protocol = Protocol,
-        alg = Alg,
-        public_key = PublicKey
-    },
+        alg = Alg
+    } = Data,
     _Origin,
     _RelativeNames,
     Separator
 ) ->
-    PublicKeyBin = public_key_to_wire_binary(Alg, PublicKey),
+    PublicKeyBin = public_key_to_wire_binary(Data),
     encode_key_record(Flags, Protocol, Alg, PublicKeyBin, base64, Separator);
 encode_rdata(
     ?DNS_TYPE_RRSIG,
