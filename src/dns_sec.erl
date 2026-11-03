@@ -196,7 +196,8 @@ Generate NSEC3 records from a list of `t:dns:rr/0`.
 
 The list must contain a SOA `t:dns:rr/0` to source the zone name and
 TTL from as well as as an NSEC3Param `t:dns:rr/0` to source the
-hash algorithm, iterations and salt from.
+hash algorithm, iterations and salt from. Raises `name_mismatch` for a
+record outside the zone.
 """.
 -spec gen_nsec3([dns:rr()], gen_nsec3_opts()) -> [dns:rr()].
 gen_nsec3(RRs, Opts) ->
@@ -239,7 +240,7 @@ gen_nsec3(RRs, ZoneName, Alg, Salt, Iterations, TTL, Class, Opts) ->
                 DName = dns_domain:to_wire(Name),
                 HashedName = ih(Alg, Salt, DName, Iterations),
                 HexdHashName = base32:encode(HashedName, [hex, nopad]),
-                NewName = <<HexdHashName/binary, $., ZoneName/binary>>,
+                NewName = nsec3_owner(HexdHashName, ZoneName),
                 Data = #dns_rrdata_nsec3{
                     hash_alg = Alg,
                     opt_out = false,
@@ -264,6 +265,15 @@ gen_nsec3(RRs, ZoneName, Alg, Salt, Iterations, TTL, Class, Opts) ->
     ),
     Sorted = [RR || {_, RR} <- lists:keysort(1, Unsorted)],
     add_next_hash(Sorted).
+
+%% RFC5155§3: an NSEC3's owner is its hash in base32hex, as a label under the
+%% zone, written as the SOA writes the zone's name, but under the root
+-spec nsec3_owner(binary(), dns:dname()) -> dns:dname().
+nsec3_owner(Hash, ZoneName) ->
+    case dns_domain:split(ZoneName) of
+        [] -> Hash;
+        _ -> <<Hash/binary, $., ZoneName/binary>>
+    end.
 
 -spec minimum_soa_ttl(dns:rr()) -> dns:ttl().
 minimum_soa_ttl(#dns_rr{type = ?DNS_TYPE_SOA, ttl = Rec, data = #dns_rrdata_soa{minimum = Min}}) ->
@@ -962,41 +972,25 @@ canonical_rrdata_form(#dns_rrdata_srv{target = Target} = Data) ->
 canonical_rrdata_form(X) ->
     X.
 
-%% The names between a name and its zone, each by its name_key/1, which both are
-%% compared by, so that the zone's name can be written as the records' are not
--spec name_ancestors(dns:dname(), dns:dname()) -> [binary()].
+%% The names strictly between a name, given by its name_key/1, and its zone, each
+%% by its name_key/1. They are found by labels, never by the bytes of the escaped
+%% text, in which an escaped dot reads as the end of a label. Raises name_mismatch
+%% for a name outside the zone
+-spec name_ancestors(dns:dname(), dns:dname()) -> [dns:dname()].
 name_ancestors(Name, ZoneName) ->
-    NameKey = name_key(Name),
-    ZoneKey = name_key(ZoneName),
-    gen_name_ancestors(NameKey, ZoneKey).
+    Labels = dns_domain:split(Name),
+    Zone = dns_domain:split(ZoneName),
+    is_at_or_under(Labels, Zone) orelse error(name_mismatch),
+    Depth = length(Labels) - length(Zone),
+    labels_ancestors(Labels, Depth).
 
--spec gen_name_ancestors(binary(), binary()) -> [binary()].
-gen_name_ancestors(ZoneName, ZoneName) ->
-    [];
-gen_name_ancestors(Name, ZoneName) when byte_size(Name) > byte_size(ZoneName) + 1 ->
-    Offset = byte_size(Name) - byte_size(ZoneName) - 1,
-    case Name of
-        <<RelName:Offset/binary, $., ZoneName/binary>> ->
-            case dns_domain:split(RelName) of
-                [_] ->
-                    [];
-                [_ | Labels0] ->
-                    %% split/1 unescapes the labels, so a dot in one is escaped again
-                    [FirstLabel | Labels] = [
-                        dns_domain:escape_label(Label)
-                     || Label <- lists:reverse(Labels0)
-                    ],
-                    gen_name_ancestors_labels(Labels, [<<FirstLabel/binary, $., ZoneName/binary>>])
-            end;
-        _ ->
-            erlang:error(name_mismatch)
-    end.
-
-gen_name_ancestors_labels([], Anc) ->
-    Anc;
-gen_name_ancestors_labels([Label | Labels], [Parent | _] = Asc) ->
-    NewName = <<Label/binary, $., Parent/binary>>,
-    gen_name_ancestors_labels(Labels, [NewName | Asc]).
+%% The ancestors of a name given as labels Depth labels under its zone, the zone
+%% left out, as name_key/1 gives them
+-spec labels_ancestors(dns:labels(), non_neg_integer()) -> [dns:dname()].
+labels_ancestors([_ | Parent], Depth) when Depth > 1 ->
+    [dns_domain:join(Parent) | labels_ancestors(Parent, Depth - 1)];
+labels_ancestors(_Labels, _Depth) ->
+    [].
 
 -spec name_order([dns:rr(), ...]) -> [dns:rr(), ...].
 name_order(RRs) when is_list(RRs) ->

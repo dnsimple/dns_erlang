@@ -37,7 +37,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - DNSSEC: signing with a DSA key RFC 2536 §2 rules out, whose Q is not 160 bits or whose P is not 512 + 64T bits, raises `{unsupported_key, Alg}`.
 - DNSSEC: signing and verifying leave duplicate records out of an RRset, as RFC 4034 §6.3 has it.
 - DNSSEC: `dns_sec:sign_rr/6` and the NSEC and NSEC3 generators take owner names that differ only in a final dot as one owner, where they split an RRset or crashed.
-- DNSSEC: `dns_sec:gen_nsec3/1,2` hashes an empty non-terminal whose label holds a dot with the dot escaped.
+- DNSSEC: `dns_sec:gen_nsec3/1,2` finds empty non-terminals by labels, so a label holding a dot neither hides one nor makes one up, and raises `name_mismatch` for any record outside the zone.
+- DNSSEC: `dns_sec:gen_nsec3/1,2` makes NSEC3 records for the root zone, where it raised `name_mismatch`.
 - DNSSEC: `dns_sec:sign_rr/6` leaves RRSIG records unsigned, and `dns_sec:sign_rrset/6` raises `badarg` for an RRSIG RRset, as RFC 4035 §2.2 has it.
 - DNSSEC: `dns_sec:sign_rrset/6` raises `badarg` for records of more than one RRset, where it signed them all under the first's owner, class and type.
 - JSON: `dns_json:from_map/1` computes a DNSKEY's or CDNSKEY's key tag from its RDATA, as the wire and zone file decoders do, whatever the JSON's `keytag` is.

@@ -92,6 +92,8 @@ groups() ->
             gen_nsec3_makes_no_ent_from_escaped_dot,
             verify_owner_with_leading_dot_is_false,
             sign_rr_rejects_what_is_not_a_record,
+            gen_nsec3_root_zone,
+            gen_nsec3_rejects_names_outside_the_zone,
             ih_custom_hash_test,
             dsa_sign_verify_test,
             ecdsa_sign_verify_test,
@@ -1595,6 +1597,35 @@ sign_rr_rejects_what_is_not_a_record(_Config) ->
     Sign = fun(RRs) -> dns_sec:sign_rr(RRs, ~"example", KeyTag, ?DNS_ALG_ED25519, Priv, Opts) end,
     ?assertError(_, Sign([A, {dns_rr, ~"x.example"}])),
     ?assertError(_, Sign([A, #dns_query{name = ~"www.example", type = ?DNS_TYPE_A}])).
+
+%% RFC5155§3: an NSEC3's owner is its hash as one label under the zone, for the
+%% root zone too, written as "." or as <<>>, whose empty non-terminals are found
+%% as any zone's. 5.1.1 raised name_mismatch for the root zone
+gen_nsec3_root_zone(_Config) ->
+    Hash = fun(Name) ->
+        Wire = dns_domain:to_wire(Name),
+        base32:encode(dns_sec:ih(?DNSSEC_NSEC3_ALG_SHA1, <<>>, Wire, 0), [hex, nopad])
+    end,
+    Expected = lists:sort([Hash(Name) || Name <- [~".", ~"example", ~"www.example"]]),
+    [
+        begin
+            RRs = [soa_rr(Root), nsec3param_rr(Root), rr_a(~"www.example", {192, 0, 2, 1})],
+            Owners = [Name || #dns_rr{name = Name} <- dns_sec:gen_nsec3(RRs)],
+            ?assertEqual({Root, Expected}, {Root, lists:sort(Owners)})
+        end
+     || Root <- [~".", <<>>]
+    ].
+
+%% gen_nsec3/1 raises name_mismatch for a record outside the zone, whichever way
+%% its name compares with the zone's by length and by bytes. x.a\.example has the
+%% labels x and a.example, so it is not under example, nor is a\.example
+gen_nsec3_rejects_names_outside_the_zone(_Config) ->
+    Zone = [soa_rr(~"example"), nsec3param_rr(~"example")],
+    Outside = [~"other", ~"com", ~"xexample", ~"foo.bar.other", ~"x.a\\.example", ~"a\\.example"],
+    [
+        ?assertError(name_mismatch, dns_sec:gen_nsec3([rr_a(Name, {192, 0, 2, 1}) | Zone]))
+     || Name <- Outside
+    ].
 
 dsa_dnskey(Field) ->
     #dns_rr{
