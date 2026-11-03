@@ -1701,18 +1701,16 @@ rrsig_to_sig(#dns_rrdata_rrsig{
         signature = Signature
     }.
 
-%% E and M as integers, or as their big-endian bytes, as crypto:generate_key/2 gives
-%% them. An RSA DNSKEY's key as a list of two is always [E, M], never two pieces
-%% of its bytes
+%% E and M as integers, or as their big-endian bytes, as crypto:generate_key/2 gives them.
+%% An RSA DNSKEY's key as a list of two is always [E, M], never two pieces of its bytes
 -spec encode_rsa_key(non_neg_integer() | binary(), non_neg_integer() | binary()) -> binary().
 encode_rsa_key(E, M) ->
     MBin = strip_leading_zeros(unsigned_binary(M)),
     EBin = strip_leading_zeros(unsigned_binary(E)),
     ESize = byte_size(EBin),
     case ESize of
-        %% RFC3110§2: a zero first octet says the exponent's length takes the two
-        %% octets after it, so an empty exponent would not read back, nor would a
-        %% key whose modulus is empty
+        %% RFC3110§2: a zero first octet says the exponent's length takes the two octets after it,
+        %% so an empty exponent would not read back, nor would a key whose modulus is empty
         _ when ESize =:= 0; MBin =:= <<>> ->
             erlang:error(badarg);
         _ when ESize =< 16#FF ->
