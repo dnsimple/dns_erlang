@@ -256,7 +256,7 @@ Non-RR records (message, query, OPT records) use a two-level nested map format:
 - `protocol` (`t:dns:uint8/0`): Direct value
 - `alg` (`t:dns:uint8/0`): Direct value
 - `public_key` (`t:binary/0`): Base64-encoded public key
-- `keytag` (`t:integer/0`): Direct value
+- `keytag` (`t:integer/0`): Key tag (RFC 4034 Appendix B), which `from_map/1` computes from the other fields, whatever value is given
 
 **Example:**
 
@@ -438,7 +438,7 @@ Non-RR records (message, query, OPT records) use a two-level nested map format:
 - `protocol` (`t:dns:uint8/0`): Direct value
 - `alg` (`t:dns:uint8/0`): Direct value
 - `public_key` (`t:binary/0`): Base64-encoded public key
-- `keytag` (`t:integer/0`): Direct value
+- `keytag` (`t:integer/0`): Key tag (RFC 4034 Appendix B), which `from_map/1` computes from the other fields, whatever value is given
 
 **Example:**
 

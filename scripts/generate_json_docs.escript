@@ -610,7 +610,7 @@ generate_fields_doc(RecordName, Fields, EncodingRules, Acc) ->
     FieldsList = lists:foldl(
         fun({FieldName, TypeStr}, InnerAcc) ->
             Encoding = determine_encoding(RecordName, FieldName, TypeStr, EncodingRules),
-            EncodingDesc = encoding_description(Encoding, FieldName, TypeStr),
+            EncodingDesc = field_description(RecordName, FieldName, Encoding, TypeStr),
             FieldBin = atom_to_binary(FieldName),
             %% TypeStr is already formatted with ExDoc links from extract_record_field_type_string
             <<InnerAcc/binary, "- `", FieldBin/binary, "` (", TypeStr/binary, "): ",
@@ -644,6 +644,17 @@ infer_encoding(TypeStr) ->
         HasIp4 orelse HasIp6 orelse HasIp -> ip_string;
         true -> direct
     end.
+
+%% A DNSKEY's or CDNSKEY's key tag is no field of its RDATA: from_map/1 computes
+%% it from the others, as the wire and zone file decoders do
+-spec field_description(record_name(), field_name(), encoding(), ex_doc_type_string()) ->
+    binary().
+field_description(RecordName, keytag, _Encoding, _TypeStr) when
+    RecordName =:= dns_rrdata_dnskey; RecordName =:= dns_rrdata_cdnskey
+->
+    ~"Key tag (RFC 4034 Appendix B), which `from_map/1` computes from the other fields, whatever value is given";
+field_description(_RecordName, FieldName, Encoding, TypeStr) ->
+    encoding_description(Encoding, FieldName, TypeStr).
 
 -spec encoding_description(encoding(), field_name(), ex_doc_type_string()) -> binary().
 encoding_description(base64, FieldName, _TypeStr) ->

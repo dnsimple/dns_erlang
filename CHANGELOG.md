@@ -40,6 +40,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - DNSSEC: `dns_sec:gen_nsec3/1,2` hashes an empty non-terminal whose label holds a dot with the dot escaped.
 - DNSSEC: `dns_sec:sign_rr/6` leaves RRSIG records unsigned, and `dns_sec:sign_rrset/6` raises `badarg` for an RRSIG RRset, as RFC 4035 §2.2 has it.
 - DNSSEC: `dns_sec:sign_rrset/6` raises `badarg` for records of more than one RRset, where it signed them all under the first's owner, class and type.
+- JSON: `dns_json:from_map/1` computes a DNSKEY's or CDNSKEY's key tag from its RDATA, as the wire and zone file decoders do, whatever the JSON's `keytag` is.
 - Zone files: read hex split by whitespace in DS, CDS, DLV, TLSA and SMIMEA, and base64 in DHCID, CERT and KEY.
 - Zone files: read TLSA, SMIMEA, DHCID and CERT data unquoted, as their RFCs' examples write it.
 - Zone files: read base64 whose final `=` is alone on a line.

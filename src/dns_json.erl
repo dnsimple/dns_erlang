@@ -283,6 +283,10 @@ from_map_record(Tag, Fields, DataMap) ->
 %% RFC8777§4.2.4: an AMTRELAY relay is an address for relay types 1 and 2 and a
 %% domain name for type 3, even one that reads like an address, as it does in a
 %% zone file; dns_check refuses a relay that does not match its type.
+%%
+%% RFC4034 Appendix B: a DNSKEY's or CDNSKEY's key tag is computed from its RDATA,
+%% as the wire and zone file decoders compute it, whatever the JSON's keytag is,
+%% so that an RRSIG signed with it names the key.
 -spec from_map_siblings(tuple()) -> tuple().
 from_map_siblings(#dns_rrdata_amtrelay{relay_type = RelayType, relay = Relay} = Data) when
     (RelayType =:= 1 orelse RelayType =:= 2) andalso is_binary(Relay)
@@ -291,8 +295,27 @@ from_map_siblings(#dns_rrdata_amtrelay{relay_type = RelayType, relay = Relay} = 
         {ok, IP} -> Data#dns_rrdata_amtrelay{relay = IP};
         {error, _} -> Data
     end;
+from_map_siblings(
+    #dns_rrdata_dnskey{flags = Flags, protocol = Protocol, alg = Alg, public_key = Key} = Data
+) when
+    is_integer(Flags) andalso is_integer(Protocol) andalso is_integer(Alg) andalso is_binary(Key)
+->
+    KeyTag = key_tag(Flags, Protocol, Alg, Key),
+    Data#dns_rrdata_dnskey{keytag = KeyTag};
+from_map_siblings(
+    #dns_rrdata_cdnskey{flags = Flags, protocol = Protocol, alg = Alg, public_key = Key} = Data
+) when
+    is_integer(Flags) andalso is_integer(Protocol) andalso is_integer(Alg) andalso is_binary(Key)
+->
+    KeyTag = key_tag(Flags, Protocol, Alg, Key),
+    Data#dns_rrdata_cdnskey{keytag = KeyTag};
 from_map_siblings(Data) ->
     Data.
+
+-spec key_tag(integer(), integer(), integer(), binary()) -> dns:uint16().
+key_tag(Flags, Protocol, Alg, Key) ->
+    RData = <<Flags:16, Protocol:8, Alg:8, Key/binary>>,
+    dns_decode:bin_to_key_tag(RData).
 
 %% Convert DNS type to RRDATA record tag
 -spec type_to_rrdata_tag(dns:type()) -> atom() | no_return().

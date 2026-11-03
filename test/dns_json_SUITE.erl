@@ -28,6 +28,7 @@ groups() ->
             test_svcb_ech_json_base64,
             test_svcb_ech_json_invalid_base64_rejected,
             test_dnskey_formats,
+            test_dnskey_key_tag_computed,
             test_nsec3_salt,
             test_ipseckey_gateway,
             test_records_that_do_not_fit_rejected,
@@ -477,7 +478,8 @@ test_optrr_records(_Config) ->
 test_special_encodings(_Config) ->
     %% RRDATA records must be wrapped in dns_rr
     Cases = [
-        #dns_rr{
+        %% from_map/1 computes a DNSKEY's key tag from its RDATA
+        dns_sec:add_keytag_to_dnskey(#dns_rr{
             name = ~"example.com",
             type = ?DNS_TYPE_DNSKEY,
             ttl = 3600,
@@ -485,10 +487,9 @@ test_special_encodings(_Config) ->
                 flags = 256,
                 protocol = 3,
                 alg = ?DNS_ALG_RSASHA256,
-                public_key = ~"test-public-key-data",
-                keytag = 12345
+                public_key = ~"test-public-key-data"
             }
-        },
+        }),
         #dns_rr{
             name = ~"example.com",
             type = ?DNS_TYPE_DS,
@@ -893,7 +894,8 @@ test_svcb_params_to_json_invalid_key_rejected(_Config) ->
 test_dnskey_formats(_Config) ->
     %% RRDATA records must be wrapped in dns_rr
     %% Test DNSKEY with binary public_key
-    DnskeyBinary = #dns_rr{
+    %% from_map/1 computes the key tag from the RDATA
+    DnskeyBinary = dns_sec:add_keytag_to_dnskey(#dns_rr{
         name = ~"example.com",
         type = ?DNS_TYPE_DNSKEY,
         ttl = 3600,
@@ -901,23 +903,22 @@ test_dnskey_formats(_Config) ->
             flags = 256,
             protocol = 3,
             alg = ?DNS_ALG_RSASHA256,
-            public_key = ~"binary-public-key-data",
-            keytag = 12345
+            public_key = ~"binary-public-key-data"
         }
-    },
+    }),
     assert_transcode(DnskeyBinary),
 
     %% A key is its bytes, even bytes that read as numbers each behind a 32-bit
     %% length, which JSON took for an RSA key's [E, M], whatever the algorithm
     LengthPrefixed = <<<<(byte_size(B)):32, B/binary>> || B <- [<<1, 0, 1>>, <<1, 9, 50>>]>>,
-    DnskeyPrefixed = DnskeyBinary#dns_rr{
+    DnskeyPrefixed = dns_sec:add_keytag_to_dnskey(DnskeyBinary#dns_rr{
         data = (DnskeyBinary#dns_rr.data)#dns_rrdata_dnskey{public_key = LengthPrefixed}
-    },
+    }),
     #{~"data" := #{~"public_key" := DnskeyB64}} = assert_transcode(DnskeyPrefixed),
     ?assertEqual(base64:encode(LengthPrefixed), DnskeyB64),
 
     %% Test CDNSKEY with binary public_key
-    CdnskeyBinary = #dns_rr{
+    CdnskeyBinary = dns_sec:add_keytag_to_cdnskey(#dns_rr{
         name = ~"example.com",
         type = ?DNS_TYPE_CDNSKEY,
         ttl = 3600,
@@ -925,16 +926,34 @@ test_dnskey_formats(_Config) ->
             flags = 256,
             protocol = 3,
             alg = ?DNS_ALG_RSASHA256,
-            public_key = ~"binary-public-key-data",
-            keytag = 12345
+            public_key = ~"binary-public-key-data"
         }
-    },
+    }),
     assert_transcode(CdnskeyBinary),
 
-    CdnskeyPrefixed = CdnskeyBinary#dns_rr{
+    CdnskeyPrefixed = dns_sec:add_keytag_to_cdnskey(CdnskeyBinary#dns_rr{
         data = (CdnskeyBinary#dns_rr.data)#dns_rrdata_cdnskey{public_key = LengthPrefixed}
-    },
+    }),
     assert_transcode(CdnskeyPrefixed).
+
+%% RFC4034 Appendix B: a DNSKEY's or CDNSKEY's key tag is computed from its
+%% RDATA, as the wire and zone file decoders compute it, whatever the JSON's
+%% keytag is, or with none. The key is RFC5702§6.1's, whose key tag is 9033.
+test_dnskey_key_tag_computed(_Config) ->
+    Key = base64:decode(
+        ~"AwEAAcFcGsaxxdgiuuGmCkVImy4h99CqT7jwY3pexPGcnUFtR2Fh36BponcwtkZ4cAgtvd4Qs8PkxUdp6p/DlUmObdk="
+    ),
+    Data = #{
+        ~"flags" => 256, ~"protocol" => 3, ~"alg" => 8, ~"public_key" => base64:encode(Key)
+    },
+    [
+        begin
+            Map = #{~"name" => ~"example.net", ~"type" => Type, ~"ttl" => 3600, ~"data" => KeyData},
+            ?assertMatch(#dns_rr{data = {_, 256, 3, 8, Key, 9033}}, dns_json:from_map(Map))
+        end
+     || Type <- [~"DNSKEY", ~"CDNSKEY"],
+        KeyData <- [Data, Data#{~"keytag" => 0}, Data#{~"keytag" => 12345}]
+    ].
 
 test_nsec3_salt(_Config) ->
     %% RRDATA records must be wrapped in dns_rr
