@@ -990,23 +990,18 @@ is_at_or_under(Labels, Zone) ->
 
 %% A DNSKEY decoded from the wire holds an RSA or DSA key as integers, and one
 %% parsed from a zone file its RDATA bytes, which are read as the decoder reads
-%% them. Bytes that do not parse stay a binary, which verifies nothing.
+%% them. Bytes that do not parse stay a binary, which verifies nothing, and so
+%% do those of a key the RFCs rule out, which the decoder keeps as bytes: an RSA
+%% key with leading zero octets, or with three octets for an exponent length
+%% under 256 (RFC3110§2), and a DSA key whose P is shorter than its T makes it
+%% (RFC2536§2)
 -spec rsa_public_key(key()) -> key().
 rsa_public_key(Key) when is_binary(Key) -> dns_decode:rsa_public_key(Key);
 rsa_public_key(Key) -> Key.
 
-%% RFC2536§2: P, G and Y take 64 + 8T octets each. The decoder keeps the bytes of
-%% a key whose T is wider than they need, only so that it encodes back
-%% unchanged, so they are read here whatever T is
 -spec dsa_public_key(key()) -> key().
-dsa_public_key(<<T, Q:20/unit:8, PGY/binary>>) when
-    T =< 8, byte_size(PGY) =:= 3 * (64 + 8 * T)
-->
-    S = 64 + 8 * T,
-    <<P:S/unit:8, G:S/unit:8, Y:S/unit:8>> = PGY,
-    [P, Q, G, Y];
-dsa_public_key(Key) ->
-    Key.
+dsa_public_key(Key) when is_binary(Key) -> dns_decode:dsa_public_key(Key);
+dsa_public_key(Key) -> Key.
 
 %% crypto takes a key's integers all as integers or all as binaries, and raises
 %% badarith on a mix. It turns integers into binaries in time quadratic in their

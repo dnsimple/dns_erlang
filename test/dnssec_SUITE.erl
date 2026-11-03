@@ -75,7 +75,8 @@ groups() ->
             sign_leaves_rrsigs_unsigned,
             verify_short_rsa_signature_same_for_all_algorithms,
             verify_dsa_key_with_binary_field,
-            verify_dsa_key_with_wide_t,
+            dsa_key_with_wide_t_verifies_nothing,
+            rsa_key_rfc3110_rules_out_verifies_nothing,
             sign_rejects_dsa_q_over_160_bits,
             sign_dsa_p_over_1024_bits_names_cause,
             verify_dsa_dnskey_after_wire_round_trip,
@@ -1197,11 +1198,12 @@ verify_dsa_key_with_binary_field(Config) ->
     ?assert(dnssec:verify_rrsig(RRSig, [RR], [DNSKey], #{now => 1500000})),
     ?assert(dnssec:verify_rrsig(RRSig, [RR], [Mixed], #{now => 1500000})).
 
-%% RFC2536§2: a DSA DNSKEY can have a T wider than its P, G and Y need. The
-%% decoder keeps the bytes of such a key, so that it encodes back unchanged, and
-%% verify_rrsig/4 read them by the decoder's rule, so it verified nothing with
-%% the key, decoded or parsed from a zone file
-verify_dsa_key_with_wide_t(Config) ->
+%% RFC2536§2: P is "in the range 2**(511+64T) < P < 2**(512+64T) and so is
+%% 64 + 8*T octets long", so a DSA DNSKEY whose T is wider than its P needs is
+%% no RFC 2536 key. The decoder and the zone file parser keep its bytes, so that
+%% it encodes back unchanged, and verify_rrsig/4 verifies nothing with it, as
+%% with an RSA key that RFC3110§2 rules out
+dsa_key_with_wide_t_verifies_nothing(Config) ->
     Samples = proplists:get_value(dnssec_samples, Config),
     %% A key whose T is under 8, written here with the next T
     [{Zone, KeyProps, T} | _] = [
@@ -1214,23 +1216,61 @@ verify_dsa_key_with_wide_t(Config) ->
     [P, Q, G, Y] = helper_samplekeypl_to_pubkey(KeyProps),
     S = 64 + 8 * (T + 1),
     Wide = <<(T + 1), Q:20/unit:8, P:S/unit:8, G:S/unit:8, Y:S/unit:8>>,
-    DNSKey = #dns_rr{
-        name = Zone,
-        type = ?DNS_TYPE_DNSKEY,
-        ttl = 3600,
-        data = #dns_rrdata_dnskey{flags = 256, protocol = 3, alg = ?DNS_ALG_DSA, public_key = Wide}
-    },
-    Wire = dns_encode:encode_rrdata(?DNS_CLASS_IN, DNSKey#dns_rr.data),
-    Decoded = DNSKey#dns_rr{
-        data = dns_decode:decode_rrdata(<<>>, ?DNS_CLASS_IN, ?DNS_TYPE_DNSKEY, Wire)
-    },
-    ?assertMatch(#dns_rr{data = #dns_rrdata_dnskey{public_key = Wide}}, Decoded),
+    KeyData = #dns_rrdata_dnskey{flags = 256, protocol = 3, alg = ?DNS_ALG_DSA, public_key = Wide},
+    WideKey = #dns_rr{name = Zone, type = ?DNS_TYPE_DNSKEY, ttl = 3600, data = KeyData},
+    Wire = dns_encode:encode_rrdata(?DNS_CLASS_IN, KeyData),
+    ?assertMatch(
+        #dns_rrdata_dnskey{public_key = Wide},
+        dns_decode:decode_rrdata(<<>>, ?DNS_CLASS_IN, ?DNS_TYPE_DNSKEY, Wire)
+    ),
+    ZoneText = <<Zone/binary, ". 3600 IN DNSKEY 256 3 3 ", (base64:encode(Wide))/binary, "\n">>,
+    ?assertMatch(
+        {ok, [#dns_rr{data = #dns_rrdata_dnskey{public_key = Wide}}]},
+        dns_zone:parse_string(ZoneText)
+    ),
     RR = rr_a(<<"test.", Zone/binary>>, {192, 0, 2, 1}),
     Opts = #{inception => 1000000, expiration => 2000000},
     Priv = helper_samplekeypl_to_privkey(KeyProps),
-    RRSig = dnssec:sign_rrset([RR], Zone, key_tag_of(DNSKey), ?DNS_ALG_DSA, Priv, Opts),
-    ?assert(dnssec:verify_rrsig(RRSig, [RR], [DNSKey], #{now => 1500000})),
-    ?assert(dnssec:verify_rrsig(RRSig, [RR], [Decoded], #{now => 1500000})).
+    Verify = fun(DNSKey) ->
+        RRSig = dnssec:sign_rrset([RR], Zone, key_tag_of(DNSKey), ?DNS_ALG_DSA, Priv, Opts),
+        dnssec:verify_rrsig(RRSig, [RR], [DNSKey], #{now => 1500000})
+    end,
+    %% The same key with its own T verifies
+    ?assert(Verify(WideKey#dns_rr{data = KeyData#dns_rrdata_dnskey{public_key = [P, Q, G, Y]}})),
+    ?assertNot(Verify(WideKey)).
+
+%% RFC3110§2: an exponent length of 1 to 255 takes one octet, and "leading zero
+%% octets are prohibited in the exponent and modulus". The decoder keeps the
+%% bytes of a key that breaks either rule, and verify_rrsig/4 verifies nothing
+%% with it, though its numbers are those of a key that verifies
+rsa_key_rfc3110_rules_out_verifies_nothing(_Config) ->
+    {[E, N], [E, N, D | _]} = crypto:generate_key(rsa, {1024, 65537}),
+    <<3, E:3/binary, N/binary>> = Canonical = dns_encode:encode_rsa_key(E, N),
+    RR = rr_a(~"www.example", {192, 0, 2, 1}),
+    Opts = #{inception => 1000000, expiration => 2000000},
+    Verify = fun(KeyBytes) ->
+        DNSKey = #dns_rr{
+            name = ~"example",
+            type = ?DNS_TYPE_DNSKEY,
+            ttl = 3600,
+            data = #dns_rrdata_dnskey{
+                flags = 256, protocol = 3, alg = ?DNS_ALG_RSASHA256, public_key = KeyBytes
+            }
+        },
+        RRSig = dnssec:sign_rrset(
+            [RR], ~"example", key_tag_of(DNSKey), ?DNS_ALG_RSASHA256, [E, N, D], Opts
+        ),
+        dnssec:verify_rrsig(RRSig, [RR], [DNSKey], #{now => 1500000})
+    end,
+    ?assert(Verify(Canonical)),
+    [
+        ?assertNot(Verify(Bytes), Rule)
+     || {Rule, Bytes} <- [
+            {zero_before_modulus, <<3, E/binary, 0, N/binary>>},
+            {zero_before_exponent, <<4, 0, E/binary, N/binary>>},
+            {long_exponent_length, <<0, 0, 3, E/binary, N/binary>>}
+        ]
+    ].
 
 %% RFC2536§3: R and S of a DSA signature have 20 octets each, thus Q has
 %% 160 bits. With a wider Q, crypto makes a wider R and S. sign_rrset/6 cut

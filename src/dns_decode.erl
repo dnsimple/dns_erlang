@@ -14,6 +14,7 @@
     decode_message_body/3,
     decode_rrdata/3,
     rsa_public_key/1,
+    dsa_public_key/1,
     bin_to_key_tag/1
 ]).
 
