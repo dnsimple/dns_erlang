@@ -2315,7 +2315,7 @@ uri_decode_preserves_target(_) ->
             Wire = <<10:16, 1:16, Target/binary>>,
             Decoded = dns_decode:decode_rrdata(<<>>, ?DNS_CLASS_IN, ?DNS_TYPE_URI, Wire),
             Canonical = dns_encode:encode_rrdata(
-                ?DNS_CLASS_IN, dnssec:canonical_rrdata_form(Decoded)
+                ?DNS_CLASS_IN, dns_sec:canonical_rrdata_form(Decoded)
             ),
             ?assertEqual(Wire, Canonical, Target)
         end

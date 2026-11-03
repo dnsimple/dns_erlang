@@ -11,36 +11,37 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
-- DNSSEC: `dnssec:dnskey_public_key/2` makes a DNSKEY's public key field from a key `crypto:generate_key/2` gives.
+- DNSSEC: `dns_sec:dnskey_public_key/2` makes a DNSKEY's public key field from a key `crypto:generate_key/2` gives.
 
 ### Changed
 
+- DNSSEC: the `dnssec` module is now `dns_sec`, with the `dns_` prefix of every other module.
 - DNSKEY and CDNSKEY: `public_key` is always the RDATA's key field, a `binary()`; RSA and DSA keys no longer decode to `[E, M]` and `[P, Q, G, Y]` integers, nor encode from them.
 - JSON: a DNSKEY's or CDNSKEY's `public_key` is base64 of its bytes, for RSA and DSA too, where it was base64 of each number behind a 32-bit length.
-- DNSSEC: `dnssec:sign_rr/6` and `dnssec:sign_rrset/6` take RSA and DSA private keys as the binaries `crypto:generate_key/2` gives.
+- DNSSEC: `dns_sec:sign_rr/6` and `dns_sec:sign_rrset/6` take RSA and DSA private keys as the binaries `crypto:generate_key/2` gives.
 
 ### Fixed
 
 - DNSSEC: ECDSA signatures (13, 14) hashed the data twice since 4.4.0; re-sign stored ones, which now fail to verify.
 - DNSSEC: DSA signatures (3, 6) signed the data's length along with it; re-sign stored ones, or move off DSA, which RFC 9904 forbids.
 - DNSSEC: DSA RRSIGs carry their DNSKEY's T even when P is not 64 + 8T octets.
-- DNSSEC: `dnssec:verify_rrsig/4` no longer crashes on RRsets whose TTL is not the RRSIG's original TTL.
-- DNSSEC: `dnssec:verify_rrsig/4` returns `false` for unknown algorithms, algorithms the local crypto refuses, keys or signatures of the wrong size, RRSIGs whose RDATA did not decode, and empty RRsets.
-- DNSSEC: `dnssec:verify_rrsig/4` verifies RSA and DSA DNSKEYs parsed from zone files, and nothing with a key RFC 3110 §2 or RFC 2536 §2 rules out.
-- DNSSEC: `dnssec:verify_rrsig/4` only tries the zone keys of the RRSIG's class it names by owner, algorithm and key tag, computed from their RDATA, not every key of the signer.
-- DNSSEC: `dnssec:verify_rrsig/4` matches an RRSIG's signer to a DNSKEY's owner with or without a final dot.
-- DNSSEC: `dnssec:verify_rrsig/4` verifies RRsets a wildcard was expanded into, leaving the proof that no closer name exists to the caller (RFC 4035 §5.3.4).
-- DNSSEC: `dnssec:verify_rrsig/4` compares an RRSIG's validity period in serial number arithmetic, as RFC 4034 §3.1.5 has it.
-- DNSSEC: `dnssec:verify_rrsig/4` rejects an RRSIG unless every record of the RRset has its owner, class and type covered.
-- DNSSEC: `dnssec:verify_rrsig/4` rejects an RRSIG whose signer cannot be the zone of its RRset, as BIND does.
-- DNSSEC: `dnssec:verify_rrsig/4` rejects an RSA signature that is not as long as the modulus, as RFC 8017 §8.2.2 has it.
+- DNSSEC: `dns_sec:verify_rrsig/4` no longer crashes on RRsets whose TTL is not the RRSIG's original TTL.
+- DNSSEC: `dns_sec:verify_rrsig/4` returns `false` for unknown algorithms, algorithms the local crypto refuses, keys or signatures of the wrong size, RRSIGs whose RDATA did not decode, and empty RRsets.
+- DNSSEC: `dns_sec:verify_rrsig/4` verifies RSA and DSA DNSKEYs parsed from zone files, and nothing with a key RFC 3110 §2 or RFC 2536 §2 rules out.
+- DNSSEC: `dns_sec:verify_rrsig/4` only tries the zone keys of the RRSIG's class it names by owner, algorithm and key tag, computed from their RDATA, not every key of the signer.
+- DNSSEC: `dns_sec:verify_rrsig/4` matches an RRSIG's signer to a DNSKEY's owner with or without a final dot.
+- DNSSEC: `dns_sec:verify_rrsig/4` verifies RRsets a wildcard was expanded into, leaving the proof that no closer name exists to the caller (RFC 4035 §5.3.4).
+- DNSSEC: `dns_sec:verify_rrsig/4` compares an RRSIG's validity period in serial number arithmetic, as RFC 4034 §3.1.5 has it.
+- DNSSEC: `dns_sec:verify_rrsig/4` rejects an RRSIG unless every record of the RRset has its owner, class and type covered.
+- DNSSEC: `dns_sec:verify_rrsig/4` rejects an RRSIG whose signer cannot be the zone of its RRset, as BIND does.
+- DNSSEC: `dns_sec:verify_rrsig/4` rejects an RSA signature that is not as long as the modulus, as RFC 8017 §8.2.2 has it.
 - DNSSEC: signing with an unknown algorithm raises `{unsupported_algorithm, Alg}`.
 - DNSSEC: signing with a DSA key RFC 2536 cannot carry, a Q over 160 bits or a P over 1024, raises `{unsupported_key, Alg}`.
 - DNSSEC: signing and verifying leave duplicate records out of an RRset, as RFC 4034 §6.3 has it.
-- DNSSEC: `dnssec:sign_rr/6` and the NSEC and NSEC3 generators take owner names that differ only in a final dot as one owner, where they split an RRset or crashed.
-- DNSSEC: `dnssec:gen_nsec3/1,2` hashes an empty non-terminal whose label holds a dot with the dot escaped.
-- DNSSEC: `dnssec:sign_rr/6` leaves RRSIG records unsigned, and `dnssec:sign_rrset/6` raises `badarg` for an RRSIG RRset, as RFC 4035 §2.2 has it.
-- DNSSEC: `dnssec:sign_rrset/6` raises `badarg` for records of more than one RRset, where it signed them all under the first's owner, class and type.
+- DNSSEC: `dns_sec:sign_rr/6` and the NSEC and NSEC3 generators take owner names that differ only in a final dot as one owner, where they split an RRset or crashed.
+- DNSSEC: `dns_sec:gen_nsec3/1,2` hashes an empty non-terminal whose label holds a dot with the dot escaped.
+- DNSSEC: `dns_sec:sign_rr/6` leaves RRSIG records unsigned, and `dns_sec:sign_rrset/6` raises `badarg` for an RRSIG RRset, as RFC 4035 §2.2 has it.
+- DNSSEC: `dns_sec:sign_rrset/6` raises `badarg` for records of more than one RRset, where it signed them all under the first's owner, class and type.
 - Zone files: read hex split by whitespace in DS, CDS, DLV, TLSA and SMIMEA, and base64 in DHCID, CERT and KEY.
 - Zone files: read TLSA, SMIMEA, DHCID and CERT data unquoted, as their RFCs' examples write it.
 - Zone files: read base64 whose final `=` is alone on a line.
