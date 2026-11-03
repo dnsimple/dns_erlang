@@ -113,6 +113,9 @@ and `[E, M]` or `[P, Q, G, Y]` to verify, which is how the wire decoder gives a
 DNSKEY's key. Each integer can also be given as its big-endian bytes, as
 `crypto:generate_key/2` gives an RSA key. A DNSKEY parsed from a zone file
 keeps the RDATA's key bytes, which verify as well. Other keys are binaries.
+Though its record field's type is `iodata()`, a DNSKEY's key in a list is read
+as those numbers, not as pieces of its bytes: two binaries are an RSA key's
+`[E, M]`, so a key given as its bytes must be one binary.
 """.
 -type key() :: [non_neg_integer() | binary()] | binary().
 -doc "Options for `sign_rr/6` and `sign_rrset/6`.".

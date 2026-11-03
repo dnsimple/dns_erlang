@@ -104,6 +104,10 @@
     flags :: dns:uint16(),
     protocol :: dns:uint8(),
     alg :: dns:uint8(),
+    %% The key's bytes as one binary, or an RSA or DSA key as the list of its
+    %% numbers, [E, M] or [P, Q, G, Y], each an integer or its big-endian bytes.
+    %% Though the type is iodata(), a list is read as those numbers, not as
+    %% pieces of the key's bytes: two binaries are an RSA key's [E, M]
     public_key :: iodata(),
     keytag :: integer()
 }).
@@ -113,6 +117,7 @@
     flags :: dns:uint16(),
     protocol :: dns:uint8(),
     alg :: dns:uint8(),
+    %% As a DNSKEY's
     public_key :: iodata(),
     keytag :: integer()
 }).

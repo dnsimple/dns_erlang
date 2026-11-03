@@ -1701,7 +1701,9 @@ rrsig_to_sig(#dns_rrdata_rrsig{
         signature = Signature
     }.
 
-%% E and M as integers, or as their big-endian bytes, as crypto:generate_key/2 gives them
+%% E and M as integers, or as their big-endian bytes, as crypto:generate_key/2 gives
+%% them. An RSA DNSKEY's key as a list of two is always [E, M], never two pieces
+%% of its bytes
 -spec encode_rsa_key(non_neg_integer() | binary(), non_neg_integer() | binary()) -> binary().
 encode_rsa_key(E, M) ->
     MBin = strip_leading_zeros(unsigned_binary(M)),
