@@ -1745,7 +1745,9 @@ encode_dsa_key(PKM) ->
 %% them all; taking it from P alone truncated a wider G or Y
 -spec dsa_t([non_neg_integer()]) -> 0..8.
 dsa_t(Fields) ->
-    (dsa_field_size(lists:max([unsigned_size(F) || F <- Fields])) - 64) div 8.
+    Max = lists:max([unsigned_size(F) || F <- Fields]),
+    DsaFieldSize = dsa_field_size(Max),
+    (DsaFieldSize - 64) div 8.
 
 -spec unsigned_binary(non_neg_integer() | binary()) -> binary().
 unsigned_binary(I) when is_integer(I) -> binary:encode_unsigned(I);
