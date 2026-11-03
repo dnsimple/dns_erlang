@@ -13,8 +13,6 @@
     decode_message_additional/3,
     decode_message_body/3,
     decode_rrdata/3,
-    rsa_public_key/1,
-    dsa_public_key/1,
     bin_to_key_tag/1
 ]).
 
@@ -642,48 +640,6 @@ decode_rrdata(MsgBin, _Class, ?DNS_TYPE_DNAME, Bin) ->
     #dns_rrdata_dname{dname = decode_dnameonly(MsgBin, Bin)};
 decode_rrdata(
     _MsgBin, _Class, ?DNS_TYPE_DNSKEY, <<Flags:16, Protocol:8, AlgNum:8, PublicKey/binary>> = Bin
-) when
-    AlgNum =:= ?DNS_ALG_RSASHA1 orelse
-        AlgNum =:= ?DNS_ALG_NSEC3RSASHA1 orelse
-        AlgNum =:= ?DNS_ALG_RSASHA256 orelse
-        AlgNum =:= ?DNS_ALG_RSASHA512
-->
-    #dns_rrdata_dnskey{
-        flags = Flags,
-        protocol = Protocol,
-        alg = AlgNum,
-        public_key = rsa_public_key(PublicKey),
-        keytag = bin_to_key_tag(Bin)
-    };
-decode_rrdata(
-    _MsgBin, _Class, ?DNS_TYPE_DNSKEY, <<Flags:16, Protocol:8, AlgNum:8, PublicKey/binary>> = Bin
-) when
-    AlgNum =:= ?DNS_ALG_DSA orelse AlgNum =:= ?DNS_ALG_NSEC3DSA
-->
-    #dns_rrdata_dnskey{
-        flags = Flags,
-        protocol = Protocol,
-        alg = AlgNum,
-        public_key = dsa_public_key(PublicKey),
-        keytag = bin_to_key_tag(Bin)
-    };
-decode_rrdata(
-    _MsgBin, _Class, ?DNS_TYPE_DNSKEY, <<Flags:16, Protocol:8, AlgNum:8, PublicKey/binary>> = Bin
-) when
-    (AlgNum =:= ?DNS_ALG_ECDSAP256SHA256 andalso 64 =:= byte_size(PublicKey)) orelse
-        (AlgNum =:= ?DNS_ALG_ECDSAP384SHA384 andalso 96 =:= byte_size(PublicKey)) orelse
-        (AlgNum =:= ?DNS_ALG_ED25519 andalso 32 =:= byte_size(PublicKey)) orelse
-        (AlgNum =:= ?DNS_ALG_ED448 andalso 57 =:= byte_size(PublicKey))
-->
-    #dns_rrdata_dnskey{
-        flags = Flags,
-        protocol = Protocol,
-        alg = AlgNum,
-        public_key = PublicKey,
-        keytag = bin_to_key_tag(Bin)
-    };
-decode_rrdata(
-    _MsgBin, _Class, ?DNS_TYPE_DNSKEY, <<Flags:16, Protocol:8, AlgNum:8, PublicKey/binary>> = Bin
 ) ->
     #dns_rrdata_dnskey{
         flags = Flags,
@@ -693,58 +649,7 @@ decode_rrdata(
         keytag = bin_to_key_tag(Bin)
     };
 decode_rrdata(
-    _MsgBin,
-    _Class,
-    ?DNS_TYPE_CDNSKEY,
-    <<Flags:16, Protocol:8, AlgNum:8, PublicKey/binary>> = Bin
-) when
-    AlgNum =:= ?DNS_ALG_RSASHA1 orelse
-        AlgNum =:= ?DNS_ALG_NSEC3RSASHA1 orelse
-        AlgNum =:= ?DNS_ALG_RSASHA256 orelse
-        AlgNum =:= ?DNS_ALG_RSASHA512
-->
-    #dns_rrdata_cdnskey{
-        flags = Flags,
-        protocol = Protocol,
-        alg = AlgNum,
-        public_key = rsa_public_key(PublicKey),
-        keytag = bin_to_key_tag(Bin)
-    };
-decode_rrdata(
     _MsgBin, _Class, ?DNS_TYPE_CDNSKEY, <<Flags:16, Protocol:8, AlgNum:8, PublicKey/binary>> = Bin
-) when
-    AlgNum =:= ?DNS_ALG_DSA orelse AlgNum =:= ?DNS_ALG_NSEC3DSA
-->
-    #dns_rrdata_cdnskey{
-        flags = Flags,
-        protocol = Protocol,
-        alg = AlgNum,
-        public_key = dsa_public_key(PublicKey),
-        keytag = bin_to_key_tag(Bin)
-    };
-decode_rrdata(
-    _MsgBin,
-    _Class,
-    ?DNS_TYPE_CDNSKEY,
-    <<Flags:16, Protocol:8, AlgNum:8, PublicKey/binary>> = Bin
-) when
-    (AlgNum =:= ?DNS_ALG_ECDSAP256SHA256 andalso 64 =:= byte_size(PublicKey)) orelse
-        (AlgNum =:= ?DNS_ALG_ECDSAP384SHA384 andalso 96 =:= byte_size(PublicKey)) orelse
-        (AlgNum =:= ?DNS_ALG_ED25519 andalso 32 =:= byte_size(PublicKey)) orelse
-        (AlgNum =:= ?DNS_ALG_ED448 andalso 57 =:= byte_size(PublicKey))
-->
-    #dns_rrdata_cdnskey{
-        flags = Flags,
-        protocol = Protocol,
-        alg = AlgNum,
-        public_key = PublicKey,
-        keytag = bin_to_key_tag(Bin)
-    };
-decode_rrdata(
-    _MsgBin,
-    _Class,
-    ?DNS_TYPE_CDNSKEY,
-    <<Flags:16, Protocol:8, AlgNum:8, PublicKey/binary>> = Bin
 ) ->
     #dns_rrdata_cdnskey{
         flags = Flags,
@@ -1186,42 +1091,6 @@ decode_dnameonly(MsgBin, Bin) ->
         {DName, <<>>} -> DName;
         _ -> error(trailing_garbage)
     end.
-
-%% RFC3110§2: an RSA public key as [E, M], or its bytes as they are if they are not canonical
--spec rsa_public_key(binary()) -> [non_neg_integer()] | binary().
-rsa_public_key(PublicKey) ->
-    case rsa_fields(PublicKey) of
-        {ExpBin, ModBin} -> [binary:decode_unsigned(ExpBin), binary:decode_unsigned(ModBin)];
-        not_canonical -> PublicKey
-    end.
-
-%% RFC3110§2: exponent length in one octet, or zero then two octets.
-%% Real keys are canonical -- an RSA modulus has its top bit set, and 65537 starts 0x01.
--spec rsa_fields(binary()) -> {binary(), binary()} | not_canonical.
-rsa_fields(<<0, Len:16, Exp:Len/binary, Mod/binary>>) when 255 < Len -> rsa_fields(Exp, Mod);
-rsa_fields(<<Len:8, Exp:Len/binary, Mod/binary>>) -> rsa_fields(Exp, Mod);
-rsa_fields(<<_/binary>>) -> not_canonical.
-
-rsa_fields(<<E, _/binary>> = Exp, <<M, _/binary>> = Mod) when 0 < E, 0 < M -> {Exp, Mod};
-rsa_fields(_Exp, _Mod) -> not_canonical.
-
-%% RFC2536§2: a DSA public key as [P, Q, G, Y], or its bytes as they are if they
-%% are not laid out as T, Q, P, G and Y, P, G and Y each 64 + 8T octets, or if T
-%% is wider than P, G and Y need: the encoder writes the narrowest T, so the
-%% RDATA, and an RRSIG over it, would change. RFC2536§2 puts P's top octet in
-%% use, so no real key has such a T.
--spec dsa_public_key(binary()) -> [non_neg_integer()] | binary().
-dsa_public_key(<<T, Q:20/unit:8, PGY/binary>> = PublicKey) when
-    T =< 8, byte_size(PGY) =:= 3 * (64 + 8 * T)
-->
-    S = 64 + 8 * T,
-    <<P:S/unit:8, G:S/unit:8, Y:S/unit:8>> = PGY,
-    case dns_encode:dsa_t([P, G, Y]) of
-        T -> [P, Q, G, Y];
-        _ -> PublicKey
-    end;
-dsa_public_key(PublicKey) ->
-    PublicKey.
 
 -spec decode_text(binary()) -> [binary()].
 decode_text(<<>>) ->

@@ -6,11 +6,6 @@
 
 -include_lib("dns_erlang/include/dns.hrl").
 
--define(IS_RSA_ALG(Alg),
-    (Alg =:= ?DNS_ALG_RSASHA1 orelse Alg =:= ?DNS_ALG_NSEC3RSASHA1 orelse
-        Alg =:= ?DNS_ALG_RSASHA256 orelse Alg =:= ?DNS_ALG_RSASHA512)
-).
-
 -doc "Converts a DNS record to a map representation suitable for JSON encoding.".
 -spec to_map(tuple()) -> map().
 to_map(#dns_rr{name = Name, type = Type, class = Class, ttl = Ttl, data = Data}) ->
@@ -205,8 +200,7 @@ record_type_from_key(_) -> undefined.
 
 %% Convert RRDATA record to a flat map
 -spec to_map_rrdata(tuple() | binary()) -> map().
-to_map_rrdata(Record0) when is_tuple(Record0) ->
-    Record = key_numbers_as_integers(Record0),
+to_map_rrdata(Record) when is_tuple(Record) ->
     Tag = element(1, Record),
     Fields = record_fields(Tag),
     Values = tl(tuple_to_list(Record)),
@@ -223,25 +217,6 @@ to_map_rrdata(Binary) when is_binary(Binary) ->
     %% For unknown/unsupported record types, data is a raw binary
     %% Encode as base64 for JSON representation
     #{~"data" => base64:encode(Binary)}.
-
-%% An RSA key's [E, M] can be given as their big-endian bytes, as
-%% crypto:generate_key/2 gives them, and map as the integers do, as the wire
-%% encoder reads them. Any other key in a list is left as it is
--spec key_numbers_as_integers(tuple()) -> tuple().
-key_numbers_as_integers(#dns_rrdata_dnskey{alg = Alg, public_key = [E, M]} = Data) when
-    ?IS_RSA_ALG(Alg)
-->
-    Data#dns_rrdata_dnskey{public_key = [key_number(E), key_number(M)]};
-key_numbers_as_integers(#dns_rrdata_cdnskey{alg = Alg, public_key = [E, M]} = Data) when
-    ?IS_RSA_ALG(Alg)
-->
-    Data#dns_rrdata_cdnskey{public_key = [key_number(E), key_number(M)]};
-key_numbers_as_integers(Data) ->
-    Data.
-
--spec key_number(term()) -> non_neg_integer().
-key_number(Number) when is_binary(Number) -> binary:decode_unsigned(Number);
-key_number(Number) when is_integer(Number), 0 =< Number -> Number.
 
 %% Check if a tag is an RRDATA record
 %% RRDATA records must be wrapped in dns_rr
@@ -422,10 +397,6 @@ to_map_value(Tag, Field, Value) when
             {Tag, Field} =:= {dns_rrdata_ipseckey, gateway})
 ->
     list_to_binary(inet:ntoa(Value));
-to_map_value(Tag, public_key, Value) when
-    is_list(Value) andalso (dns_rrdata_dnskey =:= Tag orelse dns_rrdata_cdnskey =:= Tag)
-->
-    base64:encode(to_map_dnskey_publickey(Value));
 to_map_value(dns_rrdata_key, public_key, Value) when is_binary(Value) ->
     base64:encode(iolist_to_binary(Value));
 to_map_value(Tag, salt, Value) when
@@ -502,9 +473,9 @@ from_map_field(dns_rrdata_aaaa, ip, Value) when is_binary(Value) ->
         {error, _} -> erlang:error({invalid_ip, Value})
     end;
 from_map_field(dns_rrdata_dnskey, public_key, Value) when is_binary(Value) ->
-    from_map_dnskey_publickey(base64:decode(Value));
+    base64:decode(Value);
 from_map_field(dns_rrdata_cdnskey, public_key, Value) when is_binary(Value) ->
-    from_map_dnskey_publickey(base64:decode(Value));
+    base64:decode(Value);
 from_map_field(Tag, salt, ~"-") when
     Tag =:= dns_rrdata_nsec3 orelse Tag =:= dns_rrdata_nsec3param
 ->
@@ -595,24 +566,3 @@ decode_field(dns_opt_unknown, bin, Value) ->
     binary:decode_hex(Value);
 decode_field(_Tag, _Field, Value) ->
     Value.
-
-%% Helper to decode DNSKEY public key (handles both binary and list formats)
--spec from_map_dnskey_publickey(binary()) -> binary() | [integer()].
-from_map_dnskey_publickey(<<>>) ->
-    [];
-from_map_dnskey_publickey(<<L:32, I:L/unit:8, Rest/binary>>) ->
-    [I | from_map_dnskey_publickey(Rest)];
-from_map_dnskey_publickey(PK) ->
-    PK.
-
-%% Handle list of integers (RSA key components)
--spec to_map_dnskey_publickey([integer()]) -> binary().
-to_map_dnskey_publickey(Ints) ->
-    lists:foldl(
-        fun(I, Acc) ->
-            BI = binary:encode_unsigned(I),
-            <<Acc/binary, (byte_size(BI)):32, BI/binary>>
-        end,
-        <<>>,
-        Ints
-    ).

@@ -104,11 +104,10 @@
     flags :: dns:uint16(),
     protocol :: dns:uint8(),
     alg :: dns:uint8(),
-    %% The key's bytes as one binary, or an RSA or DSA key as the list of its
-    %% numbers, [E, M] or [P, Q, G, Y], each an integer or its big-endian bytes.
-    %% Though the type is iodata(), a list is read as those numbers, not as
-    %% pieces of the key's bytes: two binaries are an RSA key's [E, M]
-    public_key :: iodata(),
+    %% The RDATA's public key field, as the algorithm lays it out: RFC 3110 for
+    %% RSA, RFC 2536 for DSA. dnssec:dnskey_public_key/2 makes it from a key
+    %% that crypto:generate_key/2 gives
+    public_key :: binary(),
     keytag :: integer()
 }).
 
@@ -118,7 +117,7 @@
     protocol :: dns:uint8(),
     alg :: dns:uint8(),
     %% As a DNSKEY's
-    public_key :: iodata(),
+    public_key :: binary(),
     keytag :: integer()
 }).
 

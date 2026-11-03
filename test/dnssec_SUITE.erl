@@ -74,7 +74,6 @@ groups() ->
             sign_rr_groups_owner_names_as_names,
             sign_leaves_rrsigs_unsigned,
             verify_short_rsa_signature_same_for_all_algorithms,
-            verify_dsa_key_with_binary_field,
             dsa_key_with_wide_t_verifies_nothing,
             rsa_key_rfc3110_rules_out_verifies_nothing,
             sign_rejects_dsa_q_over_160_bits,
@@ -82,8 +81,8 @@ groups() ->
             verify_dsa_dnskey_after_wire_round_trip,
             verify_rejects_signer_in_wrong_zone,
             verify_signer_of_ds_and_nsec3,
-            verify_rsa_key_as_binaries,
-            rsa_key_encodes_alike_as_integers_and_binaries,
+            crypto_keys_sign_and_verify,
+            dnskey_public_key_layout,
             sign_folds_case_of_escaped_letters,
             verify_dnskey_without_key_tag,
             sign_rrset_rejects_records_of_other_rrsets,
@@ -740,8 +739,7 @@ rfc_known_answer(#{source := Source, alg := Alg, private_key := PrivateKey, zone
         [] ->
             ok
     end,
-    %% With the key as presentation format gives it and as the wire decoder does:
-    %% for RSA one is the RFC3110 bytes, the other [E, M]
+    %% With the key as the zone file parser and as the wire decoder give it
     ?assert(dnssec:verify_rrsig(RRSig, RRSet, [DNSKey], Opts), Source),
     ?assert(dnssec:verify_rrsig(RRSig, RRSet, [DecodedDNSKey], Opts), Source),
     <<Head:(byte_size(Signature) - 1)/binary, Last>> = Signature,
@@ -1144,7 +1142,7 @@ sign_leaves_rrsigs_unsigned(_Config) ->
 %% it, but RSA/SHA-1 accepts it. All RSA algorithms must give the same result.
 verify_short_rsa_signature_same_for_all_algorithms(_Config) ->
     {[E, N], Priv} = crypto:generate_key(rsa, {1024, 65537}),
-    PublicKey = [binary:decode_unsigned(E), binary:decode_unsigned(N)],
+    PublicKey = dnssec:dnskey_public_key(?DNS_ALG_RSASHA256, [E, N]),
     Results = [
         begin
             DNSKey = dnssec:add_keytag_to_dnskey(#dns_rr{
@@ -1178,26 +1176,6 @@ rsa_rrsig_with_leading_zero(Alg, KeyTag, Priv, I) when I < 100000 ->
         _ -> rsa_rrsig_with_leading_zero(Alg, KeyTag, Priv, I + 1)
     end.
 
-%% crypto accepts DSA key fields as integers or as binaries. A key with one
-%% field as a binary must verify as the key with integers does. On main it
-%% verified. Now crypto raises badarith and verify_rrsig/4 crashes.
-verify_dsa_key_with_binary_field(Config) ->
-    Samples = proplists:get_value(dnssec_samples, Config),
-    [#dnssec_test_sample{zonename = Zone, zsk_pl = ZskProps} | _] =
-        [S || #dnssec_test_sample{alg = dsa} = S <- Samples],
-    #key_info{tag = KeyTag, alg = Alg, rr = DNSKey} = generate_key_struct(ZskProps, dsa, Zone),
-    RR = rr_a(<<"test.", Zone/binary>>, {192, 0, 2, 1}),
-    Opts = #{inception => 1000000, expiration => 2000000},
-    RRSig = dnssec:sign_rrset(
-        [RR], Zone, KeyTag, Alg, helper_samplekeypl_to_privkey(ZskProps), Opts
-    ),
-    #dns_rr{data = #dns_rrdata_dnskey{public_key = [P, Q, G, Y]} = KeyData} = DNSKey,
-    Mixed = DNSKey#dns_rr{
-        data = KeyData#dns_rrdata_dnskey{public_key = [P, binary:encode_unsigned(Q), G, Y]}
-    },
-    ?assert(dnssec:verify_rrsig(RRSig, [RR], [DNSKey], #{now => 1500000})),
-    ?assert(dnssec:verify_rrsig(RRSig, [RR], [Mixed], #{now => 1500000})).
-
 %% RFC2536§2: P is "in the range 2**(511+64T) < P < 2**(512+64T) and so is
 %% 64 + 8*T octets long", so a DSA DNSKEY whose T is wider than its P needs is
 %% no RFC 2536 key. The decoder and the zone file parser keep its bytes, so that
@@ -1205,17 +1183,19 @@ verify_dsa_key_with_binary_field(Config) ->
 %% with an RSA key that RFC3110§2 rules out
 dsa_key_with_wide_t_verifies_nothing(Config) ->
     Samples = proplists:get_value(dnssec_samples, Config),
-    %% A key whose T is under 8, written here with the next T
-    [{Zone, KeyProps, T} | _] = [
-        {Zone, Props, T}
+    %% A key whose T is under 8, written here with the next T, eight more zero
+    %% octets in front of each of P, G and Y
+    [{Zone, KeyProps, Narrow} | _] = [
+        {Zone, Props, Narrow}
      || #dnssec_test_sample{alg = dsa, zonename = Zone, zsk_pl = Zsk, ksk_pl = Ksk} <- Samples,
         Props <- [Zsk, Ksk],
-        <<T, _/binary>> <- [dns_encode:encode_dsa_key(helper_samplekeypl_to_pubkey(Props))],
+        <<T, _/binary>> = Narrow <- [sample_dnskey_public_key(Props)],
         T < 8
     ],
-    [P, Q, G, Y] = helper_samplekeypl_to_pubkey(KeyProps),
-    S = 64 + 8 * (T + 1),
-    Wide = <<(T + 1), Q:20/unit:8, P:S/unit:8, G:S/unit:8, Y:S/unit:8>>,
+    <<T, Q:20/binary, PGY/binary>> = Narrow,
+    S = 64 + 8 * T,
+    <<P:S/binary, G:S/binary, Y:S/binary>> = PGY,
+    Wide = <<(T + 1), Q/binary, 0:64, P/binary, 0:64, G/binary, 0:64, Y/binary>>,
     KeyData = #dns_rrdata_dnskey{flags = 256, protocol = 3, alg = ?DNS_ALG_DSA, public_key = Wide},
     WideKey = #dns_rr{name = Zone, type = ?DNS_TYPE_DNSKEY, ttl = 3600, data = KeyData},
     Wire = dns_encode:encode_rrdata(?DNS_CLASS_IN, KeyData),
@@ -1236,7 +1216,7 @@ dsa_key_with_wide_t_verifies_nothing(Config) ->
         dnssec:verify_rrsig(RRSig, [RR], [DNSKey], #{now => 1500000})
     end,
     %% The same key with its own T verifies
-    ?assert(Verify(WideKey#dns_rr{data = KeyData#dns_rrdata_dnskey{public_key = [P, Q, G, Y]}})),
+    ?assert(Verify(WideKey#dns_rr{data = KeyData#dns_rrdata_dnskey{public_key = Narrow}})),
     ?assertNot(Verify(WideKey)).
 
 %% RFC3110§2: an exponent length of 1 to 255 takes one octet, and "leading zero
@@ -1245,7 +1225,7 @@ dsa_key_with_wide_t_verifies_nothing(Config) ->
 %% with it, though its numbers are those of a key that verifies
 rsa_key_rfc3110_rules_out_verifies_nothing(_Config) ->
     {[E, N], [E, N, D | _]} = crypto:generate_key(rsa, {1024, 65537}),
-    <<3, E:3/binary, N/binary>> = Canonical = dns_encode:encode_rsa_key(E, N),
+    <<3, E:3/binary, N/binary>> = Canonical = dnssec:dnskey_public_key(?DNS_ALG_RSASHA256, [E, N]),
     RR = rr_a(~"www.example", {192, 0, 2, 1}),
     Opts = #{inception => 1000000, expiration => 2000000},
     Verify = fun(KeyBytes) ->
@@ -1274,15 +1254,15 @@ rsa_key_rfc3110_rules_out_verifies_nothing(_Config) ->
 
 %% RFC2536§3: R and S of a DSA signature have 20 octets each, thus Q has
 %% 160 bits. With a wider Q, crypto makes a wider R and S. sign_rrset/6 cut
-%% them to 20 octets, and the RRSIG never verified. dns_encode refuses this Q
-%% for the DNSKEY. sign_rrset/6 must refuse it too, before crypto, which may
+%% them to 20 octets, and the RRSIG never verified. dnskey_public_key/2 refuses
+%% this Q for the DNSKEY. sign_rrset/6 must refuse it too, before crypto, which may
 %% sign or fail with this group.
 sign_rejects_dsa_q_over_160_bits(_Config) ->
     %% Not a real DSA group, which signing does not need
-    P = (1 bsl 1023) + 257,
-    Q = (1 bsl 223) + 12345,
-    {G, X} = {2, 16#1234567},
-    ?assertError(badarg, dns_encode:encode_dsa_key([P, Q, G, 16#89ABCDEF])),
+    P = binary:encode_unsigned((1 bsl 1023) + 257),
+    Q = binary:encode_unsigned((1 bsl 223) + 12345),
+    {G, X} = {<<2>>, <<16#1234567:32>>},
+    ?assertError(badarg, dnssec:dnskey_public_key(?DNS_ALG_DSA, [P, Q, G, <<16#89ABCDEF:32>>])),
     RR = rr_a(~"www.example", {192, 0, 2, 1}),
     ?assertError(
         {unsupported_key, ?DNS_ALG_DSA},
@@ -1293,12 +1273,12 @@ sign_rejects_dsa_q_over_160_bits(_Config) ->
 %% sign_rrset/6 raised a bare badarg from dns_encode after crypto signed. The
 %% error must tell the cause, as {unsupported_algorithm, Alg} does.
 sign_dsa_p_over_1024_bits_names_cause(_Config) ->
-    P = (1 bsl 2047) + 257,
-    Q = 16#E2B4F7B1A4D6E39F7C5A0C0D7B4E3A9C1B2D3E4F,
+    P = binary:encode_unsigned((1 bsl 2047) + 257),
+    Q = <<16#E2B4F7B1A4D6E39F7C5A0C0D7B4E3A9C1B2D3E4F:160>>,
     RR = rr_a(~"www.example", {192, 0, 2, 1}),
     ?assertError(
         {unsupported_key, ?DNS_ALG_DSA},
-        dnssec:sign_rrset([RR], ~"example", 1, ?DNS_ALG_DSA, [P, Q, 2, 16#1234567], #{})
+        dnssec:sign_rrset([RR], ~"example", 1, ?DNS_ALG_DSA, [P, Q, <<2>>, <<16#1234567:32>>], #{})
     ).
 
 %% RFC2536§2: a DSA DNSKEY can have a T that is wider than P, G and Y need.
@@ -1386,43 +1366,91 @@ verify_signer_of_ds_and_nsec3(_Config) ->
     ?assertNot(Verify(NSEC3#dns_rr{name = ~"2t7b4g4vsa5smi47k61mv5bv1a22bojr.sub.example"})),
     ?assertNot(Verify(NSEC3#dns_rr{name = ~"example"})).
 
-%% crypto:generate_key(rsa, _) gives the public key as [E, N] binaries. The
-%% key() type on main allowed this form. The doc of verify_rrsig/4 tells to
-%% set the key tag with add_keytag_to_dnskey/1. It must accept this form.
-verify_rsa_key_as_binaries(_Config) ->
-    {[_E, _N] = PublicKey, Priv} = crypto:generate_key(rsa, {1024, 65537}),
-    DNSKey = dnssec:add_keytag_to_dnskey(#dns_rr{
-        name = ~"example",
-        type = ?DNS_TYPE_DNSKEY,
-        ttl = 3600,
-        data = #dns_rrdata_dnskey{
-            flags = 256, protocol = 3, alg = ?DNS_ALG_RSASHA256, public_key = PublicKey
-        }
-    }),
-    #dns_rr{data = #dns_rrdata_dnskey{keytag = KeyTag}} = DNSKey,
+%% A key as crypto:generate_key/2 gives it signs as it is, and verifies once
+%% dnskey_public_key/2 makes its DNSKEY's public key field. An RSA key signs
+%% with the whole private key list crypto gives as well as with [E, N, D]
+crypto_keys_sign_and_verify(_Config) ->
+    {RsaPub, [E, N, D | _] = RsaPriv} = crypto:generate_key(rsa, {1024, 65537}),
+    Keys =
+        [
+            {?DNS_ALG_RSASHA256, RsaPub, RsaPriv},
+            {?DNS_ALG_RSASHA256, RsaPub, [E, N, D]}
+        ] ++
+            [
+                {Alg, Pub, Priv}
+             || {Alg, Type, Params} <- [
+                    {?DNS_ALG_ECDSAP256SHA256, ecdh, secp256r1},
+                    {?DNS_ALG_ECDSAP384SHA384, ecdh, secp384r1},
+                    {?DNS_ALG_ED25519, eddsa, ed25519},
+                    {?DNS_ALG_ED448, eddsa, ed448}
+                ],
+                {Pub, Priv} <- [crypto:generate_key(Type, Params)]
+            ],
     A = rr_a(~"www.example", {192, 0, 2, 1}),
     Opts = #{inception => 1000000, expiration => 2000000},
-    RRSig = dnssec:sign_rrset([A], ~"example", KeyTag, ?DNS_ALG_RSASHA256, Priv, Opts),
-    ?assert(dnssec:verify_rrsig(RRSig, [A], [DNSKey], #{now => 1500000})).
-
-%% An RSA key's E and M encode the same in a DNSKEY whether they are integers or
-%% binaries, with or without leading zeros, so the key tag is the same as well
-rsa_key_encodes_alike_as_integers_and_binaries(_Config) ->
-    {[E, N], _Priv} = crypto:generate_key(rsa, {1024, 65537}),
-    Encode = fun(Key) ->
-        dns_encode:encode_rrdata(?DNS_CLASS_IN, #dns_rrdata_dnskey{
-            flags = 256, protocol = 3, alg = ?DNS_ALG_RSASHA256, public_key = Key
-        })
-    end,
-    Integers = Encode([binary:decode_unsigned(E), binary:decode_unsigned(N)]),
-    ?assertEqual(Integers, Encode([E, N])),
-    ?assertEqual(Integers, Encode([<<0, E/binary>>, <<0, 0, N/binary>>])),
-    %% An empty exponent would be written as the zero octet that says a
-    %% two-octet length follows (RFC3110§2), and an empty modulus as none, so
-    %% neither encodes
     [
-        ?assertError(badarg, Encode(Key))
-     || Key <- [[0, N], [<<>>, N], [<<0>>, N], [E, 0], [E, <<>>], [E, <<0, 0>>]]
+        begin
+            DNSKey = dnssec:add_keytag_to_dnskey(#dns_rr{
+                name = ~"example",
+                type = ?DNS_TYPE_DNSKEY,
+                ttl = 3600,
+                data = #dns_rrdata_dnskey{
+                    flags = 256,
+                    protocol = 3,
+                    alg = Alg,
+                    public_key = dnssec:dnskey_public_key(Alg, Pub)
+                }
+            }),
+            #dns_rr{data = #dns_rrdata_dnskey{keytag = KeyTag}} = DNSKey,
+            RRSig = dnssec:sign_rrset([A], ~"example", KeyTag, Alg, Priv, Opts),
+            ?assert(dnssec:verify_rrsig(RRSig, [A], [DNSKey], #{now => 1500000}), Alg)
+        end
+     || {Alg, Pub, Priv} <- Keys
+    ].
+
+%% dnskey_public_key/2 lays a key out as its DNSKEY carries it: an RSA key as
+%% RFC3110§2 has it, with no leading zeros and the exponent's length in one
+%% octet, or in three past 255 octets; a DSA key as RFC2536§2 has it, with the
+%% narrowest T; an ECDSA point without the octet 4 that marks it uncompressed
+%% (RFC6605§4); and an EdDSA key as it is (RFC8080§3). A key the DNSKEY cannot
+%% carry raises badarg, an empty RSA exponent among them, which would be written
+%% as the zero octet that says a two-octet length follows
+dnskey_public_key_layout(_Config) ->
+    Rsa = fun(Key) -> dnssec:dnskey_public_key(?DNS_ALG_RSASHA256, Key) end,
+    {[E, N], _} = crypto:generate_key(rsa, {1024, 65537}),
+    ?assertEqual(<<3, 1, 0, 1, N/binary>>, Rsa([E, N])),
+    ?assertEqual(Rsa([E, N]), Rsa([<<0, E/binary>>, <<0, 0, N/binary>>])),
+    LongE = <<1, 0:(255 * 8)>>,
+    ?assertEqual(<<0, 256:16, LongE/binary, N/binary>>, Rsa([LongE, N])),
+    [?assertError(badarg, Rsa(Key)) || Key <- [[<<>>, N], [<<0>>, N], [E, <<>>], [E, <<0, 0>>]]],
+    Dsa = fun(Key) -> dnssec:dnskey_public_key(?DNS_ALG_DSA, Key) end,
+    Q = <<16#E2B4F7B1A4D6E39F7C5A0C0D7B4E3A9C1B2D3E4F:160>>,
+    P = <<16#80, 0:(63 * 8)>>,
+    ?assertEqual(
+        <<0, Q/binary, P/binary, 0:(63 * 8), 2, 0:(63 * 8), 3>>, Dsa([P, Q, <<2>>, <<3>>])
+    ),
+    P65 = <<16#80, 0:(64 * 8)>>,
+    ?assertEqual(
+        <<1, Q/binary, 0:56, P65/binary, 0:(71 * 8), 2, 0:(71 * 8), 3>>, Dsa([P65, Q, <<2>>, <<3>>])
+    ),
+    [
+        ?assertError(badarg, Dsa(Key))
+     || Key <- [[P, <<1, Q/binary>>, <<2>>, <<3>>], [<<1, 0:(128 * 8)>>, Q, <<2>>, <<3>>]]
+    ],
+    {<<4, Point256:64/binary>> = Pub256, _} = crypto:generate_key(ecdh, secp256r1),
+    ?assertEqual(Point256, dnssec:dnskey_public_key(?DNS_ALG_ECDSAP256SHA256, Pub256)),
+    {<<4, Point384:96/binary>> = Pub384, _} = crypto:generate_key(ecdh, secp384r1),
+    ?assertEqual(Point384, dnssec:dnskey_public_key(?DNS_ALG_ECDSAP384SHA384, Pub384)),
+    {Ed25519, _} = crypto:generate_key(eddsa, ed25519),
+    ?assertEqual(Ed25519, dnssec:dnskey_public_key(?DNS_ALG_ED25519, Ed25519)),
+    [
+        ?assertError(badarg, dnssec:dnskey_public_key(Alg, Key))
+     || {Alg, Key} <- [
+            {?DNS_ALG_ECDSAP256SHA256, Point256},
+            {?DNS_ALG_ED25519, <<Ed25519/binary, 0>>},
+            {?DNS_ALG_RSASHA256, <<3, 1, 0, 1, N/binary>>},
+            {200, Ed25519}
+        ]
     ].
 
 %% RFC4034§6.2: a name in canonical form has all its letters in lowercase. A
@@ -1578,7 +1606,7 @@ malformed_input_does_not_verify(_Config) ->
     RRSig = malformed_rrsig(?DNS_ALG_RSASHA256, key_tag_of(DNSKey), <<1, 2, 3>>),
     ?assertNot(dnssec:verify_rrsig(RRSig, [], [DNSKey], #{now => 1000000})),
     ?assertNot(dnssec:verify_rrsig(RRSig, [RR], [], #{now => 1000000})),
-    %% A key that does not encode, such as RSA's of three numbers, has no key tag
+    %% A key that is no binary, as the record's type would have it, is never tried
     ?assertNot(
         dnssec:verify_rrsig(RRSig, [RR], [malformed_dnskey(?DNS_ALG_RSASHA256, [1, 2, 3])], #{
             now => 1000000
@@ -1792,14 +1820,14 @@ verify_wildcard_expansion(Config) ->
 dsa_rrsig_t_is_dnskey_t(_Config) ->
     %% A 160-bit Q, as RFC2536§2 has it; neither P nor G make a real DSA group,
     %% which signing does not need
-    Q = 16#E2B4F7B1A4D6E39F7C5A0C0D7B4E3A9C1B2D3E4F,
+    Q = <<16#E2B4F7B1A4D6E39F7C5A0C0D7B4E3A9C1B2D3E4F:160>>,
     RR = #dns_rr{name = ~"example", type = ?DNS_TYPE_A, data = #dns_rrdata_a{ip = {192, 0, 2, 1}}},
     [
         begin
-            P = (1 bsl (8 * PSize - 1)) + 2 * PSize + 1,
-            {G, X} = {2, 16#1234567},
-            Y = binary:decode_unsigned(crypto:mod_pow(G, X, P)),
-            <<KeyT, _/binary>> = dns_encode:encode_dsa_key([P, Q, G, Y]),
+            P = binary:encode_unsigned((1 bsl (8 * PSize - 1)) + 2 * PSize + 1),
+            {G, X} = {<<2>>, <<16#1234567:32>>},
+            Y = crypto:mod_pow(G, X, P),
+            <<KeyT, _/binary>> = dnssec:dnskey_public_key(?DNS_ALG_DSA, [P, Q, G, Y]),
             #dns_rr{data = #dns_rrdata_rrsig{signature = <<SigT, _:40/binary>>}} =
                 dnssec:sign_rrset([RR], ~"example", 1, ?DNS_ALG_DSA, [P, Q, G, X], #{}),
             ?assertEqual({PSize, KeyT}, {PSize, SigT})
@@ -1808,7 +1836,7 @@ dsa_rrsig_t_is_dnskey_t(_Config) ->
     ].
 
 rsa_private_key(E, N, D) ->
-    [binary:decode_unsigned(base64:decode(B)) || B <- [E, N, D]].
+    [base64:decode(B) || B <- [E, N, D]].
 
 %% The examples of RFC5702§6, RFC6605§6 and RFC8080§6 as the RFCs print them,
 %% but for RFC8080's RRSIGs, which are the ones its verified erratum 4935
@@ -2186,16 +2214,14 @@ zone(Config) ->
     %% Run the validation for every sample in the config
     [validate_zone_sample(Config, Sample) || #dnssec_test_sample{alg = rsa} = Sample <- Samples].
 
-generate_key_struct(Props, Alg, ZoneName) ->
+generate_key_struct(Props, _Alg, ZoneName) ->
     AlgNo = proplists:get_value(alg, Props),
     Flags = proplists:get_value(flags, Props),
-    PubKey = helper_samplekeypl_to_pubkey(Props),
-    PubKeyForRR = helper_pubkey_to_dnskey_pubkey(Alg, PubKey),
     Data0 = #dns_rrdata_dnskey{
         flags = Flags,
         protocol = 3,
         alg = AlgNo,
-        public_key = PubKeyForRR
+        public_key = sample_dnskey_public_key(Props)
     },
     %% Calculate Key Tag
     #dns_rrdata_dnskey{keytag = KeyTag} = Data = helper_add_keytag_to_dnskey(Data0),
@@ -2320,7 +2346,7 @@ props_to_dnskey_data(_Config, Props) ->
         flags = proplists:get_value(flags, Props),
         protocol = 3,
         alg = proplists:get_value(alg, Props),
-        public_key = helper_samplekeypl_to_pubkey(Props)
+        public_key = sample_dnskey_public_key(Props)
     },
     helper_add_keytag_to_dnskey(Key0).
 
@@ -2583,7 +2609,7 @@ helper_samplekeypl_to_privkey(DSA, Proplist) when
     Q = proplists:get_value(q, Proplist),
     G = proplists:get_value(g, Proplist),
     X = proplists:get_value(x, Proplist),
-    [I || <<L:32, I:L/unit:8>> <- [P, Q, G, X]];
+    [B || <<L:32, B:L/binary>> <- [P, Q, G, X]];
 helper_samplekeypl_to_privkey(?DNS_ALG_ECDSAP256SHA256, Proplist) ->
     proplists:get_value(private_key, Proplist);
 helper_samplekeypl_to_privkey(?DNS_ALG_ECDSAP384SHA384, Proplist) ->
@@ -2596,7 +2622,7 @@ helper_samplekeypl_to_privkey(_RSA, Proplist) ->
     E = proplists:get_value(public_exp, Proplist),
     N = proplists:get_value(modulus, Proplist),
     D = proplists:get_value(private_exp, Proplist),
-    [I || <<L:32, I:L/unit:8>> <- [E, N, D]].
+    [B || <<L:32, B:L/binary>> <- [E, N, D]].
 
 helper_samplekeypl_to_pubkey(Proplist) ->
     Alg = proplists:get_value(alg, Proplist),
@@ -2605,12 +2631,11 @@ helper_samplekeypl_to_pubkey(Proplist) ->
 helper_samplekeypl_to_pubkey(DSA, Proplist) when
     DSA =:= ?DNS_ALG_DSA orelse DSA =:= ?DNS_ALG_NSEC3DSA
 ->
-    %% [P, Q, G, Y] as integers for crypto and for DNSKEY (encode_dsa_key accepts integers).
     P = proplists:get_value(p, Proplist),
     Q = proplists:get_value(q, Proplist),
     G = proplists:get_value(g, Proplist),
     Y = proplists:get_value(y, Proplist),
-    [I || <<L:32, I:L/unit:8>> <- [P, Q, G, Y]];
+    [B || <<L:32, B:L/binary>> <- [P, Q, G, Y]];
 helper_samplekeypl_to_pubkey(?DNS_ALG_ECDSAP256SHA256, Proplist) ->
     proplists:get_value(public_key, Proplist);
 helper_samplekeypl_to_pubkey(?DNS_ALG_ECDSAP384SHA384, Proplist) ->
@@ -2622,38 +2647,15 @@ helper_samplekeypl_to_pubkey(?DNS_ALG_ED448, Proplist) ->
 helper_samplekeypl_to_pubkey(_RSA, Proplist) ->
     E = proplists:get_value(public_exp, Proplist),
     N = proplists:get_value(modulus, Proplist),
-    [I || <<L:32, I:L/unit:8>> <- [E, N]].
+    [B || <<L:32, B:L/binary>> <- [E, N]].
 
-helper_strip_leading_zeros(<<0, Rest/binary>>) ->
-    helper_strip_leading_zeros(Rest);
-helper_strip_leading_zeros(B) ->
-    B.
-
-helper_pubkey_to_dnskey_pubkey(rsa, [E, M]) ->
-    MBin = helper_strip_leading_zeros(binary:encode_unsigned(M)),
-    EBin = helper_strip_leading_zeros(binary:encode_unsigned(E)),
-    ESize = byte_size(EBin),
-    if
-        ESize =< 16#FF ->
-            <<ESize:8, EBin:ESize/binary, MBin/binary>>;
-        ESize =< 16#FFFF ->
-            <<0, ESize:16, EBin:ESize/binary, MBin/binary>>;
-        true ->
-            erlang:error(badarg)
-    end;
-%% DNSKEY public_key for DSA must be [P, Q, G, Y] for dns_encode:encode_dsa_key/1 (list, not wire binary).
-helper_pubkey_to_dnskey_pubkey(dsa, [P, Q, G, Y]) ->
-    [P, Q, G, Y];
-helper_pubkey_to_dnskey_pubkey(nsec3dsa, [P, Q, G, Y]) ->
-    [P, Q, G, Y];
-helper_pubkey_to_dnskey_pubkey(ecdsap256, PubKey) when is_binary(PubKey) ->
-    PubKey;
-helper_pubkey_to_dnskey_pubkey(ecdsap384, PubKey) when is_binary(PubKey) ->
-    PubKey;
-helper_pubkey_to_dnskey_pubkey(ed25519, PubKey) when is_binary(PubKey) ->
-    PubKey;
-helper_pubkey_to_dnskey_pubkey(ed448, PubKey) when is_binary(PubKey) ->
-    PubKey.
+%% A sample key's DNSKEY public key field: an RSA or DSA key's numbers as RFC3110
+%% or RFC2536 lays them out, any other key as it is
+sample_dnskey_public_key(Props) ->
+    case helper_samplekeypl_to_pubkey(Props) of
+        [_ | _] = Numbers -> dnssec:dnskey_public_key(proplists:get_value(alg, Props), Numbers);
+        Key -> Key
+    end.
 
 helper_add_keytag_to_dnskey(#dns_rrdata_dnskey{} = DNSKey) ->
     RR = #dns_rr{type = ?DNS_TYPE_DNSKEY, data = DNSKey},

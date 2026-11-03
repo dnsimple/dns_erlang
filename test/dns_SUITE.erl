@@ -68,9 +68,7 @@ groups() ->
             optrr_must_be_root_named_and_singular,
             optrr_honoured_anywhere_in_additional,
             encode_rejects_second_optrr,
-            dnskey_dsa_alg_short_rdata_reencodes,
-            dnskey_dsa_field_width_preserved,
-            dnskey_rsa_non_canonical_kept_opaque,
+            dnskey_key_kept_as_rdata_bytes,
             uri_decode_preserves_target,
             uri_decode_invalid_error,
             decode_encode_rrdata_wire_samples,
@@ -1465,182 +1463,52 @@ optrr_must_be_root_named_and_singular(_) ->
         dns:decode_message(<<(Header(2))/binary, RootOpt/binary, PlainRR/binary>>)
     ).
 
-%% RFC3110§2 encodes an RSA key as an exponent length, the exponent, then the
-%% modulus. Decoding turns those into the integer pair [E, M], which cannot hold a
-%% zero-length field, a leading zero, or the choice of exponent-length form -- and
-%% encoding strips leading zeros and always picks the short form below 256. Such a
-%% key is therefore kept opaque, so it re-encodes byte for byte; otherwise a
-%% DNSKEY would change shape on the way through, and with it the canonical RDATA
-%% an RRSIG covers.
-dnskey_rsa_non_canonical_kept_opaque(_) ->
+%% A DNSKEY's or CDNSKEY's key is its RDATA's key field, kept as bytes whatever
+%% its algorithm and shape. RSA and DSA keys were parsed into integers, with
+%% special cases so that a key RFC3110 or RFC2536 rules out, one too short for
+%% its layout, or a DSA key with a T wider than it needs, re-encoded as it came,
+%% and a short DSA key crashed the encoder. Every key decodes as its bytes and
+%% re-encodes byte for byte, in an RDATA and in a message.
+dnskey_key_kept_as_rdata_bytes(_) ->
     Modulus = <<255, (binary:copy(<<16#AB>>, 127))/binary>>,
-    Canonical = [
-        %% exponent 65537 in the one-octet length form, modulus with its top bit set
-        {"e=65537, short form", <<256:16, 3:8, (?DNS_ALG_RSASHA256):8, 3, 1, 0, 1, Modulus/binary>>}
-    ],
-    NonCanonical = [
-        {"all-zero key", <<0:16, 0:8, (?DNS_ALG_RSASHA1):8, 0:(24 * 8)>>},
-        {"zero-length exponent", <<0:16, 3:8, (?DNS_ALG_RSASHA1):8, 0, 0, 0, 1, 2, 3>>},
-        {"leading-zero modulus", <<0:16, 3:8, (?DNS_ALG_RSASHA1):8, 1, 3, 0, 255, 255, 255>>},
-        {"leading-zero exponent", <<0:16, 3:8, (?DNS_ALG_RSASHA1):8, 2, 0, 3, 255, 255, 255>>},
-        %% the two-octet length form used for an exponent that fits one octet
-        {"long form, short exponent",
-            <<256:16, 3:8, (?DNS_ALG_RSASHA256):8, 0, 0, 3, 1, 0, 1, Modulus/binary>>}
-    ],
-    %% A canonically encoded key is parsed into [E, M] ...
-    [
-        begin
-            Decoded = dns_decode:decode_rrdata(<<>>, ?DNS_CLASS_IN, ?DNS_TYPE_DNSKEY, Rdata),
-            ?assertMatch(#dns_rrdata_dnskey{public_key = [_, _]}, Decoded, Label),
-            ?assertEqual(Rdata, dns_encode:encode_rrdata(?DNS_CLASS_IN, Decoded), Label)
-        end
-     || {Label, Rdata} <- Canonical
-    ],
-    %% ... anything else stays a binary, and either way the bytes are reproduced
-    [
-        begin
-            Decoded = dns_decode:decode_rrdata(<<>>, ?DNS_CLASS_IN, ?DNS_TYPE_DNSKEY, Rdata),
-            #dns_rrdata_dnskey{public_key = PublicKey} = Decoded,
-            ?assert(is_binary(PublicKey), Label),
-            ?assertEqual(Rdata, dns_encode:encode_rrdata(?DNS_CLASS_IN, Decoded), Label)
-        end
-     || {Label, Rdata} <- NonCanonical
-    ],
-    %% CDNSKEY shares the decoder, and so the behaviour
-    [
-        begin
-            Decoded = dns_decode:decode_rrdata(<<>>, ?DNS_CLASS_IN, ?DNS_TYPE_CDNSKEY, Rdata),
-            ?assertEqual(Rdata, dns_encode:encode_rrdata(?DNS_CLASS_IN, Decoded), Label)
-        end
-     || {Label, Rdata} <- Canonical ++ NonCanonical
-    ].
-
-%% RFC2536§2 gives P, G and Y one shared width S = 64 + 8T, T in 0..8, with T on
-%% the wire but absent from the record, so encoding has to derive it. It derived
-%% it from P alone and did not round to that lattice, so a valid key whose P
-%% merely began with a zero byte re-encoded three bytes short with G and Y
-%% truncated -- a record no decoder could parse.
-dnskey_dsa_field_width_preserved(_) ->
-    Key = fun(T, PTop, GTop, YTop) ->
-        S = 64 + T * 8,
-        Fill = fun(Top, Byte) -> <<Top, (binary:copy(<<Byte>>, S - 1))/binary>> end,
-        Q = binary:copy(<<16#DD>>, 20),
-        <<256:16, 3:8, (?DNS_ALG_DSA):8, T, Q/binary, (Fill(PTop, 16#AA))/binary,
-            (Fill(GTop, 16#BB))/binary, (Fill(YTop, 16#CC))/binary>>
+    Dsa = fun(T, Fill) ->
+        <<T, (binary:copy(<<16#DD>>, 20))/binary, (binary:copy(<<Fill>>, 3 * (64 + 8 * T)))/binary>>
     end,
-    Decode = fun(Wire) -> dns_decode:decode_rrdata(<<>>, ?DNS_CLASS_IN, ?DNS_TYPE_DNSKEY, Wire) end,
-    %% Whenever the widest field pins the width, the wire form is reproduced exactly
+    Keys = [
+        {"RSA", ?DNS_ALG_RSASHA256, <<3, 1, 0, 1, Modulus/binary>>},
+        {"RSA, all zero", ?DNS_ALG_RSASHA1, <<0:(24 * 8)>>},
+        {"RSA, empty exponent", ?DNS_ALG_RSASHA1, <<0, 0, 0, 1, 2, 3>>},
+        {"RSA, leading-zero modulus", ?DNS_ALG_RSASHA1, <<1, 3, 0, 255, 255, 255>>},
+        {"RSA, leading-zero exponent", ?DNS_ALG_RSASHA1, <<2, 0, 3, 255, 255, 255>>},
+        {"RSA, long length form", ?DNS_ALG_RSASHA256, <<0, 0, 3, 1, 0, 1, Modulus/binary>>},
+        {"DSA", ?DNS_ALG_DSA, Dsa(0, 16#AA)},
+        {"DSA, T wider than needed", ?DNS_ALG_DSA, Dsa(1, 16#00)},
+        {"DSA, too short", ?DNS_ALG_NSEC3DSA, <<1, 2, 3, 4, 5, 6, 7, 8>>},
+        {"DSA, odd length", ?DNS_ALG_DSA, <<0, 0:160, 1, 2, 3, 4, 5>>},
+        {"ECDSA", ?DNS_ALG_ECDSAP256SHA256, binary:copy(<<1>>, 64)},
+        {"Ed25519, short", ?DNS_ALG_ED25519, binary:copy(<<2>>, 31)}
+    ],
     [
         begin
-            Wire = Key(T, PTop, GTop, 16#CC),
-            Decoded = Decode(Wire),
-            ?assertMatch(#dns_rrdata_dnskey{public_key = [_, _, _, _]}, Decoded, {T, PTop}),
-            ?assertEqual(Wire, dns_encode:encode_rrdata(?DNS_CLASS_IN, Decoded), {T, PTop, GTop})
-        end
-     || {T, PTop, GTop} <- [
-            {0, 16#AA, 16#BB},
-            %% P starting with a zero byte was the corrupting case
-            {0, 16#00, 16#BB},
-            {1, 16#00, 16#BB},
-            {0, 16#00, 16#00},
-            {8, 16#00, 16#00}
-        ]
-    ],
-    %% When every field has leading zeros, T is wider than the key needs, which
-    %% RFC2536§2 does not allow, and the encoder would write the narrowest T. So
-    %% the key stays bytes, and the record re-encodes as it came: its RDATA, key
-    %% tag and any RRSIG over it stay the same.
-    Narrow = <<
-        256:16,
-        3:8,
-        (?DNS_ALG_DSA):8,
-        1,
-        (binary:copy(<<16#DD>>, 20))/binary,
-        %% T=1 means 72-byte fields, but each value fits 64 bytes
-        (binary:copy(<<0>>, 8))/binary,
-        (binary:copy(<<16#AA>>, 64))/binary,
-        (binary:copy(<<0>>, 8))/binary,
-        (binary:copy(<<16#BB>>, 64))/binary,
-        (binary:copy(<<0>>, 8))/binary,
-        (binary:copy(<<16#CC>>, 64))/binary
-    >>,
-    <<_:4/binary, NarrowKey/binary>> = Narrow,
-    NarrowDecoded = Decode(Narrow),
-    ?assertEqual(NarrowKey, NarrowDecoded#dns_rrdata_dnskey.public_key),
-    ?assertEqual(Narrow, dns_encode:encode_rrdata(?DNS_CLASS_IN, NarrowDecoded)),
-    %% Values too wide for the field, or a Q past its fixed 20 bytes, are rejected
-    %% rather than silently truncated
-    Wide = fun(Field, Bytes) ->
-        Big = binary:decode_unsigned(binary:copy(<<16#FF>>, Bytes)),
-        Ok = binary:decode_unsigned(binary:copy(<<16#AA>>, 64)),
-        Q = binary:decode_unsigned(binary:copy(<<16#DD>>, 20)),
-        PK =
-            case Field of
-                p -> [Big, Q, Ok, Ok];
-                g -> [Ok, Q, Big, Ok];
-                y -> [Ok, Q, Ok, Big];
-                q -> [Ok, Big, Ok, Ok]
-            end,
-        #dns_rrdata_dnskey{flags = 256, protocol = 3, alg = ?DNS_ALG_DSA, public_key = PK}
-    end,
-    [
-        ?assertError(badarg, dns_encode:encode_rrdata(?DNS_CLASS_IN, Wide(F, 129)), F)
-     || F <- [p, g, y]
-    ],
-    ?assertError(badarg, dns_encode:encode_rrdata(?DNS_CLASS_IN, Wide(q, 21))).
-
-%% RFC2536§2 lays a DSA DNSKEY out as T, Q, P, G, Y, so rdata shorter than that
-%% cannot be parsed as one and decodes with public_key left a binary. The DSA
-%% encode clause matched a bare variable guarded only on the algorithm, so that
-%% binary reached encode_dsa_key/1 and died in a list comprehension: one crafted
-%% rdata made decode succeed and re-encode crash, which is reachable by anything
-%% that decodes then re-encodes.
-dnskey_dsa_alg_short_rdata_reencodes(_) ->
-    DsaAlgs = [?DNS_ALG_DSA, ?DNS_ALG_NSEC3DSA],
-    Short = fun(Alg) -> <<256:16, 3:8, Alg:8, 1, 2, 3, 4, 5, 6, 7, 8>> end,
-    %% T and Q, but P, G and Y not 64 + 8T octets each, which crashed the decoder
-    Odd = fun(Alg) -> <<256:16, 3:8, Alg:8, 0, 0:160, 1, 2, 3, 4, 5>> end,
-    [
-        begin
-            Rdata = Shape(Alg),
-            Data = dns_decode:decode_rrdata(<<>>, ?DNS_CLASS_IN, Type, Rdata),
-            %% too short for the DSA layout, so the key stays opaque ...
-            PK =
-                case Type of
-                    ?DNS_TYPE_DNSKEY -> Data#dns_rrdata_dnskey.public_key;
-                    ?DNS_TYPE_CDNSKEY -> Data#dns_rrdata_cdnskey.public_key
+            Rdata = <<256:16, 3, Alg, Key/binary>>,
+            Decoded = dns_decode:decode_rrdata(<<>>, ?DNS_CLASS_IN, Type, Rdata),
+            PublicKey =
+                case Decoded of
+                    #dns_rrdata_dnskey{public_key = PK} -> PK;
+                    #dns_rrdata_cdnskey{public_key = PK} -> PK
                 end,
-            ?assert(is_binary(PK), {Type, Alg}),
-            %% ... and re-encoding reproduces the original bytes instead of crashing
-            ?assertEqual(Rdata, dns_encode:encode_rrdata(?DNS_CLASS_IN, Data), {Type, Alg})
+            ?assertEqual(Key, PublicKey, {Type, Label}),
+            ?assertEqual(Rdata, dns_encode:encode_rrdata(?DNS_CLASS_IN, Decoded), {Type, Label})
         end
-     || Type <- [?DNS_TYPE_DNSKEY, ?DNS_TYPE_CDNSKEY], Alg <- DsaAlgs, Shape <- [Short, Odd]
+     || {Label, Alg, Key} <- Keys, Type <- [?DNS_TYPE_DNSKEY, ?DNS_TYPE_CDNSKEY]
     ],
-    %% Reachable through a full message: decode then re-encode must both survive
-    Rdata = Short(?DNS_ALG_NSEC3DSA),
+    Rdata = <<256:16, 3, (?DNS_ALG_NSEC3DSA), 1, 2, 3, 4, 5, 6, 7, 8>>,
     Header = <<1:16, 1:1, 0:4, 0:1, 0:1, 0:1, 0:1, 0:1, 0:1, 0:1, 0:4, 0:16, 1:16, 0:16, 0:16>>,
     Answer =
         <<3, $f, $o, $o, 0, (?DNS_TYPE_DNSKEY):16, (?DNS_CLASS_IN):16, 300:32,
             (byte_size(Rdata)):16, Rdata/binary>>,
     Wire = <<Header/binary, Answer/binary>>,
-    Decoded = dns:decode_message(Wire),
-    ?assertMatch(#dns_message{}, Decoded),
-    ?assertEqual(Wire, dns:encode_message(Decoded)),
-
-    %% A well-formed DSA key still takes the DSA path and round-trips
-    Q = 16#7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF,
-    P = binary:decode_unsigned(binary:copy(<<16#FF>>, 64)),
-    WellFormed = #dns_rrdata_dnskey{
-        flags = 256,
-        protocol = 3,
-        alg = ?DNS_ALG_DSA,
-        public_key = [P, Q, P, P]
-    },
-    DsaWire = dns_encode:encode_rrdata(?DNS_CLASS_IN, WellFormed),
-    ?assertMatch(
-        #dns_rrdata_dnskey{alg = ?DNS_ALG_DSA, public_key = [_, _, _, _]},
-        dns_decode:decode_rrdata(<<>>, ?DNS_CLASS_IN, ?DNS_TYPE_DNSKEY, DsaWire)
-    ).
+    ?assertEqual(Wire, dns:encode_message(dns:decode_message(Wire))).
 
 %% RFC6891§6.1.1: an OPT RR "MUST be the only OPT RR in that message". The
 %% decoder rejects a second one, but the encoder would happily emit two, so a

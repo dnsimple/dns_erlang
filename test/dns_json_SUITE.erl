@@ -907,47 +907,15 @@ test_dnskey_formats(_Config) ->
     },
     assert_transcode(DnskeyBinary),
 
-    %% Test DNSKEY with list public_key (RSA components)
-    DnskeyList = #dns_rr{
-        name = ~"example.com",
-        type = ?DNS_TYPE_DNSKEY,
-        ttl = 3600,
-        data = #dns_rrdata_dnskey{
-            flags = 256,
-            protocol = 3,
-            alg = ?DNS_ALG_RSASHA256,
-            public_key = [65537, 67890],
-            keytag = 12345
-        }
+    %% A key is its bytes, even bytes that read as numbers each behind a 32-bit
+    %% length, which JSON took for an RSA key's [E, M], whatever the algorithm
+    LengthPrefixed = <<<<(byte_size(B)):32, B/binary>> || B <- [<<1, 0, 1>>, <<1, 9, 50>>]>>,
+    DnskeyPrefixed = DnskeyBinary#dns_rr{
+        data = (DnskeyBinary#dns_rr.data)#dns_rrdata_dnskey{public_key = LengthPrefixed}
     },
-    assert_transcode(DnskeyList),
-    %% E and M as their big-endian bytes, as crypto:generate_key/2 gives them
-    DnskeyBytes = DnskeyList#dns_rr{
-        data = (DnskeyList#dns_rr.data)#dns_rrdata_dnskey{public_key = [<<1, 0, 1>>, <<1, 9, 50>>]}
-    },
-    ?assertEqual(dns_json:to_map(DnskeyList), dns_json:to_map(DnskeyBytes)),
-    %% Another algorithm's key in a list is no list of numbers, and must not map
-    %% as one, which JSON could not give back
-    EcdsaList = DnskeyList#dns_rr{
-        data = (DnskeyList#dns_rr.data)#dns_rrdata_dnskey{
-            alg = ?DNS_ALG_ECDSAP256SHA256, public_key = [<<1:256>>, <<2:256>>]
-        }
-    },
-    ?assertError(badarg, dns_json:to_map(EcdsaList)),
-    %% Nor is an RSA key in a list of other than two, nor a DSA key in bytes,
-    %% which the wire encoder reads otherwise
-    RsaThree = DnskeyBytes#dns_rr{
-        data = (DnskeyBytes#dns_rr.data)#dns_rrdata_dnskey{
-            public_key = [<<3, 1, 0>>, <<1, 200>>, <<7>>]
-        }
-    },
-    ?assertError(badarg, dns_json:to_map(RsaThree)),
-    DsaBytes = DnskeyBytes#dns_rr{
-        data = (DnskeyBytes#dns_rr.data)#dns_rrdata_dnskey{
-            alg = ?DNS_ALG_DSA, public_key = [<<0, 0, 0, 1, 7>>, <<5>>, <<2>>, <<3>>]
-        }
-    },
-    ?assertError(badarg, dns_json:to_map(DsaBytes)),
+    assert_transcode(DnskeyPrefixed),
+    #{~"data" := #{~"public_key" := DnskeyB64}} = dns_json:to_map(DnskeyPrefixed),
+    ?assertEqual(base64:encode(LengthPrefixed), DnskeyB64),
 
     %% Test CDNSKEY with binary public_key
     CdnskeyBinary = #dns_rr{
@@ -964,26 +932,10 @@ test_dnskey_formats(_Config) ->
     },
     assert_transcode(CdnskeyBinary),
 
-    %% Test CDNSKEY with list public_key
-    CdnskeyList = #dns_rr{
-        name = ~"example.com",
-        type = ?DNS_TYPE_CDNSKEY,
-        ttl = 3600,
-        data = #dns_rrdata_cdnskey{
-            flags = 256,
-            protocol = 3,
-            alg = ?DNS_ALG_RSASHA256,
-            public_key = [65537, 67890],
-            keytag = 12345
-        }
+    CdnskeyPrefixed = CdnskeyBinary#dns_rr{
+        data = (CdnskeyBinary#dns_rr.data)#dns_rrdata_cdnskey{public_key = LengthPrefixed}
     },
-    assert_transcode(CdnskeyList),
-    CdnskeyBytes = CdnskeyList#dns_rr{
-        data = (CdnskeyList#dns_rr.data)#dns_rrdata_cdnskey{
-            public_key = [<<1, 0, 1>>, <<1, 9, 50>>]
-        }
-    },
-    ?assertEqual(dns_json:to_map(CdnskeyList), dns_json:to_map(CdnskeyBytes)).
+    assert_transcode(CdnskeyPrefixed).
 
 test_nsec3_salt(_Config) ->
     %% RRDATA records must be wrapped in dns_rr
@@ -1815,9 +1767,8 @@ test_edge_cases(_Config) ->
     ?assertEqual(dns_rrdata_dnskey, element(1, DnskeyData)),
     ?assertEqual(~"simple-binary-data", element(5, DnskeyData)),
 
-    %% Test from_map_dnskey_publickey with properly formatted binary (list of integers)
-    %% Create a binary that matches the format: <<L:32, I:L/unit:8, ...>>, holding the
-    %% exponent and modulus of an RSA key
+    %% A key whose bytes read as numbers each behind a 32-bit length stays its
+    %% bytes, which from_map took for an RSA key's exponent and modulus
     FormattedBin = <<<<(byte_size(B)):32, B/binary>> || B <- [<<1, 0, 1>>, <<48, 57>>]>>,
     DnskeyMap2 = #{
         ~"name" => ~"example.com",
@@ -1836,7 +1787,7 @@ test_edge_cases(_Config) ->
     ?assertEqual(dns_rr, element(1, DnskeyRecord2)),
     DnskeyData2 = element(6, DnskeyRecord2),
     ?assertEqual(dns_rrdata_dnskey, element(1, DnskeyData2)),
-    ?assertEqual([65537, 12345], element(5, DnskeyData2)),
+    ?assertEqual(FormattedBin, element(5, DnskeyData2)),
 
     %% Simulate API/JSON that omits svc_params for alias-form SVCB/HTTPS
     SVCBJson = #{

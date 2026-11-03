@@ -35,6 +35,7 @@ DSA, RSA (SHA1/SHA256/SHA512), ECDSA (P-256/P-384), Ed25519, and Ed448.
 -export([sign_rrset/5, sign_rrset/6]).
 -export([verify_rrsig/4]).
 -export([add_keytag_to_dnskey/1, add_keytag_to_cdnskey/1]).
+-export([dnskey_public_key/2]).
 -export([canonical_rrdata_form/1]).
 -export([ih/4]).
 
@@ -106,18 +107,14 @@ Unlike `t:dns:alg/0`, this type is restricted to algorithms valid for zone signi
 -doc "DNSKEY key tag (RFC 4034 Appendix B).".
 -type keytag() :: integer().
 -doc """
-Cryptographic key material for signing or verification.
+A private key to sign with, in the binaries `crypto:generate_key/2` gives.
 
-RSA and DSA keys are lists of integers, `[E, N, D]` or `[P, Q, G, X]` to sign
-and `[E, M]` or `[P, Q, G, Y]` to verify, which is how the wire decoder gives a
-DNSKEY's key. Each integer can also be given as its big-endian bytes, as
-`crypto:generate_key/2` gives an RSA key. A DNSKEY parsed from a zone file
-keeps the RDATA's key bytes, which verify as well. Other keys are binaries.
-Though its record field's type is `iodata()`, a DNSKEY's key in a list is read
-as those numbers, not as pieces of its bytes: two binaries are an RSA key's
-`[E, M]`, so a key given as its bytes must be one binary.
+An RSA key is `[E, N, D]`, or the whole list crypto gives, and a DSA key
+`[P, Q, G, X]`, each number as its big-endian bytes. An ECDSA key is its
+private scalar and an EdDSA key its private key. The public key a DNSKEY
+carries is its RDATA's key field, which `dnskey_public_key/2` makes.
 """.
--type key() :: [non_neg_integer() | binary()] | binary().
+-type key() :: [binary()] | binary().
 -doc "Options for `sign_rr/6` and `sign_rrset/6`.".
 -type sign_rr_opts() :: #{inception => dns:unix_time(), expiration => dns:unix_time()}.
 -doc "Options for `verify_rrsig/4`.".
@@ -490,17 +487,16 @@ sign_rrset(
 
 -spec sign(dns:uint8(), iodata(), key()) -> binary().
 sign(Alg, BaseSigInput, Key) when Alg =:= ?DNS_ALG_DSA orelse Alg =:= ?DNS_ALG_NSEC3DSA ->
-    [P, Q, G, _X] = Integers = [key_integer(Field) || Field <- Key],
+    [P, Q, G, _X] = Key,
     %% RFC2536§2, §3: R and S, which are below Q, take 20 octets each, and T, 0 to
     %% 8, makes P, G and Y 64 + 8T octets: a wider Q or P cannot be carried
-    (Q < 1 bsl 160 andalso P < 1 bsl 1024 andalso G < 1 bsl 1024) orelse
+    (unsigned_size(Q) =< 20 andalso unsigned_size(P) =< 128 andalso unsigned_size(G) =< 128) orelse
         error({unsupported_key, Alg}),
-    DerSig = crypto:sign(dss, sha, BaseSigInput, Integers),
+    DerSig = crypto:sign(dss, sha, BaseSigInput, Key),
     #'Dss-Sig-Value'{r = R, s = S} = public_key:der_decode('Dss-Sig-Value', DerSig),
     %% RFC2536§3: T is the DNSKEY's. Its Y = G^X mod P is below P, so P and G
-    %% alone fix the width the DNSKEY's encoding takes T from
-    T = dns_encode:dsa_t([P, G]),
-    <<T, R:20/unit:8, S:20/unit:8>>;
+    %% alone fix the width dnskey_public_key/2 takes T from
+    <<(dsa_t([P, G])), R:20/unit:8, S:20/unit:8>>;
 sign(Alg, BaseSigInput, Key) when
     Alg =:= ?DNS_ALG_NSEC3RSASHA1 orelse
         Alg =:= ?DNS_ALG_RSASHA1 orelse
@@ -508,7 +504,7 @@ sign(Alg, BaseSigInput, Key) when
         Alg =:= ?DNS_ALG_RSASHA512
 ->
     {Hash, Msg} = rsa_message(Alg, BaseSigInput),
-    crypto:sign(rsa, Hash, Msg, key_binaries(Key), [{rsa_padding, rsa_pkcs1_padding}]);
+    crypto:sign(rsa, Hash, Msg, Key, [{rsa_padding, rsa_pkcs1_padding}]);
 sign(?DNS_ALG_ECDSAP256SHA256, BaseSigInput, Key) ->
     DerSig = crypto:sign(ecdsa, sha256, BaseSigInput, [Key, secp256r1]),
     %% RFC6605: keys must be r||s of 32 octets each
@@ -587,7 +583,7 @@ verify_rrsig(
     } = Data,
     Signer = name_labels(SignersName),
     %% The validity period and the RRset are checked before the keys, whose key
-    %% tags cost an encoding each
+    %% tags are each a sum over their RDATA
     case in_validity_period(Incept, Expire, Now) andalso fits_rrset(RRSig, Signer, RRs) of
         true ->
             %% RFC4035§5.3.1: the RRSIG's signer, algorithm and key tag name the
@@ -605,12 +601,13 @@ verify_rrsig(
                     data = #dns_rrdata_dnskey{
                         flags = Flags, protocol = 3, alg = Alg, public_key = PubKey
                     }
-                } = DNSKey <- RRDNSKey,
+                } <- RRDNSKey,
                 KeyClass =:= Class,
                 Flags band 16#0100 =/= 0,
                 Alg =:= SigAlg,
+                is_binary(PubKey),
                 is_name(Name, Signer),
-                key_tag(DNSKey) =:= SigKeyTag
+                key_tag(Flags, 3, Alg, PubKey) =:= SigKeyTag
             ],
             verify_with_keys(SigAlg, Keys, Signature, Data, RRs);
         false ->
@@ -726,8 +723,8 @@ verify(Alg, Key, <<_T, R:20/unit:8, S:20/unit:8>>, SigInput) when
     case dsa_public_key(Key) of
         [_P, _Q, _G, _Y] = PublicKey ->
             AsnSig = public_key:der_encode('Dss-Sig-Value', #'Dss-Sig-Value'{r = R, s = S}),
-            crypto:verify(dss, sha, SigInput, AsnSig, key_binaries(PublicKey));
-        _ ->
+            crypto:verify(dss, sha, SigInput, AsnSig, PublicKey);
+        invalid ->
             false
     end;
 verify(Alg, Key, Signature, SigInput) when
@@ -737,15 +734,14 @@ verify(Alg, Key, Signature, SigInput) when
         Alg =:= ?DNS_ALG_RSASHA512
 ->
     case rsa_public_key(Key) of
-        [_E, _M] = PublicKey ->
-            [_, Modulus] = Binaries = key_binaries(PublicKey),
+        [_E, Modulus] = PublicKey ->
             {Hash, Msg} = rsa_message(Alg, SigInput),
             Opts = [{rsa_padding, rsa_pkcs1_padding}],
             %% RFC8017§8.2.2: the signature is as long as the modulus. crypto checks
             %% that when it hashes, but not for SHA-1, whose DigestInfo is built here
             byte_size(Signature) =:= byte_size(Modulus) andalso
-                crypto:verify(rsa, Hash, Msg, Signature, Binaries, Opts);
-        _ ->
+                crypto:verify(rsa, Hash, Msg, Signature, PublicKey, Opts);
+        invalid ->
             false
     end;
 verify(?DNS_ALG_ECDSAP256SHA256, <<_:64/binary>> = Key, <<_:64/binary>> = Signature, SigInput) ->
@@ -802,37 +798,84 @@ rsa_message(?DNS_ALG_RSASHA256, Data) ->
 rsa_message(?DNS_ALG_RSASHA512, Data) ->
     {sha512, Data}.
 
--doc "Generates and appends a DNS Key records key tag.".
+-doc "Sets a DNSKEY record's key tag, computed from its RDATA (RFC 4034 Appendix B).".
 -spec add_keytag_to_dnskey(dns:rr()) -> dns:rr().
 add_keytag_to_dnskey(
-    #dns_rr{type = ?DNS_TYPE_DNSKEY, data = #dns_rrdata_dnskey{} = Data} = RR
+    #dns_rr{
+        type = ?DNS_TYPE_DNSKEY,
+        data =
+            #dns_rrdata_dnskey{flags = Flags, protocol = Protocol, alg = Alg, public_key = Key} =
+                Data
+    } = RR
 ) ->
-    add_keytag_to_key_rr(RR, Data, ?DNS_TYPE_DNSKEY).
+    RR#dns_rr{data = Data#dns_rrdata_dnskey{keytag = key_tag(Flags, Protocol, Alg, Key)}}.
 
--doc "Generates and appends a CDNSKEY records key tag.".
+-doc "Sets a CDNSKEY record's key tag, computed from its RDATA (RFC 4034 Appendix B).".
 -spec add_keytag_to_cdnskey(dns:rr()) -> dns:rr().
 add_keytag_to_cdnskey(
-    #dns_rr{type = ?DNS_TYPE_CDNSKEY, data = #dns_rrdata_cdnskey{} = Data} = RR
+    #dns_rr{
+        type = ?DNS_TYPE_CDNSKEY,
+        data =
+            #dns_rrdata_cdnskey{flags = Flags, protocol = Protocol, alg = Alg, public_key = Key} =
+                Data
+    } = RR
 ) ->
-    add_keytag_to_key_rr(RR, Data, ?DNS_TYPE_CDNSKEY).
-
--spec add_keytag_to_key_rr(dns:rr(), dns:rrdata(), dns:type()) -> dns:rr().
-add_keytag_to_key_rr(RR, Data, Type) ->
-    KeyBin = dns_encode:encode_rrdata(?DNS_CLASS_IN, Data),
-    NewData = dns_decode:decode_rrdata(KeyBin, ?DNS_CLASS_IN, Type),
-    RR#dns_rr{data = NewData}.
+    RR#dns_rr{data = Data#dns_rrdata_cdnskey{keytag = key_tag(Flags, Protocol, Alg, Key)}}.
 
 %% RFC4034 Appendix B: a DNSKEY's key tag, computed from its RDATA, as its keytag
-%% field may be unset or out of date in a DNSKEY built by hand. A key that does
-%% not encode, such as one given as iodata, has none. The RDATA is not decoded,
-%% which would only turn an RSA or DSA key into integers to throw away
--spec key_tag(dns:rr()) -> dns:uint16() | undefined.
-key_tag(#dns_rr{data = #dns_rrdata_dnskey{} = Data}) ->
-    try dns_encode:encode_rrdata(?DNS_CLASS_IN, Data) of
-        RData -> dns_decode:bin_to_key_tag(RData)
-    catch
-        error:_ -> undefined
-    end.
+%% field may be unset or out of date in a DNSKEY built by hand
+-spec key_tag(dns:uint16(), dns:uint8(), dns:uint8(), binary()) -> dns:uint16().
+key_tag(Flags, Protocol, Alg, Key) ->
+    dns_decode:bin_to_key_tag(<<Flags:16, Protocol:8, Alg:8, Key/binary>>).
+
+-doc """
+Returns the public key field of a DNSKEY's RDATA for a public key in the form
+`crypto:generate_key/2` gives it.
+
+An RSA key's `[E, N]` is laid out as RFC 3110 §2 has it, and a DSA key's
+`[P, Q, G, Y]` as RFC 2536 §2 has it, with the narrowest T. An ECDSA key loses
+the octet 4 in front that marks the point uncompressed (RFC 6605 §4), and an
+EdDSA key is as it is (RFC 8080 §3). Raises `badarg` for a key the algorithm's
+DNSKEY cannot carry.
+""".
+-spec dnskey_public_key(sigalg(), [binary()] | binary()) -> binary().
+dnskey_public_key(Alg, [E0, N0]) when
+    (Alg =:= ?DNS_ALG_RSASHA1 orelse Alg =:= ?DNS_ALG_NSEC3RSASHA1 orelse
+        Alg =:= ?DNS_ALG_RSASHA256 orelse Alg =:= ?DNS_ALG_RSASHA512) andalso
+        is_binary(E0) andalso is_binary(N0)
+->
+    %% RFC3110§2: no leading zero octets, and the exponent's length in one octet,
+    %% or for one over 255 octets in a zero octet and two more
+    E = strip_leading_zeros(E0),
+    N = strip_leading_zeros(N0),
+    (E =/= <<>> andalso N =/= <<>>) orelse error(badarg),
+    case byte_size(E) of
+        Len when Len =< 255 -> <<Len, E/binary, N/binary>>;
+        Len when Len =< 16#FFFF -> <<0, Len:16, E/binary, N/binary>>;
+        _ -> error(badarg)
+    end;
+dnskey_public_key(Alg, [P0, Q0, G0, Y0]) when
+    (Alg =:= ?DNS_ALG_DSA orelse Alg =:= ?DNS_ALG_NSEC3DSA) andalso
+        is_binary(P0) andalso is_binary(Q0) andalso is_binary(G0) andalso is_binary(Y0)
+->
+    %% RFC2536§2: T, 0 to 8, then Q in 20 octets, and P, G and Y in 64 + 8T each
+    [P, Q, G, Y] = [strip_leading_zeros(F) || F <- [P0, Q0, G0, Y0]],
+    (byte_size(Q) =< 20 andalso byte_size(P) =< 128 andalso byte_size(G) =< 128 andalso
+        byte_size(Y) =< 128) orelse error(badarg),
+    T = dsa_t([P, G, Y]),
+    S = 64 + 8 * T,
+    <<T, (pad_unsigned(Q, 20))/binary, (pad_unsigned(P, S))/binary, (pad_unsigned(G, S))/binary,
+        (pad_unsigned(Y, S))/binary>>;
+dnskey_public_key(?DNS_ALG_ECDSAP256SHA256, <<4, Point:64/binary>>) ->
+    Point;
+dnskey_public_key(?DNS_ALG_ECDSAP384SHA384, <<4, Point:96/binary>>) ->
+    Point;
+dnskey_public_key(?DNS_ALG_ED25519, <<_:32/binary>> = Key) ->
+    Key;
+dnskey_public_key(?DNS_ALG_ED448, <<_:57/binary>> = Key) ->
+    Key;
+dnskey_public_key(_Alg, _Key) ->
+    error(badarg).
 
 -spec rrsig_to_digestable(dns:rrdata_rrsig()) -> binary().
 rrsig_to_digestable(#dns_rrdata_rrsig{} = Data) ->
@@ -988,39 +1031,48 @@ is_at_or_under(Labels, Zone) ->
     Depth = length(Labels) - length(Zone),
     Depth >= 0 andalso dns_domain:are_equal_labels(lists:nthtail(Depth, Labels), Zone).
 
-%% A DNSKEY decoded from the wire holds an RSA or DSA key as integers, and one
-%% parsed from a zone file its RDATA bytes, which are read as the decoder reads
-%% them. Bytes that do not parse stay a binary, which verifies nothing, and so
-%% do those of a key the RFCs rule out, which the decoder keeps as bytes: an RSA
-%% key with leading zero octets, or with three octets for an exponent length
-%% under 256 (RFC3110§2), and a DSA key whose P is shorter than its T makes it
-%% (RFC2536§2)
--spec rsa_public_key(key()) -> key().
-rsa_public_key(Key) when is_binary(Key) -> dns_decode:rsa_public_key(Key);
-rsa_public_key(Key) -> Key.
+%% RFC3110§2: a DNSKEY's RSA key is the exponent's length in one octet, or for
+%% one over 255 octets in a zero octet and two more, then the exponent and the
+%% modulus, neither with leading zero octets. A key laid out otherwise verifies
+%% nothing
+-spec rsa_public_key(binary()) -> [binary()] | invalid.
+rsa_public_key(<<0, Len:16, E:Len/binary, N/binary>>) when Len > 255 -> rsa_public_key(E, N);
+rsa_public_key(<<Len, E:Len/binary, N/binary>>) when Len > 0 -> rsa_public_key(E, N);
+rsa_public_key(_Key) -> invalid.
 
--spec dsa_public_key(key()) -> key().
-dsa_public_key(Key) when is_binary(Key) -> dns_decode:dsa_public_key(Key);
-dsa_public_key(Key) -> Key.
+-spec rsa_public_key(binary(), binary()) -> [binary()] | invalid.
+rsa_public_key(<<EFirst, _/binary>> = E, <<NFirst, _/binary>> = N) when EFirst > 0, NFirst > 0 ->
+    [E, N];
+rsa_public_key(_E, _N) ->
+    invalid.
 
-%% crypto takes a key's integers all as integers or all as binaries, and raises
-%% badarith on a mix. It turns integers into binaries in time quadratic in their
-%% length, which for an RSA modulus of 64 KB is over 100 ms, so it gets binaries.
--spec key_binaries([non_neg_integer() | binary()]) -> [binary()].
-key_binaries(Key) ->
-    [unsigned_binary(Field) || Field <- Key].
+%% RFC2536§2: a DNSKEY's DSA key is T, 0 to 8, then Q in 20 octets, and P, G and
+%% Y in 64 + 8T each, where 2^159 < Q < 2^160 and 2^(511+64T) < P < 2^(512+64T),
+%% so that both have their top bit set. A key laid out otherwise verifies nothing
+-spec dsa_public_key(binary()) -> [binary()] | invalid.
+dsa_public_key(<<T, Q:20/binary, PGY/binary>>) when T =< 8, byte_size(PGY) =:= 3 * (64 + 8 * T) ->
+    S = 64 + 8 * T,
+    <<P:S/binary, G:S/binary, Y:S/binary>> = PGY,
+    case {Q, P} of
+        {<<1:1, _/bitstring>>, <<1:1, _/bitstring>>} -> [P, Q, G, Y];
+        _ -> invalid
+    end;
+dsa_public_key(_Key) ->
+    invalid.
 
-%% An integer of a key, given as an integer or as its big-endian bytes
--spec key_integer(non_neg_integer() | binary()) -> non_neg_integer().
-key_integer(Field) when is_integer(Field) -> Field;
-key_integer(Field) when is_binary(Field) -> binary:decode_unsigned(Field).
+%% RFC2536§2: the narrowest T, 0 to 8, whose 64 + 8T octets hold each number
+-spec dsa_t([binary()]) -> 0..8.
+dsa_t(Numbers) ->
+    max(0, (lists:max([unsigned_size(Number) || Number <- Numbers]) - 57) div 8).
 
-%% An integer of a key, given as an integer or as its big-endian bytes, as its
-%% bytes without leading zeros
--spec unsigned_binary(non_neg_integer() | binary()) -> binary().
-unsigned_binary(Field) when is_integer(Field) -> binary:encode_unsigned(Field);
-unsigned_binary(<<0, Rest/binary>>) -> unsigned_binary(Rest);
-unsigned_binary(Field) when is_binary(Field) -> Field.
+%% The octets of a number given as its big-endian bytes, leading zeros left out
+-spec unsigned_size(binary()) -> non_neg_integer().
+unsigned_size(Number) ->
+    byte_size(strip_leading_zeros(Number)).
+
+-spec strip_leading_zeros(binary()) -> binary().
+strip_leading_zeros(<<0, Rest/binary>>) -> strip_leading_zeros(Rest);
+strip_leading_zeros(Number) -> Number.
 
 %% RFC 6605 §4: ECDSA signatures on the wire are r || s, each padded to FieldSize bytes.
 %% crypto:sign returns DER-encoded ASN.1; crypto:verify expects DER-encoded ASN.1.

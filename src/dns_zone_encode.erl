@@ -362,15 +362,6 @@ encode_svcb_record(Priority, Target, Params, Origin, RelativeNames, Separator) -
 join_rdata_fields(Fields, Separator) ->
     lists:join(Separator, Fields).
 
-%% Helper: a DNSKEY's or CDNSKEY's key as the wire encoder writes it, in whatever
-%% form it is given, an RSA or DSA key as its numbers among them, so that a zone
-%% file and the wire always carry the same key
--spec public_key_to_wire_binary(dns:rrdata()) -> binary().
-public_key_to_wire_binary(Data) ->
-    <<_Flags:16, _Protocol:8, _Alg:8, Key/binary>> =
-        dns_encode:encode_rrdata(?DNS_CLASS_IN, Data),
-    Key.
-
 %% Helper: Encode DS/CDS/DLV/DNSKEY/CDNSKEY record
 %% Encodes 3 integer fields and a data field (hex or base64 encoded)
 -spec encode_key_record(dns:uint16(), dns:uint8(), dns:uint8(), iodata(), hex | base64, binary()) ->
@@ -665,27 +656,27 @@ encode_rdata(
     #dns_rrdata_dnskey{
         flags = Flags,
         protocol = Protocol,
-        alg = Alg
-    } = Data,
+        alg = Alg,
+        public_key = PublicKey
+    },
     _Origin,
     _RelativeNames,
     Separator
 ) ->
-    PublicKeyBin = public_key_to_wire_binary(Data),
-    encode_key_record(Flags, Protocol, Alg, PublicKeyBin, base64, Separator);
+    encode_key_record(Flags, Protocol, Alg, PublicKey, base64, Separator);
 encode_rdata(
     ?DNS_TYPE_CDNSKEY,
     #dns_rrdata_cdnskey{
         flags = Flags,
         protocol = Protocol,
-        alg = Alg
-    } = Data,
+        alg = Alg,
+        public_key = PublicKey
+    },
     _Origin,
     _RelativeNames,
     Separator
 ) ->
-    PublicKeyBin = public_key_to_wire_binary(Data),
-    encode_key_record(Flags, Protocol, Alg, PublicKeyBin, base64, Separator);
+    encode_key_record(Flags, Protocol, Alg, PublicKey, base64, Separator);
 encode_rdata(
     ?DNS_TYPE_RRSIG,
     #dns_rrdata_rrsig{
