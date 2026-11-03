@@ -13,8 +13,7 @@
     decode_message_additional/3,
     decode_message_body/3,
     decode_rrdata/3,
-    rsa_public_key/1,
-    dsa_public_key/1
+    rsa_public_key/1
 ]).
 
 -ifdef(TEST).

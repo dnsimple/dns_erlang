@@ -75,6 +75,7 @@ groups() ->
             sign_leaves_rrsigs_unsigned,
             verify_short_rsa_signature_same_for_all_algorithms,
             verify_dsa_key_with_binary_field,
+            verify_dsa_key_with_wide_t,
             sign_rejects_dsa_q_over_160_bits,
             sign_dsa_p_over_1024_bits_names_cause,
             verify_dsa_dnskey_after_wire_round_trip,
@@ -1195,6 +1196,41 @@ verify_dsa_key_with_binary_field(Config) ->
     },
     ?assert(dnssec:verify_rrsig(RRSig, [RR], [DNSKey], #{now => 1500000})),
     ?assert(dnssec:verify_rrsig(RRSig, [RR], [Mixed], #{now => 1500000})).
+
+%% RFC2536§2: a DSA DNSKEY can have a T wider than its P, G and Y need. The
+%% decoder keeps the bytes of such a key, so that it encodes back unchanged, and
+%% verify_rrsig/4 read them by the decoder's rule, so it verified nothing with
+%% the key, decoded or parsed from a zone file
+verify_dsa_key_with_wide_t(Config) ->
+    Samples = proplists:get_value(dnssec_samples, Config),
+    %% A key whose T is under 8, written here with the next T
+    [{Zone, KeyProps, T} | _] = [
+        {Zone, Props, T}
+     || #dnssec_test_sample{alg = dsa, zonename = Zone, zsk_pl = Zsk, ksk_pl = Ksk} <- Samples,
+        Props <- [Zsk, Ksk],
+        <<T, _/binary>> <- [dns_encode:encode_dsa_key(helper_samplekeypl_to_pubkey(Props))],
+        T < 8
+    ],
+    [P, Q, G, Y] = helper_samplekeypl_to_pubkey(KeyProps),
+    S = 64 + 8 * (T + 1),
+    Wide = <<(T + 1), Q:20/unit:8, P:S/unit:8, G:S/unit:8, Y:S/unit:8>>,
+    DNSKey = #dns_rr{
+        name = Zone,
+        type = ?DNS_TYPE_DNSKEY,
+        ttl = 3600,
+        data = #dns_rrdata_dnskey{flags = 256, protocol = 3, alg = ?DNS_ALG_DSA, public_key = Wide}
+    },
+    Wire = dns_encode:encode_rrdata(?DNS_CLASS_IN, DNSKey#dns_rr.data),
+    Decoded = DNSKey#dns_rr{
+        data = dns_decode:decode_rrdata(<<>>, ?DNS_CLASS_IN, ?DNS_TYPE_DNSKEY, Wire)
+    },
+    ?assertMatch(#dns_rr{data = #dns_rrdata_dnskey{public_key = Wide}}, Decoded),
+    RR = rr_a(<<"test.", Zone/binary>>, {192, 0, 2, 1}),
+    Opts = #{inception => 1000000, expiration => 2000000},
+    Priv = helper_samplekeypl_to_privkey(KeyProps),
+    RRSig = dnssec:sign_rrset([RR], Zone, key_tag_of(DNSKey), ?DNS_ALG_DSA, Priv, Opts),
+    ?assert(dnssec:verify_rrsig(RRSig, [RR], [DNSKey], #{now => 1500000})),
+    ?assert(dnssec:verify_rrsig(RRSig, [RR], [Decoded], #{now => 1500000})).
 
 %% RFC2536§3: R and S of a DSA signature have 20 octets each, thus Q has
 %% 160 bits. With a wider Q, crypto makes a wider R and S. sign_rrset/6 cut
