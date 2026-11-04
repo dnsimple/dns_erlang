@@ -51,6 +51,7 @@ groups() ->
             signers_name_in_canonical_form,
             duplicate_rrs_signed_once,
             verify_with_counted_down_ttl,
+            verify_unimplemented_algorithm,
             ih_custom_hash_test,
             dsa_sign_verify_test,
             ecdsa_sign_verify_test,
@@ -747,6 +748,59 @@ verify_with_counted_down_ttl(_Config) ->
             TTL
         )
      || TTL <- [3600, 3599, 60, 0, 7200]
+    ].
+
+%% An RRSIG decoded off the wire can carry an algorithm this module does not
+%% implement: RSAMD5, ECC-GOST, a private one. It verifies nothing, whether or not a
+%% DNSKEY of its algorithm is there, where verifying raised function_clause even
+%% with no DNSKEY to try. Signing in one raises without the key in the stack trace,
+%% which a function_clause in sign/3 would carry.
+verify_unimplemented_algorithm(_Config) ->
+    A = #dns_rr{
+        name = ~"a.example.test",
+        type = ?DNS_TYPE_A,
+        ttl = 3600,
+        data = #dns_rrdata_a{ip = {192, 0, 2, 1}}
+    },
+    [
+        begin
+            RRSig = #dns_rr{
+                name = ~"a.example.test",
+                type = ?DNS_TYPE_RRSIG,
+                ttl = 3600,
+                data = #dns_rrdata_rrsig{
+                    type_covered = ?DNS_TYPE_A,
+                    alg = Alg,
+                    labels = 3,
+                    original_ttl = 3600,
+                    inception = 1790812800,
+                    expiration = 1793491200,
+                    keytag = 1,
+                    signers_name = ~"example.test",
+                    signature = <<1, 2, 3>>
+                }
+            },
+            DNSKey = #dns_rr{
+                name = ~"example.test",
+                type = ?DNS_TYPE_DNSKEY,
+                ttl = 3600,
+                data = #dns_rrdata_dnskey{
+                    flags = 256, protocol = 3, alg = Alg, public_key = <<4, 5, 6>>, keytag = 1
+                }
+            },
+            Opts = #{now => 1790812801},
+            ?assertNot(dnssec:verify_rrsig(RRSig, [A], [], Opts), Alg),
+            ?assertNot(dnssec:verify_rrsig(RRSig, [A], [DNSKey], Opts), Alg),
+            Secret = ~"secret private key",
+            try dnssec:sign_rr([A], ~"example.test", 1, Alg, Secret, #{}) of
+                Signed -> ct:fail({signed, Alg, Signed})
+            catch
+                error:Reason:Stack ->
+                    ?assertEqual({unsupported_algorithm, Alg}, Reason),
+                    ?assertEqual(nomatch, binary:match(term_to_binary(Stack), Secret), Alg)
+            end
+        end
+     || Alg <- [1, 12, 253]
     ].
 
 %% The Ed25519 key, in the zone example.test, BIND signed the records with
