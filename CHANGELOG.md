@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## main
 
+## v5.1.2
+
 ### Fixed
 
 - DNSSEC: ECDSA RRSIGs (algorithms 13 and 14) now validate elsewhere; since 4.4.0 signing and verifying hashed the signed data twice (RFC 6605).
