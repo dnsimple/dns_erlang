@@ -49,6 +49,7 @@ groups() ->
             canonical_rrdata_form_test,
             canonical_form_matches_bind,
             signers_name_in_canonical_form,
+            duplicate_rrs_signed_once,
             ih_custom_hash_test,
             dsa_sign_verify_test,
             ecdsa_sign_verify_test,
@@ -655,6 +656,52 @@ signers_name_in_canonical_form(_Config) ->
     ?assertMatch(#dns_rrdata_rrsig{signers_name = ~"example.test", signature = Signature}, Data),
     Received = RRSig#dns_rr{data = Data#dns_rrdata_rrsig{signers_name = ~"Example.TEST"}},
     ?assert(dnssec:verify_rrsig(Received, [HTTPS], [DNSKey], #{now => Inception + 1})).
+
+%% RFC4034§6.3: a duplicate record goes into the RRset's canonical form once, as
+%% validators take it. It went in twice, so a signature made here did not verify
+%% elsewhere, and one made elsewhere did not verify here. The signature is BIND's
+%% over the record once, from canonical_form_matches_bind/1.
+duplicate_rrs_signed_once(_Config) ->
+    {PrivateKey, DNSKey} = bind_ed25519_key(),
+    HTTPS = #dns_rr{
+        name = ~"www.example.test",
+        type = ?DNS_TYPE_HTTPS,
+        ttl = 3600,
+        data = #dns_rrdata_https{
+            svc_priority = 1, target_name = ~"Svc.Example.Test", svc_params = #{}
+        }
+    },
+    Signature = base64:decode(
+        ~"RE6RL2LW1of41k02UJEzpaMgC0vYnsuH/BmTFWdRD2n3wDkqLzeR+YPSD7WZYATcM4jQqlQe2wvUVQAbbsxnBA=="
+    ),
+    {Inception, Expiration} = {1790812800, 1793491200},
+    Sign = fun(RRs) ->
+        dnssec:sign_rr(
+            RRs,
+            ~"example.test",
+            29059,
+            ?DNS_ALG_ED25519,
+            PrivateKey,
+            #{inception => Inception, expiration => Expiration}
+        )
+    end,
+    [#dns_rr{data = #dns_rrdata_rrsig{} = Data} = RRSig] = Sign([HTTPS, HTTPS]),
+    ?assertEqual(Signature, Data#dns_rrdata_rrsig.signature),
+    BIND = RRSig#dns_rr{data = Data#dns_rrdata_rrsig{signature = Signature}},
+    ?assert(dnssec:verify_rrsig(BIND, [HTTPS, HTTPS], [DNSKey], #{now => Inception + 1})),
+    %% Duplicates in canonical form, which lowercases the names in MX RDATA
+    MX = fun(Exchange) ->
+        #dns_rr{
+            name = ~"example.test",
+            type = ?DNS_TYPE_MX,
+            ttl = 3600,
+            data = #dns_rrdata_mx{preference = 10, exchange = Exchange}
+        }
+    end,
+    ?assertEqual(
+        Sign([MX(~"mail.example.test")]),
+        Sign([MX(~"Mail.Example.Test"), MX(~"mail.example.test")])
+    ).
 
 %% The Ed25519 key, in the zone example.test, BIND signed the records with
 bind_ed25519_key() ->
