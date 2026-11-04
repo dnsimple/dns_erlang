@@ -43,7 +43,7 @@ lint: build
 # and regenerate the RFC list with `make rfc-list`.
 .PHONY: rfc-list
 rfc-list:
-	./scripts/generate_rfc_list.escript --output ./SUPPORTED_RFCs.md
+	./scripts/generate_rfc_list.escript --output ./SUPPORTED_RFCS.md
 
 .PHONY: rfc-list-print
 rfc-list-print:
