@@ -228,20 +228,7 @@ rdata(Type) ->
                 #dns_rrdata_a{ip = {A, B, C, D}}
             );
         ?DNS_TYPE_AAAA ->
-            ?LET(
-                {A, B, C, D, E, F, G, H},
-                {
-                    range(0, 65535),
-                    range(0, 65535),
-                    range(0, 65535),
-                    range(0, 65535),
-                    range(0, 65535),
-                    range(0, 65535),
-                    range(0, 65535),
-                    range(0, 65535)
-                },
-                #dns_rrdata_aaaa{ip = {A, B, C, D, E, F, G, H}}
-            );
+            ?LET(IP, ip6(), #dns_rrdata_aaaa{ip = IP});
         ?DNS_TYPE_NS ->
             ?LET(Name, dns_prop_generator:simple_dname(), #dns_rrdata_ns{dname = Name});
         ?DNS_TYPE_CNAME ->
@@ -509,16 +496,7 @@ rdata(Type) ->
                     oneof([
                         {0, <<>>},
                         {1, {range(0, 255), range(0, 255), range(0, 255), range(0, 255)}},
-                        {2, {
-                            range(0, 65535),
-                            range(0, 65535),
-                            range(0, 65535),
-                            range(0, 65535),
-                            range(0, 65535),
-                            range(0, 65535),
-                            range(0, 65535),
-                            range(0, 65535)
-                        }},
+                        {2, ip6()},
                         {3, dns_prop_generator:simple_dname()}
                     ])
                 },
@@ -553,6 +531,15 @@ rdata(Type) ->
             %% For other types, generate a simple A record as fallback
             #dns_rrdata_a{ip = {192, 0, 2, 1}}
     end.
+
+%% No address that starts with fe80 or ff02 and a non-zero word: inet:ntoa/1, and
+%% so the zone writer, writes fe80:1:: as "fe80::%01", which the zone parser rejects
+ip6() ->
+    ?SUCHTHAT(
+        {A, B, _, _, _, _, _, _},
+        ?LET(Words, vector(8, range(0, 65535)), list_to_tuple(Words)),
+        not ((A =:= 16#fe80 orelse A =:= 16#ff02) andalso B =/= 0)
+    ).
 
 encode_options() ->
     ?LET(
