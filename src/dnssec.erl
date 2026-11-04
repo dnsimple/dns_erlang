@@ -575,7 +575,8 @@ build_sig_input(
     TTL
 ) when is_integer(Alg) ->
     LName = dns_domain:to_lower(Name),
-    Datas = lists:sort([canonical_rrdata_bin(RR) || RR <- RRs]),
+    %% RFC4034§6.3: in canonical order, and a duplicate record once, as validators take it
+    Datas = lists:usort([canonical_rrdata_bin(RR) || RR <- RRs]),
     LLabels = dns_domain:split(LName),
     NameBin = dns_domain:to_wire(LName),
     RecordBase = <<NameBin/binary, Type:16, Class:16, TTL:32>>,
