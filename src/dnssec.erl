@@ -566,7 +566,7 @@ build_sig_input(
 ) ->
     {dns:rrdata_rrsig(), binary()}.
 build_sig_input(
-    [#dns_rr{name = Name, class = Class, type = Type, ttl = TTL} | _] = RRs,
+    [#dns_rr{name = Name, class = Class, type = Type} | _] = RRs,
     SignersName,
     KeyTag,
     Alg,
@@ -579,6 +579,8 @@ build_sig_input(
     Datas = lists:usort([canonical_rrdata_bin(RR) || RR <- RRs]),
     LLabels = dns_domain:split(LName),
     NameBin = dns_domain:to_wire(LName),
+    %% RFC4034§6.2: every record with the original TTL, whatever TTL it arrived with, as
+    %% one from a cache arrives counted down
     RecordBase = <<NameBin/binary, Type:16, Class:16, TTL:32>>,
     RRSetBin = [<<RecordBase/binary, (byte_size(Data)):16, Data/binary>> || Data <- Datas],
     RRSigData = #dns_rrdata_rrsig{

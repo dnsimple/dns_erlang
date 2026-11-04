@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- DNSSEC: `verify_rrsig/4` verifies an RRset whose first record's TTL is not the RRSIG's original TTL, as from a cache, where it raised `function_clause` (RFC 4035 §5.3.2).
 - DNSSEC: a record twice in an RRset is signed and verified once, as validators take it (RFC 4034 §6.3); signing it twice made an RRSIG validators rejected.
 - DNSSEC: DSA RRSIGs (algorithms 3 and 6) now validate elsewhere; every release signed and verified the signed data with its length in front of it (RFC 2536).
 - Wire: DHCID, OPENPGPKEY and WALLET records of class NONE, as an UPDATE deletes them with, encode as they decode.
