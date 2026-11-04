@@ -241,10 +241,16 @@ cycle_nsec_encoding(_Config, RRs) ->
         RRs
     ).
 
+%% Every RRSIG BIND made in the sample zones verifies. It checks there are RRSIGs
+%% of every algorithm in the zones, as matching record types as atoms, which
+%% records never carry, once left it none to verify.
 verify_rrset(Config) ->
+    Cases = helper_verify_rrset_test_cases(Config),
+    Algs = [Alg || {#dns_rr{data = #dns_rrdata_rrsig{alg = Alg}}, _, _, _} <- Cases],
+    ?assertEqual([3, 5, 6, 7, 8, 10, 13, 14], lists:usort(Algs)),
     [
         ?assert(dnssec:verify_rrsig(RRSig, RRSet, DNSKeys, Opts))
-     || {RRSig, RRSet, DNSKeys, Opts} <- helper_verify_rrset_test_cases(Config)
+     || {RRSig, RRSet, DNSKeys, Opts} <- Cases
     ].
 
 verify_rrsig_expiry(_Config) ->
@@ -1214,12 +1220,12 @@ helper_verify_rrset_test_cases(Config) ->
         [
             begin
                 Opts = #{now => Now},
-                DNSKeys = [RR || #dns_rr{type = dnskey} = RR <- RRs],
+                DNSKeys = [RR || #dns_rr{type = ?DNS_TYPE_DNSKEY} = RR <- RRs],
                 Map = lists:foldl(
                     fun
                         (
                             #dns_rr{
-                                type = rrsig,
+                                type = ?DNS_TYPE_RRSIG,
                                 name = Name,
                                 class = Class,
                                 data = #dns_rrdata_rrsig{
@@ -1249,7 +1255,7 @@ helper_verify_rrset_test_cases(Config) ->
                     fun(TestRR) ->
                         {RRSigs, RRSet} = lists:partition(
                             fun(#dns_rr{type = Type}) ->
-                                Type =:= rrsig
+                                Type =:= ?DNS_TYPE_RRSIG
                             end,
                             TestRR
                         ),

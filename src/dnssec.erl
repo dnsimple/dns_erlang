@@ -598,10 +598,9 @@ build_sig_input(
     {RRSigData, SigInput}.
 
 -spec preprocess_sig_input(sigalg(), [binary()]) -> binary().
+%% RFC2536§3: crypto:sign/4 and crypto:verify/5 hash the data for DSA themselves
 preprocess_sig_input(Alg, SigInput) when Alg =:= ?DNS_ALG_DSA orelse Alg =:= ?DNS_ALG_NSEC3DSA ->
-    NewSigInput = iolist_to_binary(SigInput),
-    NewSigInputSize = byte_size(NewSigInput),
-    <<NewSigInputSize:32, NewSigInput/binary>>;
+    iolist_to_binary(SigInput);
 preprocess_sig_input(Alg, SigInput) when
     Alg =:= ?DNS_ALG_NSEC3RSASHA1 orelse
         Alg =:= ?DNS_ALG_RSASHA1 orelse

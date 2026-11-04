@@ -9,6 +9,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Fixed
 
+- DNSSEC: DSA RRSIGs (algorithms 3 and 6) now validate elsewhere; every release signed and verified the signed data with its length in front of it (RFC 2536).
 - Wire: DHCID, OPENPGPKEY and WALLET records of class NONE, as an UPDATE deletes them with, encode as they decode.
 
 ## v5.1.2
