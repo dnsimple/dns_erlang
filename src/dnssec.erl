@@ -611,10 +611,11 @@ preprocess_sig_input(Alg, SigInput) when
     {Prefix, HashType} = choose_sha_prefix_and_type(Alg),
     Hash = crypto:hash(HashType, SigInput),
     <<Prefix/binary, Hash/binary>>;
+%% RFC6605§4: crypto:sign/4 and crypto:verify/5 hash the data for ECDSA themselves
 preprocess_sig_input(?DNS_ALG_ECDSAP256SHA256, SigInput) ->
-    crypto:hash(sha256, SigInput);
+    iolist_to_binary(SigInput);
 preprocess_sig_input(?DNS_ALG_ECDSAP384SHA384, SigInput) ->
-    crypto:hash(sha384, SigInput);
+    iolist_to_binary(SigInput);
 preprocess_sig_input(Alg, SigInput) when Alg =:= ?DNS_ALG_ED25519 orelse Alg =:= ?DNS_ALG_ED448 ->
     iolist_to_binary(SigInput).
 
