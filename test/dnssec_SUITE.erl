@@ -54,6 +54,7 @@ groups() ->
             ecdsa_sign_verify_test,
             ecdsa_p256_wire_format_test,
             ecdsa_p384_wire_format_test,
+            ecdsa_rfc6605_examples,
             sample_keys,
             ed25519_basic_test,
             ed448_basic_test
@@ -805,6 +806,66 @@ ecdsa_p384_wire_format_test(_Config) ->
         }
     }),
     ?assert(dnssec:verify_rrsig(RRSig, [RR], [DNSKey], #{now => 1500000})).
+
+%% RFC6605§6: the RFC's RRSIGs verify, and what its private keys sign verifies
+%% with its DNSKEYs. Signing and verifying hashed the signed data twice, so they
+%% agreed with each other and with no other implementation.
+ecdsa_rfc6605_examples(_Config) ->
+    Examples = [
+        {?DNS_ALG_ECDSAP256SHA256, ~"GU6SnQ/Ou+xC5RumuIUIuJZteXT2z0O/ok1s38Et6mQ=",
+            ~"""
+        example.net. 3600 IN DNSKEY 257 3 13 (
+            GojIhhXUN/u4v54ZQqGSnyhWJwaubCvTmeexv7bR6edb
+            krSqQpF64cYbcB7wNcP+e+MAnLr+Wi9xMWyQLc8NAA== )
+        www.example.net. 3600 IN A 192.0.2.1
+        www.example.net. 3600 IN RRSIG A 13 3 3600 (
+            20100909100439 20100812100439 55648 example.net.
+            qx6wLYqmh+l9oCKTN6qIc+bw6ya+KJ8oMz0YP107epXA
+            yGmt+3SNruPFKG7tZoLBLlUzGGus7ZwmwWep666VCw== )
+        """},
+        {?DNS_ALG_ECDSAP384SHA384,
+            ~"WURgWHCcYIYUPWgeLmiPY2DJJk02vgrmTfitxgqcL4vwW7BOrbawVmVe0d9V94SR",
+            ~"""
+        example.net. 3600 IN DNSKEY 257 3 14 (
+            xKYaNhWdGOfJ+nPrL8/arkwf2EY3MDJ+SErKivBVSum1
+            w/egsXvSADtNJhyem5RCOpgQ6K8X1DRSEkrbYQ+OB+v8
+            /uX45NBwY8rp65F6Glur8I/mlVNgF6W/qTI37m40 )
+        www.example.net. 3600 IN A 192.0.2.1
+        www.example.net. 3600 IN RRSIG A 14 3 3600 (
+            20100909102025 20100812102025 10771 example.net.
+            /L5hDKIvGDyI1fcARX3z65qrmPsVz73QD1Mr5CEqOiLP
+            95hxQouuroGCeZOvzFaxsT8Glr74hbavRKayJNuydCuz
+            WTSSPdz7wnqXL5bdcJzusdnI0RSMROxxwGipWcJm )
+        """}
+    ],
+    [
+        begin
+            {ok, RRs} = dns_zone:parse_string(Zone),
+            [DNSKey] = [RR || #dns_rr{type = ?DNS_TYPE_DNSKEY} = RR <- RRs],
+            [#dns_rr{data = SigData} = RRSig] = [RR || #dns_rr{type = ?DNS_TYPE_RRSIG} = RR <- RRs],
+            [#dns_rr{data = AData} = A] = [RR || #dns_rr{type = ?DNS_TYPE_A} = RR <- RRs],
+            #dns_rrdata_rrsig{
+                keytag = KeyTag,
+                signers_name = Signer,
+                inception = Inception,
+                expiration = Expiration
+            } = SigData,
+            Opts = #{now => Inception},
+            ?assert(dnssec:verify_rrsig(RRSig, [A], [DNSKey], Opts)),
+            Other = A#dns_rr{data = AData#dns_rrdata_a{ip = {192, 0, 2, 2}}},
+            ?assertNot(dnssec:verify_rrsig(RRSig, [Other], [DNSKey], Opts)),
+            Signed = dnssec:sign_rrset(
+                [A],
+                Signer,
+                KeyTag,
+                Alg,
+                base64:decode(PrivateKey),
+                #{inception => Inception, expiration => Expiration}
+            ),
+            ?assert(dnssec:verify_rrsig(Signed, [A], [DNSKey], Opts))
+        end
+     || {Alg, PrivateKey, Zone} <- Examples
+    ].
 
 zone(Config) ->
     Samples = proplists:get_value(dnssec_samples, Config),
