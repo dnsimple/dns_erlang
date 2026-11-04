@@ -106,7 +106,8 @@ groups() ->
             sig_read_and_written_as_rrsig,
             sig0_ends_the_additional_section,
             px_wire_known_answer,
-            px_bound_to_class_in
+            px_bound_to_class_in,
+            class_in_rdata_reencodes_in_class_none
         ]},
         {svcb, [parallel], [
             decode_encode_svcb_params,
@@ -2294,6 +2295,26 @@ px_bound_to_class_in(_) ->
     [
         ?assertEqual(Wire, dns_decode:decode_rrdata(Wire, Class, ?DNS_TYPE_PX, Wire), Class)
      || Class <- [?DNS_CLASS_CH, ?DNS_CLASS_HS]
+    ].
+
+%% RFC2136§2.5.4: an UPDATE deletes an RR with class NONE and the RR's RDATA, so
+%% the decoder reads the RDATA of a type bound to class IN in class NONE as well,
+%% and the encoder must write it back, or re-encoding a decoded UPDATE, or
+%% building the signed data over such an RRset, crashes
+class_in_rdata_reencodes_in_class_none(_) ->
+    [
+        begin
+            Data = dns_decode:decode_rrdata(Wire, ?DNS_CLASS_NONE, Type, Wire),
+            ?assert(is_tuple(Data), Type),
+            ?assertEqual(Wire, dns_encode:encode_rrdata(?DNS_CLASS_NONE, Data), Type)
+        end
+     || {Type, Wire} <- [
+            {?DNS_TYPE_A, <<192, 0, 2, 1>>},
+            {?DNS_TYPE_DHCID, <<1, 2, 3, 4>>},
+            {?DNS_TYPE_OPENPGPKEY, <<1, 2, 3, 4>>},
+            {?DNS_TYPE_WALLET, <<3, "abc">>},
+            {?DNS_TYPE_PX, <<10:16, 4, "net2", 2, "it", 0, 4, "C-it", 0>>}
+        ]
     ].
 
 %% RFC3403§4.1: the NAPTR REGEXP field is UTF-8. unicode:characters_to_binary/2

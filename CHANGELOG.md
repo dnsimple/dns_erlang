@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## main
 
+### Fixed
+
+- Wire: DHCID, OPENPGPKEY and WALLET records of class NONE, as an UPDATE deletes them with, encode as they decode.
+
 ## v5.1.2
 
 ### Fixed

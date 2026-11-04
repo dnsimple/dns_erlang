@@ -690,9 +690,13 @@ encode_rrdata_append(
     {<<Acc/binary, (5 + byte_size(Bin)):16, Type:16, KeyTag:16, Alg, Bin/binary>>, CompMap};
 encode_rrdata_append(Acc, Pos, _Class, #dns_rrdata_cname{dname = Name}, CompMap) ->
     append_dname_rdata(Acc, Pos, Name, CompMap);
-encode_rrdata_append(Acc, _Pos, ?DNS_CLASS_IN, #dns_rrdata_dhcid{data = Bin}, CompMap) ->
+encode_rrdata_append(Acc, _Pos, Class, #dns_rrdata_dhcid{data = Bin}, CompMap) when
+    ?CLASS_IS_IN(Class)
+->
     {<<Acc/binary, (byte_size(Bin)):16, Bin/binary>>, CompMap};
-encode_rrdata_append(Acc, _Pos, ?DNS_CLASS_IN, #dns_rrdata_openpgpkey{data = Bin}, CompMap) ->
+encode_rrdata_append(Acc, _Pos, Class, #dns_rrdata_openpgpkey{data = Bin}, CompMap) when
+    ?CLASS_IS_IN(Class)
+->
     {<<Acc/binary, (byte_size(Bin)):16, Bin/binary>>, CompMap};
 encode_rrdata_append(Acc, _Pos, _Class, #dns_rrdata_hhit{data = Bin}, CompMap) ->
     {<<Acc/binary, (byte_size(Bin)):16, Bin/binary>>, CompMap};
@@ -712,7 +716,9 @@ encode_rrdata_append(
     {<<Acc/binary, (4 + byte_size(Target)):16, Priority:16, Weight:16, Target/binary>>, CompMap};
 encode_rrdata_append(Acc, _Pos, _Class, #dns_rrdata_resinfo{data = Strings}, CompMap) ->
     append_text_rdata(Acc, Strings, CompMap);
-encode_rrdata_append(Acc, _Pos, ?DNS_CLASS_IN, #dns_rrdata_wallet{data = Strings}, CompMap) ->
+encode_rrdata_append(Acc, _Pos, Class, #dns_rrdata_wallet{data = Strings}, CompMap) when
+    ?CLASS_IS_IN(Class)
+->
     append_text_rdata(Acc, Strings, CompMap);
 encode_rrdata_append(
     Acc,
