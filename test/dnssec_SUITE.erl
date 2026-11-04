@@ -50,6 +50,7 @@ groups() ->
             canonical_form_matches_bind,
             signers_name_in_canonical_form,
             duplicate_rrs_signed_once,
+            verify_with_counted_down_ttl,
             ih_custom_hash_test,
             dsa_sign_verify_test,
             ecdsa_sign_verify_test,
@@ -702,6 +703,51 @@ duplicate_rrs_signed_once(_Config) ->
         Sign([MX(~"mail.example.test")]),
         Sign([MX(~"Mail.Example.Test"), MX(~"mail.example.test")])
     ).
+
+%% RFC4035§5.3.2: the signed data has the RRSIG's original TTL in every record,
+%% whatever TTL the records arrived with, as from a cache they arrive counted down,
+%% and the RRSIG with them. Unless the first record's TTL was the original TTL,
+%% verifying raised function_clause. The RRSIG is BIND's, from
+%% canonical_form_matches_bind/1.
+verify_with_counted_down_ttl(_Config) ->
+    {_PrivateKey, DNSKey} = bind_ed25519_key(),
+    HTTPS = fun(TTL) ->
+        #dns_rr{
+            name = ~"www.example.test",
+            type = ?DNS_TYPE_HTTPS,
+            ttl = TTL,
+            data = #dns_rrdata_https{
+                svc_priority = 1, target_name = ~"Svc.Example.Test", svc_params = #{}
+            }
+        }
+    end,
+    RRSig = #dns_rr{
+        name = ~"www.example.test",
+        type = ?DNS_TYPE_RRSIG,
+        ttl = 3600,
+        data = #dns_rrdata_rrsig{
+            type_covered = ?DNS_TYPE_HTTPS,
+            alg = ?DNS_ALG_ED25519,
+            labels = 3,
+            original_ttl = 3600,
+            inception = 1790812800,
+            expiration = 1793491200,
+            keytag = 29059,
+            signers_name = ~"example.test",
+            signature = base64:decode(
+                ~"RE6RL2LW1of41k02UJEzpaMgC0vYnsuH/BmTFWdRD2n3wDkqLzeR+YPSD7WZYATcM4jQqlQe2wvUVQAbbsxnBA=="
+            )
+        }
+    },
+    [
+        ?assert(
+            dnssec:verify_rrsig(RRSig#dns_rr{ttl = TTL}, [HTTPS(TTL)], [DNSKey], #{
+                now => 1790812801
+            }),
+            TTL
+        )
+     || TTL <- [3600, 3599, 60, 0, 7200]
+    ].
 
 %% The Ed25519 key, in the zone example.test, BIND signed the records with
 bind_ed25519_key() ->
