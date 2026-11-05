@@ -332,6 +332,7 @@ alg_name(Int) when is_integer(Int) ->
         ?DNS_ALG_ECDSAP384SHA384_NUMBER -> ?DNS_ALG_ECDSAP384SHA384_BSTR;
         ?DNS_ALG_ED25519_NUMBER -> ?DNS_ALG_ED25519_BSTR;
         ?DNS_ALG_ED448_NUMBER -> ?DNS_ALG_ED448_BSTR;
+        ?DNS_ALG_MLDSA44_NUMBER -> ?DNS_ALG_MLDSA44_BSTR;
         _ -> undefined
     end.
 
@@ -349,6 +350,7 @@ name_alg(Bin) when is_binary(Bin) ->
         ?DNS_ALG_ECDSAP384SHA384_BSTR -> ?DNS_ALG_ECDSAP384SHA384_NUMBER;
         ?DNS_ALG_ED25519_BSTR -> ?DNS_ALG_ED25519_NUMBER;
         ?DNS_ALG_ED448_BSTR -> ?DNS_ALG_ED448_NUMBER;
+        ?DNS_ALG_MLDSA44_BSTR -> ?DNS_ALG_MLDSA44_NUMBER;
         _ -> undefined
     end.
 

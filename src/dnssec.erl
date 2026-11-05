@@ -25,7 +25,13 @@ signing and verifying RRSIGs, and adding keytags to DNSKEY records.
 For example, the `sign_rr/6` function can be given a collection of resource records,
 the signer name, keytag, signing algorithm, private key, and a collection of options
 and it will return a list of RRSIG records. Supported signing algorithms include
-DSA, RSA (SHA1/SHA256/SHA512), ECDSA (P-256/P-384), Ed25519, and Ed448.
+DSA, RSA (SHA1/SHA256/SHA512), ECDSA (P-256/P-384), Ed25519, Ed448, and ML-DSA-44.
+
+ML-DSA-44 (algorithm 18) follows draft-westerbaan-dnssec-mldsa-04, which may still change.
+It needs OTP 28.1+ built against OpenSSL 3.5+; elsewhere, signing raises
+`{unsupported_algorithm, 18}` and verifying returns `false`. The private key is the 32-byte
+seed or the 2560-byte expanded key. Signatures are hedged, so they differ from the draft's
+deterministic example but verify the same.
 """.
 
 %% API
@@ -86,7 +92,8 @@ Unlike `t:dns:alg/0`, this type is restricted to algorithms valid for zone signi
     | ?DNS_ALG_ECDSAP256SHA256
     | ?DNS_ALG_ECDSAP384SHA384
     | ?DNS_ALG_ED25519
-    | ?DNS_ALG_ED448.
+    | ?DNS_ALG_ED448
+    | ?DNS_ALG_MLDSA44.
 -doc "NSEC3 hash algorithm identifier (currently only SHA-1).".
 -type nsec3_hashalg() :: ?DNSSEC_NSEC3_ALG_SHA1.
 -doc "Custom hash function for use with `ih/4`.".
@@ -464,6 +471,8 @@ sign(?DNS_ALG_ED25519, BaseSigInput, Key) ->
     crypto:sign(eddsa, none, BaseSigInput, [Key, ed25519]);
 sign(?DNS_ALG_ED448, BaseSigInput, Key) ->
     crypto:sign(eddsa, none, BaseSigInput, [Key, ed448]);
+sign(?DNS_ALG_MLDSA44, BaseSigInput, Key) ->
+    mldsa44_sign(BaseSigInput, Key);
 %% function_clause would put the key in the stacktrace, raise a custom error instead
 sign(Alg, _BaseSigInput, _Key) ->
     error({unsupported_algorithm, Alg}).
@@ -556,10 +565,38 @@ verify(?DNS_ALG_ED25519, Key, Signature, SigInput) ->
     crypto:verify(eddsa, none, SigInput, Signature, [Key, ed25519]);
 verify(?DNS_ALG_ED448, Key, Signature, SigInput) ->
     crypto:verify(eddsa, none, SigInput, Signature, [Key, ed448]);
+%% Other sizes go to the catch-all, as crypto raises for a wrong-size key
+verify(?DNS_ALG_MLDSA44, <<_:1312/binary>> = Key, <<_:2420/binary>> = Signature, SigInput) ->
+    mldsa44_verify(Key, Signature, SigInput);
 %% An algorithm this module does not implement, which an RRSIG off the wire can carry
 %% function_clause would put the key in the stacktrace, return `false` specifically
 verify(_Alg, _Key, _Signature, _SigInput) ->
     false.
+
+%% Pure ML-DSA with an empty context; OTP 27's crypto specs lack mldsa44
+-dialyzer({nowarn_function, [mldsa44_sign/2, mldsa44_verify/3]}).
+-spec mldsa44_sign(binary(), key()) -> binary().
+mldsa44_sign(SigInput, Key) ->
+    case has_mldsa44() of
+        true -> crypto:sign(mldsa44, none, SigInput, mldsa44_private_key(Key));
+        false -> error({unsupported_algorithm, ?DNS_ALG_MLDSA44})
+    end.
+
+%% crypto wants the private key tagged
+-spec mldsa44_private_key(key()) -> {seed | expandedkey, key()}.
+mldsa44_private_key(<<_:32/binary>> = Seed) ->
+    {seed, Seed};
+mldsa44_private_key(Key) ->
+    {expandedkey, Key}.
+
+-spec mldsa44_verify(binary(), binary(), binary()) -> boolean().
+mldsa44_verify(Key, Signature, SigInput) ->
+    has_mldsa44() andalso crypto:verify(mldsa44, none, SigInput, Signature, Key).
+
+%% OTP 28.1+ built against OpenSSL 3.5+
+-spec has_mldsa44() -> boolean().
+has_mldsa44() ->
+    lists:member(mldsa44, crypto:supports(public_keys)).
 
 -spec build_sig_input([dns:rr(), ...], dns:dname(), keytag(), dns:alg(), integer(), integer()) ->
     {dns:rrdata_rrsig(), binary()}.
@@ -631,6 +668,9 @@ preprocess_sig_input(?DNS_ALG_ECDSAP256SHA256, SigInput) ->
 preprocess_sig_input(?DNS_ALG_ECDSAP384SHA384, SigInput) ->
     iolist_to_binary(SigInput);
 preprocess_sig_input(Alg, SigInput) when Alg =:= ?DNS_ALG_ED25519 orelse Alg =:= ?DNS_ALG_ED448 ->
+    iolist_to_binary(SigInput);
+%% Unhashed, as for EdDSA
+preprocess_sig_input(?DNS_ALG_MLDSA44, SigInput) ->
     iolist_to_binary(SigInput);
 %% An algorithm this module does not implement, which verify/4 refuses and sign/3 raises for
 preprocess_sig_input(_Alg, SigInput) ->

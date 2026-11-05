@@ -71,6 +71,7 @@ groups() ->
             dnskey_dsa_alg_short_rdata_reencodes,
             dnskey_dsa_field_width_preserved,
             dnskey_rsa_non_canonical_kept_opaque,
+            mldsa44_rrdata,
             uri_decode_preserves_target,
             uri_decode_invalid_error,
             decode_encode_rrdata_wire_samples,
@@ -1514,6 +1515,33 @@ dnskey_rsa_non_canonical_kept_opaque(_) ->
             ?assertEqual(Rdata, dns_encode:encode_rrdata(?DNS_CLASS_IN, Decoded), Label)
         end
      || {Label, Rdata} <- Canonical ++ NonCanonical
+    ].
+
+%% draft-westerbaan-dnssec-mldsa-04§6's DNSKEY and RRSIG round-trip unchanged
+mldsa44_rrdata(_) ->
+    {ok, RRs} = dns_zone:parse_string(data_samples:mldsa44_example()),
+    [#dns_rrdata_dnskey{public_key = PublicKey} = DNSKey] =
+        [Data || #dns_rr{type = ?DNS_TYPE_DNSKEY, data = Data} <- RRs],
+    [#dns_rrdata_rrsig{signature = Signature} = RRSig] =
+        [Data || #dns_rr{type = ?DNS_TYPE_RRSIG, data = Data} <- RRs],
+    ?assertMatch(#dns_rrdata_dnskey{alg = ?DNS_ALG_MLDSA44, keytag = 59829}, DNSKey),
+    ?assertEqual(1312, byte_size(PublicKey)),
+    ?assertMatch(#dns_rrdata_rrsig{alg = ?DNS_ALG_MLDSA44, keytag = 59829}, RRSig),
+    ?assertEqual(2420, byte_size(Signature)),
+    CDNSKey = #dns_rrdata_cdnskey{
+        flags = 257, protocol = 3, alg = ?DNS_ALG_MLDSA44, public_key = PublicKey, keytag = 59829
+    },
+    [
+        begin
+            Bin = dns_encode:encode_rrdata(?DNS_CLASS_IN, Data),
+            ?assertEqual(Data, dns_decode:decode_rrdata(Bin, ?DNS_CLASS_IN, Type, Bin))
+        end
+     || {Type, Data} <- [
+            {?DNS_TYPE_DNSKEY, DNSKey},
+            {?DNS_TYPE_CDNSKEY, CDNSKey},
+            %% the wire's names have no final dot
+            {?DNS_TYPE_RRSIG, RRSig#dns_rrdata_rrsig{signers_name = ~"example.com"}}
+        ]
     ].
 
 %% RFC2536§2 gives P, G and Y one shared width S = 64 + 8T, T in 0..8, with T on

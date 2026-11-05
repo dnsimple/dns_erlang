@@ -1172,7 +1172,7 @@ Non-RR records (message, query, OPT records) use a two-level nested map format:
 **Fields:**
 
 - `type_covered` (`t:dns:uint16/0`): Direct value
-- `alg` (`3` | `5` | `6` | `7` | `8` | `10` | `13` | `14` | `15` | `16`): Direct value
+- `alg` (`3` | `5` | `6` | `7` | `8` | `10` | `13` | `14` | `15` | `16` | `18`): Direct value
 - `labels` (`t:dns:uint8/0`): Direct value
 - `original_ttl` (`t:dns:uint32/0`): Direct value
 - `expiration` (`t:dns:uint32/0`): Direct value
