@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## main
 
+## v5.2.0
+
 ### Added
 
 - DNSSEC: algorithm 18, ML-DSA-44 (draft-westerbaan-dnssec-mldsa-04), where `crypto` has it (OTP 28.1+ built against OpenSSL 3.5+).
