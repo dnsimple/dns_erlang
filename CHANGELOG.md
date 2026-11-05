@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## main
 
+### Fixed
+
+- Wire: a name is held to 255 octets counted on the wire (RFC 1035): decoding took 256 and refused 255 with escapes or a pointer, and compressing took 256 and over.
+
 ## v5.2.0
 
 ### Added
