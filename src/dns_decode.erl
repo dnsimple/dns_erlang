@@ -1260,13 +1260,15 @@ decode_nsec_types(Bin) ->
     do_decode_nsec_types(Bin, -1, []).
 
 %% RFC4034§4.1.2: window blocks come in increasing order; a repeat let the same
-%% type be counted twice, decoding to a types list with a duplicate in it.
+%% type be counted twice, decoding to a types list with a duplicate in it. A
+%% block's bitmap is at most 32 octets, the 256 types of its window: a longer one
+%% decoded as types of the windows after it, which encode in blocks of their own.
 -spec do_decode_nsec_types(binary(), integer(), [non_neg_integer()]) -> [non_neg_integer()].
 do_decode_nsec_types(<<>>, _PrevWindow, Types) ->
     lists:reverse(Types);
 do_decode_nsec_types(
     <<WindowNum:8, BMPLength:8, BMP:BMPLength/binary, Rest/binary>>, PrevWindow, Types
-) when PrevWindow < WindowNum ->
+) when PrevWindow < WindowNum, BMPLength =< 32 ->
     BaseNo = WindowNum * 256,
     NewTypes = decode_bmp_bytes(BMP, BaseNo, Types),
     do_decode_nsec_types(Rest, WindowNum, NewTypes);

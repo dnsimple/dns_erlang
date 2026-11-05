@@ -84,6 +84,7 @@ groups() ->
             decode_encode_rrdata_wire_samples,
             decode_encode_rrdata,
             encode_nsec_type_bitmaps,
+            decode_type_bitmap_window_over_32_octets,
             decode_minfo_in_message,
             loc_wire_reference_point,
             loc_precision_range,
@@ -1307,6 +1308,50 @@ encode_nsec_type_bitmaps(_) ->
         ?DNS_CLASS_IN, #dns_rrdata_nxt{dname = <<"a">>, types = [0, 5]}
     ),
     ?assertEqual(<<2#10000100>>, NxtBMP).
+
+%% RFC4034§4.1.2: a window block's bitmap is 1 to 32 octets, for the 256 types
+%% of its window. A longer one decoded its octets past the 32nd as types of the
+%% windows after it, which re-encode as blocks of their own, so the RDATA did not
+%% round-trip, and a type the next block also held was listed twice. Wire
+%% fidelity failed now and then on such a CSYNC. NSEC and NSEC3 share the bitmap.
+decode_type_bitmap_window_over_32_octets(_) ->
+    %% Window 0 with Len octets, whose last bit is set: type 8 * Len - 1
+    Block = fun(Len) -> <<0, Len, 0:((Len - 1) * 8), 1>> end,
+    Rdata = fun(Bitmap) ->
+        [
+            {?DNS_TYPE_NSEC, <<0, Bitmap/binary>>},
+            {?DNS_TYPE_NSEC3, <<1, 0, 0:16, 0, 1, 16#AB, Bitmap/binary>>},
+            {?DNS_TYPE_CSYNC, <<1:32, 0:16, Bitmap/binary>>}
+        ]
+    end,
+    Types = fun
+        (#dns_rrdata_nsec{types = T}) -> T;
+        (#dns_rrdata_nsec3{types = T}) -> T;
+        (#dns_rrdata_csync{types = T}) -> T
+    end,
+    [
+        begin
+            Data = dns_decode:decode_rrdata(<<>>, ?DNS_CLASS_IN, Type, Bin),
+            ?assertEqual([255], Types(Data), Type),
+            ?assertEqual(Bin, dns_encode:encode_rrdata(?DNS_CLASS_IN, Data), Type)
+        end
+     || {Type, Bin} <- Rdata(Block(32))
+    ],
+    %% Type 263 is bit 7 of window 1, here once in window 0's 33rd octet and once
+    %% in a block of window 1 of its own
+    Over = [Block(33), <<(Block(33))/binary, 1, 1, 1>>, Block(255)],
+    [
+        ?assertError(
+            bad_nsec_type_bitmap, dns_decode:decode_rrdata(<<>>, ?DNS_CLASS_IN, Type, Bin), Type
+        )
+     || Bitmap <- Over, {Type, Bin} <- Rdata(Bitmap)
+    ],
+    %% In a message, as for windows out of order
+    {_, CSYNC} = lists:keyfind(?DNS_TYPE_CSYNC, 1, Rdata(Block(33))),
+    Msg =
+        <<1:16, 0:16, 0:16, 1:16, 0:16, 0:16, 0, ?DNS_TYPE_CSYNC:16, ?DNS_CLASS_IN:16, 0:32,
+            (byte_size(CSYNC)):16, CSYNC/binary>>,
+    ?assertMatch({formerr, _, _}, dns:decode_message(Msg)).
 
 %% RFC1876§2: latitude/longitude are unsigned 32-bit thousandths of an arcsecond
 %% where 2^31 -- not 2^31-1 -- encodes the equator/prime meridian. Encoding and

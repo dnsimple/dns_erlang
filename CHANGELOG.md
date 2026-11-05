@@ -11,6 +11,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Wire: a name is held to 255 octets counted on the wire (RFC 1035): decoding took 256 and refused 255 with escapes or a pointer, and compressing took 256 and over.
 - Wire: encoding RDATA over 65535 octets raises `{rdata_too_long, Size}`, where it wrapped RDLENGTH.
+- Wire: NSEC, NSEC3 and CSYNC RDATA with a type bitmap window over 32 octets is malformed, where it decoded as types of the next windows.
 
 ## v5.2.0
 
