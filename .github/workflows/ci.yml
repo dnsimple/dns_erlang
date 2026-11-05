@@ -38,13 +38,21 @@ jobs:
       matrix:
         otp: ['29', '28', '27']
         rebar3: ['3.28']
-    runs-on: ubuntu-latest
+    # Its OTP builds link OpenSSL 3.5, which ML-DSA needs
+    runs-on: ubuntu-26.04
+    env:
+      # The ML-DSA tests fail instead of skipping
+      DNS_ERLANG_REQUIRE_PQC: ${{ matrix.otp != '27' }}
     steps:
       - uses: actions/checkout@v7.0.1
       - uses: erlef/setup-beam@v1.24.1
         with:
           otp-version: ${{ matrix.otp }}
           rebar3-version: ${{matrix.rebar3}}
+      - name: Show crypto's library and public key algorithms
+        run: >-
+          erl -noshell -eval
+          'io:format("~p~n~p~n", [crypto:info_lib(), crypto:supports(public_keys)]), halt().'
       - uses: actions/cache@v6.1.0
         with:
           path: |
