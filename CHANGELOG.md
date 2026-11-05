@@ -7,6 +7,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## main
 
+## v5.1.3
+
 ### Fixed
 
 - DNSSEC: `verify_rrsig/4` returns false for an RRSIG in an algorithm it does not implement, where it raised `function_clause`, and signing in one raises `{unsupported_algorithm, Alg}`.
