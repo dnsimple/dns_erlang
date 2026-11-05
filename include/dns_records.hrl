@@ -328,7 +328,8 @@
         | ?DNS_ALG_ECDSAP256SHA256
         | ?DNS_ALG_ECDSAP384SHA384
         | ?DNS_ALG_ED25519
-        | ?DNS_ALG_ED448,
+        | ?DNS_ALG_ED448
+        | ?DNS_ALG_MLDSA44,
     labels :: dns:uint8(),
     original_ttl :: dns:uint32(),
     expiration :: dns:uint32(),

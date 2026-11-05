@@ -160,8 +160,11 @@ alg_terms(_) ->
         ?DNS_ALG_RSASHA512,
         ?DNS_ALG_ECDSAP256SHA256_NUMBER,
         ?DNS_ALG_ECDSAP384SHA384_NUMBER,
-        ?DNS_ALG_ED25519_NUMBER
+        ?DNS_ALG_ED25519_NUMBER,
+        ?DNS_ALG_MLDSA44_NUMBER
     ],
+    %% draft-westerbaan-dnssec-mldsa-04§8
+    ?assertEqual(~"MLDSA44", dns_names:alg_name(?DNS_ALG_MLDSA44_NUMBER)),
     ?assertEqual(undefined, dns_names:alg_name(?UNKNOWN_INT)),
     ?assertEqual(undefined, dns_names:name_alg(?UNKNOWN_BIN)),
     [?assert(is_binary(dns_names:alg_name(N))) || N <- Cases],
