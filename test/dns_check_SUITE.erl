@@ -326,9 +326,10 @@ rrdata_loc_coordinates_must_fit(_) ->
     [?assertNot(dns_check:rrdata(D), D) || D <- DoNotFit].
 
 %% A length written ahead of its field wraps like any other integer: a 256-byte
-%% CAA tag or NSEC3 salt is announced as 0 bytes, and RDATA over 65535 bytes gets
-%% an RDLENGTH that wraps (RFC1035§3.2.1). HINFO's CPU and OS are one
-%% <character-string> each, which the encoder would split into several.
+%% CAA tag or NSEC3 salt is announced as 0 bytes. RDATA over 65535 bytes would
+%% get an RDLENGTH that wraps (RFC1035§3.2.1), which the encoder refuses. HINFO's
+%% CPU and OS are one <character-string> each, which the encoder would split
+%% into several.
 rrdata_lengths_must_fit(_) ->
     Bytes = fun(Size) -> binary:copy(<<"a">>, Size) end,
     Caa = fun(Tag) -> #dns_rrdata_caa{flags = 0, tag = Tag, value = <<>>} end,

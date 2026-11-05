@@ -175,6 +175,9 @@ encode_message_tsig_add(
                 <<AlgBin/binary, Time:48, Fudge:16, MS:16, MAC:MS/binary, OrigMsgId:16, Err:16,
                     OLen:16, Other:OLen/binary>>,
             TSIGDataSize = byte_size(TSIGData),
+            %% RFC1035§3.2.1: RDLENGTH is 16 bits, and Other's 16-bit length, which wraps
+            %% first, is within it
+            TSIGDataSize =< 16#FFFF orelse erlang:error({rdata_too_long, TSIGDataSize}),
             TSigRR =
                 <<EncodedName/binary, ?DNS_TYPE_TSIG:16, ?DNS_CLASS_ANY:16, 0:32, TSIGDataSize:16,
                     TSIGData/binary>>,

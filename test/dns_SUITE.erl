@@ -47,7 +47,8 @@ groups() ->
             truncated_query_enforces_opt_record,
             encode_default_message_question_offset_correct,
             encode_default_message_additional_offset_correct,
-            encode_llq_truncates_instead_of_crashing
+            encode_llq_truncates_instead_of_crashing,
+            rdata_over_65535_octets_refused
         ]},
         {txt_records, [parallel], [
             long_txt,
@@ -583,6 +584,50 @@ encode_llq_truncates_instead_of_crashing(_) ->
         #dns_message{tc = false, qc = 1, anc = 0, auc = 1, adc = 1},
         dns:decode_message(FitsBin)
     ).
+
+%% RFC1035§3.2.1: RDLENGTH is 16 bits. RDATA over 65535 octets was written with
+%% its length wrapped, announcing fewer octets than followed, so the message
+%% decoded as trailing garbage. encode_message/1 and encode_rrdata/2 refuse it,
+%% and so do the OPT RR's options and a TSIG RR's Other. The bounded encoder, as
+%% erldns uses it, already left out a record too large for the message.
+rdata_over_65535_octets_refused(_) ->
+    Bytes = fun(Size) -> binary:copy(<<"a">>, Size) end,
+    %% 255 strings of 255 octets and one of Last, each after its length octet
+    Txt = fun(Last) -> #dns_rrdata_txt{txt = lists:duplicate(255, Bytes(255)) ++ [Bytes(Last)]} end,
+    ?assertEqual(65535, byte_size(dns_encode:encode_rrdata(?DNS_CLASS_IN, Txt(254)))),
+    ?assertError({rdata_too_long, 65536}, dns_encode:encode_rrdata(?DNS_CLASS_IN, Txt(255))),
+    Msg = fun(Last) ->
+        RR = #dns_rr{name = ~"example", type = ?DNS_TYPE_TXT, ttl = 0, data = Txt(Last)},
+        #dns_message{anc = 1, answers = [RR]}
+    end,
+    #dns_message{answers = [#dns_rr{data = Fits}]} = dns:decode_message(
+        dns:encode_message(Msg(254))
+    ),
+    ?assertEqual(Txt(254), Fits),
+    ?assertError({rdata_too_long, 65536}, dns:encode_message(Msg(255))),
+    ?assertMatch(
+        #dns_message{tc = true, anc = 0},
+        dns:decode_message(dns:encode_message(Msg(255), #{max_size => 65535}))
+    ),
+    %% The OPT RR's RDATA is its options, each a 4-octet header and its data
+    Opt = fun(Size) ->
+        #dns_message{
+            adc = 1,
+            additional = [#dns_optrr{data = [#dns_opt_unknown{id = 65001, bin = Bytes(Size)}]}]
+        }
+    end,
+    #dns_message{additional = [#dns_optrr{data = [#dns_opt_unknown{bin = Bin}]}]} =
+        dns:decode_message(dns:encode_message(Opt(65531))),
+    ?assertEqual(65531, byte_size(Bin)),
+    ?assertError({rdata_too_long, 65536}, dns:encode_message(Opt(65532))),
+    %% The TSIG RR's RDATA: the algorithm's name, 16 fixed octets, the MAC and
+    %% Other. hmac-sha256's name is 13 octets and its MAC 32, so Other's 65474
+    %% octets fill it to 65535
+    Tsig = fun(Size) ->
+        #{tsig => #{alg => ?DNS_TSIG_ALG_SHA256, name => ~"key.name", other => Bytes(Size)}}
+    end,
+    ?assertMatch({_, _}, dns:encode_message(Msg(1), Tsig(65474))),
+    ?assertError({rdata_too_long, 65536}, dns:encode_message(Msg(1), Tsig(65475))).
 
 message_other(_) ->
     QName = <<"i            .txt.example.org">>,
