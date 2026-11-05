@@ -430,7 +430,7 @@ sign_rrset(
         data = Data
     }.
 
--spec sign(sigalg(), binary(), key()) -> binary().
+-spec sign(dns:uint8(), binary(), key()) -> binary().
 sign(Alg, BaseSigInput, Key) when Alg =:= ?DNS_ALG_DSA orelse Alg =:= ?DNS_ALG_NSEC3DSA ->
     %% RFC2536: Key must be [P, Q, G, X] as integers (crypto key format).
     DerSig = crypto:sign(dss, sha, BaseSigInput, Key),
@@ -463,9 +463,17 @@ sign(?DNS_ALG_ECDSAP384SHA384, BaseSigInput, Key) ->
 sign(?DNS_ALG_ED25519, BaseSigInput, Key) ->
     crypto:sign(eddsa, none, BaseSigInput, [Key, ed25519]);
 sign(?DNS_ALG_ED448, BaseSigInput, Key) ->
-    crypto:sign(eddsa, none, BaseSigInput, [Key, ed448]).
+    crypto:sign(eddsa, none, BaseSigInput, [Key, ed448]);
+%% function_clause would put the key in the stacktrace, raise a custom error instead
+sign(Alg, _BaseSigInput, _Key) ->
+    error({unsupported_algorithm, Alg}).
 
--doc "Provides primitive verification of an RR set.".
+-doc """
+Provides primitive verification of an RR set.
+
+Returns `false` when no DNSKEY of the RRSIG's algorithm and signer verifies it, when the time is
+outside the RRSIG's validity period, and when its algorithm is one this module does not implement.
+""".
 -spec verify_rrsig(dns:rr(), [dns:rr()], [dns:rr()], verify_rrsig_opts()) -> boolean().
 verify_rrsig(#dns_rr{type = ?DNS_TYPE_RRSIG, data = Data}, RRs, RRDNSKey, Opts) ->
     Now = maps:get(now, Opts, erlang:system_time(second)),
@@ -513,7 +521,7 @@ verify_rrsig(#dns_rr{type = ?DNS_TYPE_RRSIG, data = Data}, RRs, RRDNSKey, Opts) 
             lists:any(fun({_KeyTag, Alg, Key}) -> verify(Alg, Key, Signature, SigInput) end, Keys)
     end.
 
--spec verify(sigalg(), key(), binary(), binary()) -> boolean().
+-spec verify(dns:uint8(), key(), binary(), binary()) -> boolean().
 verify(Alg, Key, Signature, SigInput) when Alg =:= ?DNS_ALG_DSA orelse Alg =:= ?DNS_ALG_NSEC3DSA ->
     <<_T, R:20/unit:8, S:20/unit:8>> = Signature,
     AsnSig = public_key:der_encode('Dss-Sig-Value', #'Dss-Sig-Value'{r = R, s = S}),
@@ -547,7 +555,11 @@ verify(?DNS_ALG_ECDSAP384SHA384, Key, Signature, SigInput) ->
 verify(?DNS_ALG_ED25519, Key, Signature, SigInput) ->
     crypto:verify(eddsa, none, SigInput, Signature, [Key, ed25519]);
 verify(?DNS_ALG_ED448, Key, Signature, SigInput) ->
-    crypto:verify(eddsa, none, SigInput, Signature, [Key, ed448]).
+    crypto:verify(eddsa, none, SigInput, Signature, [Key, ed448]);
+%% An algorithm this module does not implement, which an RRSIG off the wire can carry
+%% function_clause would put the key in the stacktrace, return `false` specifically
+verify(_Alg, _Key, _Signature, _SigInput) ->
+    false.
 
 -spec build_sig_input([dns:rr(), ...], dns:dname(), keytag(), dns:alg(), integer(), integer()) ->
     {dns:rrdata_rrsig(), binary()}.
@@ -600,7 +612,7 @@ build_sig_input(
     SigInput = preprocess_sig_input(Alg, SigInput0),
     {RRSigData, SigInput}.
 
--spec preprocess_sig_input(sigalg(), [binary()]) -> binary().
+-spec preprocess_sig_input(dns:uint8(), [binary()]) -> binary().
 %% RFC2536§3: crypto:sign/4 and crypto:verify/5 hash the data for DSA themselves
 preprocess_sig_input(Alg, SigInput) when Alg =:= ?DNS_ALG_DSA orelse Alg =:= ?DNS_ALG_NSEC3DSA ->
     iolist_to_binary(SigInput);
@@ -619,6 +631,9 @@ preprocess_sig_input(?DNS_ALG_ECDSAP256SHA256, SigInput) ->
 preprocess_sig_input(?DNS_ALG_ECDSAP384SHA384, SigInput) ->
     iolist_to_binary(SigInput);
 preprocess_sig_input(Alg, SigInput) when Alg =:= ?DNS_ALG_ED25519 orelse Alg =:= ?DNS_ALG_ED448 ->
+    iolist_to_binary(SigInput);
+%% An algorithm this module does not implement, which verify/4 refuses and sign/3 raises for
+preprocess_sig_input(_Alg, SigInput) ->
     iolist_to_binary(SigInput).
 
 -spec choose_sha_prefix_and_type(sigalg()) -> {binary(), sha | sha256 | sha512}.
