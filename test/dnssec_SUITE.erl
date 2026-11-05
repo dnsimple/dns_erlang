@@ -60,7 +60,10 @@ groups() ->
             ecdsa_rfc6605_examples,
             sample_keys,
             ed25519_basic_test,
-            ed448_basic_test
+            ed448_basic_test,
+            mldsa44_draft_example,
+            mldsa44_expanded_key,
+            mldsa44_malformed_does_not_verify
         ]}
     ].
 
@@ -1250,6 +1253,144 @@ ed448_basic_test(_Config) ->
             #{now => 1500000}
         )
     ).
+
+%% draft-westerbaan-dnssec-mldsa-04§6: the draft's RRSIG verifies, and so does one signed
+%% here with its seed. Without ML-DSA, verifying gives false and signing raises.
+mldsa44_draft_example(_Config) ->
+    {DNSKey, RRSig, MX} = mldsa44_draft_records(),
+    #dns_rr{data = SigData} = RRSig,
+    #dns_rr{data = MXData} = MX,
+    #dns_rrdata_rrsig{
+        keytag = KeyTag,
+        signers_name = Signer,
+        inception = Inception,
+        expiration = Expiration,
+        signature = Signature
+    } = SigData,
+    Opts = #{now => Inception},
+    Sign = fun() ->
+        dnssec:sign_rrset(
+            [MX],
+            Signer,
+            KeyTag,
+            ?DNS_ALG_MLDSA44,
+            list_to_binary(lists:seq(0, 31)),
+            #{inception => Inception, expiration => Expiration}
+        )
+    end,
+    case has_mldsa44() of
+        true ->
+            ?assert(dnssec:verify_rrsig(RRSig, [MX], [DNSKey], Opts)),
+            Other = MX#dns_rr{data = MXData#dns_rrdata_mx{preference = 20}},
+            ?assertNot(dnssec:verify_rrsig(RRSig, [Other], [DNSKey], Opts)),
+            <<First, Rest/binary>> = Signature,
+            Flipped = SigData#dns_rrdata_rrsig{signature = <<(First bxor 1), Rest/binary>>},
+            ?assertNot(dnssec:verify_rrsig(RRSig#dns_rr{data = Flipped}, [MX], [DNSKey], Opts)),
+            #dns_rr{data = SignedData} = Signed = Sign(),
+            ?assertEqual(
+                SigData#dns_rrdata_rrsig{signature = <<>>},
+                SignedData#dns_rrdata_rrsig{signature = <<>>}
+            ),
+            ?assert(dnssec:verify_rrsig(Signed, [MX], [DNSKey], Opts));
+        false ->
+            ?assertNot(dnssec:verify_rrsig(RRSig, [MX], [DNSKey], Opts)),
+            ?assertError({unsupported_algorithm, ?DNS_ALG_MLDSA44}, Sign()),
+            no_mldsa44()
+    end.
+
+%% The 2560-byte expanded key from crypto:generate_key/2 signs too
+mldsa44_expanded_key(_Config) ->
+    case has_mldsa44() of
+        true ->
+            {PublicKey, PrivateKey} = crypto:generate_key(mldsa44, []),
+            ?assertEqual(2560, byte_size(PrivateKey)),
+            A = #dns_rr{
+                name = ~"a.example.test",
+                type = ?DNS_TYPE_A,
+                ttl = 3600,
+                data = #dns_rrdata_a{ip = {192, 0, 2, 1}}
+            },
+            DNSKey = dnssec:add_keytag_to_dnskey(#dns_rr{
+                name = ~"example.test",
+                type = ?DNS_TYPE_DNSKEY,
+                ttl = 3600,
+                data = #dns_rrdata_dnskey{
+                    flags = 256,
+                    protocol = 3,
+                    alg = ?DNS_ALG_MLDSA44,
+                    public_key = PublicKey,
+                    keytag = 0
+                }
+            }),
+            #dns_rr{data = #dns_rrdata_dnskey{keytag = KeyTag}} = DNSKey,
+            Signed = dnssec:sign_rrset(
+                [A],
+                ~"example.test",
+                KeyTag,
+                ?DNS_ALG_MLDSA44,
+                PrivateKey,
+                #{inception => 1790812800, expiration => 1793491200}
+            ),
+            ?assert(dnssec:verify_rrsig(Signed, [A], [DNSKey], #{now => 1790812801}));
+        false ->
+            no_mldsa44()
+    end.
+
+%% Wrong-size or random keys and signatures never verify
+mldsa44_malformed_does_not_verify(_Config) ->
+    {#dns_rr{data = KeyData} = DNSKey, #dns_rr{data = SigData} = RRSig, MX} =
+        mldsa44_draft_records(),
+    #dns_rrdata_dnskey{public_key = Key} = KeyData,
+    #dns_rrdata_rrsig{inception = Inception, signature = Signature} = SigData,
+    Resize = fun
+        (Bin, Size) when Size =< byte_size(Bin) -> binary:part(Bin, 0, Size);
+        (Bin, Size) -> <<Bin/binary, 0:((Size - byte_size(Bin)) * 8)>>
+    end,
+    Keys = [Resize(Key, Size) || Size <- [0, 32, 1311, 1313, 2560]],
+    Signatures = [Resize(Signature, Size) || Size <- [0, 2419, 2421]],
+    Opts = #{now => Inception},
+    [
+        ?assertNot(
+            dnssec:verify_rrsig(
+                RRSig,
+                [MX],
+                [DNSKey#dns_rr{data = KeyData#dns_rrdata_dnskey{public_key = K}}],
+                Opts
+            ),
+            byte_size(K)
+        )
+     || K <- [crypto:strong_rand_bytes(1312) | Keys]
+    ],
+    [
+        ?assertNot(
+            dnssec:verify_rrsig(
+                RRSig#dns_rr{data = SigData#dns_rrdata_rrsig{signature = S}},
+                [MX],
+                [DNSKey],
+                Opts
+            ),
+            byte_size(S)
+        )
+     || S <- [crypto:strong_rand_bytes(2420) | Signatures]
+    ].
+
+%% The DNSKEY, RRSIG and MX of draft-westerbaan-dnssec-mldsa-04§6
+mldsa44_draft_records() ->
+    {ok, RRs} = dns_zone:parse_string(data_samples:mldsa44_example()),
+    [DNSKey] = [RR || #dns_rr{type = ?DNS_TYPE_DNSKEY} = RR <- RRs],
+    [RRSig] = [RR || #dns_rr{type = ?DNS_TYPE_RRSIG} = RR <- RRs],
+    [MX] = [RR || #dns_rr{type = ?DNS_TYPE_MX} = RR <- RRs],
+    {DNSKey, RRSig, MX}.
+
+has_mldsa44() ->
+    lists:member(mldsa44, crypto:supports(public_keys)).
+
+%% CI sets DNS_ERLANG_REQUIRE_PQC where crypto should have ML-DSA
+no_mldsa44() ->
+    case os:getenv("DNS_ERLANG_REQUIRE_PQC") of
+        "true" -> ct:fail("crypto has no mldsa44, and DNS_ERLANG_REQUIRE_PQC is true");
+        _ -> {comment, "crypto has no mldsa44"}
+    end.
 
 test_sample_key(Alg, Proplist) ->
     PrivKey = helper_samplekeypl_to_privkey(Proplist),
