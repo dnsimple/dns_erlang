@@ -30,6 +30,7 @@ functionality such as socket handling or query resolution.
 - **[RFC 4701](https://tools.ietf.org/html/rfc4701)**: A DNS Resource Record (RR) for Encoding Dynamic Host Configuration Protocol (DHCP) Information (DHCID RR)
 - **[RFC 5001](https://tools.ietf.org/html/rfc5001)**: DNS Name Server Identifier (NSID) Option
 - **[RFC 5155](https://tools.ietf.org/html/rfc5155)**: DNS Security (DNSSEC) Hashed Authenticated Denial of Existence
+- **[RFC 5933](https://tools.ietf.org/html/rfc5933)**: Use of GOST Signature Algorithms in DNSKEY and RRSIG Resource Records for DNSSEC
 - **[RFC 6605](https://tools.ietf.org/html/rfc6605)**: Elliptic Curve Digital Signature Algorithm (DSA) for DNSSEC
 - **[RFC 6672](https://tools.ietf.org/html/rfc6672)**: DNAME Redirection in the DNS
 - **[RFC 6698](https://tools.ietf.org/html/rfc6698)**: The DNS-Based Authentication of Named Entities (DANE) Transport Layer Security (TLS) Protocol: TLSA
@@ -53,6 +54,8 @@ functionality such as socket handling or query resolution.
 - **[RFC 8976](https://tools.ietf.org/html/rfc8976)**: Message Digest for DNS Zones
 - **[RFC 9077](https://tools.ietf.org/html/rfc9077)**: NSEC and NSEC3 TTL Values
 - **[RFC 9460](https://tools.ietf.org/html/rfc9460)**: Service Binding and Parameter Specification via the DNS (DNS SVCB and HTTPS Resource Records)
+- **[RFC 9558](https://tools.ietf.org/html/rfc9558)**: Use of GOST 2012 Signature Algorithms in DNSKEY and RRSIG Resource Records for DNSSEC
+- **[RFC 9563](https://tools.ietf.org/html/rfc9563)**: SM2 Digital Signature Algorithm for DNSSEC
 - **[RFC 9606](https://tools.ietf.org/html/rfc9606)**: DNS Resolver Information
 - **[RFC 9619](https://tools.ietf.org/html/rfc9619)**: In the DNS, QDCOUNT Is (Usually) One
 - **[RFC 9859](https://tools.ietf.org/html/rfc9859)**: Generalized DNS Notifications

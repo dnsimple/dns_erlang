@@ -152,19 +152,34 @@ type_name(_) ->
 
 alg_terms(_) ->
     Cases = [
+        ?DNS_ALG_RSAMD5,
         ?DNS_ALG_DSA,
         ?DNS_ALG_NSEC3DSA,
         ?DNS_ALG_RSASHA1,
         ?DNS_ALG_NSEC3RSASHA1,
         ?DNS_ALG_RSASHA256,
         ?DNS_ALG_RSASHA512,
+        ?DNS_ALG_ECCGOST,
         ?DNS_ALG_ECDSAP256SHA256_NUMBER,
         ?DNS_ALG_ECDSAP384SHA384_NUMBER,
         ?DNS_ALG_ED25519_NUMBER,
-        ?DNS_ALG_MLDSA44_NUMBER
+        ?DNS_ALG_ED448,
+        ?DNS_ALG_SM2SM3,
+        ?DNS_ALG_MLDSA44_NUMBER,
+        ?DNS_ALG_ECCGOST12
     ],
-    %% draft-westerbaan-dnssec-mldsa-04§8
-    ?assertEqual(~"MLDSA44", dns_names:alg_name(?DNS_ALG_MLDSA44_NUMBER)),
+    %% The mnemonics of IANA's DNS Security Algorithm Numbers registry. MLDSA44 is
+    %% draft-westerbaan-dnssec-mldsa-04§8, SM2SM3 RFC9563§7, ECC-GOST12 RFC9558§7.
+    [
+        ?assertEqual(Name, dns_names:alg_name(N))
+     || {N, Name} <- [
+            {1, ~"RSAMD5"},
+            {12, ~"ECC-GOST"},
+            {17, ~"SM2SM3"},
+            {18, ~"MLDSA44"},
+            {23, ~"ECC-GOST12"}
+        ]
+    ],
     ?assertEqual(undefined, dns_names:alg_name(?UNKNOWN_INT)),
     ?assertEqual(undefined, dns_names:name_alg(?UNKNOWN_BIN)),
     [?assert(is_binary(dns_names:alg_name(N))) || N <- Cases],

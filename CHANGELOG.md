@@ -7,6 +7,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## main
 
+### Added
+
+- DNSSEC algorithms 1 (RSAMD5), 12 (ECC-GOST), 17 (SM2SM3) and 23 (ECC-GOST12) have names and constants in `dns_terms.hrl`.
+
 ### Fixed
 
 - Wire: a name is held to 255 octets counted on the wire (RFC 1035): decoding took 256 and refused 255 with escapes or a pointer, and compressing took 256 and over.
