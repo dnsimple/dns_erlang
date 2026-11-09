@@ -1,143 +1,134 @@
 -module(dns_zone_decode).
 -moduledoc false.
 
-% 4KB, a good default
--define(CHUNK_SIZE, 4096).
-%% calendar:datetime_to_gregorian_seconds({{1970, 1, 1}, {0, 0, 0}})
--define(UNIX_EPOCH_GREGORIAN_SECONDS, 62_167_219_200).
+%% Reads zone files (RFC 1035 §5) straight from binaries. An entry is a line, or the
+%% lines a pair of parentheses joins, and is split into fields: words, and quoted
+%% strings without their quotes. A field keeps its escapes until the reader of what
+%% it holds decodes them, as a name, a string and a number each read them their own
+%% way: RDATA is read field by field, as the type of the record has it, so a salt
+%% of digits is read as hex, and a name keeps an escaped dot.
 
 -include_lib("dns_erlang/include/dns.hrl").
 
 -export([parse_file/2, parse_string/2, format_error/1]).
 
-%% Type references from dns_zone
--type parse_options() :: dns_zone:parse_options().
--type error_detail() :: dns_zone:error_detail().
--type error_location() :: dns_zone:error_location().
--type error_type() :: dns_zone:error_type().
+%% calendar:datetime_to_gregorian_seconds({{1970, 1, 1}, {0, 0, 0}})
+-define(UNIX_EPOCH_GREGORIAN_SECONDS, 62_167_219_200).
+-define(IS_DIGIT(C), ($0 =< C andalso C =< $9)).
+%% A field a reader cannot read, or an entry a zone file cannot hold
+-define(FAIL(Reason), erlang:error({?MODULE, Reason})).
+%% RFC1876§3: the size and precisions a LOC record has when they are left out, in cm
+-define(LOC_DEFAULT_SIZE, 100).
+-define(LOC_DEFAULT_HORIZ, 1000000).
+-define(LOC_DEFAULT_VERT, 1000).
+%% The types whose RDATA has a presentation format read here; the others are read
+%% only in RFC 3597's generic form
+-define(READABLE_TYPES, [
+    ?DNS_TYPE_A,
+    ?DNS_TYPE_AAAA,
+    ?DNS_TYPE_AFSDB,
+    ?DNS_TYPE_AMTRELAY,
+    ?DNS_TYPE_BRID,
+    ?DNS_TYPE_CAA,
+    ?DNS_TYPE_CDNSKEY,
+    ?DNS_TYPE_CDS,
+    ?DNS_TYPE_CERT,
+    ?DNS_TYPE_CNAME,
+    ?DNS_TYPE_CSYNC,
+    ?DNS_TYPE_DHCID,
+    ?DNS_TYPE_DLV,
+    ?DNS_TYPE_DNAME,
+    ?DNS_TYPE_DNSKEY,
+    ?DNS_TYPE_DS,
+    ?DNS_TYPE_DSYNC,
+    ?DNS_TYPE_EUI48,
+    ?DNS_TYPE_EUI64,
+    ?DNS_TYPE_HHIT,
+    ?DNS_TYPE_HINFO,
+    ?DNS_TYPE_HIP,
+    ?DNS_TYPE_HTTPS,
+    ?DNS_TYPE_IPSECKEY,
+    ?DNS_TYPE_KEY,
+    ?DNS_TYPE_KX,
+    ?DNS_TYPE_L32,
+    ?DNS_TYPE_L64,
+    ?DNS_TYPE_LOC,
+    ?DNS_TYPE_LP,
+    ?DNS_TYPE_MB,
+    ?DNS_TYPE_MG,
+    ?DNS_TYPE_MINFO,
+    ?DNS_TYPE_MR,
+    ?DNS_TYPE_MX,
+    ?DNS_TYPE_NAPTR,
+    ?DNS_TYPE_NID,
+    ?DNS_TYPE_NS,
+    ?DNS_TYPE_NSEC,
+    ?DNS_TYPE_NSEC3,
+    ?DNS_TYPE_NSEC3PARAM,
+    ?DNS_TYPE_NXT,
+    ?DNS_TYPE_OPENPGPKEY,
+    ?DNS_TYPE_PTR,
+    ?DNS_TYPE_PX,
+    ?DNS_TYPE_RESINFO,
+    ?DNS_TYPE_RP,
+    ?DNS_TYPE_RRSIG,
+    ?DNS_TYPE_RT,
+    ?DNS_TYPE_SIG,
+    ?DNS_TYPE_SMIMEA,
+    ?DNS_TYPE_SOA,
+    ?DNS_TYPE_SPF,
+    ?DNS_TYPE_SRV,
+    ?DNS_TYPE_SSHFP,
+    ?DNS_TYPE_SVCB,
+    ?DNS_TYPE_TLSA,
+    ?DNS_TYPE_TXT,
+    ?DNS_TYPE_URI,
+    ?DNS_TYPE_WALLET,
+    ?DNS_TYPE_ZONEMD
+]).
 
-%% Parser context for maintaining state during parsing
--record(parse_ctx, {
+-record(ctx, {
     origin = <<>> :: dns:dname(),
     default_ttl = 0 :: dns:ttl(),
     default_class = ?DNS_CLASS_IN :: dns:class(),
     last_owner = <<>> :: dns:dname(),
     base_dir = "" :: file:filename_all(),
     filename = undefined :: file:filename_all() | undefined,
-    source_lines = [] :: [string()]
+    source = <<>> :: binary()
 }).
+-type ctx() :: #ctx{}.
 
--type parse_ctx() :: #parse_ctx{}.
+%% A word, or a quoted string without its quotes, as written, escapes included,
+%% with the line it starts on
+-type field() :: {word | quoted, binary(), pos_integer()}.
+-type patterns() :: {binary:cp(), binary:cp(), binary:cp()}.
+-type entry() ::
+    {rr, dns:rr(), ctx()}
+    | {rrs, [dns:rr()], ctx()}
+    | {ctx, ctx()}
+    | {error, dns_zone:error_detail()}.
 
--type rdata() ::
-    {int, integer()}
-    | {string, string()}
-    | {ipv4, string()}
-    | {ipv6, string()}
-    | {domain, string()}
-    | {rfc3597, string()}
-    | {dollar, string()}
-    | {lbrace, string()}
-    | {rbrace, string()}.
--type directive() ::
-    {directive, origin, dynamic()}
-    | {directive, ttl, dynamic()}
-    | {directive, include, dynamic()}
-    | {directive, include, dynamic(), dynamic()}
-    | {directive, generate, dynamic()}.
--type rr() ::
-    {rr, Owner :: dynamic(), TTL :: dynamic(), Class :: dynamic(), Type :: dynamic(),
-        RData :: [rdata()]}.
--type entry() :: empty | directive() | rr().
+%% ============================================================================
+%% API
+%% ============================================================================
 
-%% Parse a zone file from disk with options.
 -spec parse_file(file:filename(), dns_zone:parse_options()) ->
     {ok, [dns:rr()]} | {error, dns_zone:error_detail()}.
 parse_file(Filename, Options) ->
-    ChunkSize = maps:get(chunk_size, Options, ?CHUNK_SIZE),
-    case file:open(Filename, [raw, read, {read_ahead, ?CHUNK_SIZE}]) of
-        {ok, Device} ->
-            InitialState = {Device, 1, [], ChunkSize},
-            BaseDir = filename:dirname(Filename),
-            Opts = Options#{base_dir => BaseDir, filename => Filename},
-            Ctx = init_context(Opts, []),
-            do_parse_file(Device, Ctx, InitialState);
+    case file:read_file(Filename) of
+        {ok, Bin} ->
+            parse(Bin, Options#{base_dir => filename:dirname(Filename), filename => Filename});
         {error, Reason} ->
-            {error, make_file_error(Filename, Reason)}
+            {error, file_error(Filename, Reason)}
     end.
 
-do_parse_file(Device, Ctx, InitialState) ->
-    try dns_zone_parser:parse_and_scan({fun next_tokens/1, [InitialState]}) of
-        {ok, Entries} ->
-            process_entries(Entries, Ctx, []);
-        {error, {lexer, Reason, ELine}} ->
-            {error, make_lexer_error(ELine, Reason, Ctx)};
-        {error, Reason} ->
-            {error, make_semantic_error(Reason, Ctx)}
-    after
-        file:close(Device)
-    end.
-
-%% Parse zone file content from a string or binary with options.
 -spec parse_string(binary() | string(), dns_zone:parse_options()) ->
     {ok, [dns:rr()]} | {error, dns_zone:error_detail()}.
-parse_string(Data, Options) when is_list(Data) ->
-    parse(Data, Options);
 parse_string(Data, Options) when is_binary(Data) ->
-    parse(binary_to_list(Data), Options).
+    parse(Data, Options);
+parse_string(Data, Options) when is_list(Data) ->
+    parse(chars_to_binary(Data), Options).
 
-%% Tokenizer function that yecc calls. Holds state {Device, Line, LexerContinuation}
-%% and attempts to get tokens from the lexer, triggering file reads when needed.
-next_tokens({Device, Line, LexerCont, ChunkSize}) ->
-    call_leex(Device, "", Line, LexerCont, ChunkSize).
-
-%% Internal helper to manage the {more, _} loop from leex.
-call_leex(Device, Buffer, Line, LexerCont, ChunkSize) ->
-    % Call the leex-generated function
-    case dns_zone_lexer:tokens(LexerCont, Buffer, Line) of
-        {done, {ok, Tokens, EndLine}, NewLexerCont} ->
-            % Success! leex processed the buffer and produced tokens.
-            % Return them to yecc.
-            {ok, Tokens, {Device, EndLine, NewLexerCont}};
-        {done, {eof, EndLine}, NewLexerCont} ->
-            % leex signaled end-of-file. Pass this to yecc.
-            {eof, {Device, EndLine, NewLexerCont}};
-        {done, {error, Reason, ELine}, NewLexerCont} ->
-            % leex found a syntax error. Pass this to yecc.
-            % ct:pal("R: ~p, ELine: ~p, NewLexerCont: ~p~n", [Reason, ELine, NewLexerCont]),
-            {error, {lexer, Reason, ELine}, {Device, ELine, NewLexerCont}};
-        {more, NewLexerCont} ->
-            % leex needs more characters. Read a chunk from the file.
-            case file:read(Device, ChunkSize) of
-                eof ->
-                    % We hit the end of the file.
-                    % Feed an empty binary to leex to make it
-                    % flush any remaining tokens and return {done, {eof, _}, _}.
-                    call_leex(Device, eof, Line, NewLexerCont, ChunkSize);
-                {ok, NewData} ->
-                    % We got data. Recurse to feed it back to leex.
-                    call_leex(Device, NewData, Line, NewLexerCont, ChunkSize);
-                {error, Reason} ->
-                    % A file read error occurred.
-                    {error, {file_read, Reason}, {Device, Line, NewLexerCont}}
-            end
-    end.
-
-%% Main parsing function. Tokenizes input and parses into DNS records.
--spec parse(string(), dns_zone:parse_options()) ->
-    {ok, [dns:rr()]} | {error, dns_zone:error_detail()}.
-parse(String, Options) ->
-    %% Split source into lines for error context
-    SourceLines = string:split(String, "\n", all),
-    Ctx = init_context(Options, SourceLines),
-    maybe
-        {ok, Tokens} ?= tokenize(String, Ctx),
-        {ok, ParseTree} ?= lexerize(Tokens, Ctx),
-        {ok, Records} ?= process_entries(ParseTree, Ctx, []),
-        {ok, Records}
-    end.
-
-%% Format a parse error into a human-readable string.
 -spec format_error(dns_zone:error_detail()) -> iolist().
 format_error(#{type := Type, message := Message} = Error) ->
     Location = maps:get(location, Error, #{}),
@@ -152,223 +143,1572 @@ format_error(#{type := Type, message := Message} = Error) ->
         format_suggestion(Suggestion)
     ].
 
-%% Format location information
--spec format_location(error_location(), error_type()) -> iolist().
-format_location(#{line := Line, file := File}, Type) when File /= undefined ->
-    io_lib:format("~s at ~s:~p (~p):~n", [capitalize(Type), File, Line, Type]);
-format_location(#{file := File}, Type) when File /= undefined ->
-    io_lib:format("~s at ~s (~p):~n", [capitalize(Type), File, Type]);
-format_location(#{line := Line}, Type) ->
-    io_lib:format("~s at line ~p (~p):~n", [capitalize(Type), Line, Type]);
-format_location(_Location, Type) ->
-    io_lib:format("~s:~n", [capitalize(Type)]).
-
-%% Format context (the source line where error occurred)
--spec format_context(binary() | undefined) -> iolist().
-format_context(undefined) ->
-    [];
-format_context(Context) ->
-    ["  | ", Context, "\n"].
-
-%% Format suggestion
--spec format_suggestion(binary() | undefined) -> iolist().
-format_suggestion(undefined) ->
-    [];
-format_suggestion(Suggestion) ->
-    ["\nSuggestion:\n  ", Suggestion, "\n"].
-
-%% Capitalize first letter of atom
--spec capitalize(atom()) -> unicode:chardata().
-capitalize(Atom) ->
-    string:titlecase(atom_to_list(Atom)).
-
 %% ============================================================================
-%% Internal Functions
+%% Entries
 %% ============================================================================
 
-%% Initialize parser context from options
--spec init_context(parse_options(), [string()]) -> parse_ctx().
-init_context(Options, SourceLines) ->
+%% A list of characters up to 255 is a string of octets, as it was before
+%% binaries were read; one with characters past 255 is read as UTF-8
+-spec chars_to_binary(string()) -> binary().
+chars_to_binary(Data) ->
+    try
+        iolist_to_binary(Data)
+    catch
+        error:badarg ->
+            case unicode:characters_to_binary(Data) of
+                Bin when is_binary(Bin) -> Bin;
+                _ -> erlang:error(badarg, [Data])
+            end
+    end.
+
+-spec parse(binary(), dns_zone:parse_options()) ->
+    {ok, [dns:rr()]} | {error, dns_zone:error_detail()}.
+parse(Bin, Options) ->
     Origin = maps:get(origin, Options, <<>>),
-    DefaultTTL = maps:get(default_ttl, Options, 0),
-    DefaultClass = maps:get(default_class, Options, ?DNS_CLASS_IN),
-    BaseDir = maps:get(base_dir, Options, ""),
-    Filename = maps:get(filename, Options, undefined),
-    #parse_ctx{
+    Ctx = #ctx{
         origin = Origin,
-        default_ttl = DefaultTTL,
-        default_class = DefaultClass,
+        default_ttl = maps:get(default_ttl, Options, 0),
+        default_class = maps:get(default_class, Options, ?DNS_CLASS_IN),
         last_owner = Origin,
-        base_dir = BaseDir,
-        filename = Filename,
-        source_lines = SourceLines
-    }.
+        base_dir = maps:get(base_dir, Options, ""),
+        filename = maps:get(filename, Options, undefined),
+        source = Bin
+    },
+    with_binary_heap(byte_size(Bin), fun() -> entries(Bin, 0, 1, Ctx, [], patterns()) end).
 
-%% Build enhanced error with location and context
--spec make_error(error_type(), binary(), term(), binary() | undefined, parse_ctx()) ->
-    error_detail().
-make_error(Type, Message, Details, undefined, Ctx) ->
-    #{
-        type => Type,
-        message => Message,
-        details => Details,
-        location => make_location(undefined, Ctx)
-    };
-make_error(Type, Message, Details, Suggestion, Ctx) ->
-    #{
-        type => Type,
-        message => Message,
-        details => Details,
-        suggestion => Suggestion,
-        location => make_location(undefined, Ctx)
-    }.
+%% The source is referenced from the process heap while it is read, and counts
+%% towards the process's binary heap. With the default minimum, a large source
+%% overflows it each time records are promoted to the old heap, and the garbage
+%% collector then sweeps the whole heap. Twice the source's size, for as long as
+%% it is read, keeps it off.
+-spec with_binary_heap(non_neg_integer(), fun(() -> Result)) -> Result.
+with_binary_heap(Size, Fun) ->
+    Words = 2 * Size div erlang:system_info(wordsize),
+    case erlang:process_info(self(), min_bin_vheap_size) of
+        {min_bin_vheap_size, Current} when Current < Words ->
+            Previous = erlang:process_flag(min_bin_vheap_size, Words),
+            try
+                Fun()
+            after
+                erlang:process_flag(min_bin_vheap_size, Previous)
+            end;
+        _ ->
+            Fun()
+    end.
 
-%% Get source line by line number
--spec get_source_line(pos_integer(), parse_ctx()) -> binary() | undefined.
-get_source_line(Line, #parse_ctx{source_lines = SourceLines}) when Line > 0 ->
-    case Line =< length(SourceLines) of
-        true -> list_to_binary(lists:nth(Line, SourceLines));
-        false -> undefined
+-spec entries(binary(), non_neg_integer(), pos_integer(), ctx(), [dns:rr()], patterns()) ->
+    {ok, [dns:rr()]} | {error, dns_zone:error_detail()}.
+entries(Bin, Pos, Line, Ctx, Acc, Patterns) ->
+    case next_entry(Bin, Pos, Line, Patterns) of
+        eof ->
+            {ok, lists:reverse(Acc)};
+        {Start, Fields, Next, NextLine} ->
+            case entry(Start, Fields, Ctx) of
+                {rr, RR, Ctx1} ->
+                    entries(Bin, Next, NextLine, Ctx1, [RR | Acc], Patterns);
+                {rrs, RRs, Ctx1} ->
+                    entries(Bin, Next, NextLine, Ctx1, lists:reverse(RRs, Acc), Patterns);
+                {ctx, Ctx1} ->
+                    entries(Bin, Next, NextLine, Ctx1, Acc, Patterns);
+                {error, _} = Error ->
+                    Error
+            end;
+        {error, unterminated_string = Reason, ErrorLine} ->
+            Message = <<"Lexical error: ", (reason_text(Reason))/binary>>,
+            {error, error_detail(lexer, Message, undefined, {lexer_error, Reason}, ErrorLine, Ctx)};
+        {error, Reason, ErrorLine} ->
+            Message = <<"Parse error: ", (reason_text(Reason))/binary>>,
+            {error,
+                error_detail(parser, Message, undefined, {parser_error, Reason}, ErrorLine, Ctx)}
+    end.
+
+-spec entry(pos_integer(), [field(), ...], ctx()) -> entry().
+entry(Line, [{word, <<$$, _/binary>> = Name, _} | Args], Ctx) ->
+    try
+        directive(dns_domain:to_upper(Name), Args, Ctx)
+    catch
+        error:{?MODULE, Reason} ->
+            Message = <<"Parse error: ", (reason_text(Reason))/binary>>,
+            {error, error_detail(parser, Message, undefined, {parser_error, Reason}, Line, Ctx)}
     end;
-get_source_line(_, _) ->
-    undefined.
+entry(Line, Fields, Ctx) ->
+    try
+        RR = record(Fields, Ctx),
+        {rr, RR, Ctx#ctx{last_owner = RR#dns_rr.name}}
+    catch
+        error:{?MODULE, {rdata_error, Message, Suggestion, Details}} ->
+            {error, error_detail(semantic, Message, Suggestion, Details, Line, Ctx)};
+        error:{?MODULE, Reason} ->
+            Message = <<"Parse error: ", (reason_text(Reason))/binary>>,
+            {error, error_detail(parser, Message, undefined, {parser_error, Reason}, Line, Ctx)}
+    end.
 
-%% Build file error
--spec make_file_error(file:filename() | undefined, term()) -> error_detail().
-make_file_error(Filename, Reason) ->
-    Message = io_lib:format("Failed to read file: ~p", [Reason]),
+%% RFC1035§5.1 directives, and RFC2308§4's $TTL. BIND's $GENERATE is accepted and
+%% generates nothing.
+-spec directive(binary(), [field()], ctx()) -> entry().
+directive(~"$ORIGIN", [Name], Ctx) ->
+    Origin = fqdn(name(Name, Ctx)),
+    {ctx, Ctx#ctx{origin = Origin, last_owner = Origin}};
+directive(~"$TTL", [TTL], Ctx) ->
+    {ctx, Ctx#ctx{default_ttl = ttl(TTL)}};
+directive(~"$INCLUDE", [File], Ctx) ->
+    include(text(File), Ctx#ctx.origin, Ctx);
+directive(~"$INCLUDE", [File, Origin], Ctx) ->
+    include(text(File), fqdn(name(Origin, Ctx)), Ctx);
+directive(~"$GENERATE", _Args, Ctx) ->
+    {ctx, Ctx};
+directive(Name, Args, _Ctx) ->
+    ?FAIL({bad_directive, Name, length(Args)}).
+
+%% RFC1035§5.1: the origin of the parent file is not changed by the included file
+-spec include(binary(), dns:dname(), ctx()) -> entry().
+include(File, Origin, #ctx{base_dir = BaseDir} = Ctx) ->
+    Path =
+        case BaseDir of
+            "" -> File;
+            <<>> -> File;
+            _ -> filename:join(BaseDir, File)
+        end,
+    Options = #{
+        origin => Origin,
+        default_ttl => Ctx#ctx.default_ttl,
+        default_class => Ctx#ctx.default_class,
+        base_dir => BaseDir
+    },
+    case parse_file(Path, Options) of
+        {ok, RRs} -> {rrs, RRs, Ctx};
+        {error, _} = Error -> Error
+    end.
+
+%% RFC1035§5.1: an owner, or none for the owner of the previous record, then
+%% [<TTL>] [<class>] <type> <RDATA>, TTL and class in either order. Owner names are
+%% lowercased; the names in RDATA keep their case.
+-spec record([field(), ...], ctx()) -> dns:rr().
+record(Fields0, Ctx) ->
+    {Owner, Fields1} = owner(Fields0, Ctx),
+    {TTL, Class0, Type, Mnemonic, RDataFields} = header(Fields1, undefined, undefined),
+    RDataFields =:= [] andalso ?FAIL({no_rdata, Mnemonic}),
+    Class = default(Class0, Ctx#ctx.default_class),
+    RR = #dns_rr{
+        name = Owner,
+        type = Type,
+        class = Class,
+        ttl = default(TTL, Ctx#ctx.default_ttl),
+        data = rdata(Type, Mnemonic, RDataFields, Ctx)
+    },
+    dns_check:rr(RR) orelse rdata_fail(Mnemonic, RDataFields, does_not_fit),
+    RR.
+
+-spec default(Value | undefined, Value) -> Value.
+default(undefined, Default) -> Default;
+default(Value, _Default) -> Value.
+
+%% The owner is the first field, as the grammar this parser replaced read it:
+%% unless that field is a TTL, a class or a type, which leave the owner of the
+%% previous record, whether or not the line starts with a blank. A type is an
+%% owner when a class follows it, or a TTL and a class. The words are told apart
+%% as that grammar's lexer told them, which took only uppercase mnemonics.
+-spec owner([field(), ...], ctx()) -> {dns:dname(), [field()]}.
+owner([{word, ~"@", _} | Fields], #ctx{origin = Origin}) ->
+    {dns_domain:to_lower(Origin), Fields};
+owner([{word, Word, _} = Name | Rest] = Fields, Ctx) ->
+    case word_kind(Word) of
+        name ->
+            {dns_domain:to_lower(name(Name, Ctx)), Rest};
+        type ->
+            case [word_kind(Next) || {word, Next, _} <- lists:sublist(Rest, 2)] of
+                [class | _] -> {dns_domain:to_lower(name(Name, Ctx)), Rest};
+                [ttl, class] -> {dns_domain:to_lower(name(Name, Ctx)), Rest};
+                _ -> {Ctx#ctx.last_owner, Fields}
+            end;
+        _ ->
+            {Ctx#ctx.last_owner, Fields}
+    end;
+owner([{quoted, Text, _} | _], _Ctx) ->
+    ?FAIL({quoted_owner, Text}).
+
+-spec word_kind(binary()) -> ttl | class | type | generic_type | name.
+word_kind(Word) ->
+    case Word of
+        <<C, _/binary>> when ?IS_DIGIT(C) ->
+            case lexer_ttl(Word) of
+                true -> ttl;
+                false -> name
+            end;
+        ~"IN" ->
+            class;
+        ~"CH" ->
+            class;
+        ~"HS" ->
+            class;
+        ~"CS" ->
+            class;
+        <<"CLASS", Digits/binary>> when Digits =/= <<>> ->
+            case digits(Digits) of
+                true -> class;
+                false -> name
+            end;
+        <<"TYPE", Digits/binary>> when Digits =/= <<>> ->
+            case digits(Digits) of
+                true -> generic_type;
+                false -> lexer_type(Word)
+            end;
+        _ ->
+            lexer_type(Word)
+    end.
+
+%% Digits, alone or each run followed by lowercase units
+-spec lexer_ttl(binary()) -> boolean().
+lexer_ttl(<<C, Rest/binary>>) when ?IS_DIGIT(C) ->
+    lexer_ttl(Rest);
+lexer_ttl(<<U, Rest/binary>>) when U =:= $y; U =:= $w; U =:= $d; U =:= $h; U =:= $m; U =:= $s ->
+    lexer_ttl(Rest);
+lexer_ttl(<<>>) ->
+    true;
+lexer_ttl(_) ->
+    false.
+
+-spec lexer_type(binary()) -> type | name.
+lexer_type(Word) when byte_size(Word) =< 10 ->
+    case Word of
+        ~"A" -> type;
+        ~"AAAA" -> type;
+        ~"AFSDB" -> type;
+        ~"ALIAS" -> type;
+        ~"AMTRELAY" -> type;
+        ~"BRID" -> type;
+        ~"CAA" -> type;
+        ~"CDNSKEY" -> type;
+        ~"CDS" -> type;
+        ~"CERT" -> type;
+        ~"CNAME" -> type;
+        ~"CSYNC" -> type;
+        ~"DHCID" -> type;
+        ~"DLV" -> type;
+        ~"DNAME" -> type;
+        ~"DNSKEY" -> type;
+        ~"DS" -> type;
+        ~"DSYNC" -> type;
+        ~"EUI48" -> type;
+        ~"EUI64" -> type;
+        ~"HHIT" -> type;
+        ~"HINFO" -> type;
+        ~"HIP" -> type;
+        ~"HTTPS" -> type;
+        ~"IPSECKEY" -> type;
+        ~"KEY" -> type;
+        ~"KX" -> type;
+        ~"L32" -> type;
+        ~"L64" -> type;
+        ~"LOC" -> type;
+        ~"LP" -> type;
+        ~"MB" -> type;
+        ~"MG" -> type;
+        ~"MINFO" -> type;
+        ~"MR" -> type;
+        ~"MX" -> type;
+        ~"NAPTR" -> type;
+        ~"NID" -> type;
+        ~"NS" -> type;
+        ~"NSEC" -> type;
+        ~"NSEC3" -> type;
+        ~"NSEC3PARAM" -> type;
+        ~"NXT" -> type;
+        ~"OPENPGPKEY" -> type;
+        ~"PTR" -> type;
+        ~"PX" -> type;
+        ~"RESINFO" -> type;
+        ~"RP" -> type;
+        ~"RRSIG" -> type;
+        ~"RT" -> type;
+        ~"SIG" -> type;
+        ~"SMIMEA" -> type;
+        ~"SOA" -> type;
+        ~"SPF" -> type;
+        ~"SRV" -> type;
+        ~"SSHFP" -> type;
+        ~"SVCB" -> type;
+        ~"TLSA" -> type;
+        ~"TXT" -> type;
+        ~"URI" -> type;
+        ~"WALLET" -> type;
+        ~"ZONEMD" -> type;
+        _ -> name
+    end;
+lexer_type(_Word) ->
+    name.
+
+-spec header([field()], dns:ttl() | undefined, dns:class() | undefined) ->
+    {dns:ttl() | undefined, dns:class() | undefined, dns:type(), binary(), [field()]}.
+header([{word, Word, _} | Rest], TTL, Class) ->
+    case classify(Word) of
+        {ttl, Value} when TTL =:= undefined -> header(Rest, Value, Class);
+        {class, Value} when Class =:= undefined -> header(Rest, TTL, Value);
+        {type, Type, Mnemonic} -> {TTL, Class, Type, Mnemonic, Rest};
+        _ -> ?FAIL({unexpected_field, Word})
+    end;
+header([{quoted, Text, _} | _], _TTL, _Class) ->
+    ?FAIL({unexpected_field, Text});
+header([], _TTL, _Class) ->
+    ?FAIL(no_type).
+
+-spec classify(binary()) ->
+    {ttl, non_neg_integer()} | {class, dns:class()} | {type, dns:type(), binary()} | unknown.
+classify(<<C, _/binary>> = Word) when ?IS_DIGIT(C) ->
+    case ttl_value(Word) of
+        error -> unknown;
+        TTL -> {ttl, TTL}
+    end;
+classify(Word) ->
+    case classify_mnemonic(Word) of
+        unknown -> classify_mnemonic(dns_domain:to_upper(Word));
+        Kind -> Kind
+    end.
+
+-spec classify_mnemonic(binary()) -> {class, dns:class()} | {type, dns:type(), binary()} | unknown.
+classify_mnemonic(Word) ->
+    case class_number(Word) of
+        undefined ->
+            case type_number(Word) of
+                undefined -> unknown;
+                Type -> {type, Type, Word}
+            end;
+        Class ->
+            {class, Class}
+    end.
+
+%% RFC3597§5: CLASSnnn for any class. A number past 16 bits is read as IN, as the
+%% parser read it.
+-spec class_number(binary()) -> dns:class() | undefined.
+class_number(~"IN") -> ?DNS_CLASS_IN;
+class_number(~"CH") -> ?DNS_CLASS_CH;
+class_number(~"HS") -> ?DNS_CLASS_HS;
+class_number(~"CS") -> ?DNS_CLASS_CS;
+class_number(<<"CLASS", Number/binary>>) -> generic_number(Number, ?DNS_CLASS_IN);
+class_number(_) -> undefined.
+
+%% RFC3597§5: TYPEnnn for any type. A number past 16 bits is read as A, as the
+%% parser read it. ALIAS, PowerDNS's, is read as a CNAME.
+-spec type_number(binary()) -> dns:type() | undefined.
+type_number(~"ALIAS") ->
+    ?DNS_TYPE_CNAME;
+type_number(<<"TYPE", Number/binary>> = Mnemonic) ->
+    case generic_number(Number, ?DNS_TYPE_A) of
+        undefined -> dns_names:name_type(Mnemonic);
+        Type -> Type
+    end;
+type_number(Mnemonic) ->
+    dns_names:name_type(Mnemonic).
+
+-spec generic_number(binary(), dns:uint16()) -> dns:uint16() | undefined.
+generic_number(Number, TooLarge) ->
+    case digits(Number) of
+        true ->
+            case binary_to_integer(Number) of
+                N when N =< 16#FFFF -> N;
+                _ -> TooLarge
+            end;
+        false ->
+            undefined
+    end.
+
+%% ============================================================================
+%% Splitting entries into fields
+%% ============================================================================
+
+%% The fields of the next entry, the line its first field is on, and where the
+%% entry after it starts. Lines with no fields, blank or with only a comment, are
+%% skipped. The source is read by offset, without taking what follows a field as
+%% a binary of its own: each such binary would hold the whole source, and count it
+%% towards the process heap, so that the garbage collector would run every few
+%% fields.
+-spec next_entry(binary(), non_neg_integer(), pos_integer(), patterns()) ->
+    eof
+    | {pos_integer(), [field(), ...], non_neg_integer(), pos_integer()}
+    | {error, term(), pos_integer()}.
+next_entry(Bin, Pos, _Line, _Patterns) when Pos >= byte_size(Bin) ->
+    eof;
+next_entry(Bin, Pos, Line, Patterns) ->
+    case fields(Bin, Pos, Line, 0, [], Patterns) of
+        {ok, [], Next, NextLine} ->
+            next_entry(Bin, Next, NextLine, Patterns);
+        {ok, [{_, _, Start} | _] = Fields, Next, NextLine} ->
+            {Start, Fields, Next, NextLine};
+        {error, unclosed_parenthesis, _End} ->
+            {error, unclosed_parenthesis, Line};
+        {error, _, _} = Error ->
+            Error
+    end.
+
+%% The octets where a word may end or needs a closer look, those where a quoted
+%% string does, and the end of a line, which ends a comment
+-spec patterns() -> patterns().
+patterns() ->
+    {
+        binary:compile_pattern([~" ", ~"\t", ~"\r", ~"\n", ~";", ~"(", ~")", ~"\"", ~"\\", ~"="]),
+        binary:compile_pattern([~"\"", ~"\\", ~"\n"]),
+        binary:compile_pattern(~"\n")
+    }.
+
+%% RFC1035§5.1: a semicolon starts a comment, which ends with the line, and
+%% parentheses group fields across lines
+-spec fields(
+    binary(), non_neg_integer(), pos_integer(), non_neg_integer(), [field()], patterns()
+) ->
+    {ok, [field()], non_neg_integer(), pos_integer()} | {error, term(), pos_integer()}.
+fields(Bin, Pos, Line, 0, Acc, _Patterns) when Pos >= byte_size(Bin) ->
+    {ok, lists:reverse(Acc), Pos, Line};
+fields(Bin, Pos, Line, _Depth, _Acc, _Patterns) when Pos >= byte_size(Bin) ->
+    {error, unclosed_parenthesis, Line};
+fields(Bin, Pos, Line, Depth, Acc, Patterns) ->
+    case binary:at(Bin, Pos) of
+        C when C =:= $\s; C =:= $\t; C =:= $\r ->
+            fields(Bin, Pos + 1, Line, Depth, Acc, Patterns);
+        $\n when Depth =:= 0 ->
+            {ok, lists:reverse(Acc), Pos + 1, Line + 1};
+        $\n ->
+            fields(Bin, Pos + 1, Line + 1, Depth, Acc, Patterns);
+        $; ->
+            fields(Bin, find(Bin, Pos + 1, element(3, Patterns)), Line, Depth, Acc, Patterns);
+        $( ->
+            fields(Bin, Pos + 1, Line, Depth + 1, Acc, Patterns);
+        $) when Depth =:= 0 ->
+            {error, unbalanced_parenthesis, Line};
+        $) ->
+            fields(Bin, Pos + 1, Line, Depth - 1, Acc, Patterns);
+        $" ->
+            case quoted_end(Bin, Pos + 1, Line, Patterns) of
+                {End, Next} ->
+                    Text = binary:part(Bin, Pos + 1, End - Pos - 1),
+                    fields(Bin, End + 1, Next, Depth, [{quoted, Text, Line} | Acc], Patterns);
+                error ->
+                    {error, unterminated_string, Line}
+            end;
+        _ ->
+            case word_end(Bin, Pos, Line, Patterns) of
+                {End, Next} ->
+                    Word = binary:part(Bin, Pos, End - Pos),
+                    fields(Bin, End, Next, Depth, [{word, Word, Line} | Acc], Patterns);
+                error ->
+                    {error, unterminated_string, Line}
+            end
+    end.
+
+%% Where the pattern is next found from Pos, or the end of the source
+-spec find(binary(), non_neg_integer(), binary:cp()) -> non_neg_integer().
+find(Bin, Pos, Pattern) ->
+    Size = byte_size(Bin),
+    case binary:match(Bin, Pattern, [{scope, {Pos, Size - Pos}}]) of
+        nomatch -> Size;
+        {Found, _} -> Found
+    end.
+
+%% A word ends at a blank, a parenthesis, a semicolon, a quote or the end of the
+%% line, and a backslash escapes the character after it. A quote right after an
+%% equals sign quotes what follows it up to the next one within the word, so that
+%% an SVCB parameter key="a value" is one field.
+-spec word_end(binary(), non_neg_integer(), pos_integer(), patterns()) ->
+    {non_neg_integer(), pos_integer()} | error.
+word_end(Bin, Pos, Line, {WordStops, _, _} = Patterns) ->
+    Size = byte_size(Bin),
+    case find(Bin, Pos, WordStops) of
+        Size ->
+            {Size, Line};
+        Stop ->
+            case binary:at(Bin, Stop) of
+                $\\ when Stop + 1 =:= Size ->
+                    {Size, Line};
+                $\\ ->
+                    case binary:at(Bin, Stop + 1) of
+                        $\n -> word_end(Bin, Stop + 2, Line + 1, Patterns);
+                        _ -> word_end(Bin, Stop + 2, Line, Patterns)
+                    end;
+                $= when Stop + 1 < Size ->
+                    case binary:at(Bin, Stop + 1) of
+                        $" -> equals_quoted_end(Bin, Stop + 2, Line, Patterns);
+                        _ -> word_end(Bin, Stop + 1, Line, Patterns)
+                    end;
+                $= ->
+                    {Size, Line};
+                _ ->
+                    {Stop, Line}
+            end
+    end.
+
+-spec equals_quoted_end(binary(), non_neg_integer(), pos_integer(), patterns()) ->
+    {non_neg_integer(), pos_integer()} | error.
+equals_quoted_end(Bin, Pos, Line, Patterns) ->
+    case quoted_end(Bin, Pos, Line, Patterns) of
+        {End, Next} -> word_end(Bin, End + 1, Next, Patterns);
+        error -> error
+    end.
+
+%% A quoted string ends at the next quote a backslash does not escape, and may
+%% span lines
+-spec quoted_end(binary(), non_neg_integer(), pos_integer(), patterns()) ->
+    {non_neg_integer(), pos_integer()} | error.
+quoted_end(Bin, Pos, Line, {_, QuotedStops, _} = Patterns) ->
+    Size = byte_size(Bin),
+    case find(Bin, Pos, QuotedStops) of
+        Size ->
+            error;
+        Stop ->
+            case binary:at(Bin, Stop) of
+                $" ->
+                    {Stop, Line};
+                $\n ->
+                    quoted_end(Bin, Stop + 1, Line + 1, Patterns);
+                $\\ when Stop + 1 =:= Size ->
+                    error;
+                $\\ ->
+                    case binary:at(Bin, Stop + 1) of
+                        $\n -> quoted_end(Bin, Stop + 2, Line + 1, Patterns);
+                        _ -> quoted_end(Bin, Stop + 2, Line, Patterns)
+                    end
+            end
+    end.
+
+%% ============================================================================
+%% RDATA
+%% ============================================================================
+
+%% RFC3597§5: \# and the length and hex of the RDATA stand for the RDATA of any
+%% type, which is then kept as those octets
+-spec rdata(dns:type(), binary(), [field(), ...], ctx()) -> dns:rrdata().
+rdata(Type, Mnemonic, Fields, Ctx) ->
+    try
+        case Fields of
+            [{word, ~"\\#", _} | Generic] -> generic(Generic);
+            _ -> rdata(Type, Fields, Ctx)
+        end
+    catch
+        error:{?MODULE, Reason} -> rdata_fail(Mnemonic, Fields, Reason)
+    end.
+
+-spec rdata_fail(binary(), [field()], term()) -> no_return().
+rdata_fail(Mnemonic, Fields, does_not_fit) ->
+    Message = <<"Invalid ", Mnemonic/binary, " record: a value does not fit its field">>,
+    Texts = [Text || {_, Text, _} <- Fields],
+    ?FAIL({rdata_error, Message, undefined, {invalid_record, Mnemonic, Texts}});
+rdata_fail(Mnemonic, Fields, Reason) ->
+    {ShapeMessage, Suggestion} = rdata_error_message(Mnemonic, Fields),
+    Message =
+        case Reason of
+            malformed -> ShapeMessage;
+            _ -> <<"Invalid ", Mnemonic/binary, " record: ", (reason_text(Reason))/binary>>
+        end,
+    ?FAIL({rdata_error, Message, Suggestion, {semantic_error, Reason}}).
+
+-spec generic([field()]) -> binary().
+generic([Length | Hex]) ->
+    Size = uint(Length),
+    Data = hex(Hex),
+    byte_size(Data) =:= Size orelse ?FAIL({rfc3597_length_mismatch, Size, byte_size(Data)}),
+    Data;
+generic([]) ->
+    ?FAIL(rfc3597_no_length).
+
+-spec rdata(dns:type(), [field(), ...], ctx()) -> dns:rrdata().
+rdata(?DNS_TYPE_A, [IP], _Ctx) ->
+    #dns_rrdata_a{ip = ipv4(IP)};
+rdata(?DNS_TYPE_AAAA, [IP], _Ctx) ->
+    #dns_rrdata_aaaa{ip = ipv6(IP)};
+rdata(?DNS_TYPE_NS, [Name], Ctx) ->
+    #dns_rrdata_ns{dname = name(Name, Ctx)};
+rdata(?DNS_TYPE_CNAME, [Name], Ctx) ->
+    #dns_rrdata_cname{dname = name(Name, Ctx)};
+rdata(?DNS_TYPE_PTR, [Name], Ctx) ->
+    #dns_rrdata_ptr{dname = name(Name, Ctx)};
+rdata(?DNS_TYPE_DNAME, [Name], Ctx) ->
+    #dns_rrdata_dname{dname = name(Name, Ctx)};
+rdata(?DNS_TYPE_MB, [Name], Ctx) ->
+    #dns_rrdata_mb{madname = name(Name, Ctx)};
+rdata(?DNS_TYPE_MG, [Name], Ctx) ->
+    #dns_rrdata_mg{madname = name(Name, Ctx)};
+rdata(?DNS_TYPE_MR, [Name], Ctx) ->
+    #dns_rrdata_mr{newname = name(Name, Ctx)};
+rdata(?DNS_TYPE_MX, [Pref, Name], Ctx) ->
+    #dns_rrdata_mx{preference = uint(Pref), exchange = name(Name, Ctx)};
+rdata(?DNS_TYPE_KX, [Pref, Name], Ctx) ->
+    #dns_rrdata_kx{preference = uint(Pref), exchange = name(Name, Ctx)};
+rdata(?DNS_TYPE_RT, [Pref, Name], Ctx) ->
+    #dns_rrdata_rt{preference = uint(Pref), host = name(Name, Ctx)};
+rdata(?DNS_TYPE_AFSDB, [Subtype, Name], Ctx) ->
+    #dns_rrdata_afsdb{subtype = uint(Subtype), hostname = name(Name, Ctx)};
+rdata(?DNS_TYPE_LP, [Pref, Name], Ctx) ->
+    #dns_rrdata_lp{preference = uint(Pref), fqdn = name(Name, Ctx)};
+rdata(?DNS_TYPE_PX, [Pref, Map822, MapX400], Ctx) ->
+    #dns_rrdata_px{
+        preference = uint(Pref), map822 = name(Map822, Ctx), mapx400 = name(MapX400, Ctx)
+    };
+rdata(?DNS_TYPE_RP, [Mbox, Txt], Ctx) ->
+    #dns_rrdata_rp{mbox = name(Mbox, Ctx), txt = name(Txt, Ctx)};
+rdata(?DNS_TYPE_MINFO, [RMailbx, EMailbx], Ctx) ->
+    #dns_rrdata_minfo{rmailbx = name(RMailbx, Ctx), emailbx = name(EMailbx, Ctx)};
+rdata(?DNS_TYPE_SOA, [MName, RName, Serial, Refresh, Retry, Expire, Minimum], Ctx) ->
+    #dns_rrdata_soa{
+        mname = name(MName, Ctx),
+        rname = name(RName, Ctx),
+        serial = uint(Serial),
+        refresh = ttl(Refresh),
+        retry = ttl(Retry),
+        expire = ttl(Expire),
+        minimum = ttl(Minimum)
+    };
+rdata(?DNS_TYPE_SRV, [Priority, Weight, Port, Target], Ctx) ->
+    #dns_rrdata_srv{
+        priority = uint(Priority),
+        weight = uint(Weight),
+        port = uint(Port),
+        target = name(Target, Ctx)
+    };
+rdata(?DNS_TYPE_TXT, Strings, _Ctx) ->
+    #dns_rrdata_txt{txt = [text(String) || String <- Strings]};
+rdata(?DNS_TYPE_SPF, Strings, _Ctx) ->
+    #dns_rrdata_spf{spf = [text(String) || String <- Strings]};
+rdata(?DNS_TYPE_RESINFO, Strings, _Ctx) ->
+    #dns_rrdata_resinfo{data = [text(String) || String <- Strings]};
+rdata(?DNS_TYPE_WALLET, Strings, _Ctx) ->
+    #dns_rrdata_wallet{data = [text(String) || String <- Strings]};
+rdata(?DNS_TYPE_HINFO, [CPU, OS], _Ctx) ->
+    #dns_rrdata_hinfo{cpu = text(CPU), os = text(OS)};
+rdata(?DNS_TYPE_CAA, [Flags, Tag, Value], _Ctx) ->
+    #dns_rrdata_caa{flags = uint(Flags), tag = text(Tag), value = text(Value)};
+rdata(?DNS_TYPE_NAPTR, [Order, Pref, Flags, Services, Regexp, Replacement], Ctx) ->
+    #dns_rrdata_naptr{
+        order = uint(Order),
+        preference = uint(Pref),
+        flags = text(Flags),
+        services = text(Services),
+        regexp = text(Regexp),
+        replacement = name(Replacement, Ctx)
+    };
+%% RFC4255§3.2, RFC6698§2.2, RFC8162§2, RFC8976§2.3, RFC4034§5.3: the hex may be
+%% split by blanks, and its pieces join
+rdata(?DNS_TYPE_SSHFP, [Alg, FPType | [_ | _] = FP], _Ctx) ->
+    #dns_rrdata_sshfp{alg = uint(Alg), fp_type = uint(FPType), fp = hex(FP)};
+rdata(?DNS_TYPE_TLSA, [Usage, Selector, MatchingType | [_ | _] = Cert], _Ctx) ->
+    #dns_rrdata_tlsa{
+        usage = uint(Usage),
+        selector = uint(Selector),
+        matching_type = uint(MatchingType),
+        certificate = hex(Cert)
+    };
+rdata(?DNS_TYPE_SMIMEA, [Usage, Selector, MatchingType | [_ | _] = Cert], _Ctx) ->
+    #dns_rrdata_smimea{
+        usage = uint(Usage),
+        selector = uint(Selector),
+        matching_type = uint(MatchingType),
+        certificate = hex(Cert)
+    };
+rdata(?DNS_TYPE_ZONEMD, [Serial, Scheme, Alg | [_ | _] = Hash], _Ctx) ->
+    #dns_rrdata_zonemd{
+        serial = uint(Serial), scheme = uint(Scheme), algorithm = uint(Alg), hash = hex(Hash)
+    };
+rdata(?DNS_TYPE_DS, [KeyTag, Alg, DigestType | [_ | _] = Digest], _Ctx) ->
+    #dns_rrdata_ds{
+        keytag = uint(KeyTag), alg = alg(Alg), digest_type = uint(DigestType), digest = hex(Digest)
+    };
+rdata(?DNS_TYPE_CDS, [KeyTag, Alg, DigestType | [_ | _] = Digest], _Ctx) ->
+    #dns_rrdata_cds{
+        keytag = uint(KeyTag), alg = alg(Alg), digest_type = uint(DigestType), digest = hex(Digest)
+    };
+rdata(?DNS_TYPE_DLV, [KeyTag, Alg, DigestType | [_ | _] = Digest], _Ctx) ->
+    #dns_rrdata_dlv{
+        keytag = uint(KeyTag), alg = alg(Alg), digest_type = uint(DigestType), digest = hex(Digest)
+    };
+%% RFC4034§2.2, RFC4398§2.2, RFC4701§3.2, RFC7929§2.3, RFC9886§5: base64 may be
+%% split by blanks, and its pieces join
+rdata(?DNS_TYPE_DNSKEY, [Flags, Protocol, Alg | [_ | _] = Key], _Ctx) ->
+    {F, P, A, PublicKey} = {uint(Flags), uint(Protocol), alg(Alg), base64(Key)},
+    #dns_rrdata_dnskey{
+        flags = F,
+        protocol = P,
+        alg = A,
+        public_key = PublicKey,
+        keytag = keytag(F, P, A, PublicKey)
+    };
+rdata(?DNS_TYPE_CDNSKEY, [Flags, Protocol, Alg | [_ | _] = Key], _Ctx) ->
+    {F, P, A, PublicKey} = {uint(Flags), uint(Protocol), alg(Alg), base64(Key)},
+    #dns_rrdata_cdnskey{
+        flags = F,
+        protocol = P,
+        alg = A,
+        public_key = PublicKey,
+        keytag = keytag(F, P, A, PublicKey)
+    };
+rdata(?DNS_TYPE_CERT, [Type, KeyTag, Alg | [_ | _] = Cert], _Ctx) ->
+    #dns_rrdata_cert{type = uint(Type), keytag = uint(KeyTag), alg = alg(Alg), cert = base64(Cert)};
+rdata(?DNS_TYPE_DHCID, Data, _Ctx) ->
+    #dns_rrdata_dhcid{data = base64(Data)};
+rdata(?DNS_TYPE_OPENPGPKEY, Data, _Ctx) ->
+    #dns_rrdata_openpgpkey{data = base64(Data)};
+rdata(?DNS_TYPE_HHIT, Data, _Ctx) ->
+    #dns_rrdata_hhit{data = base64(Data)};
+rdata(?DNS_TYPE_BRID, Data, _Ctx) ->
+    #dns_rrdata_brid{data = base64(Data)};
+%% RFC2535§7.1: the key is left out when the flags say there is none
+rdata(?DNS_TYPE_KEY, [Flags, Protocol, Alg | Key], _Ctx) ->
+    F = uint(Flags),
+    F =< 16#FFFF orelse ?FAIL({out_of_range, flags, F}),
+    #dns_rrdata_key{
+        type = (F bsr 14) band 16#3,
+        xt = (F bsr 12) band 16#1,
+        name_type = (F bsr 8) band 16#3,
+        sig = F band 16#F,
+        protocol = uint(Protocol),
+        alg = alg(Alg),
+        public_key = base64(Key)
+    };
+rdata(?DNS_TYPE_RRSIG, [_, _, _, _, _, _, _, _ | [_ | _]] = Fields, Ctx) ->
+    rrsig(Fields, Ctx);
+rdata(?DNS_TYPE_SIG, [_, _, _, _, _, _, _, _ | [_ | _]] = Fields, Ctx) ->
+    dns_encode:rrsig_to_sig(rrsig(Fields, Ctx));
+rdata(?DNS_TYPE_NSEC, [Next | Types], Ctx) ->
+    #dns_rrdata_nsec{next_dname = name(Next, Ctx), types = types(Types)};
+rdata(?DNS_TYPE_NXT, [Next | Types], Ctx) ->
+    #dns_rrdata_nxt{dname = name(Next, Ctx), types = types(Types)};
+%% RFC5155§3.3: "-" for no salt, and the hash in base32hex
+rdata(?DNS_TYPE_NSEC3, [HashAlg, Flags, Iterations, Salt, Hash | Types], _Ctx) ->
+    F = uint(Flags),
+    F =< 16#FF orelse ?FAIL({out_of_range, flags, F}),
+    #dns_rrdata_nsec3{
+        hash_alg = uint(HashAlg),
+        opt_out = F band 16#01 =:= 1,
+        iterations = uint(Iterations),
+        salt = salt(Salt),
+        hash = base32hex(Hash),
+        types = types(Types)
+    };
+rdata(?DNS_TYPE_NSEC3PARAM, [HashAlg, Flags, Iterations, Salt], _Ctx) ->
+    #dns_rrdata_nsec3param{
+        hash_alg = uint(HashAlg),
+        flags = uint(Flags),
+        iterations = uint(Iterations),
+        salt = salt(Salt)
+    };
+rdata(?DNS_TYPE_CSYNC, [Serial, Flags | Types], _Ctx) ->
+    #dns_rrdata_csync{soa_serial = uint(Serial), flags = uint(Flags), types = types(Types)};
+rdata(?DNS_TYPE_DSYNC, [Type, Scheme, Port, Target], Ctx) ->
+    #dns_rrdata_dsync{
+        rrtype = type(Type), scheme = uint(Scheme), port = uint(Port), target = name(Target, Ctx)
+    };
+rdata(?DNS_TYPE_URI, [Priority, Weight, Target], _Ctx) ->
+    #dns_rrdata_uri{priority = uint(Priority), weight = uint(Weight), target = uri(Target)};
+rdata(?DNS_TYPE_EUI48, [Address], _Ctx) ->
+    #dns_rrdata_eui48{address = eui(Address, 6)};
+rdata(?DNS_TYPE_EUI64, [Address], _Ctx) ->
+    #dns_rrdata_eui64{address = eui(Address, 8)};
+%% RFC6742§2.1-2.3
+rdata(?DNS_TYPE_NID, [Pref, NodeID], _Ctx) ->
+    #dns_rrdata_nid{preference = uint(Pref), node_id = ilnp64(NodeID)};
+rdata(?DNS_TYPE_L64, [Pref, Locator], _Ctx) ->
+    #dns_rrdata_l64{preference = uint(Pref), locator64 = ilnp64(Locator)};
+rdata(?DNS_TYPE_L32, [Pref, Locator], _Ctx) ->
+    #dns_rrdata_l32{preference = uint(Pref), locator32 = ipv4(Locator)};
+%% RFC8777§4.3.1: the relay is "." for relay type 0, an address for types 1 and 2,
+%% and a name for type 3
+rdata(?DNS_TYPE_AMTRELAY, [Precedence, D, RelayType, Relay], Ctx) ->
+    Type = uint(RelayType),
+    #dns_rrdata_amtrelay{
+        precedence = uint(Precedence),
+        discovery_optional = discovery_optional(D),
+        relay_type = Type,
+        relay = gateway(Type, Relay, Ctx)
+    };
+%% As the zone writer writes it: precedence, algorithm, gateway, "." for none, and
+%% the key in hex
+rdata(?DNS_TYPE_IPSECKEY, [Precedence, Alg, Gateway, Key], Ctx) ->
+    #dns_rrdata_ipseckey{
+        precedence = uint(Precedence),
+        alg = uint(Alg),
+        gateway = ipseckey_gateway(Gateway, Ctx),
+        public_key = hex([Key])
+    };
+%% RFC8005§6: the HIT in hex and the key in base64, each one word
+rdata(?DNS_TYPE_HIP, [Alg, HIT, Key | Servers], Ctx) ->
+    #dns_rrdata_hip{
+        alg = uint(Alg),
+        hit = hex([HIT]),
+        public_key = base64([Key]),
+        rendezvous_servers = [name(Server, Ctx) || Server <- Servers]
+    };
+rdata(?DNS_TYPE_LOC, Fields, _Ctx) ->
+    loc(Fields);
+rdata(?DNS_TYPE_SVCB, [Priority, Target | Params], Ctx) ->
+    #dns_rrdata_svcb{
+        svc_priority = uint(Priority), target_name = name(Target, Ctx), svc_params = svcb(Params)
+    };
+rdata(?DNS_TYPE_HTTPS, [Priority, Target | Params], Ctx) ->
+    #dns_rrdata_https{
+        svc_priority = uint(Priority), target_name = name(Target, Ctx), svc_params = svcb(Params)
+    };
+rdata(Type, _Fields, _Ctx) ->
+    case lists:member(Type, ?READABLE_TYPES) of
+        true -> ?FAIL(malformed);
+        false -> ?FAIL(unsupported_type)
+    end.
+
+%% RFC4034§3.2: the RRSIG fields, SIG's too (RFC2535§7.2)
+-spec rrsig([field()], ctx()) -> dns:rrdata_rrsig().
+rrsig([Covered, Alg, Labels, OriginalTTL, Expiration, Inception, KeyTag, Signer | Sig], Ctx) ->
+    #dns_rrdata_rrsig{
+        type_covered = type(Covered),
+        alg = alg(Alg),
+        labels = uint(Labels),
+        original_ttl = ttl(OriginalTTL),
+        expiration = rrsig_time(Expiration),
+        inception = rrsig_time(Inception),
+        keytag = uint(KeyTag),
+        signers_name = name(Signer, Ctx),
+        signature = base64(Sig)
+    }.
+
+%% RFC4034§3.2: a signature time is written either as seconds since the epoch or
+%% as a UTC date YYYYMMDDHHmmSS. The date is always 14 digits and a 32-bit number
+%% never more than 10, which tells them apart. RFC4034§3.1.5: the wire field holds
+%% the seconds modulo 2^32, compared with serial number arithmetic, so a date
+%% after 2106 wraps as it does in BIND. BIND also takes second 60, a leap second,
+%% as the first second of the next minute; calendar refuses it, so the seconds of
+%% the day are added up here.
+-spec rrsig_time(field()) -> dns:uint32().
+rrsig_time(Field) ->
+    case uint(Field) of
+        Seconds when Seconds =< 16#FFFFFFFF ->
+            Seconds;
+        Date when 10_000_000_000_000 =< Date, Date < 100_000_000_000_000 ->
+            Year = Date div 10_000_000_000,
+            YMD = {Year, Date div 100_000_000 rem 100, Date div 1_000_000 rem 100},
+            {H, M, S} = {Date div 10_000 rem 100, Date div 100 rem 100, Date rem 100},
+            case
+                1970 =< Year andalso calendar:valid_date(YMD) andalso H < 24 andalso
+                    M < 60 andalso S =< 60
+            of
+                true ->
+                    Days = calendar:date_to_gregorian_days(YMD),
+                    Gregorian = Days * 86400 + H * 3600 + M * 60 + S,
+                    (Gregorian - ?UNIX_EPOCH_GREGORIAN_SECONDS) rem (1 bsl 32);
+                false ->
+                    ?FAIL({bad_time, Date})
+            end;
+        Time ->
+            ?FAIL({bad_time, Time})
+    end.
+
+%% RFC1876§3: d1 [m1 [s1]] N|S d2 [m2 [s2]] E|W alt[m] [siz[m] [hp[m] [vp[m]]]].
+%% The six integers the zone writer writes are read too.
+-spec loc([field()]) -> dns:rrdata().
+loc(Fields) ->
+    case [signed_integer(Text) || {word, Text, _} <- Fields] of
+        [Lat, Lon, Alt, Size, Horiz, Vert] when
+            is_integer(Lat),
+            is_integer(Lon),
+            is_integer(Alt),
+            is_integer(Size),
+            is_integer(Horiz),
+            is_integer(Vert),
+            length(Fields) =:= 6
+        ->
+            #dns_rrdata_loc{
+                lat = Lat, lon = Lon, alt = Alt, size = Size, horiz = Horiz, vert = Vert
+            };
+        _ ->
+            loc_rfc1876([text(Field) || Field <- Fields])
+    end.
+
+-spec loc_rfc1876([binary()]) -> dns:rrdata().
+loc_rfc1876(Words) ->
+    {Lat, Rest1} = loc_coordinate(Words, [], ~"N", ~"S"),
+    {Lon, Rest2} = loc_coordinate(Rest1, [], ~"E", ~"W"),
+    case Rest2 of
+        [Alt | Precisions] ->
+            {Size, Horiz, Vert} = loc_precisions(Precisions),
+            #dns_rrdata_loc{
+                lat = Lat, lon = Lon, alt = loc_cm(Alt), size = Size, horiz = Horiz, vert = Vert
+            };
+        [] ->
+            ?FAIL(malformed)
+    end.
+
+%% Degrees, and minutes and seconds if given, to thousandths of a second of arc,
+%% negative to the south and the west
+-spec loc_coordinate([binary()], [binary()], binary(), binary()) -> {integer(), [binary()]}.
+loc_coordinate([Word | Rest], Parts, Positive, Negative) when Parts =/= [] ->
+    case dns_domain:to_upper(Word) of
+        Positive -> {loc_angle(lists:reverse(Parts)), Rest};
+        Negative -> {-loc_angle(lists:reverse(Parts)), Rest};
+        _ when length(Parts) < 3 -> loc_coordinate(Rest, [Word | Parts], Positive, Negative);
+        _ -> ?FAIL(malformed)
+    end;
+loc_coordinate([Word | Rest], [], Positive, Negative) ->
+    loc_coordinate(Rest, [Word], Positive, Negative);
+loc_coordinate([], _Parts, _Positive, _Negative) ->
+    ?FAIL(malformed).
+
+-spec loc_angle([binary()]) -> non_neg_integer().
+loc_angle([Degrees]) ->
+    decimal(Degrees, 0) * 3600000;
+loc_angle([Degrees, Minutes]) ->
+    decimal(Degrees, 0) * 3600000 + decimal(Minutes, 0) * 60000;
+loc_angle([Degrees, Minutes, Seconds]) ->
+    decimal(Degrees, 0) * 3600000 + decimal(Minutes, 0) * 60000 + decimal(Seconds, 3).
+
+-spec loc_precisions([binary()]) -> {integer(), integer(), integer()}.
+loc_precisions([]) ->
+    {?LOC_DEFAULT_SIZE, ?LOC_DEFAULT_HORIZ, ?LOC_DEFAULT_VERT};
+loc_precisions([Size]) ->
+    {loc_cm(Size), ?LOC_DEFAULT_HORIZ, ?LOC_DEFAULT_VERT};
+loc_precisions([Size, Horiz]) ->
+    {loc_cm(Size), loc_cm(Horiz), ?LOC_DEFAULT_VERT};
+loc_precisions([Size, Horiz, Vert]) ->
+    {loc_cm(Size), loc_cm(Horiz), loc_cm(Vert)};
+loc_precisions(_) ->
+    ?FAIL(malformed).
+
+%% Metres, with an "m" or without, to centimetres
+-spec loc_cm(binary()) -> integer().
+loc_cm(Word) ->
+    Size = byte_size(Word) - 1,
+    case Word of
+        <<Number:Size/binary, M>> when M =:= $m; M =:= $M -> signed_decimal(Number, 2);
+        _ -> signed_decimal(Word, 2)
+    end.
+
+-spec signed_decimal(binary(), non_neg_integer()) -> integer().
+signed_decimal(<<$-, Number/binary>>, Scale) -> -decimal(Number, Scale);
+signed_decimal(Number, Scale) -> decimal(Number, Scale).
+
+%% A decimal number in units of 10^-Scale, rounded to the nearest
+-spec decimal(binary(), non_neg_integer()) -> non_neg_integer().
+decimal(Text, Scale) ->
+    {Int, Frac} =
+        case binary:split(Text, ~".") of
+            [I] -> {I, <<>>};
+            [I, F] -> {I, F}
+        end,
+    case {digits(Int), Frac =:= <<>> orelse digits(Frac)} of
+        {true, true} ->
+            Unit = pow10(Scale),
+            Fraction =
+                case byte_size(Frac) of
+                    0 ->
+                        0;
+                    Digits when Digits =< Scale ->
+                        binary_to_integer(Frac) * pow10(Scale - Digits);
+                    Digits ->
+                        Divisor = pow10(Digits - Scale),
+                        (binary_to_integer(Frac) + Divisor div 2) div Divisor
+                end,
+            binary_to_integer(Int) * Unit + Fraction;
+        _ ->
+            ?FAIL({not_a_number, Text})
+    end.
+
+-spec digits(binary()) -> boolean().
+digits(<<>>) -> false;
+digits(Text) -> lists:all(fun(C) -> ?IS_DIGIT(C) end, binary_to_list(Text)).
+
+-spec pow10(non_neg_integer()) -> pos_integer().
+pow10(0) -> 1;
+pow10(N) -> 10 * pow10(N - 1).
+
+-spec signed_integer(binary()) -> integer() | error.
+signed_integer(<<$-, C, _/binary>> = Text) when ?IS_DIGIT(C) -> to_integer(Text);
+signed_integer(<<C, _/binary>> = Text) when ?IS_DIGIT(C) -> to_integer(Text);
+signed_integer(_) -> error.
+
+-spec to_integer(binary()) -> integer() | error.
+to_integer(Text) ->
+    try
+        binary_to_integer(Text)
+    catch
+        error:badarg -> error
+    end.
+
+%% ============================================================================
+%% Fields
+%% ============================================================================
+
+%% RFC1035§5.1: a domain name, relative to the origin unless it ends with a dot,
+%% and "@" for the origin itself
+-spec name(field(), ctx()) -> dns:dname().
+name({word, ~"@", _}, #ctx{origin = <<>>}) ->
+    ~".";
+name({word, ~"@", _}, #ctx{origin = Origin}) ->
+    fqdn(Origin);
+name({word, Text, _}, #ctx{origin = Origin}) ->
+    case presentation_name(Text) of
+        {Name, true} -> Name;
+        {Name, false} when Origin =:= <<>> -> Name;
+        {Name, false} when Origin =:= ~"." -> <<Name/binary, $.>>;
+        {Name, false} -> <<Name/binary, $., Origin/binary>>
+    end;
+name({quoted, Text, _}, _Ctx) ->
+    ?FAIL({quoted_name, Text}).
+
+%% The name as dns_erlang keeps it, and whether it ends with a dot. RFC1035§5.1:
+%% \X stands for X and \DDD for the octet DDD, which are kept as they are, but for
+%% a dot or a backslash, kept escaped as dns_erlang keeps them within a label.
+-spec presentation_name(binary()) -> {dns:dname(), boolean()}.
+presentation_name(~".") ->
+    {~".", true};
+presentation_name(<<$., _/binary>> = Text) ->
+    ?FAIL({empty_label, Text});
+presentation_name(Text) ->
+    case plain_name(Text, $.) of
+        plain -> {binary:copy(Text), binary:last(Text) =:= $.};
+        escaped -> escaped_name(Text, Text, <<>>, 0);
+        empty_label -> ?FAIL({empty_label, Text})
+    end.
+
+%% Whether a name has no escapes, and no empty label either
+-spec plain_name(binary(), byte()) -> plain | escaped | empty_label.
+plain_name(<<$\\, _/binary>>, _Previous) -> escaped;
+plain_name(<<$., _/binary>>, $.) -> empty_label;
+plain_name(<<C, Rest/binary>>, _Previous) -> plain_name(Rest, C);
+plain_name(<<>>, _Previous) -> plain.
+
+-spec escaped_name(binary(), binary(), binary(), non_neg_integer()) -> {binary(), boolean()}.
+escaped_name(<<$\\, A, B, C, Rest/binary>>, Text, Acc, Len) when
+    ?IS_DIGIT(A), ?IS_DIGIT(B), ?IS_DIGIT(C)
+->
+    case (A - $0) * 100 + (B - $0) * 10 + (C - $0) of
+        Octet when Octet =< 255 -> escaped_name(Rest, Text, label_octet(Octet, Acc), Len + 1);
+        _ -> ?FAIL({bad_escape, Text})
+    end;
+escaped_name(<<$\\, C, Rest/binary>>, Text, Acc, Len) ->
+    escaped_name(Rest, Text, label_octet(C, Acc), Len + 1);
+escaped_name(<<$\\>>, Text, _Acc, _Len) ->
+    ?FAIL({bad_escape, Text});
+escaped_name(<<$.>>, _Text, Acc, Len) when Len > 0 ->
+    {<<Acc/binary, $.>>, true};
+escaped_name(<<$., Rest/binary>>, Text, Acc, Len) when Len > 0 ->
+    escaped_name(Rest, Text, <<Acc/binary, $.>>, 0);
+escaped_name(<<$., _/binary>>, Text, _Acc, 0) ->
+    ?FAIL({empty_label, Text});
+escaped_name(<<C, Rest/binary>>, Text, Acc, Len) ->
+    escaped_name(Rest, Text, <<Acc/binary, C>>, Len + 1);
+escaped_name(<<>>, _Text, Acc, _Len) ->
+    {Acc, false}.
+
+-spec label_octet(byte(), binary()) -> binary().
+label_octet($., Acc) -> <<Acc/binary, "\\.">>;
+label_octet($\\, Acc) -> <<Acc/binary, "\\\\">>;
+label_octet(Octet, Acc) -> <<Acc/binary, Octet>>.
+
+-spec fqdn(dns:dname()) -> dns:dname().
+fqdn(<<>>) ->
+    ~".";
+fqdn(Name) ->
+    case binary:last(Name) of
+        $. -> Name;
+        _ -> <<Name/binary, $.>>
+    end.
+
+%% RFC1035§5.1: a <character-string>, quoted or not. \DDD is the octet DDD and \X
+%% is X; \xHH is the octet HH, and \n, \t and \r a newline, a tab and a carriage
+%% return, as the parser always read them. Quotes within a word only group.
+-spec text(field()) -> binary().
+text({_, Text, _}) ->
+    unescape(Text).
+
+-spec unescape(binary()) -> binary().
+unescape(Text) ->
+    case plain_text(Text) of
+        true -> binary:copy(Text);
+        false -> unescape(Text, <<>>)
+    end.
+
+-spec plain_text(binary()) -> boolean().
+plain_text(<<$\\, _/binary>>) -> false;
+plain_text(<<$", _/binary>>) -> false;
+plain_text(<<_, Rest/binary>>) -> plain_text(Rest);
+plain_text(<<>>) -> true.
+
+-spec unescape(binary(), binary()) -> binary().
+unescape(<<$\\, A, B, C, Rest/binary>>, Acc) when ?IS_DIGIT(A), ?IS_DIGIT(B), ?IS_DIGIT(C) ->
+    case (A - $0) * 100 + (B - $0) * 10 + (C - $0) of
+        Octet when Octet =< 255 -> unescape(Rest, <<Acc/binary, Octet>>);
+        _ -> unescape(<<A, B, C, Rest/binary>>, <<Acc/binary, $\\>>)
+    end;
+unescape(<<$\\, $x, H1, H2, Rest/binary>>, Acc) ->
+    case {hex_digit(H1), hex_digit(H2)} of
+        {V1, V2} when is_integer(V1), is_integer(V2) ->
+            unescape(Rest, <<Acc/binary, (V1 * 16 + V2)>>);
+        _ ->
+            unescape(<<H1, H2, Rest/binary>>, <<Acc/binary, "\\x">>)
+    end;
+unescape(<<$\\, $n, Rest/binary>>, Acc) ->
+    unescape(Rest, <<Acc/binary, $\n>>);
+unescape(<<$\\, $t, Rest/binary>>, Acc) ->
+    unescape(Rest, <<Acc/binary, $\t>>);
+unescape(<<$\\, $r, Rest/binary>>, Acc) ->
+    unescape(Rest, <<Acc/binary, $\r>>);
+unescape(<<$\\, C, Rest/binary>>, Acc) ->
+    unescape(Rest, <<Acc/binary, C>>);
+unescape(<<$", Rest/binary>>, Acc) ->
+    unescape(Rest, Acc);
+unescape(<<C, Rest/binary>>, Acc) ->
+    unescape(Rest, <<Acc/binary, C>>);
+unescape(<<>>, Acc) ->
+    Acc.
+
+-spec hex_digit(byte()) -> 0..15 | error.
+hex_digit(C) when ?IS_DIGIT(C) -> C - $0;
+hex_digit(C) when $a =< C, C =< $f -> C - $a + 10;
+hex_digit(C) when $A =< C, C =< $F -> C - $A + 10;
+hex_digit(_) -> error.
+
+%% A number, written as a TTL may be, 1h for 3600, as the parser read numbers
+-spec uint(field()) -> non_neg_integer().
+uint({word, Text, _}) ->
+    case ttl_value(Text) of
+        error -> ?FAIL({not_a_number, Text});
+        Number -> Number
+    end;
+uint({quoted, Text, _}) ->
+    ?FAIL({not_a_number, Text}).
+
+%% RFC4034§2.2, §3.2, §5.3: an algorithm number, or its mnemonic
+-spec alg(field()) -> dns:uint8().
+alg({word, <<C, _/binary>>, _} = Field) when ?IS_DIGIT(C) ->
+    uint(Field);
+alg({word, Text, _}) ->
+    case dns_names:name_alg(dns_domain:to_upper(Text)) of
+        undefined -> ?FAIL({unknown_algorithm, Text});
+        Alg -> Alg
+    end;
+alg({quoted, Text, _}) ->
+    ?FAIL({unknown_algorithm, Text}).
+
+-spec ttl(field()) -> non_neg_integer().
+ttl({word, Text, _}) ->
+    case ttl_value(Text) of
+        error -> ?FAIL({bad_ttl, Text});
+        TTL -> TTL
+    end;
+ttl({quoted, Text, _}) ->
+    ?FAIL({bad_ttl, Text}).
+
+%% RFC2308§4, as BIND reads it: seconds, or numbers each followed by a unit, which
+%% add up, as 1h30m, in either case: w, d, h, m and s, and y for 365 days
+-spec ttl_value(binary()) -> non_neg_integer() | error.
+ttl_value(Text) ->
+    ttl_value(Text, none, 0, false).
+
+-spec ttl_value(binary(), non_neg_integer() | none, non_neg_integer(), boolean()) ->
+    non_neg_integer() | error.
+ttl_value(<<C, Rest/binary>>, Pending, Total, Units) when ?IS_DIGIT(C) ->
+    Number =
+        case Pending of
+            none -> 0;
+            _ -> Pending
+        end,
+    ttl_value(Rest, Number * 10 + (C - $0), Total, Units);
+ttl_value(<<Unit, Rest/binary>>, Pending, Total, _Units) when is_integer(Pending) ->
+    case ttl_unit(Unit) of
+        error -> error;
+        Seconds -> ttl_value(Rest, none, Total + Pending * Seconds, true)
+    end;
+ttl_value(<<>>, Pending, 0, false) when is_integer(Pending) ->
+    Pending;
+ttl_value(<<>>, none, Total, true) ->
+    Total;
+ttl_value(_, _, _, _) ->
+    error.
+
+-spec ttl_unit(byte()) -> pos_integer() | error.
+ttl_unit(Unit) when Unit =:= $s; Unit =:= $S -> 1;
+ttl_unit(Unit) when Unit =:= $m; Unit =:= $M -> 60;
+ttl_unit(Unit) when Unit =:= $h; Unit =:= $H -> 3600;
+ttl_unit(Unit) when Unit =:= $d; Unit =:= $D -> 86400;
+ttl_unit(Unit) when Unit =:= $w; Unit =:= $W -> 604800;
+ttl_unit(Unit) when Unit =:= $y; Unit =:= $Y -> 31536000;
+ttl_unit(_) -> error.
+
+%% RFC3597§5: a type's mnemonic, or TYPEnnn
+-spec type(field()) -> dns:type().
+type({word, Text, _}) ->
+    case type_number(Text) of
+        undefined ->
+            case type_number(dns_domain:to_upper(Text)) of
+                undefined -> ?FAIL({unknown_type, Text});
+                Type -> Type
+            end;
+        Type ->
+            Type
+    end;
+type({quoted, Text, _}) ->
+    ?FAIL({unknown_type, Text}).
+
+-spec types([field()]) -> [dns:type()].
+types(Fields) ->
+    [type(Field) || Field <- Fields].
+
+%% RFC1035§3.4.1: four decimal octets, with no leading zeros, which would read as
+%% octal elsewhere
+-spec ipv4(field()) -> inet:ip4_address().
+ipv4({word, Text, _}) ->
+    case ipv4_octets(Text, []) of
+        [D, C, B, A] -> {A, B, C, D};
+        _ -> ?FAIL({bad_ipv4, Text})
+    end;
+ipv4({quoted, Text, _}) ->
+    ?FAIL({bad_ipv4, Text}).
+
+%% The octets, last first, or error
+-spec ipv4_octets(binary(), [byte()]) -> [byte()] | error.
+ipv4_octets(Text, Acc) when length(Acc) < 4 ->
+    case Text of
+        <<D1, D2, D3, Rest/binary>> when
+            $1 =< D1,
+            D1 =< $2,
+            ?IS_DIGIT(D2),
+            ?IS_DIGIT(D3),
+            (D1 - $0) * 100 + (D2 - $0) * 10 + (D3 - $0) =< 255
+        ->
+            ipv4_rest(Rest, [(D1 - $0) * 100 + (D2 - $0) * 10 + (D3 - $0) | Acc]);
+        <<D1, D2, Rest/binary>> when $1 =< D1, D1 =< $9, ?IS_DIGIT(D2) ->
+            ipv4_rest(Rest, [(D1 - $0) * 10 + (D2 - $0) | Acc]);
+        <<D, Rest/binary>> when ?IS_DIGIT(D) ->
+            ipv4_rest(Rest, [D - $0 | Acc]);
+        _ ->
+            error
+    end;
+ipv4_octets(_Text, _Acc) ->
+    error.
+
+-spec ipv4_rest(binary(), [byte()]) -> [byte()] | error.
+ipv4_rest(<<>>, Acc) when length(Acc) =:= 4 -> Acc;
+ipv4_rest(<<$., Rest/binary>>, Acc) when length(Acc) < 4 -> ipv4_octets(Rest, Acc);
+ipv4_rest(_, _Acc) -> error.
+
+%% An IPv6 address, without the "%" and zone index that inet would take and drop,
+%% which have no place in a zone file
+-spec ipv6(field()) -> inet:ip6_address().
+ipv6({word, Text, _}) ->
+    case binary:match(Text, ~"%") of
+        nomatch ->
+            case inet:parse_ipv6strict_address(binary_to_list(Text)) of
+                {ok, IP} -> IP;
+                {error, _} -> ?FAIL({bad_ipv6, Text})
+            end;
+        _ ->
+            ?FAIL({bad_ipv6, Text})
+    end;
+ipv6({quoted, Text, _}) ->
+    ?FAIL({bad_ipv6, Text}).
+
+-spec hex([field()]) -> binary().
+hex(Fields) ->
+    decode_hex(iolist_to_binary([text(Field) || Field <- Fields])).
+
+-spec decode_hex(binary()) -> binary().
+decode_hex(Hex) ->
+    try
+        binary:decode_hex(Hex)
+    catch
+        error:badarg -> ?FAIL({bad_hex, Hex})
+    end.
+
+-spec base64([field()]) -> binary().
+base64(Fields) ->
+    Base64 = iolist_to_binary([text(Field) || Field <- Fields]),
+    try
+        base64:decode(Base64)
+    catch
+        error:_ -> ?FAIL({bad_base64, Base64})
+    end.
+
+%% RFC5155§3.3: "-" for no salt
+-spec salt(field()) -> binary().
+salt(Field) ->
+    case text(Field) of
+        ~"-" -> <<>>;
+        Hex -> decode_hex(Hex)
+    end.
+
+%% RFC4648§7, without padding, as RFC5155§3.3 writes the next hashed owner name;
+%% padding is read too, as the zone writer wrote it
+-spec base32hex(field()) -> binary().
+base32hex(Field) ->
+    Text = text(Field),
+    Digits = string:trim(Text, trailing, "="),
+    try <<<<(base32hex_digit(C)):5>> || <<C>> <= Digits>> of
+        Bits ->
+            Size = bit_size(Bits) div 8,
+            Spare = bit_size(Bits) rem 8,
+            case Bits of
+                <<Hash:Size/binary, 0:Spare>> when Spare < 5 -> Hash;
+                _ -> ?FAIL({bad_base32hex, Text})
+            end
+    catch
+        error:badarg -> ?FAIL({bad_base32hex, Text})
+    end.
+
+-spec base32hex_digit(byte()) -> 0..31.
+base32hex_digit(C) when ?IS_DIGIT(C) -> C - $0;
+base32hex_digit(C) when $A =< C, C =< $V -> C - $A + 10;
+base32hex_digit(C) when $a =< C, C =< $v -> C - $a + 10;
+base32hex_digit(_) -> erlang:error(badarg).
+
+%% RFC7553§4.4: the target is a URI, kept as it is written
+-spec uri(field()) -> binary().
+uri(Field) ->
+    Target = text(Field),
+    case uri_string:normalize(Target) of
+        {error, _, _} -> ?FAIL({bad_uri, Target});
+        _ -> Target
+    end.
+
+%% RFC7043§3, §4: six or eight octets in hex, separated by hyphens; colons are
+%% read too, as are the hex digits alone, as the zone writer writes them
+-spec eui(field(), 6 | 8) -> binary().
+eui(Field, Size) ->
+    Text = text(Field),
+    case decode_hex(<<<<C>> || <<C>> <= Text, C =/= $-, C =/= $:>>) of
+        <<_:Size/binary>> = Address -> Address;
+        _ -> ?FAIL({bad_eui, Text})
+    end.
+
+%% RFC6742§2.1, §2.3: a NodeID or Locator64 is four colon-separated groups of one
+%% to four hex digits, as in an AAAA record, but never with the "::" shorthand
+-spec ilnp64(field()) -> <<_:64>>.
+ilnp64({word, Text, _}) ->
+    case binary:split(Text, ~":", [global]) of
+        [_, _, _, _] = Groups ->
+            iolist_to_binary([ilnp64_group(Group, Text) || Group <- Groups]);
+        _ ->
+            ?FAIL({bad_ilnp64, Text})
+    end;
+ilnp64({quoted, Text, _}) ->
+    ?FAIL({bad_ilnp64, Text}).
+
+-spec ilnp64_group(binary(), binary()) -> <<_:16>>.
+ilnp64_group(Group, Text) when 1 =< byte_size(Group), byte_size(Group) =< 4 ->
+    case decode_hex(<<(binary:copy(~"0", 4 - byte_size(Group)))/binary, Group/binary>>) of
+        <<_:16>> = Bin -> Bin;
+        _ -> ?FAIL({bad_ilnp64, Text})
+    end;
+ilnp64_group(_Group, Text) ->
+    ?FAIL({bad_ilnp64, Text}).
+
+-spec discovery_optional(field()) -> boolean().
+discovery_optional({word, ~"0", _}) -> false;
+discovery_optional({word, ~"1", _}) -> true;
+discovery_optional({_, Text, _}) -> ?FAIL({bad_discovery_optional, Text}).
+
+-spec ipseckey_gateway(field(), ctx()) -> <<>> | inet:ip_address() | dns:dname().
+ipseckey_gateway({word, ~".", _}, _Ctx) ->
+    <<>>;
+ipseckey_gateway({word, Text, _} = Field, Ctx) ->
+    case inet:parse_strict_address(binary_to_list(Text)) of
+        {ok, IP} -> IP;
+        {error, _} -> name(Field, Ctx)
+    end;
+ipseckey_gateway({quoted, Text, Line}, Ctx) ->
+    ipseckey_gateway({word, Text, Line}, Ctx).
+
+%% RFC8777§4.3.1: the relay of each type
+-spec gateway(non_neg_integer(), field(), ctx()) -> <<>> | inet:ip_address() | dns:dname().
+gateway(0, {word, ~".", _}, _Ctx) -> <<>>;
+gateway(1, Field, _Ctx) -> ipv4(Field);
+gateway(2, Field, _Ctx) -> ipv6(Field);
+gateway(3, Field, Ctx) -> name(Field, Ctx);
+gateway(Type, {_, Text, _}, _Ctx) -> ?FAIL({bad_gateway, Type, Text}).
+
+%% RFC9460§2.1: key=value, or a key alone, each value a <character-string>
+-spec svcb([field()]) -> dns:svcb_svc_params().
+svcb(Fields) ->
+    case dns_svcb_params:from_zone([svcb_param(Field) || Field <- Fields]) of
+        {ok, Params} -> Params;
+        {error, Reason} -> ?FAIL(Reason)
+    end.
+
+-spec svcb_param(field()) -> {binary(), binary() | none}.
+svcb_param({word, Text, _}) ->
+    case binary:split(Text, ~"=") of
+        [Key] -> {Key, none};
+        [Key, Value] -> {Key, unescape(Value)}
+    end;
+svcb_param({quoted, Text, _}) ->
+    ?FAIL({invalid_svcparam_format, Text}).
+
+%% RFC4034 Appendix B
+-spec keytag(non_neg_integer(), non_neg_integer(), non_neg_integer(), binary()) -> dns:uint16().
+keytag(Flags, Protocol, Alg, PublicKey) ->
+    Sum = keytag_sum(<<Flags:16, Protocol:8, Alg:8, PublicKey/binary>>, 0),
+    ((Sum band 16#FFFF) + (Sum bsr 16)) band 16#FFFF.
+
+-spec keytag_sum(binary(), non_neg_integer()) -> non_neg_integer().
+keytag_sum(<<Word:16, Rest/binary>>, Acc) -> keytag_sum(Rest, Acc + Word);
+keytag_sum(<<Octet:8>>, Acc) -> Acc + (Octet bsl 8);
+keytag_sum(<<>>, Acc) -> Acc.
+
+%% ============================================================================
+%% Errors
+%% ============================================================================
+
+-spec error_detail(
+    dns_zone:error_type(), binary(), binary() | undefined, term(), pos_integer(), ctx()
+) -> dns_zone:error_detail().
+error_detail(Type, Message, Suggestion, Details, Line, #ctx{filename = File, source = Source}) ->
+    Location =
+        case File of
+            undefined -> #{line => Line};
+            _ -> #{line => Line, file => File}
+        end,
+    Error = #{type => Type, message => Message, details => Details, location => Location},
+    WithContext =
+        case source_line(Source, Line) of
+            undefined -> Error;
+            Context -> Error#{context => Context}
+        end,
+    case Suggestion of
+        undefined -> WithContext;
+        _ -> WithContext#{suggestion => Suggestion}
+    end.
+
+-spec source_line(binary(), pos_integer()) -> binary() | undefined.
+source_line(Source, 1) ->
+    Line =
+        case binary:match(Source, ~"\n") of
+            nomatch -> Source;
+            {Pos, _} -> binary:part(Source, 0, Pos)
+        end,
+    binary:copy(string:trim(Line, trailing, "\r"));
+source_line(Source, Line) ->
+    case binary:match(Source, ~"\n") of
+        nomatch -> undefined;
+        {Pos, _} -> source_line(binary:part(Source, Pos + 1, byte_size(Source) - Pos - 1), Line - 1)
+    end.
+
+-spec file_error(file:filename_all(), term()) -> dns_zone:error_detail().
+file_error(Filename, Reason) ->
     #{
         type => file,
-        message => iolist_to_binary(Message),
+        message => iolist_to_binary(io_lib:format("Failed to read file: ~p", [Reason])),
         details => {file_error, Reason},
         location => #{file => Filename}
     }.
 
-%% Build error location map
--spec make_location(pos_integer() | undefined, parse_ctx()) -> error_location().
-make_location(Line, #parse_ctx{filename = Filename}) when is_integer(Line), Line > 0 ->
-    Location = #{line => Line},
-    make_filename(Filename, Location);
-make_location(_, #parse_ctx{filename = undefined}) ->
-    #{};
-make_location(_, #parse_ctx{filename = Filename}) ->
-    #{file => Filename}.
+-spec reason_text(term()) -> binary().
+reason_text({not_a_number, Text}) ->
+    <<"not a number: ", Text/binary>>;
+reason_text({bad_ttl, Text}) ->
+    <<"not a TTL: ", Text/binary>>;
+reason_text({bad_ipv4, Text}) ->
+    <<"not an IPv4 address: ", Text/binary>>;
+reason_text({bad_ipv6, Text}) ->
+    <<"not an IPv6 address: ", Text/binary>>;
+reason_text({bad_hex, Text}) ->
+    <<"not hex: ", Text/binary>>;
+reason_text({bad_base64, Text}) ->
+    <<"not base64: ", Text/binary>>;
+reason_text({bad_base32hex, Text}) ->
+    <<"not base32hex: ", Text/binary>>;
+reason_text({bad_uri, Text}) ->
+    <<"not a URI: ", Text/binary>>;
+reason_text({bad_eui, Text}) ->
+    <<"not an EUI address: ", Text/binary>>;
+reason_text({bad_ilnp64, Text}) ->
+    <<"not four groups of hex digits: ", Text/binary>>;
+reason_text({bad_discovery_optional, Text}) ->
+    <<"the D-bit is not 0 or 1: ", Text/binary>>;
+reason_text({unknown_type, Text}) ->
+    <<"unknown type: ", Text/binary>>;
+reason_text({unknown_algorithm, Text}) ->
+    <<"unknown algorithm: ", Text/binary>>;
+reason_text({quoted_name, Text}) ->
+    <<"a name cannot be quoted: ", Text/binary>>;
+reason_text({quoted_owner, Text}) ->
+    <<"an owner name cannot be quoted: ", Text/binary>>;
+reason_text({empty_label, Text}) ->
+    <<"a name with an empty label: ", Text/binary>>;
+reason_text({bad_escape, Text}) ->
+    <<"a name with a bad escape: ", Text/binary>>;
+reason_text({unexpected_field, Text}) ->
+    <<"expected a TTL, a class or a type: ", Text/binary>>;
+reason_text(no_type) ->
+    ~"no type";
+reason_text({no_rdata, Mnemonic}) ->
+    <<"no RDATA for ", Mnemonic/binary>>;
+reason_text(unbalanced_parenthesis) ->
+    ~"a closing parenthesis without an opening one";
+reason_text(unclosed_parenthesis) ->
+    ~"a parenthesis left open";
+reason_text(unterminated_string) ->
+    ~"a quoted string left open";
+reason_text(unsupported_type) ->
+    ~"no presentation format, use RFC 3597's \\# form";
+reason_text(rfc3597_no_length) ->
+    ~"\\# without a length";
+reason_text({rfc3597_length_mismatch, Length, Actual}) ->
+    iolist_to_binary(io_lib:format("\\# of length ~b with ~b octets", [Length, Actual]));
+reason_text({bad_directive, Name, Args}) ->
+    iolist_to_binary(
+        io_lib:format("unknown directive, or one with ~b arguments: ~ts", [Args, Name])
+    );
+reason_text({out_of_range, What, Value}) ->
+    iolist_to_binary(io_lib:format("~ts out of range: ~b", [What, Value]));
+reason_text({bad_time, Time}) ->
+    iolist_to_binary(io_lib:format("not a time: ~b", [Time]));
+reason_text({bad_gateway, Type, Text}) ->
+    <<"not a gateway of type ", (integer_to_binary(Type))/binary, ": ", Text/binary>>;
+reason_text(Reason) ->
+    iolist_to_binary(io_lib:format("~0tp", [Reason])).
 
-make_filename(undefined, Acc) -> Acc;
-make_filename(F, Acc) -> Acc#{file => F}.
-
-%% Build lexer error
--spec make_lexer_error(pos_integer(), term(), parse_ctx()) -> error_detail().
-make_lexer_error(Line, Reason, Ctx) ->
-    Message = io_lib:format("Lexical error: ~p", [Reason]),
-    Error = #{
-        type => lexer,
-        message => iolist_to_binary(Message),
-        details => {lexer_error, Reason},
-        location => make_location(Line, Ctx)
-    },
-    maybe_append_source_line(Error, Line, Ctx).
-
-%% Build parser error
--spec make_parser_error(term(), parse_ctx()) -> error_detail().
-make_parser_error(Reason, Ctx) ->
-    Message = io_lib:format("Parse error: ~p", [Reason]),
-    %% Try to extract line number from parser error reason
-    Line = extract_line_from_parser_error(Reason),
-    Error = #{
-        type => parser,
-        message => iolist_to_binary(Message),
-        details => {parser_error, Reason},
-        location => make_location(Line, Ctx)
-    },
-    case Line of
-        undefined ->
-            Error;
-        L ->
-            maybe_append_source_line(Error, L, Ctx)
-    end.
-
-maybe_append_source_line(Error, Line, Ctx) ->
-    case get_source_line(Line, Ctx) of
-        undefined -> Error;
-        SourceLine -> Error#{context => SourceLine}
-    end.
-
-%% Extract line number from parser error tuple
--spec extract_line_from_parser_error(term()) -> pos_integer() | undefined.
-extract_line_from_parser_error({Line, _Module, _Message}) when is_integer(Line), Line > 0 ->
-    Line;
-extract_line_from_parser_error(_) ->
-    undefined.
-
-%% Build semantic error
--spec make_semantic_error(term(), parse_ctx()) -> error_detail().
-make_semantic_error(Reason, Ctx) ->
-    Message = io_lib:format("Semantic error: ~p", [Reason]),
-    #{
-        type => semantic,
-        message => iolist_to_binary(Message),
-        details => {semantic_error, Reason},
-        location => make_location(undefined, Ctx)
-    }.
-
-%% Build error for invalid RDATA with suggestions
--spec make_rdata_error(binary(), list(), parse_ctx()) -> error_detail().
-make_rdata_error(TypeName, RData, Ctx) ->
-    {Message, Suggestion} = rdata_error_message(TypeName, RData),
-    make_error(semantic, Message, {invalid_rdata, TypeName, RData}, Suggestion, Ctx).
-
-%% Generate helpful error messages for RDATA errors
--spec rdata_error_message(binary(), list()) -> {binary(), binary() | undefined}.
-rdata_error_message(~"SSHFP", RData) when length(RData) < 3 ->
+%% Messages and suggestions for RDATA that does not have the fields of its type
+-spec rdata_error_message(binary(), [field()]) -> {binary(), binary() | undefined}.
+rdata_error_message(~"SSHFP", Fields) when length(Fields) < 3 ->
     {
         <<"Invalid SSHFP record: expected 3 fields ", "(algorithm, fptype, fingerprint), got ",
-            (integer_to_binary(length(RData)))/binary>>,
+            (integer_to_binary(length(Fields)))/binary>>,
         ~"""
         SSHFP requires: algorithm fptype "hexfingerprint"
             Example: example.com. 3600 IN SSHFP 2 1 "123ABC..."
         """
     };
-rdata_error_message(~"SSHFP", _RData) ->
+rdata_error_message(~"SSHFP", _Fields) ->
     {
         ~"Invalid SSHFP record: fingerprint must be even-length hex string",
         ~"Hex strings must have an even number of characters (each byte = 2 hex digits)"
     };
-rdata_error_message(~"TLSA", RData) when length(RData) < 4 ->
+rdata_error_message(~"TLSA", Fields) when length(Fields) < 4 ->
     {
         <<"Invalid TLSA record: expected 4 fields ",
             "(usage, selector, matching-type, cert-data), got ",
-            (integer_to_binary(length(RData)))/binary>>,
+            (integer_to_binary(length(Fields)))/binary>>,
         ~"""
         TLSA requires: usage selector matching-type "hexcertdata",
             Example: _443._tcp.example.com. IN TLSA 3 1 1 "ABC123..."
         """
     };
-rdata_error_message(~"TLSA", _RData) ->
+rdata_error_message(~"TLSA", _Fields) ->
     {
         ~"Invalid TLSA record: certificate data must be even-length hex string",
         ~"Hex strings must have an even number of characters"
     };
-rdata_error_message(~"NAPTR", RData) when length(RData) < 6 ->
+rdata_error_message(~"NAPTR", Fields) when length(Fields) < 6 ->
     {
         <<"Invalid NAPTR record: expected 6 fields ",
             "(order, preference, flags, services, regexp, replacement), got ",
-            (integer_to_binary(length(RData)))/binary>>,
+            (integer_to_binary(length(Fields)))/binary>>,
         ~"""
         NAPTR requires: order preference "flags" "services" "regexp" replacement
             Example: example.com. IN NAPTR 100 10 "S" "SIP+D2T" _sip._tcp.example.com.
         """
     };
-rdata_error_message(~"CERT", RData) when length(RData) < 4 ->
+rdata_error_message(~"CERT", Fields) when length(Fields) < 4 ->
     {
         <<"Invalid CERT record: expected 4 fields ", "(type, keytag, algorithm, cert-data), got ",
-            (integer_to_binary(length(RData)))/binary>>,
+            (integer_to_binary(length(Fields)))/binary>>,
         ~"""
         CERT requires: type keytag algorithm "certdata"
             Example: example.com. IN CERT 1 12345 8 "MIICXAIBAAKBgQC8"
         """
     };
-rdata_error_message(~"DHCID", _RData) ->
+rdata_error_message(~"DHCID", _Fields) ->
     {
         ~"Invalid DHCID record: requires base64-encoded data",
         ~"""
@@ -376,78 +1716,78 @@ rdata_error_message(~"DHCID", _RData) ->
             Example: example.com. IN DHCID "AAIBY2/AuCccgoJbsaxcQc9TUapptP69lOjxfNuVAA2kjEA="
         """
     };
-rdata_error_message(~"DS", RData) when length(RData) < 4 ->
+rdata_error_message(~"DS", Fields) when length(Fields) < 4 ->
     {
         <<"Invalid DS record: expected 4 fields ", "(keytag, algorithm, digest-type, digest), got ",
-            (integer_to_binary(length(RData)))/binary>>,
+            (integer_to_binary(length(Fields)))/binary>>,
         ~"""
         DS requires: keytag algorithm digest-type "hexdigest"
             Example: example.com. IN DS 12345 8 2 "49FD46E6C4B45C55D4AC"
         """
     };
-rdata_error_message(~"DS", _RData) ->
+rdata_error_message(~"DS", _Fields) ->
     {
         ~"Invalid DS record: digest must be even-length hex string",
         ~"Hex strings must have an even number of characters"
     };
-rdata_error_message(~"DNSKEY", RData) when length(RData) < 4 ->
+rdata_error_message(~"DNSKEY", Fields) when length(Fields) < 4 ->
     {
         <<"Invalid DNSKEY record: expected 4 fields ",
             "(flags, protocol, algorithm, public-key), got ",
-            (integer_to_binary(length(RData)))/binary>>,
+            (integer_to_binary(length(Fields)))/binary>>,
         ~"""
         DNSKEY requires: flags protocol algorithm "base64publickey"
             Example: example.com. IN DNSKEY 256 3 8 "AwEAAa..."
         """
     };
-rdata_error_message(~"DNSKEY", _RData) ->
+rdata_error_message(~"DNSKEY", _Fields) ->
     {
         ~"Invalid DNSKEY record: public key must be valid base64",
         ~"Public key should be base64-encoded key material"
     };
-rdata_error_message(~"ZONEMD", RData) when length(RData) < 4 ->
+rdata_error_message(~"ZONEMD", Fields) when length(Fields) < 4 ->
     {
         <<"Invalid ZONEMD record: expected 4 fields ", "(serial, scheme, algorithm, hash), got ",
-            (integer_to_binary(length(RData)))/binary>>,
+            (integer_to_binary(length(Fields)))/binary>>,
         ~"""
         ZONEMD requires: serial scheme algorithm "hexhash"
             Example: example.com. IN ZONEMD 2025121100 1 1 F8857A5A89EF49FF..."
         """
     };
-rdata_error_message(~"ZONEMD", _RData) ->
+rdata_error_message(~"ZONEMD", _Fields) ->
     {
         ~"Invalid ZONEMD record: hash must be even-length hex string",
         ~"Hex strings must have an even number of characters"
     };
-rdata_error_message(~"SVCB", RData) when length(RData) < 2 ->
+rdata_error_message(~"SVCB", Fields) when length(Fields) < 2 ->
     {
         <<"Invalid SVCB record: expected at least 2 fields ", "(priority, target), got ",
-            (integer_to_binary(length(RData)))/binary>>,
+            (integer_to_binary(length(Fields)))/binary>>,
         ~"""
         SVCB requires: priority target
             Example: example.com. IN SVCB 1 svc.example.com.
         """
     };
-rdata_error_message(~"SVCB", _RData) ->
+rdata_error_message(~"SVCB", _Fields) ->
     {
         ~"Invalid SVCB record: malformed priority or target",
         ~"Priority must be an integer, target must be a domain name"
     };
-rdata_error_message(~"HTTPS", RData) when length(RData) < 2 ->
+rdata_error_message(~"HTTPS", Fields) when length(Fields) < 2 ->
     {
         <<"Invalid HTTPS record: expected at least 2 fields ", "(priority, target), got ",
-            (integer_to_binary(length(RData)))/binary>>,
+            (integer_to_binary(length(Fields)))/binary>>,
         ~"""
         HTTPS requires: priority target
             Example: example.com. IN HTTPS 1 .
         """
     };
-rdata_error_message(~"HTTPS", _RData) ->
+rdata_error_message(~"HTTPS", _Fields) ->
     {
         ~"Invalid HTTPS record: malformed priority or target",
         ~"Priority must be an integer, target must be a domain name"
     };
-rdata_error_message(TypeName, _RData) when TypeName =:= ~"NID"; TypeName =:= ~"L64" ->
+rdata_error_message(TypeName, _Fields) when TypeName =:= ~"NID"; TypeName =:= ~"L64" ->
     {
         <<"Invalid ", TypeName/binary, " record: expected a preference and a 64-bit value">>,
         <<TypeName/binary,
@@ -455,7 +1795,7 @@ rdata_error_message(TypeName, _RData) when TypeName =:= ~"NID"; TypeName =:= ~"L
             "without the \"::\" shorthand\n"
             "    Example: example.com. 3600 IN ", TypeName/binary, " 10 0014:4fff:ff20:ee64">>
     };
-rdata_error_message(~"AMTRELAY", _RData) ->
+rdata_error_message(~"AMTRELAY", _Fields) ->
     {
         ~"Invalid AMTRELAY record: expected a precedence, a D-bit, a relay type and a relay",
         ~"""
@@ -465,2102 +1805,38 @@ rdata_error_message(~"AMTRELAY", _RData) ->
             Example: 12.100.51.198.in-addr.arpa. 3600 IN AMTRELAY 10 0 1 203.0.113.15
         """
     };
-rdata_error_message(TypeName, _RData) when TypeName =:= ~"HHIT"; TypeName =:= ~"BRID" ->
+rdata_error_message(TypeName, _Fields) when TypeName =:= ~"HHIT"; TypeName =:= ~"BRID" ->
     {
         <<"Invalid ", TypeName/binary, " record: data must be valid base64">>,
         <<TypeName/binary,
             " requires: base64 CBOR data, which may be split into several pieces\n"
             "    Example: example.com. 3600 IN ", TypeName/binary, " ( gxJpM2ZmOCAw MDBhWQEY... )">>
     };
-rdata_error_message(TypeName, _RData) ->
+rdata_error_message(TypeName, _Fields) ->
     {<<"Invalid ", TypeName/binary, " record: malformed RDATA">>, undefined}.
 
-%% Tokenize input using the lexer
--spec tokenize(string(), parse_ctx()) -> {ok, [dynamic()]} | {error, error_detail()}.
-tokenize(String, Ctx) ->
-    case dns_zone_lexer:string(String) of
-        {ok, Tokens, _EndLine} ->
-            {ok, Tokens ++ [{'$end', 99999}]};
-        {error, Reason, Line} ->
-            {error, make_lexer_error(Line, Reason, Ctx)}
-    end.
+-spec format_location(dns_zone:error_location(), dns_zone:error_type()) -> iolist().
+format_location(#{line := Line, file := File}, Type) when File /= undefined ->
+    io_lib:format("~s at ~s:~p (~p):~n", [capitalize(Type), File, Line, Type]);
+format_location(#{file := File}, Type) when File /= undefined ->
+    io_lib:format("~s at ~s (~p):~n", [capitalize(Type), File, Type]);
+format_location(#{line := Line}, Type) ->
+    io_lib:format("~s at line ~p (~p):~n", [capitalize(Type), Line, Type]);
+format_location(_Location, Type) ->
+    io_lib:format("~s:~n", [capitalize(Type)]).
 
-%% Parse tokens into structured data
--spec lexerize([dynamic()], parse_ctx()) -> {ok, [dynamic()]} | {error, error_detail()}.
-lexerize(Tokens, Ctx) ->
-    case dns_zone_parser:parse(Tokens) of
-        {ok, ParseTree} when is_list(ParseTree) ->
-            {ok, ParseTree};
-        {error, Reason} ->
-            {error, make_parser_error(Reason, Ctx)}
-    end.
-
-%% Process parsed entries into DNS records
--spec process_entries([entry()], parse_ctx(), [dns:rr()]) ->
-    {ok, [dns:rr()]} | {error, error_detail()}.
-process_entries([], _Ctx, Acc) ->
-    {ok, lists:reverse(Acc)};
-process_entries([Entry | Rest], Ctx, Acc) ->
-    case process_entry(Entry, Ctx) of
-        {ok, NewCtx, Records} ->
-            process_entries(Rest, NewCtx, lists:reverse(Records, Acc));
-        {error, #{type := _} = EnhancedError} ->
-            {error, EnhancedError}
-    end.
-
-%% Process a single entry (directive or resource record)
--spec process_entry(entry(), parse_ctx()) ->
-    {ok, parse_ctx(), [dns:rr()]} | {error, tuple() | error_detail()}.
-process_entry(empty, Ctx) ->
-    {ok, Ctx, []};
-process_entry({directive, origin, Origin0}, Ctx) ->
-    %% Update the origin
-    Origin = ensure_binary(Origin0),
-    NewOrigin = ensure_fqdn(Origin),
-    NewCtx = Ctx#parse_ctx{origin = NewOrigin, last_owner = NewOrigin},
-    {ok, NewCtx, []};
-process_entry({directive, ttl, TTL0}, Ctx) ->
-    %% Update the default TTL
-    TTL = ensure_integer(TTL0),
-    NewCtx = Ctx#parse_ctx{default_ttl = TTL},
-    {ok, NewCtx, []};
-process_entry({directive, include, Filename}, Ctx) when is_list(Filename) ->
-    %% Handle $INCLUDE directive
-    handle_include(Filename, Ctx#parse_ctx.origin, Ctx);
-process_entry({directive, include, Filename, Origin0}, Ctx) when is_list(Filename) ->
-    %% Handle $INCLUDE with origin
-    Origin = ensure_binary(Origin0),
-    NewOrigin = ensure_fqdn(Origin),
-    handle_include(Filename, NewOrigin, Ctx);
-process_entry({directive, generate, _Content}, Ctx) ->
-    %% $GENERATE - BIND extension (non-standard)
-    %% Not yet implemented - would require template expansion
-    %% Example: $GENERATE 1-100 server-$.example.com. A 192.168.1.$
-    %% See: https://bind9.readthedocs.io/en/latest/chapter3.html
-    %% TODO: Implement template expansion with range iteration
-    {ok, Ctx, []};
-process_entry({rr, Owner, TTL0, Class0, Type0, RData0}, Ctx) ->
-    %% Process resource record
-    TTL = ensure_ttl(TTL0),
-    Class = ensure_entry_class(Class0),
-    Type = ensure_entry_type(Type0),
-    RData = ensure_list(RData0),
-    case build_rr(Owner, TTL, Class, Type, RData, Ctx) of
-        {ok, RR, NewCtx} ->
-            {ok, NewCtx, [RR]};
-        {error, Reason} ->
-            {error, Reason}
-    end;
-process_entry(_Entry, Ctx) ->
-    {ok, Ctx, []}.
-
-%% RFC 3597 - Preserve tuple structure for generic types/classes
-ensure_entry_class({generic_class, _} = Class0) ->
-    Class0;
-ensure_entry_class(Class0) when is_list(Class0) ->
-    Class0;
-ensure_entry_class(undefined) ->
-    undefined.
-
-%% RFC 3597 - Preserve tuple structure for generic types/classes
-ensure_entry_type({generic_type, _} = Type0) ->
-    Type0;
-ensure_entry_type(Type0) when is_list(Type0) ->
-    Type0.
-
-%% Ensure a term is an integer or undefined
--spec ensure_ttl(dynamic()) -> dns:ttl() | undefined.
-ensure_ttl(I) when is_integer(I) -> I;
-ensure_ttl(_) -> undefined.
-
-%% Build a DNS resource record
--spec build_rr(
-    term(),
-    dns:ttl() | undefined,
-    {generic_class, _} | string() | undefined,
-    string() | {generic_type, string()},
-    [rdata()],
-    parse_ctx()
-) -> {ok, dns:rr(), parse_ctx()} | {error, error_detail()}.
-build_rr(Owner, TTL, Class, Type, RData, Ctx) ->
-    ResolvedOwner = dns_domain:to_lower(resolved_owner(Owner, Ctx)),
-    ResolvedTTL = resolved_ttl(TTL, Ctx),
-    ResolvedClass = resolved_class(Class, Ctx),
-    TypeNum = type_to_number(Type),
-    maybe
-        {ok, RDataRecord} ?= build_rdata(Type, RData, Ctx),
-        RR = #dns_rr{
-            name = ResolvedOwner,
-            type = TypeNum,
-            class = ResolvedClass,
-            ttl = ResolvedTTL,
-            data = RDataRecord
-        },
-        ok ?= check_rr(Type, RData, RR, Ctx),
-        {ok, RR, Ctx#parse_ctx{last_owner = ResolvedOwner}}
-    end.
-
-%% The encoder writes what it is given, keeping checks off the query path, so a
-%% record is checked here, when the zone is read: a value too wide for its field
-%% would otherwise go out silently wrong, or fail each response that carries it.
--spec check_rr(string() | {generic_type, string()}, [rdata()], dns:rr(), parse_ctx()) ->
-    ok | {error, error_detail()}.
-check_rr(Type, RData, RR, Ctx) ->
-    case dns_check:rr(RR) of
-        true ->
-            ok;
-        false ->
-            TypeName = list_to_binary(type_string(Type)),
-            Message = <<"Invalid ", TypeName/binary, " record: a value does not fit its field">>,
-            {error,
-                make_error(semantic, Message, {invalid_record, TypeName, RData}, undefined, Ctx)}
-    end.
-
--spec type_string(string() | {generic_type, string()}) -> string().
-type_string({generic_type, TypeStr}) -> TypeStr;
-type_string(TypeStr) -> TypeStr.
-
-%% Resolve owner name
-resolved_owner(undefined, Ctx) ->
-    Ctx#parse_ctx.last_owner;
-resolved_owner(at_sign, Ctx) ->
-    Ctx#parse_ctx.origin;
-resolved_owner(at_sign_fqdn, Ctx) ->
-    Ctx#parse_ctx.origin;
-resolved_owner(Name, Ctx) when is_list(Name) ->
-    resolve_name(Name, Ctx#parse_ctx.origin).
-
-%% Use default TTL if not specified
-resolved_ttl(undefined, Ctx) -> Ctx#parse_ctx.default_ttl;
-resolved_ttl(TTL, _) -> TTL.
-
-%% Use default class if not specified
-%% RFC 3597 - Handle generic CLASS### syntax
-resolved_class(undefined, Ctx) ->
-    Ctx#parse_ctx.default_class;
-resolved_class({generic_class, _} = Class, _) ->
-    class_to_number(Class);
-resolved_class(Class, _) when is_list(Class) ->
-    class_to_number(Class).
-
-%% Rejoin SVCB/HTTPS svcparam values split by { } lexer tokens (e.g. dohpath=/dns-query{?dns}).
--spec merge_svcb_brace_fragments([rdata()]) -> [rdata()].
-merge_svcb_brace_fragments([]) ->
+-spec format_context(binary() | undefined) -> iolist().
+format_context(undefined) ->
     [];
-merge_svcb_brace_fragments([{domain, D} | Rest]) ->
-    case Rest of
-        [{lbrace, _} | R1] ->
-            case take_svcb_brace_inner(R1) of
-                {Inner, Rem} ->
-                    [{domain, D ++ "{" ++ Inner ++ "}"} | merge_svcb_brace_fragments(Rem)];
-                error ->
-                    [{domain, D} | merge_svcb_brace_fragments(Rest)]
-            end;
-        _ ->
-            [{domain, D} | merge_svcb_brace_fragments(Rest)]
-    end;
-merge_svcb_brace_fragments([H | Rest]) ->
-    [H | merge_svcb_brace_fragments(Rest)].
+format_context(Context) ->
+    ["  | ", Context, "\n"].
 
--spec take_svcb_brace_inner([rdata()]) -> {string(), [rdata()]} | error.
-take_svcb_brace_inner([{domain, Inner}, {rbrace, _} | Rem]) ->
-    {Inner, Rem};
-take_svcb_brace_inner(_) ->
-    error.
+-spec format_suggestion(binary() | undefined) -> iolist().
+format_suggestion(undefined) ->
+    [];
+format_suggestion(Suggestion) ->
+    ["\nSuggestion:\n  ", Suggestion, "\n"].
 
-%% RFC 1876 LOC presentation (degrees/minutes/seconds + hemispheres + alt/size in meters)
--define(LOC_MAX_INT32, 16#7FFFFFFF).
-
--type rrdata_loc() :: #dns_rrdata_loc{}.
-
--spec parse_loc_rfc1876_presentation([rdata()]) -> {ok, rrdata_loc()} | error.
-parse_loc_rfc1876_presentation(RData) ->
-    Words = loc_rdata_collect_words(RData, []),
-    case loc_split_lat_lon(Words) of
-        {ok, {LatD, LatM, LatS, North, LonD, LonM, LonS, East, Rest}} ->
-            case Rest of
-                [AltS, SizeS, HorizS, VertS] ->
-                    try
-                        LatMs = loc_dms_to_ms(LatD, LatM, LatS),
-                        LonMs = loc_dms_to_ms(LonD, LonM, LonS),
-                        LatPre = loc_hemisphere_to_pre(North, LatMs),
-                        LonPre = loc_hemisphere_to_pre(East, LonMs),
-                        Lat = loc_wire_pre_to_internal(LatPre),
-                        Lon = loc_wire_pre_to_internal(LonPre),
-                        Alt = loc_parse_meters_cm(AltS),
-                        Size = loc_parse_meters_cm(SizeS),
-                        Horiz = loc_parse_meters_cm(HorizS),
-                        Vert = loc_parse_meters_cm(VertS),
-                        {ok, #dns_rrdata_loc{
-                            size = Size,
-                            horiz = Horiz,
-                            vert = Vert,
-                            lat = Lat,
-                            lon = Lon,
-                            alt = Alt
-                        }}
-                    catch
-                        error:_ -> error
-                    end;
-                _ ->
-                    error
-            end;
-        error ->
-            error
-    end.
-
--spec loc_rdata_collect_words([rdata()], [string()]) -> [string()].
-loc_rdata_collect_words([], Acc) ->
-    lists:reverse(Acc);
-loc_rdata_collect_words([{int, I} | Rest], Acc) ->
-    loc_rdata_collect_words(Rest, [integer_to_list(I) | Acc]);
-loc_rdata_collect_words([{domain, D} | Rest], Acc) when is_list(D) ->
-    loc_rdata_collect_words(Rest, [D | Acc]);
-loc_rdata_collect_words([{string, S} | Rest], Acc) when is_list(S) ->
-    loc_rdata_collect_words(Rest, [S | Acc]);
-loc_rdata_collect_words([_ | Rest], Acc) ->
-    loc_rdata_collect_words(Rest, Acc).
-
--spec loc_split_lat_lon([string()]) ->
-    {ok,
-        {string(), string(), string(), boolean(), string(), string(), string(), boolean(), [
-            string()
-        ]}}
-    | error.
-loc_split_lat_lon(Words) ->
-    case loc_take_until_hemisphere(Words, ["N", "S"]) of
-        error ->
-            error;
-        {LatParts, ["N" | AfterLat]} ->
-            loc_split_lon(AfterLat, LatParts, true);
-        {LatParts, ["S" | AfterLat]} ->
-            loc_split_lon(AfterLat, LatParts, false);
-        _ ->
-            error
-    end.
-
-loc_split_lon(AfterLat, LatParts, North) ->
-    case loc_take_until_hemisphere(AfterLat, ["E", "W"]) of
-        error ->
-            error;
-        {LonParts, ["E" | Rest]} ->
-            loc_parts_to_tuple(LatParts, North, LonParts, true, Rest);
-        {LonParts, ["W" | Rest]} ->
-            loc_parts_to_tuple(LatParts, North, LonParts, false, Rest);
-        _ ->
-            error
-    end.
-
-loc_parts_to_tuple(LatParts, North, LonParts, East, Rest) ->
-    case {LatParts, LonParts} of
-        {[D1, M1, S1], [D2, M2, S2]} ->
-            {ok, {D1, M1, S1, North, D2, M2, S2, East, Rest}};
-        _ ->
-            error
-    end.
-
--spec loc_take_until_hemisphere([string()], [string()]) -> {[string()], [string()]} | error.
-loc_take_until_hemisphere(Words, Hems) ->
-    loc_take_until_hemisphere(Words, [], Hems).
-
-loc_take_until_hemisphere([W | T], Acc, Hems) ->
-    case lists:member(W, Hems) of
-        true ->
-            {lists:reverse(Acc), [W | T]};
-        false ->
-            loc_take_until_hemisphere(T, [W | Acc], Hems)
-    end;
-loc_take_until_hemisphere([], _, _) ->
-    error.
-
--spec loc_dms_to_ms(string(), string(), string()) -> non_neg_integer().
-loc_dms_to_ms(D, M, S) ->
-    Deg = loc_parse_num(D),
-    Min = loc_parse_num(M),
-    Sec = loc_parse_num(S),
-    round((Deg * 3600.0 + Min * 60.0 + Sec) * 1000.0).
-
--spec loc_parse_num(string()) -> float().
-loc_parse_num(S) ->
-    case string:to_float(S) of
-        {F, ""} ->
-            F;
-        {error, no_float} ->
-            case string:to_integer(S) of
-                {I, ""} -> I * 1.0;
-                _ -> error({bad_loc_num, S})
-            end
-    end.
-
-%% Thousandths of arcsecond from equator/prime meridian; RFC wire uses offset from 2^31-1.
--spec loc_hemisphere_to_pre(boolean(), non_neg_integer()) -> non_neg_integer().
-loc_hemisphere_to_pre(true, Ms) ->
-    (?LOC_MAX_INT32 + Ms) band 16#FFFFFFFF;
-loc_hemisphere_to_pre(false, Ms) ->
-    (?LOC_MAX_INT32 - Ms) band 16#FFFFFFFF.
-
--spec loc_wire_pre_to_internal(non_neg_integer()) -> integer().
-loc_wire_pre_to_internal(P) ->
-    case P > ?LOC_MAX_INT32 of
-        true -> P - ?LOC_MAX_INT32;
-        false -> -(?LOC_MAX_INT32 - P)
-    end.
-
--spec loc_parse_meters_cm(string()) -> integer().
-loc_parse_meters_cm(S0) ->
-    S = string:trim(S0),
-    case string:split(S, "m", all) of
-        [NumPart, ""] ->
-            Meters = loc_parse_num(NumPart),
-            erlang:round(Meters * 100.0);
-        _ ->
-            error({bad_loc_m, S0})
-    end.
-
-%% Build RDATA for specific record types
--spec build_rdata(string() | {generic_type, string()}, [rdata()], parse_ctx()) ->
-    {ok, dns:rrdata()} | {error, error_detail()}.
-%% RFC 3597 - Generic RDATA format: \# length hexdata
-%% This can be used with any record type, including known types
-build_rdata(_Type, [{rfc3597, RawData}], Ctx) ->
-    %% RawData is like <<"\\# 4 C0000201">>
-    case parse_rfc3597_token(RawData) of
-        {ok, BinaryData} ->
-            %% Return raw binary for generic RDATA
-            %% Note: This is stored as-is in the dns_rr data field
-            {ok, BinaryData};
-        {error, Reason} ->
-            {error, make_semantic_error(Reason, Ctx)}
-    end;
-build_rdata("A", RData, Ctx) ->
-    case RData of
-        [{ipv4, IP}] when is_list(IP) ->
-            case parse_ipv4(IP) of
-                {ok, IPAddr} -> {ok, #dns_rrdata_a{ip = IPAddr}};
-                {error, Reason} -> {error, make_semantic_error(Reason, Ctx)}
-            end;
-        [{domain, IP}] when is_list(IP) ->
-            %% Sometimes IPv4 is lexed as a domain name
-            case parse_ipv4(IP) of
-                {ok, IPAddr} -> {ok, #dns_rrdata_a{ip = IPAddr}};
-                {error, Reason} -> {error, make_semantic_error(Reason, Ctx)}
-            end;
-        _ ->
-            {error, make_semantic_error({invalid_rdata, 'A', RData}, Ctx)}
-    end;
-build_rdata("AAAA", RData, Ctx) ->
-    case RData of
-        [{ipv6, IP}] when is_list(IP) ->
-            case parse_ipv6(IP) of
-                {ok, IPAddr} -> {ok, #dns_rrdata_aaaa{ip = IPAddr}};
-                {error, Reason} -> {error, make_semantic_error(Reason, Ctx)}
-            end;
-        [{domain, IP}] when is_list(IP) ->
-            %% Sometimes IPv6 is lexed as a domain name
-            case parse_ipv6(IP) of
-                {ok, IPAddr} -> {ok, #dns_rrdata_aaaa{ip = IPAddr}};
-                {error, Reason} -> {error, make_semantic_error(Reason, Ctx)}
-            end;
-        _ ->
-            {error, make_semantic_error({invalid_rdata, 'AAAA', RData}, Ctx)}
-    end;
-build_rdata("NS", RData, Ctx) ->
-    case extract_domain(RData) of
-        {ok, DName} ->
-            {ok, #dns_rrdata_ns{dname = resolve_name(DName, Ctx#parse_ctx.origin)}};
-        {error, Reason} ->
-            {error, make_semantic_error(Reason, Ctx)}
-    end;
-%% PowerDNS ALIAS: same presentation/wire handling as CNAME for zone parsing
-build_rdata("ALIAS", RData, Ctx) ->
-    build_rdata("CNAME", RData, Ctx);
-build_rdata("CNAME", RData, Ctx) ->
-    case extract_domain(RData) of
-        {ok, DName} ->
-            {ok, #dns_rrdata_cname{dname = resolve_name(DName, Ctx#parse_ctx.origin)}};
-        {error, Reason} ->
-            {error, make_semantic_error(Reason, Ctx)}
-    end;
-build_rdata("PTR", RData, Ctx) ->
-    case extract_domain(RData) of
-        {ok, DName} ->
-            {ok, #dns_rrdata_ptr{dname = resolve_name(DName, Ctx#parse_ctx.origin)}};
-        {error, Reason} ->
-            {error, make_semantic_error(Reason, Ctx)}
-    end;
-build_rdata("MX", RData, Ctx) ->
-    case RData of
-        [{int, Pref}, {domain, Exchange}] when is_integer(Pref), is_list(Exchange) ->
-            {ok, #dns_rrdata_mx{
-                preference = Pref,
-                exchange = resolve_name(Exchange, Ctx#parse_ctx.origin)
-            }};
-        _ ->
-            {error, make_semantic_error({invalid_rdata, 'MX', RData}, Ctx)}
-    end;
-build_rdata("TXT", RData, Ctx) ->
-    case extract_strings(RData) of
-        {ok, []} ->
-            {error, make_rdata_error(~"TXT", RData, Ctx)};
-        {ok, Strings} ->
-            {ok, #dns_rrdata_txt{txt = Strings}};
-        {error, Reason} ->
-            {error, make_semantic_error(Reason, Ctx)}
-    end;
-build_rdata("SOA", RData, Ctx) ->
-    case RData of
-        [
-            {domain, MName},
-            {domain, RName},
-            {int, Serial},
-            TRefresh,
-            TRetry,
-            TExpire,
-            TMinimum
-        ] when
-            is_list(MName),
-            is_list(RName),
-            is_integer(Serial)
-        ->
-            case
-                {
-                    soa_timer_to_seconds(TRefresh),
-                    soa_timer_to_seconds(TRetry),
-                    soa_timer_to_seconds(TExpire),
-                    soa_timer_to_seconds(TMinimum)
-                }
-            of
-                {{ok, Refresh}, {ok, Retry}, {ok, Expire}, {ok, Minimum}} ->
-                    {ok, #dns_rrdata_soa{
-                        mname = resolve_name(MName, Ctx#parse_ctx.origin),
-                        rname = resolve_name(RName, Ctx#parse_ctx.origin),
-                        serial = Serial,
-                        refresh = Refresh,
-                        retry = Retry,
-                        expire = Expire,
-                        minimum = Minimum
-                    }};
-                _ ->
-                    {error, make_semantic_error({invalid_rdata, 'SOA', RData}, Ctx)}
-            end;
-        _ ->
-            {error, make_semantic_error({invalid_rdata, 'SOA', RData}, Ctx)}
-    end;
-build_rdata("SRV", RData, Ctx) ->
-    case RData of
-        [{int, Priority}, {int, Weight}, {int, Port}, {domain, Target}] when
-            is_integer(Priority), is_integer(Weight), is_integer(Port), is_list(Target)
-        ->
-            {ok, #dns_rrdata_srv{
-                priority = Priority,
-                weight = Weight,
-                port = Port,
-                target = resolve_name(Target, Ctx#parse_ctx.origin)
-            }};
-        _ ->
-            {error, make_semantic_error({invalid_rdata, 'SRV', RData}, Ctx)}
-    end;
-build_rdata("CAA", RData, Ctx) ->
-    case RData of
-        [{int, Flags}, {string, Tag}, {string, Value}] when
-            is_integer(Flags), is_list(Tag), is_list(Value)
-        ->
-            {ok, #dns_rrdata_caa{
-                flags = Flags,
-                tag = list_to_binary(Tag),
-                value = list_to_binary(Value)
-            }};
-        [{int, Flags}, {domain, Tag}, {string, Value}] when
-            is_integer(Flags), is_list(Tag), is_list(Value)
-        ->
-            %% Sometimes tag is parsed as domain
-            {ok, #dns_rrdata_caa{
-                flags = Flags,
-                tag = list_to_binary(Tag),
-                value = list_to_binary(Value)
-            }};
-        _ ->
-            {error, make_semantic_error({invalid_rdata, 'CAA', RData}, Ctx)}
-    end;
-build_rdata("DNAME", RData, Ctx) ->
-    case extract_domain(RData) of
-        {ok, DName} ->
-            {ok, #dns_rrdata_dname{dname = resolve_name(DName, Ctx#parse_ctx.origin)}};
-        {error, Reason} ->
-            {error, make_semantic_error(Reason, Ctx)}
-    end;
-build_rdata("MB", RData, Ctx) ->
-    case extract_domain(RData) of
-        {ok, DName} ->
-            {ok, #dns_rrdata_mb{madname = resolve_name(DName, Ctx#parse_ctx.origin)}};
-        {error, Reason} ->
-            {error, make_semantic_error(Reason, Ctx)}
-    end;
-build_rdata("MG", RData, Ctx) ->
-    case extract_domain(RData) of
-        {ok, DName} ->
-            {ok, #dns_rrdata_mg{madname = resolve_name(DName, Ctx#parse_ctx.origin)}};
-        {error, Reason} ->
-            {error, make_semantic_error(Reason, Ctx)}
-    end;
-build_rdata("MR", RData, Ctx) ->
-    case extract_domain(RData) of
-        {ok, DName} ->
-            {ok, #dns_rrdata_mr{newname = resolve_name(DName, Ctx#parse_ctx.origin)}};
-        {error, Reason} ->
-            {error, make_semantic_error(Reason, Ctx)}
-    end;
-build_rdata("HINFO", RData, Ctx) ->
-    case RData of
-        [{string, CPU}, {string, OS}] when is_list(CPU), is_list(OS) ->
-            {ok, #dns_rrdata_hinfo{
-                cpu = list_to_binary(CPU),
-                os = list_to_binary(OS)
-            }};
-        _ ->
-            {error, make_semantic_error({invalid_rdata, 'HINFO', RData}, Ctx)}
-    end;
-build_rdata("HIP", RData, Ctx) ->
-    %% HIP format: pk-algorithm hit(hex) public-key(base64) [rendezvous-server ...], the
-    %% HIT and the key each one word (RFC 8005 §6)
-    maybe
-        [{int, Alg}, {_, HITHex}, {_, PublicKeyB64} | ServerTokens] ?= RData,
-        true ?= is_integer(Alg) andalso is_list(HITHex) andalso is_list(PublicKeyB64),
-        {ok, HIT} ?= hex_to_binary(HITHex),
-        {ok, PublicKey} ?= parse_base64_pieces([{string, PublicKeyB64}]),
-        {ok, Servers} ?= parse_domain_names(ServerTokens, Ctx),
-        {ok, #dns_rrdata_hip{
-            alg = Alg, hit = HIT, public_key = PublicKey, rendezvous_servers = Servers
-        }}
-    else
-        _ -> {error, make_rdata_error(~"HIP", RData, Ctx)}
-    end;
-build_rdata("MINFO", RData, Ctx) ->
-    case RData of
-        [{domain, RMailbx}, {domain, EmailBx}] when is_list(RMailbx), is_list(EmailBx) ->
-            {ok, #dns_rrdata_minfo{
-                rmailbx = resolve_name(RMailbx, Ctx#parse_ctx.origin),
-                emailbx = resolve_name(EmailBx, Ctx#parse_ctx.origin)
-            }};
-        _ ->
-            {error, make_semantic_error({invalid_rdata, 'MINFO', RData}, Ctx)}
-    end;
-build_rdata("RP", RData, Ctx) ->
-    case RData of
-        [{domain, Mbox}, {domain, Txt}] when is_list(Mbox), is_list(Txt) ->
-            {ok, #dns_rrdata_rp{
-                mbox = resolve_name(Mbox, Ctx#parse_ctx.origin),
-                txt = resolve_name(Txt, Ctx#parse_ctx.origin)
-            }};
-        _ ->
-            {error, make_semantic_error({invalid_rdata, 'RP', RData}, Ctx)}
-    end;
-build_rdata("AFSDB", RData, Ctx) ->
-    case RData of
-        [{int, Subtype}, {domain, Hostname}] when is_integer(Subtype), is_list(Hostname) ->
-            {ok, #dns_rrdata_afsdb{
-                subtype = Subtype,
-                hostname = resolve_name(Hostname, Ctx#parse_ctx.origin)
-            }};
-        _ ->
-            {error, make_semantic_error({invalid_rdata, 'AFSDB', RData}, Ctx)}
-    end;
-build_rdata("RT", RData, Ctx) ->
-    case RData of
-        [{int, Preference}, {domain, Host}] when is_integer(Preference), is_list(Host) ->
-            {ok, #dns_rrdata_rt{
-                preference = Preference,
-                host = resolve_name(Host, Ctx#parse_ctx.origin)
-            }};
-        _ ->
-            {error, make_semantic_error({invalid_rdata, 'RT', RData}, Ctx)}
-    end;
-build_rdata("PX", RData, Ctx) ->
-    %% PX format: preference map822 mapx400 (RFC 2163 §4)
-    case RData of
-        [{int, Preference}, {domain, Map822}, {domain, MapX400}] when is_integer(Preference) ->
-            {ok, #dns_rrdata_px{
-                preference = Preference,
-                map822 = resolve_name(Map822, Ctx#parse_ctx.origin),
-                mapx400 = resolve_name(MapX400, Ctx#parse_ctx.origin)
-            }};
-        _ ->
-            {error, make_rdata_error(~"PX", RData, Ctx)}
-    end;
-build_rdata("KX", RData, Ctx) ->
-    case RData of
-        [{int, Preference}, {domain, Exchange}] when
-            is_integer(Preference), is_list(Exchange)
-        ->
-            {ok, #dns_rrdata_kx{
-                preference = Preference,
-                exchange = resolve_name(Exchange, Ctx#parse_ctx.origin)
-            }};
-        _ ->
-            {error, make_semantic_error({invalid_rdata, 'KX', RData}, Ctx)}
-    end;
-build_rdata("SPF", RData, Ctx) ->
-    case extract_strings(RData) of
-        {ok, Strings} -> {ok, #dns_rrdata_spf{spf = Strings}};
-        {error, Reason} -> {error, make_semantic_error(Reason, Ctx)}
-    end;
-build_rdata("NAPTR", RData, Ctx) ->
-    %% NAPTR format: order preference "flags" "services" "regexp" replacement
-    case RData of
-        [
-            {int, Order},
-            {int, Preference},
-            {string, Flags},
-            {string, Services},
-            {string, Regexp},
-            {domain, Replacement}
-        ] when
-            is_integer(Order),
-            is_integer(Preference),
-            is_list(Flags),
-            is_list(Services),
-            is_list(Regexp),
-            is_list(Replacement)
-        ->
-            {ok, #dns_rrdata_naptr{
-                order = Order,
-                preference = Preference,
-                flags = list_to_binary(Flags),
-                services = list_to_binary(Services),
-                regexp = list_to_binary(Regexp),
-                replacement = resolve_name(Replacement, Ctx#parse_ctx.origin)
-            }};
-        _ ->
-            {error, make_rdata_error(~"NAPTR", RData, Ctx)}
-    end;
-build_rdata("SSHFP", RData, Ctx) ->
-    %% SSHFP format: algorithm fptype fingerprint(hex string)
-    case RData of
-        [{int, Alg}, {int, FpType}, {string, FpHex}] when
-            is_integer(Alg), is_integer(FpType), is_list(FpHex)
-        ->
-            case hex_to_binary(FpHex) of
-                {ok, Fp} ->
-                    {ok, #dns_rrdata_sshfp{alg = Alg, fp_type = FpType, fp = Fp}};
-                {error, _Reason} ->
-                    {error, make_rdata_error(~"SSHFP", RData, Ctx)}
-            end;
-        _ ->
-            {error, make_rdata_error(~"SSHFP", RData, Ctx)}
-    end;
-build_rdata("TLSA", RData, Ctx) ->
-    %% TLSA format: usage selector matching-type cert-data(hex), RFC 6698 §2.2,
-    %% which allows whitespace within the certificate data
-    case parse_tlsa_rdata(RData) of
-        {ok, Usage, Selector, MatchingType, Cert} ->
-            {ok, #dns_rrdata_tlsa{
-                usage = Usage,
-                selector = Selector,
-                matching_type = MatchingType,
-                certificate = Cert
-            }};
-        error ->
-            {error, make_rdata_error(~"TLSA", RData, Ctx)}
-    end;
-build_rdata("CERT", RData, Ctx) ->
-    %% CERT format: type keytag algorithm cert-data, base64 that RFC 4398 §2.2
-    %% allows to be split into any number of white-space-separated substrings.
-    %% Hex is read too, and tried first
-    maybe
-        [{int, Type}, {int, KeyTag}, {int, Alg} | CertParts] ?= RData,
-        true ?= is_integer(Type) andalso is_integer(KeyTag) andalso is_integer(Alg),
-        {ok, CertData} ?= concat_rdata_string_parts(CertParts),
-        Cert =
-            case hex_to_binary(CertData) of
-                {ok, Binary} ->
-                    Binary;
-                {error, _} ->
-                    try
-                        base64:decode(CertData)
-                    catch
-                        error:_ -> CertData
-                    end
-            end,
-        {ok, #dns_rrdata_cert{type = Type, keytag = KeyTag, alg = Alg, cert = Cert}}
-    else
-        _ -> {error, make_rdata_error(~"CERT", RData, Ctx)}
-    end;
-build_rdata("DHCID", RData, Ctx) ->
-    %% DHCID format: base64, which RFC 4701 §3.2 allows to be split into any
-    %% number of white-space-separated substrings
-    case parse_base64_pieces(RData) of
-        {ok, Data} -> {ok, #dns_rrdata_dhcid{data = Data}};
-        error -> {error, make_rdata_error(~"DHCID", RData, Ctx)}
-    end;
-build_rdata("OPENPGPKEY", RData, Ctx) ->
-    %% OPENPGPKEY format: base64-encoded data (single string)
-    %% RFC 7929 - OpenPGP Public Key
-    case RData of
-        [{string, Base64Data}] when is_list(Base64Data) ->
-            try
-                Data = base64:decode(Base64Data),
-                {ok, #dns_rrdata_openpgpkey{data = Data}}
-            catch
-                error:_ ->
-                    {error, make_rdata_error(~"OPENPGPKEY", RData, Ctx)}
-            end;
-        _ ->
-            {error, make_rdata_error(~"OPENPGPKEY", RData, Ctx)}
-    end;
-build_rdata("HHIT", RData, Ctx) ->
-    %% HHIT format: CBOR data in base64 (RFC 9886 §5.1.1)
-    case parse_base64_pieces(RData) of
-        {ok, Data} -> {ok, #dns_rrdata_hhit{data = Data}};
-        error -> {error, make_rdata_error(~"HHIT", RData, Ctx)}
-    end;
-build_rdata("BRID", RData, Ctx) ->
-    %% BRID format: CBOR data in base64 (RFC 9886 §5.2.1)
-    case parse_base64_pieces(RData) of
-        {ok, Data} -> {ok, #dns_rrdata_brid{data = Data}};
-        error -> {error, make_rdata_error(~"BRID", RData, Ctx)}
-    end;
-build_rdata("URI", RData, Ctx) ->
-    %% URI format: priority weight target
-    %% RFC 7553 - The Uniform Resource Identifier (URI) DNS Resource Record
-    case RData of
-        [{int, Priority}, {int, Weight}, {string, Target}] when
-            is_integer(Priority), is_integer(Weight), is_list(Target)
-        ->
-            BinTarget = unicode:characters_to_binary(Target),
-            case uri_string:normalize(BinTarget) of
-                {error, _, _} ->
-                    {error, make_rdata_error(~"URI", RData, Ctx)};
-                NormalizedTarget ->
-                    {ok, #dns_rrdata_uri{
-                        priority = Priority,
-                        weight = Weight,
-                        target = NormalizedTarget
-                    }}
-            end;
-        _ ->
-            {error, make_rdata_error(~"URI", RData, Ctx)}
-    end;
-build_rdata("RESINFO", RData, Ctx) ->
-    %% RESINFO format: text strings (same as TXT)
-    %% RFC 9606 - Resource Information (RESINFO) DNS Resource Record
-    case extract_strings(RData) of
-        {ok, []} ->
-            {error, make_rdata_error(~"RESINFO", RData, Ctx)};
-        {ok, Strings} ->
-            {ok, #dns_rrdata_resinfo{data = Strings}};
-        {error, Reason} ->
-            {error, make_semantic_error(Reason, Ctx)}
-    end;
-build_rdata("WALLET", RData, Ctx) ->
-    %% WALLET: character-strings (same presentation and wire format as TXT).
-    case extract_strings(RData) of
-        {ok, []} ->
-            {error, make_rdata_error(~"WALLET", RData, Ctx)};
-        {ok, Strings} ->
-            {ok, #dns_rrdata_wallet{data = Strings}};
-        {error, Reason} ->
-            {error, make_semantic_error(Reason, Ctx)}
-    end;
-build_rdata("SMIMEA", RData, Ctx) ->
-    %% SMIMEA format: usage selector matching-type cert-data(hex), RFC 8162 §2, as TLSA,
-    %% which allows whitespace within the certificate data
-    case parse_tlsa_rdata(RData) of
-        {ok, Usage, Selector, MatchingType, Cert} ->
-            {ok, #dns_rrdata_smimea{
-                usage = Usage,
-                selector = Selector,
-                matching_type = MatchingType,
-                certificate = Cert
-            }};
-        error ->
-            {error, make_rdata_error(~"SMIMEA", RData, Ctx)}
-    end;
-build_rdata("EUI48", RData, Ctx) ->
-    %% EUI48 format: 48-bit MAC address (hex string, 12 hex digits; may use - or : separators)
-    %% RFC 7043 - EUI-48 address
-    case RData of
-        [{string, HexAddr}] when is_list(HexAddr) ->
-            case hex_to_binary(eui_hex_normalize(HexAddr)) of
-                {ok, Addr} when byte_size(Addr) =:= 6 ->
-                    {ok, #dns_rrdata_eui48{address = Addr}};
-                _ ->
-                    {error, make_rdata_error(~"EUI48", RData, Ctx)}
-            end;
-        [{domain, HexAddr}] when is_list(HexAddr) ->
-            %% Hex strings may be parsed as domain names
-            case hex_to_binary(eui_hex_normalize(HexAddr)) of
-                {ok, Addr} when byte_size(Addr) =:= 6 ->
-                    {ok, #dns_rrdata_eui48{address = Addr}};
-                _ ->
-                    {error, make_rdata_error(~"EUI48", RData, Ctx)}
-            end;
-        _ ->
-            {error, make_rdata_error(~"EUI48", RData, Ctx)}
-    end;
-build_rdata("EUI64", RData, Ctx) ->
-    %% EUI64 format: 64-bit MAC address (hex string, 16 hex digits; may use - or : separators)
-    %% RFC 7043 - EUI-64 address
-    case RData of
-        [{string, HexAddr}] when is_list(HexAddr) ->
-            case hex_to_binary(eui_hex_normalize(HexAddr)) of
-                {ok, Addr} when byte_size(Addr) =:= 8 ->
-                    {ok, #dns_rrdata_eui64{address = Addr}};
-                _ ->
-                    {error, make_rdata_error(~"EUI64", RData, Ctx)}
-            end;
-        [{domain, HexAddr}] when is_list(HexAddr) ->
-            %% Hex strings may be parsed as domain names
-            case hex_to_binary(eui_hex_normalize(HexAddr)) of
-                {ok, Addr} when byte_size(Addr) =:= 8 ->
-                    {ok, #dns_rrdata_eui64{address = Addr}};
-                _ ->
-                    {error, make_rdata_error(~"EUI64", RData, Ctx)}
-            end;
-        _ ->
-            {error, make_rdata_error(~"EUI64", RData, Ctx)}
-    end;
-build_rdata("NID", RData, Ctx) ->
-    %% NID format: preference node-id (RFC 6742 §2.1)
-    maybe
-        {ok, Pref, NodeID} ?= build_ilnp64(RData),
-        {ok, #dns_rrdata_nid{preference = Pref, node_id = NodeID}}
-    else
-        error -> {error, make_rdata_error(~"NID", RData, Ctx)}
-    end;
-build_rdata("L32", RData, Ctx) ->
-    %% L32 format: preference locator32, the locator spelled as an A record's address
-    %% (RFC 6742 §2.2)
-    case RData of
-        [{int, Pref}, {Kind, IP}] when
-            is_integer(Pref) andalso (Kind =:= ipv4 orelse Kind =:= domain) andalso is_list(IP)
-        ->
-            case parse_ipv4(IP) of
-                {ok, Locator32} ->
-                    {ok, #dns_rrdata_l32{preference = Pref, locator32 = Locator32}};
-                {error, _} ->
-                    {error, make_rdata_error(~"L32", RData, Ctx)}
-            end;
-        _ ->
-            {error, make_rdata_error(~"L32", RData, Ctx)}
-    end;
-build_rdata("L64", RData, Ctx) ->
-    %% L64 format: preference locator64 (RFC 6742 §2.3)
-    maybe
-        {ok, Pref, Locator64} ?= build_ilnp64(RData),
-        {ok, #dns_rrdata_l64{preference = Pref, locator64 = Locator64}}
-    else
-        error -> {error, make_rdata_error(~"L64", RData, Ctx)}
-    end;
-build_rdata("LP", RData, Ctx) ->
-    %% LP format: preference fqdn (RFC 6742 §2.4)
-    case RData of
-        [{int, Pref}, {domain, FQDN}] when is_integer(Pref), is_list(FQDN) ->
-            {ok, #dns_rrdata_lp{
-                preference = Pref,
-                fqdn = resolve_name(FQDN, Ctx#parse_ctx.origin)
-            }};
-        _ ->
-            {error, make_rdata_error(~"LP", RData, Ctx)}
-    end;
-build_rdata("AMTRELAY", RData, Ctx) ->
-    %% AMTRELAY format: precedence D-bit relay-type relay (RFC 8777 §4.3.1)
-    case RData of
-        [{int, Precedence}, {int, D}, {int, RelayType}, RelayToken] when
-            is_integer(Precedence) andalso (D =:= 0 orelse D =:= 1) andalso is_integer(RelayType)
-        ->
-            case parse_amtrelay_relay(RelayType, RelayToken, Ctx) of
-                {ok, Relay} ->
-                    {ok, #dns_rrdata_amtrelay{
-                        precedence = Precedence,
-                        discovery_optional = D =:= 1,
-                        relay_type = RelayType,
-                        relay = Relay
-                    }};
-                error ->
-                    {error, make_rdata_error(~"AMTRELAY", RData, Ctx)}
-            end;
-        _ ->
-            {error, make_rdata_error(~"AMTRELAY", RData, Ctx)}
-    end;
-build_rdata("DS", RData, Ctx) ->
-    %% DS format: keytag algorithm digest-type digest(hex), RFC 4034 §5.3, which
-    %% allows whitespace within the digest
-    case parse_ds_rdata(RData) of
-        {ok, KeyTag, Alg, DigestType, Digest} ->
-            {ok, #dns_rrdata_ds{
-                keytag = KeyTag,
-                alg = Alg,
-                digest_type = DigestType,
-                digest = Digest
-            }};
-        error ->
-            {error, make_rdata_error(~"DS", RData, Ctx)}
-    end;
-build_rdata("CDS", RData, Ctx) ->
-    %% CDS format: keytag algorithm digest-type digest(hex), RFC 7344 §3.1, as DS, which
-    %% allows whitespace within the digest
-    case parse_ds_rdata(RData) of
-        {ok, KeyTag, Alg, DigestType, Digest} ->
-            {ok, #dns_rrdata_cds{
-                keytag = KeyTag,
-                alg = Alg,
-                digest_type = DigestType,
-                digest = Digest
-            }};
-        error ->
-            {error, make_rdata_error(~"CDS", RData, Ctx)}
-    end;
-build_rdata("DLV", RData, Ctx) ->
-    %% DLV format: keytag algorithm digest-type digest(hex), RFC 4431 §2, as DS, which
-    %% allows whitespace within the digest
-    case parse_ds_rdata(RData) of
-        {ok, KeyTag, Alg, DigestType, Digest} ->
-            {ok, #dns_rrdata_dlv{
-                keytag = KeyTag,
-                alg = Alg,
-                digest_type = DigestType,
-                digest = Digest
-            }};
-        error ->
-            {error, make_rdata_error(~"DLV", RData, Ctx)}
-    end;
-build_rdata("DNSKEY", RData, Ctx) ->
-    %% DNSKEY format: flags protocol algorithm public-key(base64 string)
-    %% RFC 4034 - DNS Public Key
-    %% Base64 strings are often unquoted, so they may be parsed as labels/domains; may be split
-    %% across lines inside parentheses
-    case RData of
-        [{int, Flags}, {int, Protocol}, {int, Alg} | KeyParts] when
-            is_integer(Flags), is_integer(Protocol), is_integer(Alg)
-        ->
-            case concat_rdata_string_parts(KeyParts) of
-                {ok, PublicKeyB64Bin} ->
-                    try
-                        PublicKey = base64:decode(PublicKeyB64Bin),
-                        %% Calculate keytag (RFC 4034 Appendix B)
-                        KeyTag = calculate_keytag(Flags, Protocol, Alg, PublicKey),
-                        {ok, #dns_rrdata_dnskey{
-                            flags = Flags,
-                            protocol = Protocol,
-                            alg = Alg,
-                            public_key = PublicKey,
-                            keytag = KeyTag
-                        }}
-                    catch
-                        error:_ ->
-                            {error, make_rdata_error(~"DNSKEY", RData, Ctx)}
-                    end;
-                error ->
-                    {error, make_rdata_error(~"DNSKEY", RData, Ctx)}
-            end;
-        _ ->
-            {error, make_rdata_error(~"DNSKEY", RData, Ctx)}
-    end;
-build_rdata("CDNSKEY", RData, Ctx) ->
-    %% CDNSKEY format: flags protocol algorithm public-key(base64 string)
-    %% RFC 7344 - Child DNSKEY
-    %% Same format as DNSKEY (including multi-line parenthesized base64)
-    case RData of
-        [{int, Flags}, {int, Protocol}, {int, Alg} | KeyParts] when
-            is_integer(Flags), is_integer(Protocol), is_integer(Alg)
-        ->
-            case concat_rdata_string_parts(KeyParts) of
-                {ok, PublicKeyB64Bin} ->
-                    try
-                        PublicKey = base64:decode(PublicKeyB64Bin),
-                        %% Calculate keytag (RFC 4034 Appendix B)
-                        KeyTag = calculate_keytag(Flags, Protocol, Alg, PublicKey),
-                        {ok, #dns_rrdata_cdnskey{
-                            flags = Flags,
-                            protocol = Protocol,
-                            alg = Alg,
-                            public_key = PublicKey,
-                            keytag = KeyTag
-                        }}
-                    catch
-                        error:_ ->
-                            {error, make_rdata_error(~"CDNSKEY", RData, Ctx)}
-                    end;
-                error ->
-                    {error, make_rdata_error(~"CDNSKEY", RData, Ctx)}
-            end;
-        _ ->
-            {error, make_rdata_error(~"CDNSKEY", RData, Ctx)}
-    end;
-build_rdata("KEY", RData, Ctx) ->
-    %% KEY format: flags protocol algorithm public-key(base64), RFC 2535 §7.1,
-    %% which allows the key to be split into any number of white-space-separated
-    %% substrings. Similar to DNSKEY but with different flag structure
-    maybe
-        [{int, Flags}, {int, Protocol}, {int, Alg} | KeyParts] ?= RData,
-        true ?= is_integer(Flags) andalso is_integer(Protocol) andalso is_integer(Alg),
-        {ok, PublicKey} ?= parse_base64_pieces(KeyParts),
-        %% Type (bits 0-1), XT (bit 3), NameType (bits 6-7), Sig (bits 12-15)
-        {ok, #dns_rrdata_key{
-            type = (Flags bsr 14) band 16#3,
-            xt = (Flags bsr 12) band 16#1,
-            name_type = (Flags bsr 8) band 16#3,
-            sig = Flags band 16#F,
-            protocol = Protocol,
-            alg = Alg,
-            public_key = PublicKey
-        }}
-    else
-        _ -> {error, make_rdata_error(~"KEY", RData, Ctx)}
-    end;
-build_rdata("SVCB", RData0, Ctx) ->
-    %% RFC 9460 - Service Binding
-    %% SVCB format: priority target [svcparams...]
-    %% Service parameters are key=value pairs or just key (for no-default-alpn)
-    %% Note: TargetName "." in AliasMode (priority=0) means "service is not available"
-    RData = merge_svcb_brace_fragments(RData0),
-    case RData of
-        [{int, Priority}, {domain, Target}] when is_integer(Priority), is_list(Target) ->
-            TargetName = resolve_name(Target, Ctx#parse_ctx.origin),
-            {ok, #dns_rrdata_svcb{
-                svc_priority = Priority,
-                target_name = TargetName,
-                svc_params = #{}
-            }};
-        [{int, Priority}, {domain, Target} | SvcParams] when
-            is_integer(Priority), is_list(Target)
-        ->
-            TargetName = resolve_name(Target, Ctx#parse_ctx.origin),
-            MakeError = fun(Reason) -> make_semantic_error(Reason, Ctx) end,
-            case dns_svcb_params:from_zone(SvcParams, MakeError) of
-                {ok, Params} ->
-                    {ok, #dns_rrdata_svcb{
-                        svc_priority = Priority,
-                        target_name = TargetName,
-                        svc_params = Params
-                    }};
-                {error, Reason} ->
-                    {error, Reason}
-            end;
-        _ ->
-            {error, make_rdata_error(~"SVCB", RData, Ctx)}
-    end;
-build_rdata("HTTPS", RData0, Ctx) ->
-    %% RFC 9460 - HTTPS-specific Service Binding: same as SVCB but different type number
-    RData = merge_svcb_brace_fragments(RData0),
-    case RData of
-        [{int, Priority}, {domain, Target}] when is_integer(Priority), is_list(Target) ->
-            TargetName = resolve_name(Target, Ctx#parse_ctx.origin),
-            {ok, #dns_rrdata_https{
-                svc_priority = Priority,
-                target_name = TargetName,
-                svc_params = #{}
-            }};
-        [{int, Priority}, {domain, Target} | SvcParams] when
-            is_integer(Priority), is_list(Target)
-        ->
-            TargetName = resolve_name(Target, Ctx#parse_ctx.origin),
-            MakeError = fun(Reason) -> make_semantic_error(Reason, Ctx) end,
-            case dns_svcb_params:from_zone(SvcParams, MakeError) of
-                {ok, Params} ->
-                    {ok, #dns_rrdata_https{
-                        svc_priority = Priority,
-                        target_name = TargetName,
-                        svc_params = Params
-                    }};
-                {error, Reason} ->
-                    {error, Reason}
-            end;
-        _ ->
-            {error, make_rdata_error(~"HTTPS", RData, Ctx)}
-    end;
-build_rdata("RRSIG", RData, Ctx) ->
-    %% RRSIG format:
-    %%      type_covered alg labels original_ttl expiration inception keytag signers_name signature
-    %% RFC 4034 - DNSSEC signature
-    %% type_covered can be a record type name (like "DS", "NSEC") parsed as rtype or domain
-    %% signature is base64-encoded and may be unquoted (parsed as domain/string); may be split
-    %% across lines inside parentheses
-    case RData of
-        [
-            {domain, TypeCovered},
-            {int, Alg},
-            {int, Labels},
-            {int, OriginalTTL},
-            {int, Expiration},
-            {int, Inception},
-            {int, KeyTag},
-            {domain, SignersName}
-            | SigParts
-        ] when
-            is_list(TypeCovered) andalso
-                is_integer(Alg) andalso
-                is_integer(Labels) andalso
-                is_integer(OriginalTTL) andalso
-                is_integer(Expiration) andalso
-                is_integer(Inception) andalso
-                is_integer(KeyTag) andalso
-                is_list(SignersName)
-        ->
-            case concat_rdata_string_parts(SigParts) of
-                {ok, SignatureB64Bin} ->
-                    TypeCoveredNum = type_to_number(TypeCovered),
-                    SignersNameBin = resolve_name(SignersName, Ctx#parse_ctx.origin),
-                    try
-                        Signature = base64:decode(SignatureB64Bin),
-                        {ok, #dns_rrdata_rrsig{
-                            type_covered = TypeCoveredNum,
-                            alg = Alg,
-                            labels = Labels,
-                            original_ttl = OriginalTTL,
-                            expiration = rrsig_time(Expiration),
-                            inception = rrsig_time(Inception),
-                            keytag = KeyTag,
-                            signers_name = SignersNameBin,
-                            signature = Signature
-                        }}
-                    catch
-                        error:_ ->
-                            {error, make_rdata_error(~"RRSIG", RData, Ctx)}
-                    end;
-                error ->
-                    {error, make_rdata_error(~"RRSIG", RData, Ctx)}
-            end;
-        _ ->
-            {error, make_rdata_error(~"RRSIG", RData, Ctx)}
-    end;
-build_rdata("SIG", RData, Ctx) ->
-    %% SIG format: as RRSIG's, which took it over field for field (RFC 2535 §7.2,
-    %% RFC 4034 §3.2)
-    case build_rdata("RRSIG", RData, Ctx) of
-        {ok, RRSig} -> {ok, dns_encode:rrsig_to_sig(RRSig)};
-        {error, _} -> {error, make_rdata_error(~"SIG", RData, Ctx)}
-    end;
-build_rdata("NSEC", RData, Ctx) ->
-    %% NSEC format: next_dname type1 type2 type3 ...
-    %% RFC 4034 - DNSSEC authenticated denial of existence
-    %% Types are record type names (like "NS", "SOA", "RRSIG") parsed as rtype or domain tokens
-    case RData of
-        [{domain, NextDName} | [_ | _] = Types] when is_list(NextDName) ->
-            %% Parse type names - they can be rtype tokens (parsed as domain) or labels
-            TypeNums = lists:map(
-                fun
-                    ({domain, TypeName}) when is_list(TypeName) ->
-                        type_to_number(TypeName);
-                    ({rtype, TypeName}) when is_list(TypeName) ->
-                        type_to_number(TypeName);
-                    (_) ->
-                        %% Invalid type, skip or use 0
-                        0
-                end,
-                Types
-            ),
-            %% Filter out invalid types (0)
-            ValidTypes = [T || T <- TypeNums, T =/= 0],
-            NextDNameBin = resolve_name(NextDName, Ctx#parse_ctx.origin),
-            {ok, #dns_rrdata_nsec{
-                next_dname = NextDNameBin,
-                types = ValidTypes
-            }};
-        _ ->
-            {error, make_rdata_error(~"NSEC", RData, Ctx)}
-    end;
-build_rdata("NXT", RData, Ctx) ->
-    %% NXT format: next_dname type1 type2 type3 ...
-    %% RFC 2535 - DNSSEC authenticated denial of existence (obsoleted by NSEC)
-    %% Similar format to NSEC
-    case RData of
-        [{domain, NextDName} | [_ | _] = Types] when is_list(NextDName) ->
-            %% Parse type names - they can be rtype tokens (parsed as domain) or labels
-            TypeNums = lists:map(
-                fun
-                    ({domain, TypeName}) when is_list(TypeName) ->
-                        type_to_number(TypeName);
-                    ({rtype, TypeName}) when is_list(TypeName) ->
-                        type_to_number(TypeName);
-                    (_) ->
-                        %% Invalid type, skip or use 0
-                        0
-                end,
-                Types
-            ),
-            %% Filter out invalid types (0)
-            ValidTypes = [T || T <- TypeNums, T =/= 0],
-            NextDNameBin = resolve_name(NextDName, Ctx#parse_ctx.origin),
-            {ok, #dns_rrdata_nxt{
-                dname = NextDNameBin,
-                types = ValidTypes
-            }};
-        _ ->
-            {error, make_rdata_error(~"NXT", RData, Ctx)}
-    end;
-build_rdata("NSEC3", RData, Ctx) ->
-    %% NSEC3 format: hash_alg flags iterations salt hash type1 type2 type3 ...
-    %% RFC 5155 - DNSSEC Hashed Authenticated Denial of Existence
-    %% Salt can be "-" for empty, otherwise hex string
-    %% Hash is base32hex encoded
-    case RData of
-        [
-            {int, HashAlg}, {int, Flags}, {int, Iterations}, SaltToken, HashToken | [_ | _] = Types
-        ] when
-            is_integer(HashAlg),
-            is_integer(Flags),
-            is_integer(Iterations)
-        ->
-            %% Parse salt (can be "-" for empty, or hex string)
-            Salt =
-                case SaltToken of
-                    {string, "-"} ->
-                        <<>>;
-                    {string, SaltHex} when is_list(SaltHex) ->
-                        case hex_to_binary(SaltHex) of
-                            {ok, S} -> S;
-                            {error, _} -> <<>>
-                        end;
-                    {domain, "-"} ->
-                        <<>>;
-                    {domain, SaltHex} when is_list(SaltHex) ->
-                        case hex_to_binary(SaltHex) of
-                            {ok, S} -> S;
-                            {error, _} -> <<>>
-                        end;
-                    _ ->
-                        <<>>
-                end,
-            %% Parse hash (base32hex encoded)
-            Hash =
-                case HashToken of
-                    {string, HashB32} when is_list(HashB32) ->
-                        try
-                            base32:decode(list_to_binary(HashB32), [hex])
-                        catch
-                            error:_ -> <<>>
-                        end;
-                    {domain, HashB32} when is_list(HashB32) ->
-                        try
-                            base32:decode(list_to_binary(HashB32), [hex])
-                        catch
-                            error:_ -> <<>>
-                        end;
-                    _ ->
-                        <<>>
-                end,
-            %% Parse type names
-            TypeNums = lists:map(
-                fun
-                    ({domain, TypeName}) when is_list(TypeName) ->
-                        type_to_number(TypeName);
-                    ({rtype, TypeName}) when is_list(TypeName) ->
-                        type_to_number(TypeName);
-                    (_) ->
-                        0
-                end,
-                Types
-            ),
-            ValidTypes = [T || T <- TypeNums, T =/= 0],
-            OptOut = (Flags band 16#01) =/= 0,
-            {ok, #dns_rrdata_nsec3{
-                hash_alg = HashAlg,
-                opt_out = OptOut,
-                iterations = Iterations,
-                salt = Salt,
-                hash = Hash,
-                types = ValidTypes
-            }};
-        _ ->
-            {error, make_rdata_error(~"NSEC3", RData, Ctx)}
-    end;
-build_rdata("NSEC3PARAM", RData, Ctx) ->
-    %% NSEC3PARAM format: hash_alg flags iterations salt
-    %% RFC 5155 - NSEC3 Parameters
-    %% Salt can be "-" for empty, otherwise hex string
-    case RData of
-        [{int, HashAlg}, {int, Flags}, {int, Iterations}, SaltToken] when
-            is_integer(HashAlg), is_integer(Flags), is_integer(Iterations)
-        ->
-            %% Parse salt (can be "-" for empty, or hex string)
-            Salt =
-                case SaltToken of
-                    {string, "-"} ->
-                        <<>>;
-                    {string, SaltHex} when is_list(SaltHex) ->
-                        case hex_to_binary(SaltHex) of
-                            {ok, S} -> S;
-                            {error, _} -> <<>>
-                        end;
-                    {domain, "-"} ->
-                        <<>>;
-                    {domain, SaltHex} when is_list(SaltHex) ->
-                        case hex_to_binary(SaltHex) of
-                            {ok, S} -> S;
-                            {error, _} -> <<>>
-                        end;
-                    _ ->
-                        <<>>
-                end,
-            {ok, #dns_rrdata_nsec3param{
-                hash_alg = HashAlg,
-                flags = Flags,
-                iterations = Iterations,
-                salt = Salt
-            }};
-        _ ->
-            {error, make_rdata_error(~"NSEC3PARAM", RData, Ctx)}
-    end;
-build_rdata("CSYNC", RData, Ctx) ->
-    %% CSYNC format: soa_serial flags type1 type2 type3 ...
-    %% RFC 7477 - Child-to-Parent Synchronization in DNS
-    case RData of
-        [{int, SOASerial}, {int, Flags} | [_ | _] = Types] when
-            is_integer(SOASerial), is_integer(Flags)
-        ->
-            %% Parse type names - they can be rtype tokens (parsed as domain) or labels
-            TypeNums = lists:map(
-                fun
-                    ({domain, TypeName}) when is_list(TypeName) ->
-                        type_to_number(TypeName);
-                    ({rtype, TypeName}) when is_list(TypeName) ->
-                        type_to_number(TypeName);
-                    (_) ->
-                        %% Invalid type, skip or use 0
-                        0
-                end,
-                Types
-            ),
-            %% Filter out invalid types (0)
-            ValidTypes = [T || T <- TypeNums, T =/= 0],
-            {ok, #dns_rrdata_csync{
-                soa_serial = SOASerial,
-                flags = Flags,
-                types = ValidTypes
-            }};
-        _ ->
-            {error, make_rdata_error(~"CSYNC", RData, Ctx)}
-    end;
-build_rdata("DSYNC", RData, Ctx) ->
-    %% DSYNC format: rrtype scheme port target
-    %% RFC 9859 - Delegation Synchronization (DSYNC) DNS Resource Record
-    case RData of
-        [{domain, RRTypeName}, {int, Scheme}, {int, Port}, {domain, Target}] when
-            is_list(RRTypeName),
-            is_integer(Scheme),
-            Scheme >= 0,
-            Scheme =< 255,
-            is_integer(Port),
-            is_list(Target)
-        ->
-            RRType = type_to_number(RRTypeName),
-            case RRType of
-                0 ->
-                    {error, make_rdata_error(~"DSYNC", RData, Ctx)};
-                _ ->
-                    {ok, #dns_rrdata_dsync{
-                        rrtype = RRType,
-                        scheme = Scheme,
-                        port = Port,
-                        target = resolve_name(Target, Ctx#parse_ctx.origin)
-                    }}
-            end;
-        _ ->
-            {error, make_rdata_error(~"DSYNC", RData, Ctx)}
-    end;
-build_rdata("ZONEMD", RData, Ctx) ->
-    %% ZONEMD format: serial scheme algorithm hash(hex string)
-    %% RFC 8976 - Zone Metadata. Hash may be one token or multiple (parenthesized
-    %% multi-line layout in zone files, one hex segment per line).
-    case RData of
-        [{int, Serial}, {int, Scheme}, {int, Algorithm} | HashParts] when
-            is_integer(Serial), is_integer(Scheme), is_integer(Algorithm)
-        ->
-            case concat_rdata_string_parts(HashParts) of
-                {ok, HexBin} ->
-                    case hex_to_binary(HexBin) of
-                        {ok, Hash} ->
-                            {ok, #dns_rrdata_zonemd{
-                                serial = Serial,
-                                scheme = Scheme,
-                                algorithm = Algorithm,
-                                hash = Hash
-                            }};
-                        {error, _Reason} ->
-                            {error, make_rdata_error(~"ZONEMD", RData, Ctx)}
-                    end;
-                error ->
-                    {error, make_rdata_error(~"ZONEMD", RData, Ctx)}
-            end;
-        _ ->
-            {error, make_rdata_error(~"ZONEMD", RData, Ctx)}
-    end;
-build_rdata("LOC", RData, Ctx) ->
-    %% LOC format: lat lon alt size horiz_prec vert_prec
-    %% RFC 1876 - Geographic Location
-    %% Simplified format: integers for lat, lon, alt, size, horiz, vert
-    %% Coordinates are in 1/1000th of a second (milliseconds of arc)
-    case RData of
-        [
-            {int, Lat},
-            {int, Lon},
-            {int, Alt},
-            {int, Size},
-            {int, Horiz},
-            {int, Vert}
-        ] when
-            is_integer(Lat),
-            is_integer(Lon),
-            is_integer(Alt),
-            is_integer(Size),
-            is_integer(Horiz),
-            is_integer(Vert)
-        ->
-            {ok, #dns_rrdata_loc{
-                size = Size,
-                horiz = Horiz,
-                vert = Vert,
-                lat = Lat,
-                lon = Lon,
-                alt = Alt
-            }};
-        _ ->
-            case parse_loc_rfc1876_presentation(RData) of
-                {ok, Loc} -> {ok, Loc};
-                error -> {error, make_rdata_error(~"LOC", RData, Ctx)}
-            end
-    end;
-build_rdata("IPSECKEY", RData, Ctx) ->
-    %% IPSECKEY format: precedence algorithm gateway public_key(hex)
-    %% RFC 4025 - Storing IPsec Keying Material in DNS
-    %% Gateway can be IPv4, IPv6, or domain name (0 length = none)
-    case RData of
-        [{int, Precedence}, {int, Alg}, GatewayToken, {string, PublicKeyHex}] when
-            is_integer(Precedence), is_integer(Alg), is_list(PublicKeyHex)
-        ->
-            Gateway = parse_ipseckey_gateway(GatewayToken, Ctx),
-            case hex_to_binary(PublicKeyHex) of
-                {ok, PublicKey} ->
-                    {ok, #dns_rrdata_ipseckey{
-                        precedence = Precedence,
-                        alg = Alg,
-                        gateway = Gateway,
-                        public_key = PublicKey
-                    }};
-                {error, _Reason} ->
-                    {error, make_rdata_error(~"IPSECKEY", RData, Ctx)}
-            end;
-        [{int, Precedence}, {int, Alg}, GatewayToken, {domain, PublicKeyHex}] when
-            is_integer(Precedence), is_integer(Alg), is_list(PublicKeyHex)
-        ->
-            %% Hex strings may be parsed as domain names
-            Gateway = parse_ipseckey_gateway(GatewayToken, Ctx),
-            case hex_to_binary(PublicKeyHex) of
-                {ok, PublicKey} ->
-                    {ok, #dns_rrdata_ipseckey{
-                        precedence = Precedence,
-                        alg = Alg,
-                        gateway = Gateway,
-                        public_key = PublicKey
-                    }};
-                {error, _Reason} ->
-                    {error, make_rdata_error(~"IPSECKEY", RData, Ctx)}
-            end;
-        _ ->
-            {error, make_rdata_error(~"IPSECKEY", RData, Ctx)}
-    end;
-build_rdata(Type, _RData, Ctx) ->
-    %% Unsupported or complex record types
-    %% These are typically auto-generated or use RFC 3597 format
-    {error, make_semantic_error({unsupported_type, Type}, Ctx)}.
-
-%% Calculate DNSKEY keytag (RFC 4034 Appendix B)
--spec calculate_keytag(integer(), integer(), integer(), binary()) -> integer().
-calculate_keytag(Flags, Protocol, Alg, PublicKey) ->
-    %% Build RDATA in wire format
-    RData = <<Flags:16, Protocol:8, Alg:8, PublicKey/binary>>,
-    %% Calculate sum of 16-bit words
-    Sum = calculate_keytag_sum(RData, 0),
-    %% Add the carry bits and return modulo 65536
-    ((Sum band 16#FFFF) + (Sum bsr 16)) band 16#FFFF.
-
-%% Sum 16-bit words for keytag calculation
--spec calculate_keytag_sum(binary(), integer()) -> integer().
-calculate_keytag_sum(<<A:8, B:8, Rest/binary>>, Acc) ->
-    %% Add 16-bit word (big-endian)
-    calculate_keytag_sum(Rest, Acc + (A bsl 8) + B);
-calculate_keytag_sum(<<A:8>>, Acc) ->
-    %% Odd byte at end
-    Acc + (A bsl 8);
-calculate_keytag_sum(<<>>, Acc) ->
-    Acc.
-
-%% RFC4034§3.2: a signature time is written either as seconds since the epoch or
-%% as a UTC date YYYYMMDDHHmmSS. The date is always 14 digits and a 32-bit number
-%% never more than 10, which tells them apart. RFC4034§3.1.5: the wire field holds
-%% the seconds modulo 2^32, compared with serial number arithmetic, so a date
-%% after 2106 wraps as it does in BIND. BIND also takes second 60, a leap second,
-%% as the first second of the next minute; calendar refuses it, so the seconds of
-%% the day are added up here.
--spec rrsig_time(non_neg_integer()) -> dns:uint32().
-rrsig_time(Seconds) when Seconds =< 16#FFFFFFFF ->
-    Seconds;
-rrsig_time(Date) when 10_000_000_000_000 =< Date, Date < 100_000_000_000_000 ->
-    Year = Date div 10_000_000_000,
-    Month = Date div 100_000_000 rem 100,
-    Day = Date div 1_000_000 rem 100,
-    H = Date div 10_000 rem 100,
-    M = Date div 100 rem 100,
-    S = Date rem 100,
-    YMD = {Year, Month, Day},
-    case
-        1970 =< Year andalso calendar:valid_date(YMD) andalso H < 24 andalso M < 60 andalso S =< 60
-    of
-        true ->
-            Gregorian = calendar:date_to_gregorian_days(YMD) * 86400 + H * 3600 + M * 60 + S,
-            (Gregorian - ?UNIX_EPOCH_GREGORIAN_SECONDS) rem (1 bsl 32);
-        false ->
-            erlang:error(badarg, [Date])
-    end;
-rrsig_time(Time) ->
-    erlang:error(badarg, [Time]).
-
-%% Extract a single domain name from RDATA
--spec extract_domain([rdata()]) -> {ok, string()} | {error, term()}.
-extract_domain([{domain, Domain}]) when is_list(Domain) ->
-    {ok, Domain};
-extract_domain(_) ->
-    {error, invalid_domain}.
-
-%% Extract string list from RDATA - convert to binaries for TXT records
--spec extract_strings([rdata()]) -> {ok, [binary()]} | {error, term()}.
-extract_strings(RData) when is_list(RData) ->
-    try
-        Strings = [list_to_binary(S) || {string, S} <- RData, is_list(S)],
-        {ok, Strings}
-    catch
-        error:badarg -> {error, invalid_strings}
-    end.
-
-%% Resolve a name relative to the origin. RFC1035§2.3.3: the case of a name is kept
-%% as it is written. Owner names are lowercased by build_rr/6, but the names in
-%% the RDATA of types DNSSEC does not lowercase (RFC3597§7, RFC6840§5.1) are signed
-%% as they are, so a signature over them only verifies with the case they have.
--spec resolve_name(string(), binary()) -> binary().
-resolve_name("@", Origin) when Origin =/= <<>> ->
-    ensure_fqdn(Origin);
-resolve_name("@", <<>>) ->
-    ~".";
-resolve_name(Name, Origin) when is_list(Name) ->
-    BinName = list_to_binary(Name),
-    case is_fqdn(Name) of
-        true ->
-            BinName;
-        false when Origin =:= <<>> ->
-            %% No origin set, use as-is
-            BinName;
-        false ->
-            %% Append origin
-            <<BinName/binary, ".", Origin/binary>>
-    end.
-
-%% Check if a name is fully qualified (ends with dot)
--spec is_fqdn(string()) -> boolean().
-is_fqdn([]) -> false;
-is_fqdn(Name) -> lists:last(Name) =:= $..
-
-%% Ensure a name is fully qualified - accepts binary, returns binary
--spec ensure_fqdn(binary()) -> binary().
-ensure_fqdn(Name) when is_binary(Name) ->
-    case binary:last(Name) of
-        $. -> Name;
-        _ -> <<Name/binary, ".">>
-    end.
-
-%% Note: This function is lenient and returns <<>> for invalid input
--spec ensure_binary(iodata()) -> binary().
-ensure_binary(B) when is_binary(B) -> B;
-ensure_binary(L) when is_list(L) ->
-    try
-        erlang:iolist_to_binary(L)
-    catch
-        error:badarg -> <<>>
-    end;
-ensure_binary(_) ->
-    <<>>.
-
-%% Ensure a term is an integer
--spec ensure_integer(term()) -> integer().
-ensure_integer(I) when is_integer(I) -> I;
-ensure_integer(_) -> 0.
-
-%% Ensure a term is a list
--spec ensure_list(term()) -> list().
-ensure_list(L) when is_list(L) -> L;
-ensure_list(_) -> [].
-
-%% Parse IPv4 address
--spec parse_ipv4(string()) -> {ok, inet:ip4_address()} | {error, term()}.
-parse_ipv4(String) ->
-    case inet:parse_ipv4strict_address(String) of
-        {ok, Addr} -> {ok, Addr};
-        {error, Reason} -> {error, {invalid_ipv4, Reason}}
-    end.
-
-%% Parse IPv6 address
--spec parse_ipv6(string()) -> {ok, inet:ip6_address()} | {error, term()}.
-parse_ipv6(String) ->
-    case inet:parse_ipv6strict_address(String) of
-        {ok, Addr} -> {ok, Addr};
-        {error, Reason} -> {error, {invalid_ipv6, Reason}}
-    end.
-
-%% Convert DNS class to number
-%% RFC 3597 - Support generic CLASS### syntax
--spec class_to_number(string() | {generic_class, string()}) -> dns:class().
-class_to_number({generic_class, ClassStr}) ->
-    %% RFC 3597 - CLASS### format
-    case parse_generic_class(ClassStr) of
-        {ok, ClassNum} -> ClassNum;
-        {error, _} -> ?DNS_CLASS_IN
-    end;
-class_to_number("IN") ->
-    ?DNS_CLASS_IN;
-class_to_number("CH") ->
-    ?DNS_CLASS_CH;
-class_to_number("HS") ->
-    ?DNS_CLASS_HS;
-class_to_number("CS") ->
-    ?DNS_CLASS_CS;
-class_to_number(_) ->
-    ?DNS_CLASS_IN.
-
-%% Convert DNS type to number
-%% RFC 3597 - Support generic TYPE### syntax
--spec type_to_number(string() | {generic_type, string()}) -> dns:type().
-type_to_number({generic_type, TypeStr}) ->
-    %% RFC 3597 - TYPE### format
-    case parse_generic_type(TypeStr) of
-        {ok, TypeNum} -> TypeNum;
-        {error, _} -> ?DNS_TYPE_A
-    end;
-type_to_number("A") ->
-    ?DNS_TYPE_A;
-type_to_number("NS") ->
-    ?DNS_TYPE_NS;
-type_to_number("CNAME") ->
-    ?DNS_TYPE_CNAME;
-%% Non-standard PowerDNS name; treat as CNAME for parsing (same RDATA)
-type_to_number("ALIAS") ->
-    ?DNS_TYPE_CNAME;
-type_to_number("SOA") ->
-    ?DNS_TYPE_SOA;
-type_to_number("PTR") ->
-    ?DNS_TYPE_PTR;
-type_to_number("MX") ->
-    ?DNS_TYPE_MX;
-type_to_number("TXT") ->
-    ?DNS_TYPE_TXT;
-type_to_number("AAAA") ->
-    ?DNS_TYPE_AAAA;
-type_to_number("SRV") ->
-    ?DNS_TYPE_SRV;
-type_to_number("CAA") ->
-    ?DNS_TYPE_CAA;
-type_to_number("NAPTR") ->
-    ?DNS_TYPE_NAPTR;
-type_to_number("SSHFP") ->
-    ?DNS_TYPE_SSHFP;
-type_to_number("TLSA") ->
-    ?DNS_TYPE_TLSA;
-type_to_number("DS") ->
-    ?DNS_TYPE_DS;
-type_to_number("DNSKEY") ->
-    ?DNS_TYPE_DNSKEY;
-type_to_number("RRSIG") ->
-    ?DNS_TYPE_RRSIG;
-type_to_number("NSEC") ->
-    ?DNS_TYPE_NSEC;
-type_to_number("NSEC3") ->
-    ?DNS_TYPE_NSEC3;
-type_to_number("NSEC3PARAM") ->
-    ?DNS_TYPE_NSEC3PARAM;
-type_to_number("CDNSKEY") ->
-    ?DNS_TYPE_CDNSKEY;
-type_to_number("CDS") ->
-    ?DNS_TYPE_CDS;
-type_to_number("DNAME") ->
-    ?DNS_TYPE_DNAME;
-type_to_number("HINFO") ->
-    ?DNS_TYPE_HINFO;
-type_to_number("MB") ->
-    ?DNS_TYPE_MB;
-type_to_number("MG") ->
-    ?DNS_TYPE_MG;
-type_to_number("MR") ->
-    ?DNS_TYPE_MR;
-type_to_number("MINFO") ->
-    ?DNS_TYPE_MINFO;
-type_to_number("RP") ->
-    ?DNS_TYPE_RP;
-type_to_number("AFSDB") ->
-    ?DNS_TYPE_AFSDB;
-type_to_number("RT") ->
-    ?DNS_TYPE_RT;
-type_to_number("KEY") ->
-    ?DNS_TYPE_KEY;
-type_to_number("LOC") ->
-    ?DNS_TYPE_LOC;
-type_to_number("NXT") ->
-    ?DNS_TYPE_NXT;
-type_to_number("KX") ->
-    ?DNS_TYPE_KX;
-type_to_number("CERT") ->
-    ?DNS_TYPE_CERT;
-type_to_number("DHCID") ->
-    ?DNS_TYPE_DHCID;
-type_to_number("OPENPGPKEY") ->
-    ?DNS_TYPE_OPENPGPKEY;
-type_to_number("CSYNC") ->
-    ?DNS_TYPE_CSYNC;
-type_to_number("SMIMEA") ->
-    ?DNS_TYPE_SMIMEA;
-type_to_number("URI") ->
-    ?DNS_TYPE_URI;
-type_to_number("RESINFO") ->
-    ?DNS_TYPE_RESINFO;
-type_to_number("DSYNC") ->
-    ?DNS_TYPE_DSYNC;
-type_to_number("WALLET") ->
-    ?DNS_TYPE_WALLET;
-type_to_number("EUI48") ->
-    ?DNS_TYPE_EUI48;
-type_to_number("EUI64") ->
-    ?DNS_TYPE_EUI64;
-type_to_number("NID") ->
-    ?DNS_TYPE_NID;
-type_to_number("L32") ->
-    ?DNS_TYPE_L32;
-type_to_number("L64") ->
-    ?DNS_TYPE_L64;
-type_to_number("LP") ->
-    ?DNS_TYPE_LP;
-type_to_number("SPF") ->
-    ?DNS_TYPE_SPF;
-type_to_number("SVCB") ->
-    ?DNS_TYPE_SVCB;
-type_to_number("HTTPS") ->
-    ?DNS_TYPE_HTTPS;
-type_to_number("DLV") ->
-    ?DNS_TYPE_DLV;
-type_to_number("IPSECKEY") ->
-    ?DNS_TYPE_IPSECKEY;
-type_to_number("ZONEMD") ->
-    ?DNS_TYPE_ZONEMD;
-type_to_number("AMTRELAY") ->
-    ?DNS_TYPE_AMTRELAY;
-type_to_number("HHIT") ->
-    ?DNS_TYPE_HHIT;
-type_to_number("HIP") ->
-    ?DNS_TYPE_HIP;
-type_to_number("SIG") ->
-    ?DNS_TYPE_SIG;
-type_to_number("PX") ->
-    ?DNS_TYPE_PX;
-type_to_number("BRID") ->
-    ?DNS_TYPE_BRID;
-%% RFC 3597 §5: a type without a mnemonic, in RDATA such as an RRSIG's type covered
-type_to_number("TYPE" ++ _ = TypeStr) ->
-    type_to_number({generic_type, TypeStr});
-type_to_number(_) ->
-    ?DNS_TYPE_A.
-
-%% Handle $INCLUDE directive
--spec handle_include(string(), binary(), parse_ctx()) ->
-    {ok, parse_ctx(), [dns:rr()]} | {error, tuple() | error_detail()}.
-handle_include(Filename, Origin, Ctx) ->
-    FullPath = full_filename_path(Ctx#parse_ctx.base_dir, Filename),
-    IncludeOpts = #{
-        origin => Origin,
-        default_ttl => Ctx#parse_ctx.default_ttl,
-        default_class => Ctx#parse_ctx.default_class,
-        base_dir => Ctx#parse_ctx.base_dir
-    },
-    case parse_file(FullPath, IncludeOpts) of
-        {ok, Records} ->
-            {ok, Ctx, Records};
-        {error, ErrorDetail} ->
-            %% Pass through error from included file
-            %% Could add include context here if needed
-            {error, ErrorDetail}
-    end.
-
-%% Construct full path relative to base directory
-full_filename_path(Dir, Filename) when Dir =:= "" orelse Dir =:= <<>> ->
-    Filename;
-full_filename_path(BaseDir, Filename) ->
-    filename:join(BaseDir, Filename).
-
-%% RFC 3597 - Parse generic TYPE### syntax
-%% Extract the numeric type from "TYPE123" format
--spec parse_generic_type(string()) -> {ok, dns:type()} | {error, term()}.
-parse_generic_type("TYPE" ++ Rest) ->
-    try list_to_integer(Rest) of
-        TypeNum when TypeNum >= 0, TypeNum =< 65535 ->
-            {ok, TypeNum};
-        _ ->
-            {error, {invalid_type_range, Rest}}
-    catch
-        error:badarg ->
-            {error, {invalid_type_format, Rest}}
-    end;
-parse_generic_type(Other) ->
-    {error, {invalid_type_syntax, Other}}.
-
-%% RFC 3597 - Parse generic CLASS### syntax
-%% Extract the numeric class from "CLASS32" format
--spec parse_generic_class(string()) -> {ok, dns:class()} | {error, term()}.
-parse_generic_class("CLASS" ++ Rest) ->
-    try list_to_integer(Rest) of
-        ClassNum when ClassNum >= 0, ClassNum =< 65535 ->
-            {ok, ClassNum};
-        _ ->
-            {error, {invalid_class_range, Rest}}
-    catch
-        error:badarg ->
-            {error, {invalid_class_format, Rest}}
-    end;
-parse_generic_class(Other) ->
-    {error, {invalid_class_syntax, Other}}.
-
-%% RFC 3597 - Parse the entire RFC 3597 token: \# length hexdata
-%% Input is like "\\# 4 C0000201" or "\\# 0"
--spec parse_rfc3597_token(string()) -> {ok, binary()} | {error, term()}.
-parse_rfc3597_token(Token) ->
-    %% Remove leading \# and whitespace
-    case string:split(Token, " ", all) of
-        ["\\#", LengthStr | HexParts] ->
-            try list_to_integer(LengthStr) of
-                Length ->
-                    %% Concatenate all hex parts (they may be space-separated)
-                    HexData = lists:flatten(HexParts),
-                    parse_rfc3597_rdata(Length, list_to_binary(HexData))
-            catch
-                error:badarg ->
-                    {error, {invalid_rfc3597_length, LengthStr}}
-            end;
-        _ ->
-            {error, {invalid_rfc3597_format, Token}}
-    end.
-
-%% RFC 3597 - Parse generic RDATA format: \# length hexdata
-%% Converts hex string to binary and validates length
--spec parse_rfc3597_rdata(integer(), binary()) -> {ok, binary()} | {error, term()}.
-parse_rfc3597_rdata(Length, <<>>) when Length =:= 0 ->
-    %% Empty RDATA is valid if length is 0
-    {ok, <<>>};
-parse_rfc3597_rdata(Length, HexData) ->
-    %% Remove any whitespace from hex data
-    CleanHex = binary:replace(HexData, ~" ", <<>>, [global]),
-    %% Convert hex string to binary
-    case hex_to_binary(CleanHex) of
-        {ok, BinaryData} ->
-            ActualLength = byte_size(BinaryData),
-            case ActualLength of
-                Length ->
-                    {ok, BinaryData};
-                _ ->
-                    {error, {rfc3597_length_mismatch, Length, ActualLength}}
-            end;
-        {error, Reason} ->
-            {error, Reason}
-    end.
-
-%% SOA refresh/retry/expire/minimum: integer seconds or BIND-style suffix (8H, 30S, 1W, 1D, 1M).
--spec soa_timer_to_seconds(rdata()) -> {ok, dns:ttl()} | error.
-soa_timer_to_seconds({int, N}) when is_integer(N) ->
-    {ok, N};
-soa_timer_to_seconds({domain, S}) when is_list(S) ->
-    bind_ttl_string_to_seconds(S);
-soa_timer_to_seconds(_) ->
-    error.
-
-%% @doc Parse BIND $TTL-style duration: digits, or digits + unit (s/m/h/d/w), case-insensitive.
--spec bind_ttl_string_to_seconds(string()) -> {ok, dns:ttl()} | error.
-bind_ttl_string_to_seconds(Str) ->
-    case lists:splitwith(fun(C) -> C >= $0 andalso C =< $9 end, Str) of
-        {[], _} ->
-            error;
-        {NumChars, []} ->
-            {ok, list_to_integer(NumChars)};
-        {NumChars, [Unit]} ->
-            N = list_to_integer(NumChars),
-            case string:to_lower([Unit]) of
-                "s" -> {ok, N};
-                "m" -> {ok, N * 60};
-                "h" -> {ok, N * 3600};
-                "d" -> {ok, N * 86400};
-                "w" -> {ok, N * 604800};
-                _ -> error
-            end;
-        _ ->
-            error
-    end.
-
-%% Concatenate fragments ({domain|string, ...}) from parenthesized multi-line zone syntax.
--spec concat_rdata_string_parts([rdata()]) -> {ok, binary()} | error.
-concat_rdata_string_parts(Parts) ->
-    try
-        case
-            lists:foldl(
-                fun
-                    ({domain, S}, Acc) when is_list(S) ->
-                        <<Acc/binary, (list_to_binary(S))/binary>>;
-                    ({string, S}, Acc) when is_list(S) ->
-                        <<Acc/binary, (list_to_binary(S))/binary>>;
-                    (_, _) ->
-                        error(invalid)
-                end,
-                <<>>,
-                Parts
-            )
-        of
-            <<>> -> error;
-            Bin -> {ok, Bin}
-        end
-    catch
-        error:invalid -> error
-    end.
-
-%% Strip separators common in EUI-48/EUI-64 zone presentations (00-11-22-33-44-55).
--spec eui_hex_normalize(string()) -> string().
-eui_hex_normalize(S) when is_list(S) ->
-    [C || C <- S, C =/= $-, C =/= $:, C =/= $\s].
-
-%% The RDATA of NID and L64: a preference and a NodeID or Locator64
--spec build_ilnp64([rdata()]) -> {ok, integer(), <<_:64>>} | error.
-build_ilnp64([{int, Pref}, {domain, Value}]) when is_integer(Pref), is_list(Value) ->
-    case parse_ilnp64(Value) of
-        {ok, Bin} -> {ok, Pref, Bin};
-        error -> error
-    end;
-build_ilnp64(_RData) ->
-    error.
-
-%% RFC 6742 §2.1, §2.3: a NodeID or Locator64 is four colon-separated groups of
-%% one to four hex digits, as in an AAAA record, but never with the "::" shorthand,
-%% which would read as a 128-bit IPv6 address.
--spec parse_ilnp64(string()) -> {ok, <<_:64>>} | error.
-parse_ilnp64(String) ->
-    maybe
-        [_, _, _, _] = Groups ?= string:split(String, ":", all),
-        true ?= lists:all(fun(G) -> 1 =< length(G) andalso length(G) =< 4 end, Groups),
-        {ok, <<_:64>> = Bin} ?= hex_to_binary([string:pad(G, 4, leading, $0) || G <- Groups]),
-        {ok, Bin}
-    else
-        _ -> error
-    end.
-
-%% Domain names, each resolved against the origin
--spec parse_domain_names([rdata()], parse_ctx()) -> {ok, [dns:dname()]} | error.
-parse_domain_names(Tokens, Ctx) ->
-    case [Name || {domain, Name} <- Tokens] of
-        Names when length(Names) =:= length(Tokens) ->
-            {ok, [resolve_name(Name, Ctx#parse_ctx.origin) || Name <- Names]};
-        _ ->
-            error
-    end.
-
-%% RFC 9886 §5.1.1, §5.2.1: base64 that "may be divided into any number of
-%% white-space-separated substrings", which are concatenated
--spec parse_base64_pieces([rdata()]) -> {ok, binary()} | error.
-parse_base64_pieces(RData) ->
-    maybe
-        {ok, Base64} ?= concat_rdata_string_parts(RData),
-        try
-            {ok, base64:decode(Base64)}
-        catch
-            error:_ -> error
-        end
-    end.
-
-%% Hex that whitespace may split, as in a DS digest (RFC 4034 §5.3) or TLSA
-%% certificate data (RFC 6698 §2.2), whose pieces are concatenated
--spec parse_hex_pieces([rdata()]) -> {ok, binary()} | error.
-parse_hex_pieces(RData) ->
-    maybe
-        {ok, Hex} ?= concat_rdata_string_parts(RData),
-        {ok, Bin} ?= hex_to_binary(Hex),
-        {ok, Bin}
-    else
-        _ -> error
-    end.
-
-%% The RDATA of DS, CDS and DLV: keytag algorithm digest-type digest
--spec parse_ds_rdata([rdata()]) -> {ok, integer(), integer(), integer(), binary()} | error.
-parse_ds_rdata([{int, KeyTag}, {int, Alg}, {int, DigestType} | DigestParts]) when
-    is_integer(KeyTag), is_integer(Alg), is_integer(DigestType)
-->
-    maybe
-        {ok, Digest} ?= parse_hex_pieces(DigestParts),
-        {ok, KeyTag, Alg, DigestType, Digest}
-    end;
-parse_ds_rdata(_RData) ->
-    error.
-
-%% The RDATA of TLSA and SMIMEA: usage selector matching-type cert-data
--spec parse_tlsa_rdata([rdata()]) -> {ok, integer(), integer(), integer(), binary()} | error.
-parse_tlsa_rdata([{int, Usage}, {int, Selector}, {int, MatchingType} | CertParts]) when
-    is_integer(Usage), is_integer(Selector), is_integer(MatchingType)
-->
-    maybe
-        {ok, Cert} ?= parse_hex_pieces(CertParts),
-        {ok, Usage, Selector, MatchingType, Cert}
-    end;
-parse_tlsa_rdata(_RData) ->
-    error.
-
-%% Convert hexadecimal string to binary using OTP 26+ binary:decode_hex/1
--spec hex_to_binary(binary() | string()) -> {ok, binary()} | {error, term()}.
-hex_to_binary(HexString) when is_list(HexString) ->
-    hex_to_binary(list_to_binary(HexString));
-hex_to_binary(HexBin) when is_binary(HexBin) ->
-    try
-        %% Validate hex string has even length (pairs of hex digits)
-        {ok, binary:decode_hex(HexBin)}
-    catch
-        error:badarg ->
-            {error, {invalid_hex_data, HexBin}}
-    end.
-
-%% RFC 8777 §4.3.1: the relay is "." for relay type 0, an IPv4 or IPv6 address for
-%% types 1 and 2, and a domain name for type 3. The relay types past 3 have no
-%% presentation format; the RFC 3597 generic form still carries them.
--spec parse_amtrelay_relay(integer(), rdata(), parse_ctx()) ->
-    {ok, <<>> | inet:ip_address() | dns:dname()} | error.
-parse_amtrelay_relay(0, {domain, "."}, _Ctx) ->
-    {ok, <<>>};
-parse_amtrelay_relay(1, {Kind, IP}, _Ctx) when Kind =:= ipv4; Kind =:= domain ->
-    case parse_ipv4(IP) of
-        {ok, Relay} -> {ok, Relay};
-        {error, _} -> error
-    end;
-parse_amtrelay_relay(2, {Kind, IP}, _Ctx) when Kind =:= ipv6; Kind =:= domain ->
-    case parse_ipv6(IP) of
-        {ok, Relay} -> {ok, Relay};
-        {error, _} -> error
-    end;
-parse_amtrelay_relay(3, {domain, Name}, Ctx) ->
-    {ok, resolve_name(Name, Ctx#parse_ctx.origin)};
-parse_amtrelay_relay(_RelayType, _RelayToken, _Ctx) ->
-    error.
-
-%% Parse IPSECKEY gateway field (can be IPv4, IPv6, domain name, or "." for none)
--spec parse_ipseckey_gateway(rdata(), parse_ctx()) -> inet:ip_address() | dns:dname() | <<>>.
-parse_ipseckey_gateway({domain, "."}, _Ctx) ->
-    <<>>;
-parse_ipseckey_gateway({domain, GatewayStr}, Ctx) when is_list(GatewayStr) ->
-    %% Try to parse as IP address first, then fall back to domain name
-    case inet:parse_address(GatewayStr) of
-        {ok, IP} -> IP;
-        {error, _} -> resolve_name(GatewayStr, Ctx#parse_ctx.origin)
-    end;
-parse_ipseckey_gateway({string, GatewayStr}, Ctx) when is_list(GatewayStr) ->
-    %% Try to parse as IP address first, then fall back to domain name
-    case inet:parse_address(GatewayStr) of
-        {ok, IP} -> IP;
-        {error, _} -> resolve_name(GatewayStr, Ctx#parse_ctx.origin)
-    end;
-parse_ipseckey_gateway(_, _Ctx) ->
-    <<>>.
+-spec capitalize(atom()) -> unicode:chardata().
+capitalize(Atom) ->
+    string:titlecase(atom_to_list(Atom)).

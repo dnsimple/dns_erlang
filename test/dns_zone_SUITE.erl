@@ -45,7 +45,8 @@ groups() ->
             {group, dns_classes},
             {group, edge_cases},
             {group, parse_file_tests},
-            {group, error_cases}
+            {group, error_cases},
+            {group, field_readers}
         ]},
         {encoding_tests, [parallel], [
             encode_rdata_helper,
@@ -312,7 +313,7 @@ groups() ->
             parse_tlsa_record,
             parse_smimea_record,
             parse_cert_record,
-            parse_cert_record_hex,
+            parse_cert_record_base64_only,
             parse_dhcid_record,
             parse_openpgpkey_record,
             parse_uri_record,
@@ -530,6 +531,26 @@ groups() ->
             parse_file_zonemd,
             test_format_error_with_file,
             parse_file_nonexistent
+        ]},
+        {field_readers, [parallel], [
+            parse_hex_and_base64_of_digits,
+            parse_key_without_key,
+            parse_svcb_quoted_values,
+            parse_svcb_value_lists,
+            parse_svcb_keys_by_name,
+            parse_unquoted_strings,
+            parse_types_in_rdata,
+            parse_errors_name_their_line,
+            parse_name_escapes,
+            parse_root_and_relative_origins,
+            parse_text_escapes,
+            parse_ttl_units,
+            parse_loc_rfc1876_forms,
+            parse_algorithm_mnemonics,
+            parse_refuses_malformed_fields,
+            parse_owner_spelled_as_any_type,
+            parse_string_of_characters_past_255,
+            parse_ipseckey_gateways
         ]},
         {error_cases, [parallel], [
             parse_invalid_ipv4,
@@ -1441,8 +1462,10 @@ parse_cert_record(_Config) ->
         RR#dns_rr.data
     ).
 
-parse_cert_record_hex(_Config) ->
-    %% CERT record with hex-encoded data
+%% RFC4398§2.2: the certificate is base64, even when it reads as hex too, as
+%% ABCDEF01 does. The parser read such a certificate as hex, so one the writer
+%% wrote in base64 could come back as other octets.
+parse_cert_record_base64_only(_Config) ->
     Zone = ~"example.com. 3600 IN CERT 1 12345 8 \"ABCDEF01\"\n",
     {ok, [RR]} = dns_zone:parse_string(Zone, #{origin => ~"example.com."}),
     ?assertEqual(?DNS_TYPE_CERT, RR#dns_rr.type),
@@ -1451,7 +1474,7 @@ parse_cert_record_hex(_Config) ->
             type = 1,
             keytag = 12345,
             alg = 8,
-            cert = <<16#AB, 16#CD, 16#EF, 16#01>>
+            cert = <<0, 16, 131, 16, 93, 53>>
         },
         RR#dns_rr.data
     ).
@@ -4548,7 +4571,7 @@ parse_nsec3_record(_Config) ->
     %% Format: hash_alg flags iterations salt hash type1 type2 type3 ...
     %% Use valid base32hex hash format (simpler than base32)
     %% Base32hex uses 0-9, A-V (case insensitive)
-    Zone = ~"example.com. 3600 IN NSEC3 1 0 0 - ABCDEF0123456789ABCDEF A NS SOA\n",
+    Zone = ~"example.com. 3600 IN NSEC3 1 0 0 - 2VPTU5TIMAMQTTGL4LUU9KG21E0AOR3S A NS SOA\n",
     {ok, [RR]} = dns_zone:parse_string(Zone, #{}),
     ?assertEqual(?DNS_TYPE_NSEC3, RR#dns_rr.type),
     #dns_rrdata_nsec3{
@@ -4563,9 +4586,12 @@ parse_nsec3_record(_Config) ->
     ?assertEqual(false, OptOut),
     ?assertEqual(0, Iterations),
     ?assertEqual(<<>>, Salt),
-    ?assert(is_binary(Hash)),
-    ?assert(is_list(Types)),
-    ?assert(length(Types) > 0).
+    ?assertEqual(
+        <<23, 243, 223, 23, 178, 178, 173, 174, 246, 21, 37, 125, 228, 210, 2, 11, 128, 172, 108,
+            124>>,
+        Hash
+    ),
+    ?assertEqual([?DNS_TYPE_A, ?DNS_TYPE_NS, ?DNS_TYPE_SOA], Types).
 
 parse_nsec3param_record(_Config) ->
     %% Test NSEC3PARAM record decoding
@@ -7320,3 +7346,607 @@ encode_rdata_helper(_Config) ->
     RDataStrCAABin = iolist_to_binary(RDataStrCAA),
     ?assertNotEqual(nomatch, string:find(RDataStrCAABin, "issue")),
     ?assertNotEqual(nomatch, string:find(RDataStrCAABin, "letsencrypt.org")).
+
+%% ============================================================================
+%% Field readers
+%% ============================================================================
+
+parse_rdata(RData) ->
+    {ok, [#dns_rr{data = Data}]} = dns_zone:parse_string(<<"example. 0 IN ", RData/binary, "\n">>),
+    Data.
+
+parse_rdata_error(RData) ->
+    {error, Error} = dns_zone:parse_string(<<"example. 0 IN ", RData/binary, "\n">>),
+    Error.
+
+%% Each field is read as its type has it, so hex and base64 made of digits, or
+%% spelled as a TTL, are not taken for numbers. The parser read 1234 and 1d as
+%% numbers, so it lost a salt made of them and refused a digest, a key or a
+%% signature that read as one, and the zone writer's CDS 0 0 0 00 (RFC 8078 §4).
+parse_hex_and_base64_of_digits(_Config) ->
+    ?assertEqual(
+        #dns_rrdata_nsec3param{hash_alg = 1, flags = 0, iterations = 0, salt = <<16#12, 16#34>>},
+        parse_rdata(~"NSEC3PARAM 1 0 0 1234")
+    ),
+    ?assertEqual(
+        #dns_rrdata_nsec3param{hash_alg = 1, flags = 0, iterations = 0, salt = <<16#1D>>},
+        parse_rdata(~"NSEC3PARAM 1 0 0 1d")
+    ),
+    ?assertMatch(
+        #dns_rrdata_nsec3{salt = <<16#12, 16#34>>},
+        parse_rdata(~"NSEC3 1 0 0 1234 2VPTU5TIMAMQTTGL4LUU9KG21E0AOR3S A")
+    ),
+    ?assertEqual(
+        #dns_rrdata_cds{keytag = 0, alg = 0, digest_type = 0, digest = <<0>>},
+        parse_rdata(~"CDS 0 0 0 00")
+    ),
+    ?assertMatch(
+        #dns_rrdata_ds{digest = <<16#12, 16#34, 16#56, 16#78>>},
+        parse_rdata(~"DS 12345 8 2 12345678")
+    ),
+    ?assertMatch(#dns_rrdata_sshfp{fp = <<16#12, 16#34>>}, parse_rdata(~"SSHFP 2 1 1234")),
+    ?assertMatch(#dns_rrdata_tlsa{certificate = <<0>>}, parse_rdata(~"TLSA 3 1 1 00")),
+    ?assertMatch(#dns_rrdata_zonemd{hash = <<16#12, 16#34>>}, parse_rdata(~"ZONEMD 1 1 1 1234")),
+    ?assertMatch(
+        #dns_rrdata_dnskey{public_key = <<215, 109, 248, 231, 174, 252>>},
+        parse_rdata(~"DNSKEY 256 3 8 12345678")
+    ),
+    ?assertMatch(
+        #dns_rrdata_dnskey{public_key = <<214, 29, 166>>}, parse_rdata(~"DNSKEY 256 3 8 1h2m")
+    ),
+    ?assertMatch(
+        #dns_rrdata_rrsig{signature = <<215, 109, 248, 231, 174, 252>>},
+        parse_rdata(~"RRSIG A 8 2 3600 20300101000000 20000101000000 1 example. 12345678")
+    ),
+    ?assertMatch(#dns_rrdata_hip{hit = <<16#12, 16#34>>}, parse_rdata(~"HIP 2 1234 AwEAAQ==")),
+    ?assertEqual(
+        #dns_rrdata_eui48{address = <<0, 16#11, 16#22, 16#33, 16#44, 16#55>>},
+        parse_rdata(~"EUI48 001122334455")
+    ),
+    %% What is not what its field holds is refused, where the parser read it as nothing
+    [
+        ?assertMatch(#{type := semantic}, parse_rdata_error(RData), RData)
+     || RData <- [
+            ~"NSEC3PARAM 1 0 0 Z",
+            ~"NSEC3 1 0 0 XY 2VPTU5TIMAMQTTGL4LUU9KG21E0AOR3S A",
+            ~"NSEC3 1 0 0 - ABCDEF0123456789ABCDEF A",
+            ~"CERT 1 12345 8 MII!"
+        ]
+    ].
+
+%% RFC2535§3.1.2: a KEY whose type is "no key" has none, and the zone writer
+%% writes it with none
+parse_key_without_key(_Config) ->
+    ?assertEqual(
+        #dns_rrdata_key{
+            type = 3, xt = 0, name_type = 0, sig = 0, protocol = 3, alg = 1, public_key = <<>>
+        },
+        parse_rdata(~"KEY 49152 3 1")
+    ),
+    KeyRR = #dns_rr{
+        name = ~"example.",
+        type = ?DNS_TYPE_KEY,
+        ttl = 0,
+        data = #dns_rrdata_key{
+            type = 3, xt = 0, name_type = 0, sig = 0, protocol = 3, alg = 1, public_key = <<>>
+        }
+    },
+    ?assertEqual(
+        {ok, [KeyRR]}, dns_zone:parse_string(iolist_to_binary([dns_zone:encode_rr(KeyRR), "\n"]))
+    ).
+
+%% RFC9460 Appendix A: a value may be quoted, as the zone writer quotes them all.
+%% The parser read some of them only unquoted, so the writer's ipv4hint, ipv6hint,
+%% alpn and mandatory did not read back.
+parse_svcb_quoted_values(_Config) ->
+    ?assertEqual(
+        #dns_rrdata_svcb{
+            svc_priority = 1,
+            target_name = ~"svc.example.",
+            svc_params = #{
+                ?DNS_SVCB_PARAM_MANDATORY => [?DNS_SVCB_PARAM_ALPN, ?DNS_SVCB_PARAM_IPV4HINT],
+                ?DNS_SVCB_PARAM_ALPN => [~"h2", ~"h3"],
+                ?DNS_SVCB_PARAM_PORT => 443,
+                ?DNS_SVCB_PARAM_IPV4HINT => [{192, 0, 2, 1}, {192, 0, 2, 2}],
+                ?DNS_SVCB_PARAM_ECH => ~"abcdef",
+                ?DNS_SVCB_PARAM_IPV6HINT => [
+                    {16#2001, 16#db8, 0, 0, 0, 0, 0, 1}, {16#2001, 16#db8, 0, 0, 0, 0, 0, 2}
+                ]
+            }
+        },
+        parse_rdata(
+            <<"SVCB 1 svc.example. mandatory=\"alpn,ipv4hint\" alpn=\"h2,h3\" port=\"443\" ",
+                "ipv4hint=\"192.0.2.1,192.0.2.2\" ech=\"YWJjZGVm\" ",
+                "ipv6hint=\"2001:db8::1,2001:db8::2\"">>
+        )
+    ),
+    %% A quoted value may hold blanks
+    ?assertMatch(
+        #dns_rrdata_svcb{svc_params = #{65001 := ~"a b"}}, parse_rdata(~"SVCB 1 . key65001=\"a b\"")
+    ).
+
+%% RFC9460 Appendix A.1: within a list, "\," is a comma that does not part two
+%% items, written "\\," in a quoted value, as Appendix D.2's Figure 10 has it.
+%% §2.1: a key is not repeated.
+parse_svcb_value_lists(_Config) ->
+    ?assertMatch(
+        #dns_rrdata_svcb{svc_params = #{?DNS_SVCB_PARAM_ALPN := [~B"f\oo,bar", ~"h2"]}},
+        parse_rdata(
+            ~B"""
+        SVCB 16 foo.example.org. alpn="f\\\\oo\\,bar,h2"
+        """
+        )
+    ),
+    ?assertMatch(
+        #dns_rrdata_svcb{svc_params = #{?DNS_SVCB_PARAM_ALPN := [~B"f\oo,bar", ~"h2"]}},
+        parse_rdata(
+            ~B"""
+        SVCB 16 foo.example.org. alpn=f\\\092oo\\,bar,h2
+        """
+        )
+    ),
+    ?assertMatch(
+        #{type := semantic}, parse_rdata_error(~"SVCB 1 svc.example. alpn=h2 alpn=h3")
+    ),
+    ?assertMatch(#{type := semantic}, parse_rdata_error(~"SVCB 1 svc.example. key3=1 port=2")).
+
+%% The names of keys 7, 8 and 13, as the parser read them, and every name in a
+%% mandatory list, where the parser read only some
+parse_svcb_keys_by_name(_Config) ->
+    ?assertEqual(
+        #{
+            ?DNS_SVCB_PARAM_MANDATORY => [?DNS_SVCB_PARAM_ECH, 7, 8],
+            ?DNS_SVCB_PARAM_ECH => ~"abcdef",
+            7 => ~"/dns-query{?dns}",
+            8 => none,
+            13 => ~"29,23"
+        },
+        (parse_rdata(
+            ~"SVCB 1 . mandatory=ech,dohpath,ohttp ech=YWJjZGVm dohpath=/dns-query{?dns} ohttp tls-supported-groups=29,23"
+        ))#dns_rrdata_svcb.svc_params
+    ),
+    ?assertMatch(#{type := semantic}, parse_rdata_error(~"SVCB 1 . unknown=1")),
+    ?assertMatch(#{type := semantic}, parse_rdata_error(~"SVCB 1 . mandatory=unknown")),
+    ?assertMatch(#{type := semantic}, parse_rdata_error(~"SVCB 1 . \"alpn=h2\"")).
+
+%% RFC1035§5.1: a <character-string> need not be quoted. The parser dropped the
+%% words that were not, and refused a string of them alone.
+parse_unquoted_strings(_Config) ->
+    ?assertEqual(#dns_rrdata_txt{txt = [~"a", ~"b", ~"0"]}, parse_rdata(~"TXT \"a\" b 0")),
+    ?assertEqual(#dns_rrdata_spf{spf = [~"v=spf1", ~"-all"]}, parse_rdata(~"SPF v=spf1 -all")),
+    ?assertEqual(#dns_rrdata_hinfo{cpu = ~"PC", os = ~"Linux"}, parse_rdata(~"HINFO PC Linux")),
+    ?assertEqual(
+        #dns_rrdata_caa{flags = 0, tag = ~"issue", value = ~"ca.example."},
+        parse_rdata(~"CAA 0 issue ca.example.")
+    ),
+    ?assertMatch(
+        #dns_rrdata_naptr{flags = ~"S", services = ~"SIP+D2T", regexp = <<>>},
+        parse_rdata(~"NAPTR 100 10 S SIP+D2T \"\" _sip._tcp.example.")
+    ).
+
+%% RFC3597§5: a type is its mnemonic, in any case, or TYPEnnn, and one that is
+%% neither is refused. The parser read an unknown name, or one in lowercase, as A,
+%% or dropped it.
+parse_types_in_rdata(_Config) ->
+    ?assertEqual(
+        #dns_rrdata_nsec{next_dname = ~"next.example.", types = [?DNS_TYPE_A, ?DNS_TYPE_SOA, 0]},
+        parse_rdata(~"NSEC next.example. a soa TYPE0")
+    ),
+    ?assertMatch(
+        #dns_rrdata_rrsig{type_covered = ?DNS_TYPE_SOA},
+        parse_rdata(~"RRSIG soa 8 2 3600 20300101000000 20000101000000 1 example. AQ==")
+    ),
+    ?assertMatch(
+        #dns_rrdata_dsync{rrtype = ?DNS_TYPE_CDS}, parse_rdata(~"DSYNC cds 1 5359 t.example.")
+    ),
+    ?assertMatch(#dns_rrdata_csync{types = []}, parse_rdata(~"CSYNC 1 0")),
+    ?assertMatch(#dns_rrdata_nsec{types = []}, parse_rdata(~"NSEC next.example.")),
+    %% TYPEnnn with a known type's RDATA
+    ?assertEqual(#dns_rrdata_a{ip = {192, 0, 2, 1}}, parse_rdata(~"TYPE1 192.0.2.1")),
+    [
+        ?assertMatch(#{type := semantic}, parse_rdata_error(RData), RData)
+     || RData <- [
+            ~"NSEC next.example. A NOTATYPE",
+            ~"CSYNC 1 0 A 1",
+            ~"RRSIG X 8 2 3600 20300101000000 20000101000000 1 example. AQ==",
+            ~"DSYNC . 1 5359 t.example."
+        ]
+    ].
+
+%% Each error tells the line it was found on and what that line holds, records'
+%% RDATA too, which the parser told neither of
+parse_errors_name_their_line(Config) ->
+    Zone = <<"$ORIGIN example.\nwww 300 IN A 192.0.2.1\n\nbad 300 IN MX ten mail\n">>,
+    ?assertMatch(
+        {error, #{
+            type := semantic,
+            location := #{line := 4},
+            context := ~"bad 300 IN MX ten mail",
+            message := ~"Invalid MX record: not a number: ten"
+        }},
+        dns_zone:parse_string(Zone)
+    ),
+    %% An entry over several lines is told by the line it starts on
+    ?assertMatch(
+        {error, #{type := semantic, location := #{line := 2}}},
+        dns_zone:parse_string(~"$ORIGIN example.\n@ 300 IN SOA ns admin (\n 1 2 3 4 x )\n")
+    ),
+    ?assertMatch(
+        {error, #{type := parser, location := #{line := 2}, context := ~"www 300 IN ( A"}},
+        dns_zone:parse_string(~"$ORIGIN example.\nwww 300 IN ( A\n")
+    ),
+    ?assertMatch(
+        {error, #{type := parser, location := #{line := 1}}},
+        dns_zone:parse_string(~"www.example. 300 IN A 192.0.2.1 )\n")
+    ),
+    ?assertMatch(
+        {error, #{type := lexer, location := #{line := 2}}},
+        dns_zone:parse_string(~"; a comment\nwww.example. 300 IN TXT \"open\n")
+    ),
+    [
+        ?assertMatch(
+            {error, #{type := parser, location := #{line := 1}}}, dns_zone:parse_string(Z), Z
+        )
+     || Z <- [
+            ~"$FOO bar\n",
+            ~"$TTL\n",
+            ~"\"www.example.\" 300 IN A 192.0.2.1\n",
+            ~"www.example. 300 IN\n",
+            ~"www.example. 300 IN FOO bar\n",
+            ~"www.example. 300 IN \"A\" 192.0.2.1\n",
+            ~"www.example. 300 IN A\n"
+        ]
+    ],
+    File = filename:join(proplists:get_value(priv_dir, Config), "line.zone"),
+    ok = file:write_file(File, ~"www.example. 300 IN A 192.0.2.1\nwww.example. 300 IN A 192.0.2\n"),
+    ?assertMatch(
+        {error, #{location := #{line := 2, file := File}}}, dns_zone:parse_file(File)
+    ).
+
+%% RFC1035§5.1: \X is X and \DDD the octet DDD, and dns_erlang keeps a dot or a
+%% backslash within a label escaped. The parser refused any escape in a name.
+parse_name_escapes(_Config) ->
+    {ok, [Escaped, Decimal]} = dns_zone:parse_string(
+        ~B"""
+        a\.b.example. 0 IN A 192.0.2.1
+        \065\066.example. 0 IN A 192.0.2.1
+        """
+    ),
+    ?assertEqual(~B"a\.b.example.", Escaped#dns_rr.name),
+    ?assertEqual(~"ab.example.", Decimal#dns_rr.name),
+    [
+        ?assertEqual(#dns_rrdata_ns{dname = Name}, parse_rdata(<<"NS ", Text/binary>>), Text)
+     || {Text, Name} <- [
+            {~B"ns\032x.example.", ~"ns x.example."},
+            {~B"a\092b.example.", ~B"a\\b.example."},
+            {~B"a\046b.example.", ~B"a\.b.example."},
+            {~B"a\bc.example.", ~"abc.example."},
+            {~B"a\\.example.", ~B"a\\.example."},
+            {~"ns@1$.example.", ~"ns@1$.example."}
+        ]
+    ],
+    [
+        ?assertMatch(#{type := semantic}, parse_rdata_error(<<"NS ", Text/binary>>), Text)
+     || Text <- [~"a..b.example.", ~".a.example.", ~B"a\256.example.", ~B"a\b..example."]
+    ],
+    ?assertMatch(
+        {error, #{type := semantic}}, dns_zone:parse_string(~B"example. 0 IN NS a\")
+    ),
+    ?assertMatch(
+        {error, #{type := parser}}, dns_zone:parse_string(~"a..b.example. 0 IN A 192.0.2.1\n")
+    ).
+
+%% RFC1035§5.1: a relative $ORIGIN is relative to the origin before it, where the
+%% parser took it for absolute, and a name relative to the root origin gets one
+%% dot, where the parser gave it two
+parse_root_and_relative_origins(_Config) ->
+    {ok, [Root, Sub]} = dns_zone:parse_string(
+        ~"""
+        $ORIGIN .
+        www 0 IN A 192.0.2.1
+        $ORIGIN example.
+        $ORIGIN sub
+        www 0 IN A 192.0.2.2
+        """
+    ),
+    ?assertEqual(~"www.", Root#dns_rr.name),
+    ?assertEqual(~"www.sub.example.", Sub#dns_rr.name).
+
+%% The escapes the parser read in strings: \DDD up to 255, past which it is read
+%% as written; \xHH, read as written when not hex; \n, \t and \r
+parse_text_escapes(_Config) ->
+    ?assertEqual(
+        #dns_rrdata_txt{
+            txt = [
+                ~"a\nb\tc\rd",
+                ~"Az",
+                ~B"\xZZ",
+                ~B"\256",
+                <<"say \"hi\"">>,
+                ~B"back\slash"
+            ]
+        },
+        parse_rdata(
+            ~B"""
+            TXT "a\nb\tc\rd" "\x41\x7a" "\xZZ" "\256" "say \"hi\"" back\\slash
+            """
+        )
+    ).
+
+%% RFC2308§4 and BIND: a TTL is seconds or numbers each followed by a unit, in
+%% either case, as are SOA's timers and RRSIG's original TTL
+parse_ttl_units(_Config) ->
+    {ok, [Default, Units, Upper, Year, SOA, RRSIG]} = dns_zone:parse_string(
+        ~"""
+        $TTL 1H
+        a.example. IN A 192.0.2.1
+        b.example. 1w2d3h4m5s IN A 192.0.2.1
+        c.example. 1D IN A 192.0.2.1
+        d.example. 2y IN A 192.0.2.1
+        example. 0 IN SOA ns admin 1 1H 30M 1W 1D
+        example. 0 IN RRSIG A 8 2 1h 20300101000000 20000101000000 1 example. AQ==
+        """
+    ),
+    ?assertEqual(3600, Default#dns_rr.ttl),
+    ?assertEqual(788645, Units#dns_rr.ttl),
+    ?assertEqual(86400, Upper#dns_rr.ttl),
+    ?assertEqual(63072000, Year#dns_rr.ttl),
+    ?assertMatch(
+        #dns_rrdata_soa{refresh = 3600, retry = 1800, expire = 604800, minimum = 86400},
+        SOA#dns_rr.data
+    ),
+    ?assertMatch(#dns_rrdata_rrsig{original_ttl = 3600}, RRSIG#dns_rr.data),
+    [
+        ?assertMatch({error, #{type := parser}}, dns_zone:parse_string(Z), Z)
+     || Z <- [~"a.example. 1h30 IN A 192.0.2.1\n", ~"a.example. 1x IN A 192.0.2.1\n"]
+    ],
+    ?assertMatch(#{type := semantic}, parse_rdata_error(~"SOA ns admin 1 1H 30M 1W 1X")).
+
+%% RFC1876§3: minutes, seconds and the metres' "m" may be left out, and so may the
+%% size and the precisions, which then are 1m, 10000m and 10m. The parser read
+%% only the form with all of them. These are RFC 1876's own examples, and give the
+%% wire form dnspython gives them.
+parse_loc_rfc1876_forms(_Config) ->
+    Wire = fun(Text) ->
+        binary:encode_hex(
+            dns_encode:encode_rrdata(?DNS_CLASS_IN, parse_rdata(<<"LOC ", Text/binary>>)), lowercase
+        )
+    end,
+    ?assertEqual(~"0033161389172dd070be15f000988d20", Wire(~"42 21 54 N 71 06 18 W -24m 30m")),
+    ?assertEqual(
+        ~"001224138917069070bf2dd800988d20", Wire(~"42 21 43.952 N 71 5 6.344 W -24m 1m 200m")
+    ),
+    ?assertEqual(~"001216138b3556c88008165000989a68", Wire(~"52 14 05 N 00 08 50 E 10m")),
+    ?assertEqual(~"00121613791b7d2898d59ec800989a68", Wire(~"32 7 19 S 115 44 13 E 10m")),
+    ?assertEqual(~"001216138903210070c3da8000989680", Wire(~"42 N 71 W 0m")),
+    ?assertEqual(~"0012161389165ae070be5c4000989a68", Wire(~"42 21 N 71 6 W 10")),
+    ?assertEqual(
+        #dns_rrdata_loc{
+            lat = 152514000,
+            lon = -255978000,
+            alt = -2400,
+            size = 3000,
+            horiz = 1000000,
+            vert = 1000
+        },
+        parse_rdata(~"LOC 42 21 54 N 71 06 18 W -24m 30m")
+    ),
+    %% The six numbers the zone writer writes, negative ones too
+    ?assertEqual(
+        #dns_rrdata_loc{lat = -1, lon = -2, alt = -3, size = 100, horiz = 1000000, vert = 1000},
+        parse_rdata(~"LOC -1 -2 -3 100 1000000 1000")
+    ),
+    %% Thousandths of a second at most, the rest rounded
+    ?assertMatch(#dns_rrdata_loc{lat = 196001}, parse_rdata(~"LOC 0 3 16.0005 N 0 E 0m")),
+    [
+        ?assertMatch(#{type := semantic}, parse_rdata_error(<<"LOC ", Text/binary>>), Text)
+     || Text <- [
+            ~"42 X 71 W 0m",
+            ~"42 21 54 N",
+            ~"42 N 71 W",
+            ~"42 N 71 W 0 1 2 3 4",
+            ~"42 21 54 1 N 71 W 0m",
+            ~"42 N 71 W 1.x",
+            ~"N 71 W 0m"
+        ]
+    ].
+
+%% RFC4034§2.2, §3.2, §5.3: an algorithm is its number or its mnemonic
+parse_algorithm_mnemonics(_Config) ->
+    ?assertMatch(#dns_rrdata_ds{alg = 13}, parse_rdata(~"DS 1 ECDSAP256SHA256 2 ABCD")),
+    ?assertMatch(
+        #dns_rrdata_dnskey{alg = 15},
+        parse_rdata(~"DNSKEY 257 3 ed25519 VXEsoU69+/ogdTfuDFJteyXjQM3WniI/Jc11+fLq4Dg=")
+    ),
+    ?assertMatch(
+        #dns_rrdata_rrsig{alg = 8},
+        parse_rdata(~"RRSIG A RSASHA256 2 3600 20300101000000 20000101000000 1 example. AQ==")
+    ),
+    ?assertMatch(#dns_rrdata_cert{alg = 8}, parse_rdata(~"CERT 1 1 RSASHA256 AQ==")),
+    [
+        ?assertMatch(#{type := semantic}, parse_rdata_error(RData), RData)
+     || RData <- [~"DS 1 FOO 2 ABCD", ~"DS 1 \"8\" 2 ABCD"]
+    ].
+
+%% What does not read as its field is refused
+parse_refuses_malformed_fields(_Config) ->
+    [
+        ?assertMatch(#{type := semantic}, parse_rdata_error(RData), RData)
+     || RData <- [
+            %% inet would take the zone index and drop it
+            ~"AAAA fe80::1%eth0",
+            ~"AAAA fe80::%01",
+            ~"AAAA \"::1\"",
+            ~"A +1.2.3.4",
+            ~"A 1.2.3",
+            ~"A 1.2.3.256",
+            ~"A \"192.0.2.1\"",
+            ~"MX \"10\" mail.example.",
+            ~"NS \"ns.example.\"",
+            %% RFC4648§7: base32hex with as many digits as some octets take, the
+            %% bits past them zero
+            ~"NSEC3 1 0 0 - 0000001 A",
+            ~"NSEC3 1 0 0 - W0 A",
+            ~"NSEC3 1 256 0 - 2VPTU5TIMAMQTTGL4LUU9KG21E0AOR3S A",
+            ~"KEY 65536 3 1",
+            ~"URI 10 1 \"ht tp://x\"",
+            ~"EUI48 00-11-22-33-44",
+            ~"NID 10 0014:4fff:ff20",
+            ~"NID 10 0014:4fff:ff20:ee6g",
+            ~"NID 10 0014:4fff:ff20:00ee6",
+            ~"NID 10 \"0014:4fff:ff20:ee64\"",
+            ~"AMTRELAY 10 0 4 relay.example.",
+            ~"AMTRELAY 10 2 1 192.0.2.1",
+            ~"RRSIG A 8 2 3600 20301301000000 20000101000000 1 example. AQ==",
+            ~"RRSIG A 8 2 3600 99999999999 20000101000000 1 example. AQ==",
+            ~"DS 1 8 2 \"ABC\"",
+            ~"DNSKEY 256 3 8 AQ",
+            ~"TYPE65534 \\#",
+            ~"NULL foo"
+        ]
+    ],
+    %% A type without a presentation format is read in RFC 3597's generic form
+    ?assertEqual(<<16#AB, 16#CD>>, parse_rdata(~"NULL \\# 2 ABCD")),
+    ?assertEqual(<<16#AB, 16#CD>>, parse_rdata(~"NULL \\# 2 ( AB\n CD )")),
+    %% Lowercase base32hex is read
+    ?assertMatch(
+        #dns_rrdata_nsec3{
+            hash =
+                <<23, 243, 223, 23, 178, 178, 173, 174, 246, 21, 37, 125, 228, 210, 2, 11, 128, 172,
+                    108, 124>>
+        },
+        parse_rdata(~"NSEC3 1 0 0 - 2vptu5timamqttgl4luu9kg21e0aor3s A")
+    ).
+
+%% The parser took the owner from the first field unless it was a TTL, a class or
+%% a type, which leave the previous owner, and took a type for an owner when a
+%% class, or a TTL and a class, follow it. Every mnemonic its lexer knew is kept
+%% so, and others, as a label, are owners.
+parse_owner_spelled_as_any_type(_Config) ->
+    Types = [
+        ~"A",
+        ~"AAAA",
+        ~"AFSDB",
+        ~"ALIAS",
+        ~"AMTRELAY",
+        ~"BRID",
+        ~"CAA",
+        ~"CDNSKEY",
+        ~"CDS",
+        ~"CERT",
+        ~"CNAME",
+        ~"CSYNC",
+        ~"DHCID",
+        ~"DLV",
+        ~"DNAME",
+        ~"DNSKEY",
+        ~"DS",
+        ~"DSYNC",
+        ~"EUI48",
+        ~"EUI64",
+        ~"HHIT",
+        ~"HINFO",
+        ~"HIP",
+        ~"HTTPS",
+        ~"IPSECKEY",
+        ~"KEY",
+        ~"KX",
+        ~"L32",
+        ~"L64",
+        ~"LOC",
+        ~"LP",
+        ~"MB",
+        ~"MG",
+        ~"MINFO",
+        ~"MR",
+        ~"MX",
+        ~"NAPTR",
+        ~"NID",
+        ~"NS",
+        ~"NSEC",
+        ~"NSEC3",
+        ~"NSEC3PARAM",
+        ~"NXT",
+        ~"OPENPGPKEY",
+        ~"PTR",
+        ~"PX",
+        ~"RESINFO",
+        ~"RP",
+        ~"RRSIG",
+        ~"RT",
+        ~"SIG",
+        ~"SMIMEA",
+        ~"SOA",
+        ~"SPF",
+        ~"SRV",
+        ~"SSHFP",
+        ~"SVCB",
+        ~"TLSA",
+        ~"TXT",
+        ~"URI",
+        ~"WALLET",
+        ~"ZONEMD",
+        ~"NULL",
+        ~"in",
+        ~"a"
+    ],
+    [
+        ?assertMatch(
+            {ok, [#dns_rr{name = Owner, type = ?DNS_TYPE_A, ttl = TTL}]},
+            dns_zone:parse_string(<<"$ORIGIN example.\n$TTL 300\n", Type/binary, Rest/binary>>),
+            {Type, Rest}
+        )
+     || Type <- Types,
+        Owner <- [<<(string:lowercase(Type))/binary, ".example.">>],
+        {Rest, TTL} <- [
+            {~" IN A 192.0.2.1\n", 300},
+            {~" 60 IN A 192.0.2.1\n", 60},
+            {~" IN 60 A 192.0.2.1\n", 60},
+            {~" CLASS1 A 192.0.2.1\n", 300}
+        ]
+    ],
+    %% And a type alone leaves the previous owner, as a TTL or a class first does
+    {ok, [_, Blank, TTLFirst, ClassFirst, Generic]} = dns_zone:parse_string(
+        ~"""
+        $ORIGIN example.
+        www 300 IN A 192.0.2.1
+        TXT "a"
+        60 IN TXT "b"
+        IN TXT "c"
+        TYPE16 \# 2 0161
+        """
+    ),
+    [
+        ?assertMatch(#dns_rr{name = ~"www.example.", type = ?DNS_TYPE_TXT}, RR)
+     || RR <- [Blank, TTLFirst, ClassFirst, Generic]
+    ].
+
+%% A string of characters past 255 is read as UTF-8, one up to 255 as octets
+parse_string_of_characters_past_255(_Config) ->
+    ?assertMatch(
+        {ok, [#dns_rr{data = #dns_rrdata_txt{txt = [<<"é€"/utf8>>]}}]},
+        dns_zone:parse_string("example. 0 IN TXT \"é€\"\n")
+    ),
+    ?assertMatch(
+        {ok, [#dns_rr{data = #dns_rrdata_txt{txt = [<<233>>]}}]},
+        dns_zone:parse_string("example. 0 IN TXT \"é\"\n")
+    ).
+
+%% The zone writer's IPSECKEY: precedence, algorithm, gateway and the key in hex.
+%% The parser took an IPv4 gateway for none, and refused a key of hex digits.
+parse_ipseckey_gateways(_Config) ->
+    [
+        ?assertEqual(
+            #dns_rrdata_ipseckey{
+                precedence = 10, alg = 2, gateway = Gateway, public_key = <<16#12, 16#34>>
+            },
+            parse_rdata(<<"IPSECKEY 10 2 ", Text/binary, " 1234">>),
+            Text
+        )
+     || {Text, Gateway} <- [
+            {~"192.0.2.38", {192, 0, 2, 38}},
+            {~"2001:db8::1", {16#2001, 16#db8, 0, 0, 0, 0, 0, 1}},
+            {~".", <<>>},
+            {~"gw.example.", ~"gw.example."}
+        ]
+    ].

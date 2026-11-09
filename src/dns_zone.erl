@@ -41,7 +41,8 @@ specifications.
   * Warning: Not portable to all DNS software
   * See: https://bind9.readthedocs.io/en/latest/chapter3.html
 
-The parser uses Erlang's parsetools (leex and yecc) for lexical analysis and parsing.
+The parser reads the zone file as a binary, entry by entry, and each field of
+the RDATA as its record type has it. An error tells the line it was found on.
 
 ## Examples
 
@@ -132,9 +133,9 @@ Error location information.
 Error type classification.
 
 - `file` - File I/O error (e.g., file not found)
-- `lexer` - Lexical analysis error (invalid tokens)
-- `parser` - Syntax parsing error (grammar violation)
-- `semantic` - Semantic validation error (invalid data)
+- `lexer` - A quoted string left open
+- `parser` - An entry a zone file cannot hold, such as an unknown type or directive
+- `semantic` - RDATA that does not read as its type, or a value too wide for its field
 """.
 -type error_type() :: file | lexer | parser | semantic.
 

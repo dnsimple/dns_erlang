@@ -44,11 +44,6 @@ dns_erlang is an Erlang DNS message library supporting most common record types,
 - `dns_terms.hrl` - DNS constants (types, classes, opcodes, rcodes, algorithms)
 - `dns_records.hrl` - Erlang record definitions for DNS structures
 
-**Generated Files (excluded from formatting/linting):**
-
-- `src/dns_zone_lexer.erl` - Generated from dns_zone_lexer.xrl
-- `src/dns_zone_parser.erl` - Generated from dns_zone_parser.yrl
-
 ## Key Data Structures
 
 ```erlang
@@ -67,7 +62,7 @@ Follow the coding standards defined in [CONTRIBUTING.md](./CONTRIBUTING.md#code-
 
 Tests are in `test/` using Common Test framework. Test files follow `*_SUITE.erl` naming.
 
-Coverage requirement: 75% minimum and should always increase. Excluded: dns_zone_lexer, dns_zone_parser.
+Coverage requirement: 75% minimum and should always increase.
 
 ## Code Review Checklist
 

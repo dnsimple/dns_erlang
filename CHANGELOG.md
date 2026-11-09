@@ -11,7 +11,16 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - DNSSEC algorithms 1 (RSAMD5), 12 (ECC-GOST), 17 (SM2SM3) and 23 (ECC-GOST12) have names and constants in `dns_terms.hrl`.
 
+### Changed
+
+- Zone files: `dns_zone` parses binaries directly, without leex and yecc, 2.37–8.93x faster with 4.51–10.16x less memory on large zones, and every error gives its line.
+
 ### Fixed
+
+- Zone files: hex and base64 that read as a number or a TTL, such as the salt `1234` or the CDS `0 0 0 00`, are read as hex and base64, where they were lost or refused.
+- Zone files: SVCB and HTTPS values may be quoted, as `dns_zone` writes `alpn`, `mandatory`, `ipv4hint` and `ipv6hint`, and a key may not repeat.
+- Zone files: a field that does not read as its type is refused, where an unknown type name was read as A, a bad salt or hash as empty, and unquoted strings were dropped.
+- Zone files: a KEY may have no key, CERT data is only base64, LOC takes RFC 1876's optional fields, names take escapes, and a relative `$ORIGIN` follows the one before.
 
 - Wire: a name is held to 255 octets counted on the wire (RFC 1035): decoding took 256 and refused 255 with escapes or a pointer, and compressing took 256 and over.
 - Wire: encoding RDATA over 65535 octets raises `{rdata_too_long, Size}`, where it wrapped RDLENGTH.

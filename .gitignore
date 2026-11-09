@@ -9,9 +9,6 @@ doc/
 *.o
 *.beam
 
-# leex/yecc
-src/dns_zone_lexer.erl
-src/dns_zone_parser.erl
 
 # rebar3
 rebar3.crashdump
