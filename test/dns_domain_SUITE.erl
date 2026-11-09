@@ -77,9 +77,11 @@ groups() ->
             from_wire_escape_positions,
             from_wire_escape_every_word,
             from_wire_escape_all_bytes,
-            from_wire_errors
+            from_wire_errors,
+            name_length_limit
         ]},
         {compression_tests, [parallel], [
+            pointer_chain_limit,
             compression_encoding_basic,
             compression_encoding_multiple,
             compression_encoding_prior_only,
@@ -880,6 +882,69 @@ from_wire_errors(_) ->
             MaxLabel/binary, 0>>,
     ?assertError({name_too_long, _}, dns_domain:from_wire(FiveLongLabels)).
 
+%% RFC1035§3.1: a name is at most 255 octets on the wire, length octets and root
+%% included, whatever its escapes or compression pointers
+name_length_limit(_) ->
+    %% Labels of Byte making Octets on the wire: 63 octets each, then the rest
+    Labels = fun(Octets, Byte) ->
+        Body = Octets - 1,
+        [binary:copy(<<Byte>>, 63) || _ <- lists:seq(1, Body div 64)] ++
+            [binary:copy(<<Byte>>, Body rem 64 - 1) || Body rem 64 > 1]
+    end,
+    Wire = fun(Ls) -> <<<<<<(byte_size(L)), L/binary>> || L <- Ls>>/binary, 0>> end,
+    [?assertEqual(N, byte_size(Wire(Labels(N, $a)))) || N <- [191, 192, 255, 256, 257]],
+    Max = Labels(255, $a),
+    Over = Labels(256, $a),
+    MaxName = dns_domain:join(Max),
+    ?assertEqual({MaxName, <<>>}, dns_domain:from_wire(Wire(Max))),
+    ?assertEqual({MaxName, <<>>}, dns_domain:from_wire(Wire(Max), Wire(Max))),
+    ?assertError({name_too_long, 256}, dns_domain:from_wire(Wire(Over))),
+    ?assertError({name_too_long, 256}, dns_domain:from_wire(Wire(Over), Wire(Over))),
+    ?assertError({name_too_long, 257}, dns_domain:from_wire(Wire(Labels(257, $a)))),
+    %% Escaped text is longer than the name on the wire
+    Dots = Labels(255, $.),
+    {DotsName, <<>>} = dns_domain:from_wire(Wire(Dots)),
+    ?assert(255 < byte_size(DotsName)),
+    ?assertEqual(Wire(Dots), dns_domain:to_wire(DotsName)),
+    ?assertEqual(Wire(Dots), element(1, dns_domain:to_wire(dns_domain:new_compmap(), 0, DotsName))),
+    %% A pointer adds the labels it leads to: 190 or 191 octets, then a 65-octet suffix
+    Suffix = [binary:copy(<<"s">>, 63)],
+    [Prefix255, Prefix256] = [Labels(N, $p) || N <- [191, 192]],
+    Msg = fun(Prefix) ->
+        Bin = <<<<<<(byte_size(L)), L/binary>> || L <- Prefix>>/binary, 3:2, 0:14>>,
+        {<<(Wire(Suffix))/binary, Bin/binary>>, Bin}
+    end,
+    {Msg255, Data255} = Msg(Prefix255),
+    {Name255, <<>>} = dns_domain:from_wire(Msg255, Data255),
+    ?assertEqual(255, byte_size(dns_domain:to_wire(Name255))),
+    %% A pointer first in the name, or to another pointer, adds no octets either
+    MaxMsg = <<(Wire(Max))/binary, 3:2, 0:14>>,
+    ?assertEqual({MaxName, <<>>}, dns_domain:from_wire(MaxMsg, <<3:2, 0:14>>)),
+    ?assertEqual({MaxName, <<>>}, dns_domain:from_wire(MaxMsg, <<3:2, 255:14>>)),
+    {Msg256, Data256} = Msg(Prefix256),
+    ?assertError({name_too_long, 256}, dns_domain:from_wire(Msg256, Data256)),
+    %% Encoding, without and with a compression map, in every spelling
+    ?assertEqual(Wire(Max), dns_domain:to_wire(MaxName)),
+    ?assertEqual(Wire(Max), element(1, dns_domain:to_wire(dns_domain:new_compmap(), 0, MaxName))),
+    TooLong = [
+        dns_domain:join(Over),
+        dns_domain:to_upper(dns_domain:join(Over)),
+        dns_domain:join(Labels(256, $.))
+    ],
+    [?assertError(name_too_long, dns_domain:to_wire(Name), Name) || Name <- TooLong],
+    [
+        ?assertError(name_too_long, dns_domain:to_wire(dns_domain:new_compmap(), 0, Name), Name)
+     || Name <- TooLong
+    ],
+    %% A pointer to a suffix written earlier ends the name, but does not shorten it
+    {_, Map} = dns_domain:to_wire(dns_domain:new_compmap(), 0, dns_domain:join(Suffix)),
+    {Ptr255, _} = dns_domain:to_wire(Map, 100, dns_domain:join(Prefix255 ++ Suffix)),
+    ?assertEqual(<<(binary:part(Wire(Prefix255), 0, 190))/binary, 3:2, 0:14>>, Ptr255),
+    ?assertError(name_too_long, dns_domain:to_wire(Map, 100, dns_domain:join(Prefix256 ++ Suffix))),
+    ?assertError(
+        name_too_long, dns_domain:to_wire(Map, 100, dns_domain:join(Labels(255, $p) ++ Suffix))
+    ).
+
 %% ============================================================================
 %% Compression Tests
 %% ============================================================================
@@ -1188,6 +1253,25 @@ compression_decoding_empty_after_pointer(_) ->
      || {{MsgInput, DataInput}, Expected} <- Cases
     ].
 
+%% Pointers add no octets, so only MAX_POINTERS stops a chain of them. A valid
+%% name needs at most 128: one per label, root included.
+pointer_chain_limit(_) ->
+    %% The root, N pointers each to the one before, and padding so size isn't what stops it
+    Chain = fun(N) ->
+        Ptrs = <<<<3:2, (max(0, 2 * I - 1)):14>> || I <- lists:seq(0, N - 1)>>,
+        <<0, Ptrs/binary, 0:4096>>
+    end,
+    Head = fun(N) -> <<3:2, (2 * N - 1):14>> end,
+    %% 1 + 127 pointers, then 1 + 128
+    ?assertEqual({<<>>, <<>>}, dns_domain:from_wire(Chain(127), Head(127))),
+    ?assertError(decode_loop, dns_domain:from_wire(Chain(128), Head(128))),
+    ?assertError(decode_loop, dns_domain:from_wire(Chain(8000), Head(8000))),
+    %% The most a valid name needs: 128 pointers, one before each of 127 labels and the root
+    Segment = fun(I) -> <<1, $a, 3:2, (max(0, 4 * I - 3)):14>> end,
+    Labels = <<0, (<<<<(Segment(I))/binary>> || I <- lists:seq(0, 126)>>)/binary>>,
+    {Name, <<>>} = dns_domain:from_wire(Labels, <<3:2, (1 + 4 * 126):14>>),
+    ?assertEqual(lists:duplicate(127, ~"a"), dns_domain:split(Name)).
+
 compression_decoding_errors(_) ->
     MsgBin = <<7, "example", 3, "com", 0>>,
     %% Truncation after compression pointer
@@ -1230,11 +1314,7 @@ compression_decoding_errors(_) ->
         <<63, MaxLabel/binary, 63, MaxLabel/binary, 63, MaxLabel/binary, 63, MaxLabel/binary, 0>>,
     FullMsgLong4 = <<MsgBin/binary, LongNameMsg4/binary>>,
     {_, RestAfterFirst4} = dns_domain:from_wire(FullMsgLong4, FullMsgLong4),
-    %% Name too long in from_wire_first_compressed guard (line 568)
-    %% Process labels to TotalSize = 254, then compression pointer: 254 + 2 = 256
-    %% This calls from_wire_first_compressed with TotalSize = 256, triggering the guard
-    %% 3 labels of 63 bytes (192) + 1 label of 61 bytes (62) = 254 bytes
-    %% Then compression pointer: +2 = 256
+    %% 254 octets of labels, then a pointer to example.com, too long at "example": 1 + 254 + 8
     MaxLabel61 = iolist_to_binary(<<<<$a>> || _ <- lists:seq(1, 61)>>),
     NameWithPtr =
         <<63, MaxLabel/binary, 63, MaxLabel/binary, 63, MaxLabel/binary, 61, MaxLabel61/binary, 192,
@@ -1256,12 +1336,12 @@ compression_decoding_errors(_) ->
         %% Too many labels in rest_compressed (128 labels)
         {{FullMsg128, RestAfterFirst128}, {too_many_labels, 128}},
         %% Name too long (wire format size exceeds 255)
-        %% 5 labels of 63 bytes: error after 4th label (4 * 64 = 256)
-        {{LongNameMsg, LongNameMsg}, {name_too_long, 256}},
-        %% 4 labels of 63 bytes in rest_compressed: error after 4th label (4 * 64 = 256)
-        {{FullMsgLong4, RestAfterFirst4}, {name_too_long, 256}},
-        %% Name too long in from_wire_first_compressed guard (line 568)
-        {{FullMsgWithPtr, NameWithPtr}, {name_too_long, 256}},
+        %% 5 labels of 63 bytes: error after 4th label (1 + 4 * 64 = 257, with the root)
+        {{LongNameMsg, LongNameMsg}, {name_too_long, 257}},
+        %% 4 labels of 63 bytes in rest_compressed: error after 4th label (1 + 4 * 64 = 257)
+        {{FullMsgLong4, RestAfterFirst4}, {name_too_long, 257}},
+        %% 254 bytes of labels, then a pointer to example.com
+        {{FullMsgWithPtr, NameWithPtr}, {name_too_long, 263}},
         %% Bad pointer and truncation in rest_compressed
         {{MsgBin, <<3, "www", 192, 20>>}, {bad_pointer, 20}},
         %% Truncated: empty binary after label (line 603)

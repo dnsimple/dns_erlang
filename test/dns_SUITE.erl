@@ -47,7 +47,8 @@ groups() ->
             truncated_query_enforces_opt_record,
             encode_default_message_question_offset_correct,
             encode_default_message_additional_offset_correct,
-            encode_llq_truncates_instead_of_crashing
+            encode_llq_truncates_instead_of_crashing,
+            rdata_over_65535_octets_refused
         ]},
         {txt_records, [parallel], [
             long_txt,
@@ -83,6 +84,7 @@ groups() ->
             decode_encode_rrdata_wire_samples,
             decode_encode_rrdata,
             encode_nsec_type_bitmaps,
+            decode_type_bitmap_window_over_32_octets,
             decode_minfo_in_message,
             loc_wire_reference_point,
             loc_precision_range,
@@ -583,6 +585,50 @@ encode_llq_truncates_instead_of_crashing(_) ->
         #dns_message{tc = false, qc = 1, anc = 0, auc = 1, adc = 1},
         dns:decode_message(FitsBin)
     ).
+
+%% RFC1035§3.2.1: RDLENGTH is 16 bits. RDATA over 65535 octets was written with
+%% its length wrapped, announcing fewer octets than followed, so the message
+%% decoded as trailing garbage. encode_message/1 and encode_rrdata/2 refuse it,
+%% and so do the OPT RR's options and a TSIG RR's Other. The bounded encoder, as
+%% erldns uses it, already left out a record too large for the message.
+rdata_over_65535_octets_refused(_) ->
+    Bytes = fun(Size) -> binary:copy(<<"a">>, Size) end,
+    %% 255 strings of 255 octets and one of Last, each after its length octet
+    Txt = fun(Last) -> #dns_rrdata_txt{txt = lists:duplicate(255, Bytes(255)) ++ [Bytes(Last)]} end,
+    ?assertEqual(65535, byte_size(dns_encode:encode_rrdata(?DNS_CLASS_IN, Txt(254)))),
+    ?assertError({rdata_too_long, 65536}, dns_encode:encode_rrdata(?DNS_CLASS_IN, Txt(255))),
+    Msg = fun(Last) ->
+        RR = #dns_rr{name = ~"example", type = ?DNS_TYPE_TXT, ttl = 0, data = Txt(Last)},
+        #dns_message{anc = 1, answers = [RR]}
+    end,
+    #dns_message{answers = [#dns_rr{data = Fits}]} = dns:decode_message(
+        dns:encode_message(Msg(254))
+    ),
+    ?assertEqual(Txt(254), Fits),
+    ?assertError({rdata_too_long, 65536}, dns:encode_message(Msg(255))),
+    ?assertMatch(
+        #dns_message{tc = true, anc = 0},
+        dns:decode_message(dns:encode_message(Msg(255), #{max_size => 65535}))
+    ),
+    %% The OPT RR's RDATA is its options, each a 4-octet header and its data
+    Opt = fun(Size) ->
+        #dns_message{
+            adc = 1,
+            additional = [#dns_optrr{data = [#dns_opt_unknown{id = 65001, bin = Bytes(Size)}]}]
+        }
+    end,
+    #dns_message{additional = [#dns_optrr{data = [#dns_opt_unknown{bin = Bin}]}]} =
+        dns:decode_message(dns:encode_message(Opt(65531))),
+    ?assertEqual(65531, byte_size(Bin)),
+    ?assertError({rdata_too_long, 65536}, dns:encode_message(Opt(65532))),
+    %% The TSIG RR's RDATA: the algorithm's name, 16 fixed octets, the MAC and
+    %% Other. hmac-sha256's name is 13 octets and its MAC 32, so Other's 65474
+    %% octets fill it to 65535
+    Tsig = fun(Size) ->
+        #{tsig => #{alg => ?DNS_TSIG_ALG_SHA256, name => ~"key.name", other => Bytes(Size)}}
+    end,
+    ?assertMatch({_, _}, dns:encode_message(Msg(1), Tsig(65474))),
+    ?assertError({rdata_too_long, 65536}, dns:encode_message(Msg(1), Tsig(65475))).
 
 message_other(_) ->
     QName = <<"i            .txt.example.org">>,
@@ -1262,6 +1308,50 @@ encode_nsec_type_bitmaps(_) ->
         ?DNS_CLASS_IN, #dns_rrdata_nxt{dname = <<"a">>, types = [0, 5]}
     ),
     ?assertEqual(<<2#10000100>>, NxtBMP).
+
+%% RFC4034§4.1.2: a window block's bitmap is 1 to 32 octets, for the 256 types
+%% of its window. A longer one decoded its octets past the 32nd as types of the
+%% windows after it, which re-encode as blocks of their own, so the RDATA did not
+%% round-trip, and a type the next block also held was listed twice. Wire
+%% fidelity failed now and then on such a CSYNC. NSEC and NSEC3 share the bitmap.
+decode_type_bitmap_window_over_32_octets(_) ->
+    %% Window 0 with Len octets, whose last bit is set: type 8 * Len - 1
+    Block = fun(Len) -> <<0, Len, 0:((Len - 1) * 8), 1>> end,
+    Rdata = fun(Bitmap) ->
+        [
+            {?DNS_TYPE_NSEC, <<0, Bitmap/binary>>},
+            {?DNS_TYPE_NSEC3, <<1, 0, 0:16, 0, 1, 16#AB, Bitmap/binary>>},
+            {?DNS_TYPE_CSYNC, <<1:32, 0:16, Bitmap/binary>>}
+        ]
+    end,
+    Types = fun
+        (#dns_rrdata_nsec{types = T}) -> T;
+        (#dns_rrdata_nsec3{types = T}) -> T;
+        (#dns_rrdata_csync{types = T}) -> T
+    end,
+    [
+        begin
+            Data = dns_decode:decode_rrdata(<<>>, ?DNS_CLASS_IN, Type, Bin),
+            ?assertEqual([255], Types(Data), Type),
+            ?assertEqual(Bin, dns_encode:encode_rrdata(?DNS_CLASS_IN, Data), Type)
+        end
+     || {Type, Bin} <- Rdata(Block(32))
+    ],
+    %% Type 263 is bit 7 of window 1, here once in window 0's 33rd octet and once
+    %% in a block of window 1 of its own
+    Over = [Block(33), <<(Block(33))/binary, 1, 1, 1>>, Block(255)],
+    [
+        ?assertError(
+            bad_nsec_type_bitmap, dns_decode:decode_rrdata(<<>>, ?DNS_CLASS_IN, Type, Bin), Type
+        )
+     || Bitmap <- Over, {Type, Bin} <- Rdata(Bitmap)
+    ],
+    %% In a message, as for windows out of order
+    {_, CSYNC} = lists:keyfind(?DNS_TYPE_CSYNC, 1, Rdata(Block(33))),
+    Msg =
+        <<1:16, 0:16, 0:16, 1:16, 0:16, 0:16, 0, ?DNS_TYPE_CSYNC:16, ?DNS_CLASS_IN:16, 0:32,
+            (byte_size(CSYNC)):16, CSYNC/binary>>,
+    ?assertMatch({formerr, _, _}, dns:decode_message(Msg)).
 
 %% RFC1876§2: latitude/longitude are unsigned 32-bit thousandths of an arcsecond
 %% where 2^31 -- not 2^31-1 -- encodes the equator/prime meridian. Encoding and

@@ -533,7 +533,10 @@ encode_message_rec_unbounded(Acc, CompMap, #dns_query{name = N, type = T, class 
     {Wire, CompMap0} = encode_dname(CompMap, byte_size(Acc), N),
     {<<Acc/binary, Wire/binary, T:16, C:16>>, CompMap0};
 encode_message_rec_unbounded(Acc, CompMap, #dns_optrr{} = OptRR) ->
-    {encode_optrr(Acc, OptRR), CompMap};
+    Acc1 = encode_optrr(Acc, OptRR),
+    %% The OPT RR without options is OPTRR_MIN_SIZE octets, its RDLENGTH included
+    check_rdlength(byte_size(Acc1) - byte_size(Acc) - ?OPTRR_MIN_SIZE),
+    {Acc1, CompMap};
 encode_message_rec_unbounded(
     Acc,
     CompMap,
@@ -547,7 +550,17 @@ encode_message_rec_unbounded(
 ) ->
     {Wire, CompMap0} = encode_dname(CompMap, byte_size(Acc), N),
     Acc1 = <<Acc/binary, Wire/binary, T:16, C:16, TTL:32>>,
-    encode_rrdata_append(Acc1, byte_size(Acc1) + 2, C, D, CompMap0).
+    {Acc2, _} = Appended = encode_rrdata_append(Acc1, byte_size(Acc1) + 2, C, D, CompMap0),
+    check_rdlength(byte_size(Acc2) - byte_size(Acc1) - 2),
+    Appended.
+
+%% RFC1035§3.2.1: RDLENGTH is 16 bits, and encode_rrdata_append/5 writes there
+%% the length of the RDATA it appends, which past 65535 octets wraps and
+%% announces fewer octets than follow. The bounded encoder drops a record too
+%% large for its message, never over 65535 octets, so it needs no such check.
+-spec check_rdlength(non_neg_integer()) -> true.
+check_rdlength(Size) ->
+    Size =< 16#FFFF orelse erlang:error({rdata_too_long, Size}).
 
 -spec ensure_optrr(dns:additional(), minimal | full) -> {0 | 1, binary()}.
 ensure_optrr([#dns_optrr{} = OptRR | _], Mode) ->
@@ -611,6 +624,7 @@ encode_rrdata(Class, Data) ->
 encode_rrdata(Pos, Class, Data, CompMap) ->
     {WithLen, CompMap1} = encode_rrdata_append(<<>>, Pos, Class, Data, CompMap),
     <<_:16, Bin/binary>> = WithLen,
+    check_rdlength(byte_size(Bin)),
     {Bin, CompMap1}.
 
 %% Appends <<RDLENGTH:16, RDATA/binary>> to Acc in a single binary append per

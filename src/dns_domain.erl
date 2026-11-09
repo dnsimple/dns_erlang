@@ -50,6 +50,9 @@ offsets in it are relative to the start of the message being built.
 
 -export_type([dname/0, label/0, labels/0, wire/0, encode_error/0, decode_error/0]).
 
+%% Most pointers a name can need: one per label, root included (RFC1035§4.1.4)
+-define(MAX_POINTERS, 128).
+
 %% 56-bit (7-byte) and 32-bit SWAR constants — stay within BEAM small integer range
 -define(ONES56, 16#01010101010101).
 -define(HIGHS56, 16#80808080808080).
@@ -531,10 +534,18 @@ to_wire(CompMap, Pos, Name) when is_binary(Name) ->
     maybe
         miss ?= memo(CompMap, Pos, Key),
         %% An escaped name keeps its untrimmed spelling: split_labels/1 resolves its escapes.
+        %% RFC1035§3.1: "Since every domain name ends with the null label of the root [...]"
+        %% a name is 255 octets or less on the wire: unescaped, its text plus 2. Checked before
+        %% writing, as a pointer can end the name early.
         case classify(Name) of
-            escaped -> to_wire_escaped(CompMap, Pos, Name);
-            false -> to_wire_lc_write(CompMap, Pos, Key, <<>>, remember(Pos, Key, []));
-            true -> to_wire_mc(CompMap, Pos, Key, to_lower_chunk(Key, <<>>), <<>>, [])
+            escaped ->
+                to_wire_escaped(CompMap, Pos, Name);
+            false when byte_size(Key) =< 253 ->
+                to_wire_lc_write(CompMap, Pos, Key, <<>>, remember(Pos, Key, []));
+            true when byte_size(Key) =< 253 ->
+                to_wire_mc(CompMap, Pos, Key, to_lower_chunk(Key, <<>>), <<>>, []);
+            _ ->
+                error(name_too_long)
         end
     end.
 
@@ -619,9 +630,7 @@ to_wire_mc_write(CompMap, Pos, Rest, LRest, Acc, Pending) ->
 to_wire_last_label(Acc, L) ->
     Len = byte_size(L),
     63 < Len andalso error({label_too_long, L}),
-    Acc1 = <<Acc/binary, Len, L/binary>>,
-    255 < byte_size(Acc1) andalso error(name_too_long),
-    <<Acc1/binary, 0>>.
+    <<Acc/binary, Len, L/binary, 0>>.
 
 %% An empty label is legal only at the very start of a name (the ".foo" quirk), never here.
 no_empty(<<>>) ->
@@ -639,6 +648,7 @@ no_empty(_) ->
 %% unambiguous tail of an escaped name still shares keys with ordinary names.
 to_wire_escaped(CompMap, Pos, Name) ->
     Labels = split_labels(Name),
+    255 < wire_size(Labels, 1) andalso error(name_too_long),
     Lower =
         case has_upper(Name) of
             false -> Labels;
@@ -646,8 +656,13 @@ to_wire_escaped(CompMap, Pos, Name) ->
         end,
     to_wire_esc(CompMap, Pos, Labels, Lower, 0, last_special(Lower, 0, -1), <<>>, []).
 
+%% A name's length on the wire: Size, 1 for the root, plus each label and its length octet
+wire_size([], Size) ->
+    Size;
+wire_size([L | Ls], Size) ->
+    wire_size(Ls, Size + 1 + byte_size(L)).
+
 to_wire_esc(CompMap, _Pos, [], [], _Idx, _Last, Acc, Pending) ->
-    255 < byte_size(Acc) andalso error(name_too_long),
     {<<Acc/binary, 0>>, merge_pending(CompMap, Pending)};
 to_wire_esc(CompMap, Pos, [L | Ls], [_ | LwrLs] = Lwr, Idx, Last, Acc, Pending) ->
     Key =
@@ -750,24 +765,25 @@ from_wire_first(<<Len, Rest/binary>>) when byte_size(Rest) < Len ->
     error(truncated);
 from_wire_first(<<Len, Label:Len/binary, Rest/binary>>) ->
     Acc = escape_label_chunk(Label, <<>>),
-    from_wire_rest(Rest, Acc, 1).
+    %% Size counts octets on the wire, not escaped text: this label, its length and the root
+    from_wire_rest(Rest, Acc, 1, 2 + Len).
 
-from_wire_rest(_, Acc, _) when byte_size(Acc) > 255 ->
-    error({name_too_long, byte_size(Acc)});
-from_wire_rest(<<>>, _Acc, _) ->
+from_wire_rest(_, _Acc, _, Size) when 255 < Size ->
+    error({name_too_long, Size});
+from_wire_rest(<<>>, _Acc, _, _) ->
     error(truncated);
-from_wire_rest(<<0, Rest/binary>>, Acc, _) ->
+from_wire_rest(<<0, Rest/binary>>, Acc, _, _) ->
     {Acc, Rest};
-from_wire_rest(<<Len, _/binary>>, _Acc, _) when Len > 63 ->
+from_wire_rest(<<Len, _/binary>>, _Acc, _, _) when Len > 63 ->
     error({invalid_label_length, Len});
-from_wire_rest(<<Len, Rest/binary>>, _Acc, _) when byte_size(Rest) < Len ->
+from_wire_rest(<<Len, Rest/binary>>, _Acc, _, _) when byte_size(Rest) < Len ->
     error(truncated);
-from_wire_rest(<<Len, _:Len/binary, _/binary>>, _, 127) ->
+from_wire_rest(<<Len, _:Len/binary, _/binary>>, _, 127, _) ->
     error({too_many_labels, 128});
-from_wire_rest(<<Len, Label:Len/binary, Rest/binary>>, Acc, LabelCount) ->
+from_wire_rest(<<Len, Label:Len/binary, Rest/binary>>, Acc, LabelCount, Size) ->
     %% Add dot separator, then escape label directly into accumulator
     AccEscaped = escape_label_chunk(Label, <<Acc/binary, $.>>),
-    from_wire_rest(Rest, AccEscaped, LabelCount + 1).
+    from_wire_rest(Rest, AccEscaped, LabelCount + 1, Size + 1 + Len).
 
 %% Escape a label, appending directly into the accumulator. SWAR optimised: once a word is found to
 %% hold a byte to escape, escape_label_bytes/2 copies up to that byte and escapes it before any word
@@ -821,25 +837,14 @@ compression pointer is invalid or points outside the message.
 """.
 -spec from_wire(MsgBin :: wire(), DataBin :: wire()) -> {dname(), wire()}.
 from_wire(MsgBin, DataBin) when is_binary(MsgBin), is_binary(DataBin) ->
-    from_wire_first_compressed(MsgBin, DataBin, <<>>, 0, 0, none).
+    from_wire_first_compressed(MsgBin, DataBin, <<>>, 0, 1, none).
 
-%% Compressed decode threads the accumulator through pointer jumps: a
-%% pointer target's labels are appended straight into the same accumulator
-%% (a rest-position jump appends the '.' separator first) instead of
-%% decoding the target into its own binary and copying that into the
-%% accumulator. "First" position means the next label is appended without a
-%% separator: the start of the name, or right after a followed pointer.
-%% SavedRest is the Rest captured at the first pointer followed — the
-%% remainder from_wire/2 must return. Behavior quirks are preserved
-%% exactly: the label counter restarts on every pointer segment,
-%% decode_loop is checked only for pointers in first position
-%% (pointer-to-pointer chains; any label in between grows TotalSize, which
-%% is bounded), and a pointer to a terminating zero byte yields a
-%% trailing-dot name.
-from_wire_first_compressed(_MsgBin, _DataBin, _Acc, _Count, TotalSize, _SavedRest) when
-    255 < TotalSize
-->
-    error({name_too_long, TotalSize});
+%% A pointer's target is decoded straight into Acc, not into a binary of its own. In "first"
+%% position, at the name's start or right after a pointer, a label takes no leading dot.
+%% SavedRest is what follows the first pointer, which from_wire/2 returns. Kept quirks: the label
+%% count restarts after each pointer, and a pointer to a zero octet gives a trailing-dot name.
+%% TotalSize is the length on the wire, from 1 for the root; only labels grow it. Count is twice
+%% the pointers followed, capped at MAX_POINTERS since pointers to pointers grow nothing else.
 from_wire_first_compressed(_MsgBin, <<>>, _Acc, _Count, _TotalSize, _SavedRest) ->
     error(truncated);
 from_wire_first_compressed(_MsgBin, <<0, Rest/binary>>, Acc, _Count, _TotalSize, SavedRest) ->
@@ -848,7 +853,7 @@ from_wire_first_compressed(
     MsgBin, <<3:2, Ptr:14, Rest/binary>>, Acc, Count, TotalSize, SavedRest
 ) ->
     NewCount = Count + 2,
-    case NewCount > byte_size(MsgBin) of
+    case NewCount > byte_size(MsgBin) orelse NewCount > 2 * ?MAX_POINTERS of
         true ->
             error(decode_loop);
         false ->
@@ -859,7 +864,7 @@ from_wire_first_compressed(
                         PtrDataBin,
                         Acc,
                         NewCount,
-                        2 + TotalSize,
+                        TotalSize,
                         keep_first(SavedRest, Rest)
                     );
                 _ ->
@@ -901,7 +906,7 @@ from_wire_rest_compressed(
                 PtrDataBin,
                 <<Acc/binary, $.>>,
                 2 + Count,
-                2 + TotalSize,
+                TotalSize,
                 keep_first(SavedRest, Rest)
             );
         _ ->
