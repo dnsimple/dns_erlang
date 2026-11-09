@@ -418,7 +418,11 @@ sign_rrset(RRSet, SignerName, KeyTag, Alg, Key) ->
 -doc """
 Signs a list of `t:dns:rr/0` of the same class and type.
 
-Raises `{badarg, rrsig_rrset}` for an RRSIG RRset, which RFC 4035 §2.2 never signs.
+Raises:
+
+- `{badarg, rrsig_rrset}` for an RRSIG RRset, which RFC 4035 §2.2 never signs;
+- `{badarg, mixed_rrset}` for records of more than one RRset, of another owner name, class or type
+  than the first's. Owner names compare as names, so case and a final dot don't matter.
 """.
 -spec sign_rrset([dns:rr(), ...], dns:dname(), keytag(), sigalg(), key(), sign_rr_opts()) ->
     dns:rr().
@@ -431,6 +435,11 @@ sign_rrset(
     Opts
 ) when is_integer(Alg) ->
     Type =/= ?DNS_TYPE_RRSIG orelse erlang:error({badarg, rrsig_rrset}),
+    %% RFC4034§3.1.8.1: the records are signed as one RRset, under the first's owner, class and
+    %% type, so a record of another RRset would make an RRSIG that never verifies
+    Owner = canonical_owner(Name),
+    lists:all(fun(RR) -> in_rrset(RR, Owner, Class, Type) end, RRs) orelse
+        erlang:error({badarg, mixed_rrset}),
     Now = erlang:system_time(second),
     Incept = maps:get(inception, Opts, Now),
     %% 1 year
@@ -445,6 +454,18 @@ sign_rrset(
         ttl = TTL,
         data = Data
     }.
+
+-spec in_rrset(dns:rr(), binary(), dns:class(), dns:type()) -> boolean().
+in_rrset(#dns_rr{name = Name, class = Class, type = Type}, Owner, Class, Type) ->
+    canonical_owner(Name) =:= Owner;
+in_rrset(#dns_rr{}, _Owner, _Class, _Type) ->
+    false.
+
+%% RFC4034§6.2: the owner in canonical form, its wire form with letters in lowercase, so that names
+%% written in another case or with a final dot compare equal
+-spec canonical_owner(dns:dname()) -> binary().
+canonical_owner(Name) ->
+    dns_domain:to_lower(dns_domain:to_wire(Name)).
 
 -spec is_rrsig(dns:rr()) -> boolean().
 is_rrsig(#dns_rr{type = Type}) -> Type =:= ?DNS_TYPE_RRSIG.
