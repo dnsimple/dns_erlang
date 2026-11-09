@@ -347,6 +347,7 @@ groups() ->
             parse_rrsig_record,
             parse_rrsig_record_date_times,
             parse_keeps_rdata_name_case,
+            encode_keeps_rdata_name_case,
             parse_zonemd_record,
             parse_cds_record,
             parse_dlv_record,
@@ -1617,6 +1618,72 @@ parse_keeps_rdata_name_case(_Config) ->
     ?assertMatch(#dns_rrdata_mx{exchange = ~"MX.Example.Test."}, MX#dns_rr.data),
     ?assertMatch(#dns_rrdata_cname{dname = ~"Target.Example.Test."}, CNAME#dns_rr.data),
     ?assert(dnssec:verify_rrsig(RRSig, [HTTPS], [DNSKey], #{now => 1790812801})).
+
+%% RFC3597§7, RFC6840§5.1: DNSSEC signs the names in SVCB, HTTPS, NSEC, HIP,
+%% IPSECKEY, AMTRELAY, LP and DSYNC RDATA in the case they have. The writer
+%% lowercased them, so a signed record written out and read back no longer
+%% verified. Relative to the origin, a name keeps the case of what precedes it.
+encode_keeps_rdata_name_case(_Config) ->
+    Zone =
+        ~"""
+        $ORIGIN Example.Test.
+        @ 3600 IN DNSKEY 256 3 15 VXEsoU69+/ogdTfuDFJteyXjQM3WniI/Jc11+fLq4Dg=
+        WWW 3600 IN HTTPS 1 Svc.Example.Test.
+        www 3600 IN RRSIG HTTPS 15 3 3600 20261101000000 20261001000000 29059 example.test. RE6RL2LW1of41k02UJEzpaMgC0vYnsuH/BmTFWdRD2n3wDkqLzeR+YPSD7WZYATcM4jQqlQe2wvUVQAbbsxnBA==
+        """,
+    {ok, [DNSKey, HTTPS, RRSig]} = dns_zone:parse_string(Zone),
+    {ok, [Written]} = dns_zone:parse_string(iolist_to_binary([dns_zone:encode_rr(HTTPS), "\n"])),
+    ?assertMatch(#dns_rrdata_https{target_name = ~"Svc.Example.Test."}, Written#dns_rr.data),
+    ?assert(dnssec:verify_rrsig(RRSig, [Written], [DNSKey], #{now => 1790812801})),
+    Records = [
+        #dns_rrdata_svcb{svc_priority = 1, target_name = ~"Svc.Example.", svc_params = #{}},
+        #dns_rrdata_nsec{next_dname = ~"Next.Example.", types = [?DNS_TYPE_A]},
+        #dns_rrdata_hip{
+            alg = 2, hit = <<1>>, public_key = <<2>>, rendezvous_servers = [~"RVS.Example."]
+        },
+        #dns_rrdata_ipseckey{
+            precedence = 1, alg = 2, gateway = ~"GW.Example.", public_key = <<3>>
+        },
+        #dns_rrdata_amtrelay{
+            precedence = 1, discovery_optional = false, relay_type = 3, relay = ~"Relay.Example."
+        },
+        #dns_rrdata_lp{preference = 1, fqdn = ~"LP.Example."},
+        #dns_rrdata_dsync{rrtype = ?DNS_TYPE_CDS, scheme = 1, port = 53, target = ~"T.Example."}
+    ],
+    [
+        ?assertEqual(
+            {ok, [RR]},
+            dns_zone:parse_string(iolist_to_binary([dns_zone:encode_rr(RR, Opts), "\n"])),
+            {Data, Opts}
+        )
+     || Data <- Records,
+        RR <- [#dns_rr{name = ~"example.", type = record_type(Data), ttl = 0, data = Data}],
+        Opts <- [#{}, #{relative_names => false}]
+    ],
+    ?assertEqual(
+        ~"1 Svc.Example.",
+        iolist_to_binary(
+            dns_zone:encode_rdata(?DNS_TYPE_SVCB, hd(Records), #{origin => ~"Example."})
+        )
+    ),
+    ?assertEqual(
+        ~"1 Svc",
+        iolist_to_binary(
+            dns_zone:encode_rdata(
+                ?DNS_TYPE_SVCB,
+                #dns_rrdata_svcb{svc_priority = 1, target_name = ~"Svc.example.", svc_params = #{}},
+                #{origin => ~"example."}
+            )
+        )
+    ).
+
+record_type(#dns_rrdata_svcb{}) -> ?DNS_TYPE_SVCB;
+record_type(#dns_rrdata_nsec{}) -> ?DNS_TYPE_NSEC;
+record_type(#dns_rrdata_hip{}) -> ?DNS_TYPE_HIP;
+record_type(#dns_rrdata_ipseckey{}) -> ?DNS_TYPE_IPSECKEY;
+record_type(#dns_rrdata_amtrelay{}) -> ?DNS_TYPE_AMTRELAY;
+record_type(#dns_rrdata_lp{}) -> ?DNS_TYPE_LP;
+record_type(#dns_rrdata_dsync{}) -> ?DNS_TYPE_DSYNC.
 
 rrsig_with_times(Expiration, Inception) ->
     <<"uri.arpa. 3600 IN RRSIG SOA 8 2 3600 ", Expiration/binary, " ", Inception/binary,
@@ -5329,7 +5396,7 @@ encode_ilnp_records(_Config) ->
         {
             ?DNS_TYPE_LP,
             #dns_rrdata_lp{preference = 30, fqdn = ~"L64-Subnet1.Example.com."},
-            ~"30 l64-subnet1.example.com."
+            ~"30 L64-Subnet1.Example.com."
         }
     ],
     [
@@ -5374,7 +5441,7 @@ encode_amtrelay_record(_Config) ->
                 relay_type = 3,
                 relay = ~"AMTRelays.Example.com."
             },
-            ~"128 1 3 amtrelays.example.com."
+            ~"128 1 3 AMTRelays.Example.com."
         },
         {
             #dns_rrdata_amtrelay{
@@ -5434,7 +5501,7 @@ encode_hip_record(_Config) ->
         iolist_to_binary(dns_zone:encode_rdata(?DNS_TYPE_HIP, Hip))
     ),
     ?assertEqual(
-        ~"2 200100107B1A74DF365639CC39F1D578 AwEAAQ== rvs1 rvs2.example.org.",
+        ~"2 200100107B1A74DF365639CC39F1D578 AwEAAQ== RVS1 rvs2.example.org.",
         iolist_to_binary(
             dns_zone:encode_rdata(
                 ?DNS_TYPE_HIP,

@@ -189,7 +189,8 @@ encode_type(Type) ->
     end.
 
 %% Make a domain name relative to origin
-%% Returns relative atom if name equals origin, otherwise returns relative dname binary
+%% Returns relative atom if name equals origin, otherwise returns relative dname binary.
+%% The part before the origin keeps the case it has.
 -spec make_relative(dns:dname(), dns:dname()) -> dns:dname() | relative.
 make_relative(Name, Origin) ->
     NameLower = dns_domain:to_lower(Name),
@@ -204,7 +205,7 @@ make_relative(Name, Origin) ->
             case NameLen > SuffixLen of
                 true ->
                     %% Extract the part before origin
-                    BeforeOrigin = binary:part(NameLower, 0, NameLen - SuffixLen - 1),
+                    BeforeOrigin = binary:part(Name, 0, NameLen - SuffixLen - 1),
                     %% Remove trailing dot if present
                     case byte_size(BeforeOrigin) > 0 andalso binary:last(BeforeOrigin) =:= $. of
                         true -> binary:part(BeforeOrigin, 0, byte_size(BeforeOrigin) - 1);
@@ -347,10 +348,8 @@ encode_ilnp64(<<A:16, B:16, C:16, D:16>>) ->
     binary()
 ) -> string().
 encode_svcb_record(Priority, Target, Params, Origin, RelativeNames, Separator) ->
-    LwrTarget = dns_domain:to_lower(Target),
-    LwrOrigin = dns_domain:to_lower(Origin),
     PriorityBin = integer_to_binary(Priority),
-    TargetStr = encode_dname(LwrTarget, LwrOrigin, RelativeNames),
+    TargetStr = encode_dname(Target, Origin, RelativeNames),
     ParamsStr = dns_svcb_params:to_zone(Params, Separator, fun encode_quoted_string/1),
     case ParamsStr of
         <<>> -> join_rdata_fields([PriorityBin, TargetStr], Separator);
@@ -395,7 +394,11 @@ encode_key_record(Flags, Protocol, Alg, Data, Encoding, Separator) when is_binar
         end,
     join_rdata_fields([Field1Bin, Field2Bin, Field3Bin, EncodedData], Separator).
 
-%% Assumes origin is always in lowercase
+%% Assumes origin is always in lowercase. RFC4034§6.2 lowercases the names in the
+%% RDATA of the types it lists when they are signed, and those are written in
+%% lowercase. RFC3597§7 keeps later types off that list and RFC6840§5.1 takes NSEC
+%% off it, so the names in NSEC, IPSECKEY, HIP, LP, AMTRELAY, DSYNC, SVCB and HTTPS
+%% RDATA are signed and written in the case they have.
 -spec encode_rdata(dns:type(), dns:rrdata(), dns:dname(), boolean(), binary()) -> iodata().
 encode_rdata(?DNS_TYPE_A, #dns_rrdata_a{ip = IP}, _Origin, _RelativeNames, _Separator) ->
     "" ++ _ = inet:ntoa(IP);
@@ -531,7 +534,7 @@ encode_rdata(
     Separator
 ) ->
     %% RFC 8005 §6: the HIT in hex and the key in base64, each without whitespace
-    ServerStrs = [encode_dname(dns_domain:to_lower(S), Origin, RelativeNames) || S <- Servers],
+    ServerStrs = [encode_dname(S, Origin, RelativeNames) || S <- Servers],
     join_rdata_fields(
         [integer_to_binary(Alg), binary:encode_hex(HIT), base64:encode(PublicKey) | ServerStrs],
         Separator
@@ -751,7 +754,7 @@ encode_rdata(
     RelativeNames,
     Separator
 ) ->
-    NextDNameStr = encode_dname(dns_domain:to_lower(NextDName), Origin, RelativeNames),
+    NextDNameStr = encode_dname(NextDName, Origin, RelativeNames),
     TypeStrs = [encode_type(T) || T <- Types],
     join_rdata_fields([NextDNameStr | TypeStrs], Separator);
 encode_rdata(
@@ -945,7 +948,7 @@ encode_rdata(
     RelativeNames,
     Separator
 ) ->
-    FQDNStr = encode_dname(dns_domain:to_lower(FQDN), Origin, RelativeNames),
+    FQDNStr = encode_dname(FQDN, Origin, RelativeNames),
     join_rdata_fields([integer_to_binary(Pref), FQDNStr], Separator);
 encode_rdata(
     ?DNS_TYPE_ZONEMD,
@@ -994,7 +997,7 @@ encode_rdata(
     RRTypeStr = encode_type(RRType),
     SchemeBin = integer_to_binary(Scheme),
     PortBin = integer_to_binary(Port),
-    TargetStr = encode_dname(dns_domain:to_lower(Target), Origin, RelativeNames),
+    TargetStr = encode_dname(Target, Origin, RelativeNames),
     join_rdata_fields([RRTypeStr, SchemeBin, PortBin, TargetStr], Separator);
 encode_rdata(
     ?DNS_TYPE_SVCB,
@@ -1073,7 +1076,7 @@ encode_rdata(
                 "" ++ _ = inet:ntoa(IPv6);
             DName when is_binary(DName) ->
                 %% Domain name
-                encode_dname(dns_domain:to_lower(DName), Origin, RelativeNames)
+                encode_dname(DName, Origin, RelativeNames)
         end,
     PublicKeyHex = binary:encode_hex(PublicKey),
     join_rdata_fields([PrecedenceBin, AlgBin, GatewayStr, PublicKeyHex], Separator);
@@ -1093,7 +1096,7 @@ encode_rdata(
     RelayStr =
         case RelayType of
             0 -> ~".";
-            3 -> encode_dname(dns_domain:to_lower(Relay), Origin, RelativeNames);
+            3 -> encode_dname(Relay, Origin, RelativeNames);
             _ -> "" ++ _ = inet:ntoa(Relay)
         end,
     DBin =
