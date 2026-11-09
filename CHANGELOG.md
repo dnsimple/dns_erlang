@@ -13,6 +13,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Wire: encoding RDATA over 65535 octets raises `{rdata_too_long, Size}`, where it wrapped RDLENGTH.
 - Wire: NSEC, NSEC3 and CSYNC RDATA with a type bitmap window over 32 octets is malformed, where it decoded as types of the next windows.
 - Wire: `encode_message/2` sets TC and keeps the OPT RR when the answers fit only without it, where it dropped the OPT RR and left TC unset.
+- Wire: encoding a CAA tag, NSEC3 salt or hash, or HINFO, NAPTR or HIP string over 255 octets raises `{string_too_long, Size}`, where it wrapped the length, split the string or raised `function_clause`.
 
 ## v5.2.0
 
