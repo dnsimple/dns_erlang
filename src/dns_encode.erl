@@ -164,27 +164,7 @@ encode_message_default(
     SpaceLeft1 = SpaceLeft0 - QSize,
     case encode_message_d_req(Answers, Authority, CompMap1, byte_size(AccQ), SpaceLeft1, AccQ) of
         truncated ->
-            %% We ran out of space, we MUST append a OptRR EDNS0 record,
-            %% and this takes precedence over the body
-            {AddCountFull, OptRRBinFull} = ensure_optrr(Additional, full),
-            OptRRBinSizeFull = byte_size(OptRRBinFull),
-            SpaceForOptRR = MaxSize - ?HEADER_SIZE - QSize,
-            Acc1 = binary_part(AccQ, ?HEADER_SIZE, QSize),
-            case OptRRBinSizeFull =< SpaceForOptRR of
-                true ->
-                    %% Full OptRR fits
-                    Head = build_header(Msg0, true, QC, 0, 0, AddCountFull),
-                    <<Head/binary, Acc1/binary, OptRRBinFull/binary>>;
-                false ->
-                    %% Full OptRR doesn't fit, but minimal (should) do
-                    {AddCountMin, OptRRBinMin} = ensure_optrr(Additional, minimal),
-                    Head = build_header(Msg0, true, QC, 0, 0, AddCountMin),
-                    %% If minimal would not fit either, it is most likely bad input,
-                    %% the client code should already know the original packet,
-                    %% composed of the question plus EDNS, should have fit in this size limit.
-                    %% We MUST include OptRR per RFC6891, so include even if it may exceed the space
-                    <<Head/binary, Acc1/binary, OptRRBinMin/binary>>
-            end;
+            encode_message_d_truncated(Msg0, QC, AccQ, Additional, MaxSize);
         {AccB, CompMap2} ->
             %% AccB includes the question section, so subtract it from SpaceLeft0:
             %% SpaceLeft1 would subtract the question bytes a second time
@@ -193,8 +173,9 @@ encode_message_default(
             OptRRBinSize = byte_size(Acc2) - byte_size(AccB),
             case SpaceLeft0 + PreservedOptRRBinSize - BodySize of
                 SpaceLeft2 when SpaceLeft2 < OptRRBinSize ->
-                    Head = build_header(Msg0, false, QC, ANC, AUC, 0),
-                    finish_message(Head, AccB);
+                    %% The body fits beside the minimal OPT RR but not the full one, which
+                    %% RFC6891§7 requires in the reply: truncate rather than drop it
+                    encode_message_d_truncated(Msg0, QC, AccQ, Additional, MaxSize);
                 SpaceLeft2 ->
                     SpaceLeft3 = SpaceLeft2 - OptRRBinSize,
                     OptC =
@@ -211,6 +192,33 @@ encode_message_default(
                             finish_message(Head, AccAd)
                     end
             end
+    end.
+
+%% We ran out of space, we MUST append a OptRR EDNS0 record,
+%% and this takes precedence over the body
+-spec encode_message_d_truncated(
+    dns:message(), dns:uint16(), binary(), dns:additional(), number()
+) -> binary().
+encode_message_d_truncated(Msg0, QC, AccQ, Additional, MaxSize) ->
+    QSize = byte_size(AccQ) - ?HEADER_SIZE,
+    {AddCountFull, OptRRBinFull} = ensure_optrr(Additional, full),
+    OptRRBinSizeFull = byte_size(OptRRBinFull),
+    SpaceForOptRR = MaxSize - ?HEADER_SIZE - QSize,
+    Acc1 = binary_part(AccQ, ?HEADER_SIZE, QSize),
+    case OptRRBinSizeFull =< SpaceForOptRR of
+        true ->
+            %% Full OptRR fits
+            Head = build_header(Msg0, true, QC, 0, 0, AddCountFull),
+            <<Head/binary, Acc1/binary, OptRRBinFull/binary>>;
+        false ->
+            %% Full OptRR doesn't fit, but minimal (should) do
+            {AddCountMin, OptRRBinMin} = ensure_optrr(Additional, minimal),
+            Head = build_header(Msg0, true, QC, 0, 0, AddCountMin),
+            %% If minimal would not fit either, it is most likely bad input,
+            %% the client code should already know the original packet,
+            %% composed of the question plus EDNS, should have fit in this size limit.
+            %% We MUST include OptRR per RFC6891, so include even if it may exceed the space
+            <<Head/binary, Acc1/binary, OptRRBinMin/binary>>
     end.
 
 %% Splice the real header over the 12-byte placeholder: the single body copy
@@ -562,6 +570,12 @@ encode_message_rec_unbounded(
 check_rdlength(Size) ->
     Size =< 16#FFFF orelse erlang:error({rdata_too_long, Size}).
 
+%% A string with a one-octet length, such as a <character-string> (RFC1035§3.3), a CAA tag or an
+%% NSEC3 salt, holds at most 255 octets: a longer one would be written with its length wrapped.
+-spec check_string_length(non_neg_integer()) -> true.
+check_string_length(Size) ->
+    Size =< 255 orelse erlang:error({string_too_long, Size}).
+
 -spec ensure_optrr(dns:additional(), minimal | full) -> {0 | 1, binary()}.
 ensure_optrr([#dns_optrr{} = OptRR | _], Mode) ->
     {1, encode_optrr_mode(OptRR, Mode)};
@@ -685,6 +699,7 @@ encode_rrdata_append(
     Acc, _Pos, _Class, #dns_rrdata_caa{flags = Flags, tag = Tag, value = Value}, CompMap
 ) ->
     Len = byte_size(Tag),
+    check_string_length(Len),
     {
         <<Acc/binary, (2 + Len + byte_size(Value)):16, Flags:8, Len:8, Tag/binary, Value/binary>>,
         CompMap
@@ -935,6 +950,9 @@ encode_rrdata_append(
         CompMap
     };
 encode_rrdata_append(Acc, _Pos, _Class, #dns_rrdata_hinfo{cpu = CPU, os = OS}, CompMap) ->
+    %% Exactly two strings: encode_text/1 would split a longer one into more
+    check_string_length(byte_size(CPU)),
+    check_string_length(byte_size(OS)),
     append_text_rdata(Acc, [CPU, OS], CompMap);
 encode_rrdata_append(
     Acc,
@@ -942,14 +960,12 @@ encode_rrdata_append(
     _Class,
     #dns_rrdata_hip{alg = Alg, hit = HIT, public_key = PublicKey, rendezvous_servers = Servers},
     CompMap
-) when
-    byte_size(HIT) =< 255
-->
-    %% RFC8005§5: the HIT length is 8 bits, so a longer HIT is refused rather than
-    %% written with its length wrapped. The rendezvous servers' names MUST NOT be
+) ->
+    %% RFC8005§5: the HIT length is 8 bits. The rendezvous servers' names MUST NOT be
     %% compressed (§5.6).
-    ServersBin = <<<<(dns_domain:to_wire(Server))/binary>> || Server <- Servers>>,
     HITLen = byte_size(HIT),
+    check_string_length(HITLen),
+    ServersBin = <<<<(dns_domain:to_wire(Server))/binary>> || Server <- Servers>>,
     PKLen = byte_size(PublicKey),
     {
         <<Acc/binary, (4 + HITLen + PKLen + byte_size(ServersBin)):16, HITLen, Alg, PKLen:16,
@@ -1223,6 +1239,8 @@ encode_rrdata_append(
     OptOutN = encode_bool(OptOut),
     SaltLength = byte_size(Salt),
     HashLength = byte_size(Hash),
+    check_string_length(SaltLength),
+    check_string_length(HashLength),
     {
         <<Acc/binary, (6 + SaltLength + HashLength + byte_size(TypeBMP)):16, HashAlg:8, 0:7,
             OptOutN:1, Iterations:16, SaltLength:8/unsigned, Salt/binary, HashLength:8/unsigned,
@@ -1242,6 +1260,7 @@ encode_rrdata_append(
     CompMap
 ) ->
     SaltLength = byte_size(Salt),
+    check_string_length(SaltLength),
     {
         <<Acc/binary, (5 + SaltLength):16, HashAlg:8, Flags:8, Iterations:16, SaltLength:8/unsigned,
             Salt/binary>>,
@@ -1771,8 +1790,9 @@ dsa_field_size(Bytes) -> erlang:error(badarg, [Bytes]).
 %% `<character-string>' is treated as binary information, and can be up to 256 characters
 %% in length (including the length octet).
 -spec encode_string(binary(), binary()) -> nonempty_binary().
-encode_string(Bin, StringBin) when byte_size(StringBin) < 256 ->
+encode_string(Bin, StringBin) ->
     Size = byte_size(StringBin),
+    check_string_length(Size),
     <<Bin/binary, Size, StringBin/binary>>.
 
 %% Encodes an array of character-strings as in RFC1035§3.3, splitting any oversized segment
