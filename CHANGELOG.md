@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - DNSSEC: an algorithm 1 (RSA/MD5) key tag is the third- and second-to-last octets of the modulus (RFC 4034 Appendix B.1), where it was the checksum of the other algorithms.
 - DNSSEC: `sign_rr` leaves RRSIG records out and `sign_rrset` raises `{badarg, rrsig_rrset}` for an RRSIG RRset, where both signed it (RFC 4035 §2.2).
 - DNSSEC: `sign_rrset` raises `{badarg, mixed_rrset}` for records of more than one RRset, where it signed them as one.
+- DNSSEC: `sign_rr` signs records whose owner names differ only in a final dot as one RRset, where it signed two halves that never verified.
 
 ## v5.2.0
 

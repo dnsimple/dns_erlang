@@ -46,6 +46,7 @@ groups() ->
             sign_rr_and_rrset_5arg,
             sign_leaves_rrsigs_unsigned,
             sign_rrset_rejects_records_of_other_rrsets,
+            sign_rr_groups_owner_names_as_names,
             add_keytag_to_cdnskey_test,
             keytag_known_answers,
             keytag_rsamd5,
@@ -1319,6 +1320,43 @@ sign_rrset_rejects_records_of_other_rrsets(_Config) ->
     ?assertError(Mixed, Sign([A(~"www.example", 1), AAAA])),
     Chaos = (A(~"www.example", 2))#dns_rr{class = ?DNS_CLASS_CH},
     ?assertError(Mixed, Sign([A(~"www.example", 1), Chaos])).
+
+%% sign_rr/6 groups records into RRsets by owner name as sign_rrset/6 compares them. Owners written
+%% with and without a final dot made two RRSIGs, each covering part of the RRset, that never
+%% verified; they now make one.
+sign_rr_groups_owner_names_as_names(_Config) ->
+    {Pub, Priv} = crypto:generate_key(eddsa, ed25519),
+    DNSKey = dnssec:add_keytag_to_dnskey(#dns_rr{
+        name = ~"example",
+        type = ?DNS_TYPE_DNSKEY,
+        class = ?DNS_CLASS_IN,
+        ttl = 3600,
+        data = #dns_rrdata_dnskey{
+            flags = 256, protocol = 3, alg = ?DNS_ALG_ED25519, public_key = Pub
+        }
+    }),
+    #dns_rr{data = #dns_rrdata_dnskey{keytag = KeyTag}} = DNSKey,
+    A = fun(Name, Last) ->
+        #dns_rr{
+            name = Name,
+            type = ?DNS_TYPE_A,
+            class = ?DNS_CLASS_IN,
+            ttl = 3600,
+            data = #dns_rrdata_a{ip = {192, 0, 2, Last}}
+        }
+    end,
+    Opts = #{inception => 1000000, expiration => 2000000},
+    Sign = fun(RRs) -> dnssec:sign_rr(RRs, ~"example", KeyTag, ?DNS_ALG_ED25519, Priv, Opts) end,
+    RRSet = [A(~"www.example", 1), A(~"www.example", 2)],
+    [RRSig] = Sign(RRSet),
+    ?assert(dnssec:verify_rrsig(RRSig, RRSet, [DNSKey], #{now => 1500000})),
+    %% Ed25519 signs deterministically, so the same RRset written otherwise gets the same RRSIG
+    [
+        ?assertEqual([RRSig], Sign([A(~"www.example", 1), A(Name, 2)]), Name)
+     || Name <- [~"www.example.", ~"WWW.Example."]
+    ],
+    %% Other owners are other RRsets
+    ?assertMatch([_, _], Sign([A(~"www.example", 1), A(~"ftp.example.", 2)])).
 
 ed25519_basic_test(_Config) ->
     {Ed25519Pub, Ed25519Priv} = crypto:generate_key(eddsa, ed25519),
