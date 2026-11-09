@@ -45,6 +45,7 @@ groups() ->
             verify_rrsig_expiry,
             sign_rr_and_rrset_5arg,
             sign_leaves_rrsigs_unsigned,
+            sign_rrset_rejects_records_of_other_rrsets,
             add_keytag_to_cdnskey_test,
             keytag_known_answers,
             keytag_rsamd5,
@@ -1263,6 +1264,61 @@ sign_leaves_rrsigs_unsigned(_Config) ->
         {badarg, rrsig_rrset},
         dnssec:sign_rrset([RRSig], ~"example", KeyTag, ?DNS_ALG_ED25519, Priv, Opts)
     ).
+
+%% RFC4034§3.1.8.1: sign_rrset/6 signs its records as one RRset, under the first record's owner,
+%% class and type. A record of another RRset made an RRSIG that never verifies, so it now raises
+%% instead. Owners that are one name, in another case or with a final dot, are one RRset.
+sign_rrset_rejects_records_of_other_rrsets(_Config) ->
+    {Pub, Priv} = crypto:generate_key(eddsa, ed25519),
+    DNSKey = dnssec:add_keytag_to_dnskey(#dns_rr{
+        name = ~"example",
+        type = ?DNS_TYPE_DNSKEY,
+        class = ?DNS_CLASS_IN,
+        ttl = 3600,
+        data = #dns_rrdata_dnskey{
+            flags = 256, protocol = 3, alg = ?DNS_ALG_ED25519, public_key = Pub
+        }
+    }),
+    #dns_rr{data = #dns_rrdata_dnskey{keytag = KeyTag}} = DNSKey,
+    A = fun(Name, Last) ->
+        #dns_rr{
+            name = Name,
+            type = ?DNS_TYPE_A,
+            class = ?DNS_CLASS_IN,
+            ttl = 3600,
+            data = #dns_rrdata_a{ip = {192, 0, 2, Last}}
+        }
+    end,
+    Opts = #{inception => 1000000, expiration => 2000000},
+    Sign = fun(RRs) -> dnssec:sign_rrset(RRs, ~"example", KeyTag, ?DNS_ALG_ED25519, Priv, Opts) end,
+    RRSet = [A(~"www.example", 1), A(~"www.example", 2)],
+    RRSig = Sign(RRSet),
+    ?assert(dnssec:verify_rrsig(RRSig, RRSet, [DNSKey], #{now => 1500000})),
+    %% Ed25519 signs deterministically, so the same RRset written otherwise gets the same RRSIG
+    [
+        ?assertEqual(RRSig, Sign([A(~"www.example", 1), A(Name, 2)]), Name)
+     || Name <- [~"WWW.Example", ~"www.example."]
+    ],
+    %% An owner whose first label holds a dot, written as \\. in it
+    ?assertEqual(
+        Sign([A(~"a\\.b.example", 1), A(~"a\\.b.example", 2)]),
+        Sign([A(~"a\\.b.example", 1), A(~"A\\.B.Example.", 2)])
+    ),
+    ?assertError(
+        {badarg, mixed_rrset}, Sign([A(~"a\\.b.example", 1), A(~"a.b.example", 2)])
+    ),
+    Mixed = {badarg, mixed_rrset},
+    ?assertError(Mixed, Sign([A(~"www.example", 1), A(~"ftp.example", 2)])),
+    AAAA = #dns_rr{
+        name = ~"www.example",
+        type = ?DNS_TYPE_AAAA,
+        class = ?DNS_CLASS_IN,
+        ttl = 3600,
+        data = #dns_rrdata_aaaa{ip = {16#2001, 16#db8, 0, 0, 0, 0, 0, 1}}
+    },
+    ?assertError(Mixed, Sign([A(~"www.example", 1), AAAA])),
+    Chaos = (A(~"www.example", 2))#dns_rr{class = ?DNS_CLASS_CH},
+    ?assertError(Mixed, Sign([A(~"www.example", 1), Chaos])).
 
 ed25519_basic_test(_Config) ->
     {Ed25519Pub, Ed25519Priv} = crypto:generate_key(eddsa, ed25519),
