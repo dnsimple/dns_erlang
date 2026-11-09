@@ -353,16 +353,21 @@ build_rrmap_gbt([#dns_rr{} = RR | Rest], BaseTypes, Map) ->
     ),
     build_rrmap_gbt(Rest, BaseTypes, NewMap).
 
--type tree_key() :: {dns:dname(), dns:class(), dns:type()}.
+%% An RRset's owner name in canonical form, its class and its type
+-type tree_key() :: {binary(), dns:class(), dns:type()}.
 
 -spec rrs_to_rrsets([dns:rr()]) -> [[dns:rr()]].
 rrs_to_rrsets(RR) when is_list(RR) ->
     rrs_to_rrsets(RR, #{}, #{}).
 
--spec rrs_to_rrsets([dns:rr()], #{tree_key() => dns:ttl()}, #{tree_key() => [dns:rrdata()]}) ->
+%% Records group by owner name as sign_rrset/6 compares them, so that one written with and one
+%% without a final dot are one RRset. Each RRset keeps the lowercased owner of its first record.
+-spec rrs_to_rrsets(
+    [dns:rr()], #{tree_key() => dns:ttl()}, #{tree_key() => {dns:dname(), [dns:rrdata()]}}
+) ->
     [[dns:rr()]].
 rrs_to_rrsets([], TTLMap, RRSets) ->
-    [finalise_rrs_to_rrsets(TTLMap, Key, Datas) || Key := Datas <- RRSets];
+    [finalise_rrs_to_rrsets(TTLMap, Key, Name, Datas) || Key := {Name, Datas} <- RRSets];
 rrs_to_rrsets([#dns_rr{} = RR | RRs], TTLMap, RRSets) ->
     #dns_rr{
         name = Name,
@@ -371,14 +376,18 @@ rrs_to_rrsets([#dns_rr{} = RR | RRs], TTLMap, RRSets) ->
         ttl = TTL,
         data = Data
     } = normalise_rr(RR),
-    Key = {Name, Class, Type},
+    Key = {canonical_owner(Name), Class, Type},
     NewTTLMap = maps:update_with(Key, fun(OldTTL) -> max(OldTTL, TTL) end, TTL, TTLMap),
-    NewRRSets = maps:update_with(Key, fun(OldData) -> [Data | OldData] end, [Data], RRSets),
+    NewRRSets = maps:update_with(
+        Key, fun({Owner, OldData}) -> {Owner, [Data | OldData]} end, {Name, [Data]}, RRSets
+    ),
     rrs_to_rrsets(RRs, NewTTLMap, NewRRSets).
 
--spec finalise_rrs_to_rrsets(#{tree_key() => dns:ttl()}, tree_key(), [dns:rrdata()]) ->
+-spec finalise_rrs_to_rrsets(
+    #{tree_key() => dns:ttl()}, tree_key(), dns:dname(), [dns:rrdata()]
+) ->
     [dns:rr()].
-finalise_rrs_to_rrsets(TTLMap, {Name, Class, Type} = Key, Datas) ->
+finalise_rrs_to_rrsets(TTLMap, {_Owner, Class, Type} = Key, Name, Datas) ->
     TTL = maps:get(Key, TTLMap),
     [
         #dns_rr{
@@ -399,7 +408,9 @@ sign_rr(RR, SignerName, KeyTag, Alg, Key) ->
 -doc """
 Signs each RRset in a list of `t:dns:rr/0`, as `sign_rrset/6` does.
 
-RRSIG records are left out, as RFC 4035 §2.2 never signs an RRSIG RRset.
+Records form one RRset when their owner names, classes and types are equal, owner names compared
+as `sign_rrset/6` does, so that case and a final dot don't matter. RRSIG records are left out, as
+RFC 4035 §2.2 never signs an RRSIG RRset.
 """.
 -spec sign_rr([dns:rr()], dns:dname(), keytag(), sigalg(), key(), sign_rr_opts()) -> [dns:rr()].
 sign_rr(RR, SignerName, KeyTag, Alg, Key, Opts) when is_map(Opts) ->
