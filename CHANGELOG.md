@@ -24,6 +24,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Zone files: `dns_zone` writes the names in SVCB, HTTPS, NSEC, HIP, IPSECKEY, AMTRELAY, LP and DSYNC RDATA in the case DNSSEC signs them in, where it lowercased them.
 - Zone files: IPSECKEY is written and read in RFC 4025's form, with the gateway type and the key in base64, where the writer left out the type and wrote the key in hex.
 - Zone files and JSON: IPv6 addresses that start with fe80 or ff02 and a non-zero word are written whole, where `fe80:1::` came out as `fe80::%01`, `fe80::` with a zone index.
+- Zone files: a line that starts with a blank has the owner of the record before it, with its TTL, class and type in any case, as BIND reads it, where a first `in`, `1D` or `class1` was taken for the owner.
 - Zone files: a line whose first field reads as a TTL, but whose rest reads only with it as the owner, takes it for the owner, as in the reverse zones `dns_zone` writes (`1 3600 IN PTR ...`), which were refused.
 - Zone files: everything `dns_zone` writes reads back: it escapes names and ALPN values, splits strings over 255 octets, ends names with a dot when `relative_names` is false, and writes a field no presentation format has empty, such as a DS digest or an IPSECKEY key, in RFC 3597's generic form.
 - Zone files: `dns_zone` writes URI targets quoted, NSEC3 hashes without padding, SIG times as dates, LOC, EUI-48 and EUI-64 as their RFCs do, and CAA tags unquoted, which BIND did not read.

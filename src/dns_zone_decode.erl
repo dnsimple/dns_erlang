@@ -286,16 +286,41 @@ include(File, Origin, #ctx{base_dir = BaseDir} = Ctx) ->
 
 %% RFC1035§5.1: an owner, or none for the owner of the previous record, then
 %% [<TTL>] [<class>] <type> <RDATA>, TTL and class in either order. Owner names are
-%% lowercased; the names in RDATA keep their case.
+%% lowercased; the names in RDATA keep their case. A line that starts with a blank
+%% has no owner, unless it only reads as a record with its first field taken for
+%% one, as the grammar this parser replaced took it.
 -spec record(boolean(), [field(), ...], ctx()) -> dns:rr().
-record(Blank, Fields, Ctx) ->
-    {Owner, {TTL, Class0, Type, Mnemonic, RDataFields}} = owner_and_header(Blank, Fields, Ctx),
+record(true, Fields, Ctx) ->
+    try
+        rr(Ctx#ctx.last_owner, header(Fields, undefined, undefined), Ctx)
+    catch
+        error:{?MODULE, _} = Error:Stack ->
+            case owner_record(Fields, Ctx) of
+                {ok, RR} -> RR;
+                error -> erlang:raise(error, Error, Stack)
+            end
+    end;
+record(false, Fields, Ctx) ->
+    {Owner, Header} = owner_and_header(Fields, Ctx),
+    rr(Owner, Header, Ctx).
+
+-spec owner_record([field(), ...], ctx()) -> {ok, dns:rr()} | error.
+owner_record(Fields, Ctx) ->
+    try
+        {Owner, Rest} = owner(Fields, Ctx),
+        Rest =/= Fields orelse ?FAIL(no_owner),
+        {ok, rr(Owner, header(Rest, undefined, undefined), Ctx)}
+    catch
+        error:{?MODULE, _} -> error
+    end.
+
+-spec rr(dns:dname(), header(), ctx()) -> dns:rr().
+rr(Owner, {TTL, Class, Type, Mnemonic, RDataFields}, Ctx) ->
     RDataFields =:= [] andalso ?FAIL({no_rdata, Mnemonic}),
-    Class = default(Class0, Ctx#ctx.default_class),
     RR = #dns_rr{
         name = Owner,
         type = Type,
-        class = Class,
+        class = default(Class, Ctx#ctx.default_class),
         ttl = default(TTL, Ctx#ctx.default_ttl),
         data = rdata(Type, Mnemonic, RDataFields, Ctx)
     },
@@ -306,11 +331,11 @@ record(Blank, Fields, Ctx) ->
 default(undefined, Default) -> Default;
 default(Value, _Default) -> Value.
 
-%% The owner is the first field, as the grammar this parser replaced read it:
+%% The owner is the first field, as the grammar this parser replaced read it,
 %% unless that field is a TTL, a class or a type, which leave the owner of the
-%% previous record, whether or not the line starts with a blank. A type is an
-%% owner when a class follows it, or a TTL and a class. The words are told apart
-%% as that grammar's lexer told them, which took only uppercase mnemonics.
+%% previous record. A type is an owner when a class follows it, or a TTL and a
+%% class. The words are told apart as that grammar's lexer told them, which took
+%% only uppercase mnemonics.
 -spec owner([field(), ...], ctx()) -> {dns:dname(), [field()]}.
 owner([{word, ~"@", _} | Fields], #ctx{origin = Origin}) ->
     {dns_domain:to_lower(Origin), Fields};
@@ -335,10 +360,10 @@ owner([{quoted, Text, _} | _], _Ctx) ->
 %% rest does not read as a record's start, the first field is read as the owner,
 %% so that the 1 of a reverse zone, which the writer writes before its TTL, is
 %% an owner.
--spec owner_and_header(boolean(), [field(), ...], ctx()) -> {dns:dname(), header()}.
-owner_and_header(Blank, [First | Rest] = Fields, Ctx) ->
+-spec owner_and_header([field(), ...], ctx()) -> {dns:dname(), header()}.
+owner_and_header([First | Rest] = Fields, Ctx) ->
     case owner(Fields, Ctx) of
-        {Owner, Fields} when not Blank ->
+        {Owner, Fields} ->
             try
                 {Owner, header(Fields, undefined, undefined)}
             catch

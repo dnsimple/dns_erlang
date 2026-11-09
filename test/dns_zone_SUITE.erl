@@ -556,7 +556,8 @@ groups() ->
             parse_owner_spelled_as_any_type,
             parse_owner_that_reads_as_a_ttl,
             parse_string_of_characters_past_255,
-            parse_ipseckey_gateways
+            parse_ipseckey_gateways,
+            parse_line_starting_with_a_blank
         ]},
         {error_cases, [parallel], [
             parse_invalid_ipv4,
@@ -8318,4 +8319,39 @@ parse_owner_that_reads_as_a_ttl(_Config) ->
     ?assertMatch(
         {error, #{message := <<"Parse error: expected a TTL, a class or a type: 3600">>}},
         dns_zone:parse_string(~"1 3600 3600 A 192.0.2.1\n")
+    ).
+
+%% RFC1035§5.1: a line that starts with a blank keeps the owner before it, and its
+%% TTL, class and type may be written in any case, as BIND reads them. The parser
+%% took a first field in lowercase for an owner, and an owner the line has no other
+%% reading without, as "www A ...", still is one.
+parse_line_starting_with_a_blank(_Config) ->
+    {ok, RRs} = dns_zone:parse_string(
+        <<
+            "$ORIGIN example.\n"
+            "$TTL 300\n"
+            "@ in soa ns1 admin 1 2 3 4 5\n"
+            "    in ns ns1\n"
+            "    1D IN ns ns2\n"
+            "    in 60 mx 10 mail\n"
+            "\ttxt \"a\" \"b\"\n"
+            "    www A 192.0.2.1\n"
+            "    ns IN A 192.0.2.2\n"
+            "    mx A 192.0.2.3\n"
+            "    In A 192.0.2.4\n"
+        >>
+    ),
+    ?assertEqual(
+        [
+            {~"example.", ?DNS_TYPE_SOA, 300},
+            {~"example.", ?DNS_TYPE_NS, 300},
+            {~"example.", ?DNS_TYPE_NS, 86400},
+            {~"example.", ?DNS_TYPE_MX, 60},
+            {~"example.", ?DNS_TYPE_TXT, 300},
+            {~"www.example.", ?DNS_TYPE_A, 300},
+            {~"ns.example.", ?DNS_TYPE_A, 300},
+            {~"mx.example.", ?DNS_TYPE_A, 300},
+            {~"mx.example.", ?DNS_TYPE_A, 300}
+        ],
+        [{Name, Type, TTL} || #dns_rr{name = Name, type = Type, ttl = TTL} <- RRs]
     ).
