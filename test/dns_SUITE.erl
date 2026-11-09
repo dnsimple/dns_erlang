@@ -44,6 +44,7 @@ groups() ->
             encode_message_invalid_size,
             encode_message_clamps_small_udp_payload_size,
             encode_optrr_kept_near_max_size,
+            encode_optrr_kept_when_answers_fit_without_it,
             truncated_query_enforces_opt_record,
             encode_default_message_question_offset_correct,
             encode_default_message_additional_offset_correct,
@@ -260,6 +261,102 @@ encode_optrr_kept_near_max_size(_) ->
     ?assert(byte_size(Bin) =< 512),
     Decoded = dns:decode_message(Bin),
     ?assertMatch(#dns_message{tc = false, anc = 29, adc = 1, additional = [#dns_optrr{}]}, Decoded).
+
+%% RFC6891§7: a reply to a request with an OPT RR carries one. An answer that fits beside the
+%% minimal OPT RR but not beside the full one used to go out without the OPT RR and without TC.
+encode_optrr_kept_when_answers_fit_without_it(_) ->
+    Q = #dns_query{name = <<"example.com">>, type = ?DNS_TYPE_TXT, class = ?DNS_CLASS_IN},
+    %% 39 octets: the OPT RR's 11 and a COOKIE option's 4 + 8 + 16
+    Cookie = #dns_opt_cookie{client = <<1:64>>, server = <<2:128>>},
+    Msg = fun(Len, Options) ->
+        Txt = #dns_rr{
+            name = <<"example.com">>,
+            type = ?DNS_TYPE_TXT,
+            class = ?DNS_CLASS_IN,
+            ttl = 60,
+            data = #dns_rrdata_txt{txt = [binary:copy(<<"a">>, 255), binary:copy(<<"b">>, Len)]}
+        },
+        #dns_message{
+            id = 1,
+            qr = true,
+            qc = 1,
+            anc = 1,
+            adc = 1,
+            questions = [Q],
+            answers = [Txt],
+            additional = [#dns_optrr{udp_payload_size = 512, data = Options}]
+        }
+    end,
+    Encode = fun(Len, Options) -> dns:encode_message(Msg(Len, Options), #{max_size => 512}) end,
+    %% 298 + Len octets of header, question and answer, and the 39-octet OPT RR: 512 at Len 175
+    Fits = Encode(175, [Cookie]),
+    ?assertEqual(512, byte_size(Fits)),
+    ?assertMatch(
+        #dns_message{tc = false, anc = 1, additional = [#dns_optrr{data = [Cookie]}]},
+        dns:decode_message(Fits)
+    ),
+    %% One octet more, up to the 501 octets the minimal OPT RR leaves, and the answer gives way
+    [
+        ?assertMatch(
+            #dns_message{
+                tc = true, anc = 0, answers = [], additional = [#dns_optrr{data = [Cookie]}]
+            },
+            dns:decode_message(Encode(Len, [Cookie])),
+            Len
+        )
+     || Len <- [176, 203]
+    ],
+    %% The same with the OPT RR after another additional record
+    A = #dns_rr{
+        name = <<"example.com">>,
+        type = ?DNS_TYPE_A,
+        class = ?DNS_CLASS_IN,
+        ttl = 60,
+        data = #dns_rrdata_a{ip = {192, 0, 2, 1}}
+    },
+    #dns_message{additional = [OptRR]} = Late0 = Msg(176, [Cookie]),
+    Late = Late0#dns_message{adc = 2, additional = [A, OptRR]},
+    ?assertMatch(
+        #dns_message{tc = true, anc = 0, adc = 1, additional = [#dns_optrr{data = [Cookie]}]},
+        dns:decode_message(dns:encode_message(Late, #{max_size => 512}))
+    ),
+    %% And signed: the 81-octet TSIG RR comes off max_size first, so the reply is 512 octets at
+    %% Len 94, and one octet more truncates it, keeping the OPT RR and the TSIG RR last
+    Key = #{alg => ?DNS_TSIG_ALG_SHA256, name => ~"key.name", secret => ~"secret"},
+    {Signed94, _} = dns:encode_message(Msg(94, [Cookie]), #{max_size => 512, tsig => Key}),
+    ?assertEqual(512, byte_size(Signed94)),
+    ?assertMatch(#dns_message{tc = false, anc = 1}, dns:decode_message(Signed94)),
+    {Signed95, _} = dns:encode_message(Msg(95, [Cookie]), #{max_size => 512, tsig => Key}),
+    ?assertMatch(
+        #dns_message{
+            tc = true,
+            anc = 0,
+            additional = [#dns_optrr{data = [Cookie]}, #dns_rr{type = ?DNS_TYPE_TSIG}]
+        },
+        dns:decode_message(Signed95)
+    ),
+    ?assertMatch({ok, _}, dns:verify_tsig(Signed95, ~"key.name", ~"secret")),
+    %% Truncated, the OPT RR keeps its options if it fits beside the 12-octet header and the
+    %% 17-octet question: a 468-octet NSID makes 512, and one octet more keeps only its fixed part
+    Nsid = fun(Len) -> [#dns_opt_nsid{data = binary:copy(<<"n">>, Len)}] end,
+    Full = Encode(0, Nsid(468)),
+    ?assertEqual(512, byte_size(Full)),
+    ?assertMatch(
+        #dns_message{tc = true, anc = 0, additional = [#dns_optrr{data = [_]}]},
+        dns:decode_message(Full)
+    ),
+    [
+        begin
+            Bin = Encode(0, Nsid(Len)),
+            ?assert(byte_size(Bin) =< 512, Len),
+            ?assertMatch(
+                #dns_message{tc = true, anc = 0, additional = [#dns_optrr{data = []}]},
+                dns:decode_message(Bin),
+                Len
+            )
+        end
+     || Len <- [469, 600]
+    ].
 
 encode_message_invalid_size(_) ->
     Qs = [#dns_query{name = <<"example">>, type = ?DNS_TYPE_A}],

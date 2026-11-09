@@ -164,27 +164,7 @@ encode_message_default(
     SpaceLeft1 = SpaceLeft0 - QSize,
     case encode_message_d_req(Answers, Authority, CompMap1, byte_size(AccQ), SpaceLeft1, AccQ) of
         truncated ->
-            %% We ran out of space, we MUST append a OptRR EDNS0 record,
-            %% and this takes precedence over the body
-            {AddCountFull, OptRRBinFull} = ensure_optrr(Additional, full),
-            OptRRBinSizeFull = byte_size(OptRRBinFull),
-            SpaceForOptRR = MaxSize - ?HEADER_SIZE - QSize,
-            Acc1 = binary_part(AccQ, ?HEADER_SIZE, QSize),
-            case OptRRBinSizeFull =< SpaceForOptRR of
-                true ->
-                    %% Full OptRR fits
-                    Head = build_header(Msg0, true, QC, 0, 0, AddCountFull),
-                    <<Head/binary, Acc1/binary, OptRRBinFull/binary>>;
-                false ->
-                    %% Full OptRR doesn't fit, but minimal (should) do
-                    {AddCountMin, OptRRBinMin} = ensure_optrr(Additional, minimal),
-                    Head = build_header(Msg0, true, QC, 0, 0, AddCountMin),
-                    %% If minimal would not fit either, it is most likely bad input,
-                    %% the client code should already know the original packet,
-                    %% composed of the question plus EDNS, should have fit in this size limit.
-                    %% We MUST include OptRR per RFC6891, so include even if it may exceed the space
-                    <<Head/binary, Acc1/binary, OptRRBinMin/binary>>
-            end;
+            encode_message_d_truncated(Msg0, QC, AccQ, Additional, MaxSize);
         {AccB, CompMap2} ->
             %% AccB includes the question section, so subtract it from SpaceLeft0:
             %% SpaceLeft1 would subtract the question bytes a second time
@@ -193,8 +173,9 @@ encode_message_default(
             OptRRBinSize = byte_size(Acc2) - byte_size(AccB),
             case SpaceLeft0 + PreservedOptRRBinSize - BodySize of
                 SpaceLeft2 when SpaceLeft2 < OptRRBinSize ->
-                    Head = build_header(Msg0, false, QC, ANC, AUC, 0),
-                    finish_message(Head, AccB);
+                    %% The body fits beside the minimal OPT RR but not the full one, which
+                    %% RFC6891§7 requires in the reply: truncate rather than drop it
+                    encode_message_d_truncated(Msg0, QC, AccQ, Additional, MaxSize);
                 SpaceLeft2 ->
                     SpaceLeft3 = SpaceLeft2 - OptRRBinSize,
                     OptC =
@@ -211,6 +192,33 @@ encode_message_default(
                             finish_message(Head, AccAd)
                     end
             end
+    end.
+
+%% We ran out of space, we MUST append a OptRR EDNS0 record,
+%% and this takes precedence over the body
+-spec encode_message_d_truncated(
+    dns:message(), dns:uint16(), binary(), dns:additional(), number()
+) -> binary().
+encode_message_d_truncated(Msg0, QC, AccQ, Additional, MaxSize) ->
+    QSize = byte_size(AccQ) - ?HEADER_SIZE,
+    {AddCountFull, OptRRBinFull} = ensure_optrr(Additional, full),
+    OptRRBinSizeFull = byte_size(OptRRBinFull),
+    SpaceForOptRR = MaxSize - ?HEADER_SIZE - QSize,
+    Acc1 = binary_part(AccQ, ?HEADER_SIZE, QSize),
+    case OptRRBinSizeFull =< SpaceForOptRR of
+        true ->
+            %% Full OptRR fits
+            Head = build_header(Msg0, true, QC, 0, 0, AddCountFull),
+            <<Head/binary, Acc1/binary, OptRRBinFull/binary>>;
+        false ->
+            %% Full OptRR doesn't fit, but minimal (should) do
+            {AddCountMin, OptRRBinMin} = ensure_optrr(Additional, minimal),
+            Head = build_header(Msg0, true, QC, 0, 0, AddCountMin),
+            %% If minimal would not fit either, it is most likely bad input,
+            %% the client code should already know the original packet,
+            %% composed of the question plus EDNS, should have fit in this size limit.
+            %% We MUST include OptRR per RFC6891, so include even if it may exceed the space
+            <<Head/binary, Acc1/binary, OptRRBinMin/binary>>
     end.
 
 %% Splice the real header over the 12-byte placeholder: the single body copy
