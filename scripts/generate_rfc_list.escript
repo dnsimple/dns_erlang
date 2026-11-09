@@ -54,6 +54,7 @@
     ~"6840" => ~"Clarifications and Implementation Notes for DNS Security (DNSSEC)",
     ~"4431" => ~"The DNSSEC Lookaside Validation (DLV) DNS Resource Record",
     ~"5155" => ~"DNS Security (DNSSEC) Hashed Authenticated Denial of Existence",
+    ~"5933" => ~"Use of GOST Signature Algorithms in DNSKEY and RRSIG Resource Records for DNSSEC",
     ~"6605" => ~"Elliptic Curve Digital Signature Algorithm (DSA) for DNSSEC",
     ~"7344" => ~"Automating DNSSEC Delegation Trust Maintenance",
     ~"8080" => ~"Ed25519 and Ed448 for DNSSEC",
@@ -68,6 +69,9 @@
     ~"2163" =>
         ~"Using the Internet DNS to Distribute MIXER Conformant Global Address Mapping (MCGAM)",
     ~"8162" => ~"Using Secure DNS to Associate Certificates with Domain Names for S/MIME",
+    ~"9558" =>
+        ~"Use of GOST 2012 Signature Algorithms in DNSKEY and RRSIG Resource Records for DNSSEC",
+    ~"9563" => ~"SM2 Digital Signature Algorithm for DNSSEC",
     ~"9606" => ~"DNS Resolver Information",
     ~"7929" => ~"DNS-Based Authentication of Named Entities (DANE) Bindings for OpenPGP",
     ~"2845" => ~"Secret Key Transaction Authentication for DNS (TSIG)",

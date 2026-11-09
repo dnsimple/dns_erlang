@@ -331,17 +331,21 @@ restrictions on the length. Labels must be 63 characters or less.
 -doc #{group => "Types: TSIG"}.
 -doc "DNS algorithm identifier for DNSSEC and TSIG.".
 -type alg() ::
-    ?DNS_ALG_DSA
+    ?DNS_ALG_RSAMD5
+    | ?DNS_ALG_DSA
     | ?DNS_ALG_NSEC3DSA
     | ?DNS_ALG_RSASHA1
     | ?DNS_ALG_NSEC3RSASHA1
     | ?DNS_ALG_RSASHA256
     | ?DNS_ALG_RSASHA512
+    | ?DNS_ALG_ECCGOST
     | ?DNS_ALG_ECDSAP256SHA256
     | ?DNS_ALG_ECDSAP384SHA384
     | ?DNS_ALG_ED25519
     | ?DNS_ALG_ED448
-    | ?DNS_ALG_MLDSA44.
+    | ?DNS_ALG_SM2SM3
+    | ?DNS_ALG_MLDSA44
+    | ?DNS_ALG_ECCGOST12.
 -export_type([
     alg/0,
     tsig_mac/0,
