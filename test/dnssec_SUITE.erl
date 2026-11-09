@@ -44,6 +44,7 @@ groups() ->
             verify_rrset,
             verify_rrsig_expiry,
             sign_rr_and_rrset_5arg,
+            sign_leaves_rrsigs_unsigned,
             add_keytag_to_cdnskey_test,
             keytag_known_answers,
             keytag_rsamd5,
@@ -1229,6 +1230,39 @@ sample_keys(Config) ->
         proplists:get_value(dnssec_samples, Config)
     ),
     [?assert(test_sample_key(Alg, Proplist)) || {Alg, Proplist} <- Keys].
+
+%% RFC4035§2.2: an RRSIG RRset is never signed. sign_rr/6 leaves RRSIG records out of what it
+%% signs, and sign_rrset/6 refuses an RRSIG RRset, where both signed it.
+sign_leaves_rrsigs_unsigned(_Config) ->
+    {Pub, Priv} = crypto:generate_key(eddsa, ed25519),
+    DNSKey = dnssec:add_keytag_to_dnskey(#dns_rr{
+        name = ~"example",
+        type = ?DNS_TYPE_DNSKEY,
+        class = ?DNS_CLASS_IN,
+        ttl = 3600,
+        data = #dns_rrdata_dnskey{
+            flags = 256, protocol = 3, alg = ?DNS_ALG_ED25519, public_key = Pub
+        }
+    }),
+    #dns_rr{data = #dns_rrdata_dnskey{keytag = KeyTag}} = DNSKey,
+    A = #dns_rr{
+        name = ~"www.example",
+        type = ?DNS_TYPE_A,
+        class = ?DNS_CLASS_IN,
+        ttl = 3600,
+        data = #dns_rrdata_a{ip = {192, 0, 2, 1}}
+    },
+    Opts = #{inception => 1000000, expiration => 2000000},
+    Sign = fun(RRs) -> dnssec:sign_rr(RRs, ~"example", KeyTag, ?DNS_ALG_ED25519, Priv, Opts) end,
+    [RRSig] = Sign([A]),
+    %% Given the RRSIG with the record it covers, only the A RRset is signed
+    [#dns_rr{data = #dns_rrdata_rrsig{type_covered = ?DNS_TYPE_A}} = Again] = Sign([A, RRSig]),
+    ?assert(dnssec:verify_rrsig(Again, [A], [DNSKey], #{now => 1500000})),
+    ?assertEqual([], Sign([RRSig])),
+    ?assertError(
+        {badarg, rrsig_rrset},
+        dnssec:sign_rrset([RRSig], ~"example", KeyTag, ?DNS_ALG_ED25519, Priv, Opts)
+    ).
 
 ed25519_basic_test(_Config) ->
     {Ed25519Pub, Ed25519Priv} = crypto:generate_key(eddsa, ed25519),

@@ -50,6 +50,7 @@
     ~"9460" =>
         ~"Service Binding and Parameter Specification via the DNS (DNS SVCB and HTTPS Resource Records)",
     ~"2535" => ~"Domain Name System Security Extensions",
+    ~"4035" => ~"Protocol Modifications for the DNS Security Extensions",
     ~"4034" => ~"Resource Records for the DNS Security Extensions",
     ~"6840" => ~"Clarifications and Implementation Notes for DNS Security (DNSSEC)",
     ~"4431" => ~"The DNSSEC Lookaside Validation (DLV) DNS Resource Record",
