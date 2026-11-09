@@ -23,6 +23,7 @@ functionality such as socket handling or query resolution.
 - **[RFC 3597](https://tools.ietf.org/html/rfc3597)**: Handling of Unknown DNS Resource Record (RR) Types
 - **[RFC 4025](https://tools.ietf.org/html/rfc4025)**: A Method for Storing IPsec Keying Material in DNS
 - **[RFC 4034](https://tools.ietf.org/html/rfc4034)**: Resource Records for the DNS Security Extensions
+- **[RFC 4035](https://tools.ietf.org/html/rfc4035)**: Protocol Modifications for the DNS Security Extensions
 - **[RFC 4255](https://tools.ietf.org/html/rfc4255)**: Using DNS to Securely Publish Secure Shell (SSH) Key Fingerprints
 - **[RFC 4398](https://tools.ietf.org/html/rfc4398)**: Storing Certificates in the Domain Name System (DNS)
 - **[RFC 4408](https://tools.ietf.org/html/rfc4408)**: Sender Policy Framework (SPF) for Authorizing Use of Domains in E-Mail, Version 1

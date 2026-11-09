@@ -396,10 +396,14 @@ finalise_rrs_to_rrsets(TTLMap, {Name, Class, Type} = Key, Datas) ->
 sign_rr(RR, SignerName, KeyTag, Alg, Key) ->
     sign_rr(RR, SignerName, KeyTag, Alg, Key, #{}).
 
--doc "Signs a list of `t:dns:rr/0`.".
+-doc """
+Signs each RRset in a list of `t:dns:rr/0`, as `sign_rrset/6` does.
+
+RRSIG records are left out, as RFC 4035 §2.2 never signs an RRSIG RRset.
+""".
 -spec sign_rr([dns:rr()], dns:dname(), keytag(), sigalg(), key(), sign_rr_opts()) -> [dns:rr()].
 sign_rr(RR, SignerName, KeyTag, Alg, Key, Opts) when is_map(Opts) ->
-    RRSets = rrs_to_rrsets(RR),
+    RRSets = rrs_to_rrsets([Record || Record <- RR, not is_rrsig(Record)]),
     [
         sign_rrset(RRSet, SignerName, KeyTag, Alg, Key, Opts)
      || RRSet <- RRSets
@@ -411,17 +415,22 @@ sign_rr(RR, SignerName, KeyTag, Alg, Key, Opts) when is_map(Opts) ->
 sign_rrset(RRSet, SignerName, KeyTag, Alg, Key) ->
     sign_rrset(RRSet, SignerName, KeyTag, Alg, Key, #{}).
 
--doc "Signs a list of `t:dns:rr/0` of the same class and type.".
+-doc """
+Signs a list of `t:dns:rr/0` of the same class and type.
+
+Raises `{badarg, rrsig_rrset}` for an RRSIG RRset, which RFC 4035 §2.2 never signs.
+""".
 -spec sign_rrset([dns:rr(), ...], dns:dname(), keytag(), sigalg(), key(), sign_rr_opts()) ->
     dns:rr().
 sign_rrset(
-    [#dns_rr{name = Name, class = Class, ttl = TTL} | _] = RRs,
+    [#dns_rr{name = Name, class = Class, type = Type, ttl = TTL} | _] = RRs,
     SignersName,
     KeyTag,
     Alg,
     Key,
     Opts
 ) when is_integer(Alg) ->
+    Type =/= ?DNS_TYPE_RRSIG orelse erlang:error({badarg, rrsig_rrset}),
     Now = erlang:system_time(second),
     Incept = maps:get(inception, Opts, Now),
     %% 1 year
@@ -436,6 +445,9 @@ sign_rrset(
         ttl = TTL,
         data = Data
     }.
+
+-spec is_rrsig(dns:rr()) -> boolean().
+is_rrsig(#dns_rr{type = Type}) -> Type =:= ?DNS_TYPE_RRSIG.
 
 -spec sign(dns:uint8(), binary(), key()) -> binary().
 sign(Alg, BaseSigInput, Key) when Alg =:= ?DNS_ALG_DSA orelse Alg =:= ?DNS_ALG_NSEC3DSA ->
