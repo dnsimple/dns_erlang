@@ -13,6 +13,8 @@
 -define(DEFAULT_TTL_FORMAT, seconds).
 -define(DEFAULT_OMIT_CLASS, false).
 -define(DEFAULT_SEPARATOR, ~" ").
+%% calendar:datetime_to_gregorian_seconds({{1970, 1, 1}, {0, 0, 0}})
+-define(UNIX_EPOCH_GREGORIAN_SECONDS, 62_167_219_200).
 
 -spec encode_file([dns:rr()], file:filename(), dns_zone:encode_options()) ->
     ok | {error, term()}.
@@ -38,7 +40,7 @@ encode_rr(#dns_rr{name = Name, type = Type, class = Class, ttl = TTL, data = Dat
     EncodedTTL = encode_ttl(TTL, TTLFormat),
     EncodedClass = maybe_encode_class(Class, OmitClass),
     TypeBin = encode_type(Type),
-    RDataStr = encode_rdata(Type, Data, LwrOrigin, RelativeNames, Separator),
+    RDataStr = rdata_text(Type, Data, LwrOrigin, RelativeNames, Separator),
     %% Combine all parts with separator
     %% Format: owner [TTL] [class] type rdata
     %% If TTL is empty and class is omitted, we still need proper spacing
@@ -58,46 +60,99 @@ encode_rr(#dns_rr{name = Name, type = Type, class = Class, ttl = TTL, data = Dat
 
 -spec encode_rdata(dns:type(), dns:rrdata()) -> iodata().
 encode_rdata(Type, RData) ->
-    encode_rdata(Type, RData, <<>>, true, ?DEFAULT_SEPARATOR).
+    rdata_text(Type, RData, <<>>, true, ?DEFAULT_SEPARATOR).
 
 -spec encode_rdata(dns:type(), dns:rrdata(), dns_zone:encode_options()) -> iodata().
 encode_rdata(Type, RData, Opts) ->
     Origin = dns_domain:to_lower(maps:get(origin, Opts, ?DEFAULT_ORIGIN)),
     RelativeNames = maps:get(relative_names, Opts, ?DEFAULT_RELATIVE_NAMES),
     Separator = maps:get(separator, Opts, ?DEFAULT_SEPARATOR),
-    encode_rdata(Type, RData, Origin, RelativeNames, Separator).
+    rdata_text(Type, RData, Origin, RelativeNames, Separator).
 
 %% ============================================================================
 %% Helper Functions
 %% ============================================================================
 
 %% Encode domain name, optionally making it relative to origin.
-%% When returning an absolute name (no origin or not under origin), ensure FQDN (trailing dot).
-%% Assumes always receive input in lowercase
+%% When returning an absolute name (no origin or not under origin, or relative names
+%% not wanted), ensure FQDN (trailing dot): without it a zone file reads the name as
+%% relative to its origin, and the root, <<>> as dns_decode gives it, as nothing.
 -spec encode_dname(dns:dname(), dns:dname(), boolean()) -> dns:dname().
 encode_dname(Name, _Origin, false) ->
-    Name;
+    escape_dname(ensure_fqdn(Name));
 encode_dname(Name, <<>>, true) ->
-    ensure_fqdn(Name);
+    escape_dname(ensure_fqdn(Name));
 encode_dname(Name, Origin, true) ->
     case is_subdomain(Name, Origin) of
         true ->
             %% Name is under origin, make it relative
             case make_relative(Name, Origin) of
                 relative -> ~"@";
-                RelativeName -> RelativeName
+                RelativeName -> escape_dname(RelativeName)
             end;
         false ->
             %% Name is not under origin or no origin, use absolute FQDN
-            ensure_fqdn(Name)
+            escape_dname(ensure_fqdn(Name))
     end.
 
-%% Ensure domain name is fully qualified (trailing dot) for absolute form
+%% RFC1035§5.1: a name as BIND writes it, \DDD for an octet that is not printable
+%% or is a blank, and a backslash before one a zone file reads otherwise: a quote,
+%% a parenthesis, a semicolon, "@" and "$". A dot or a backslash within a label
+%% is escaped already, as dns_erlang keeps names.
+-spec escape_dname(dns:dname()) -> dns:dname().
+escape_dname(Name) ->
+    case plain_dname(Name) of
+        true -> Name;
+        false -> escape_dname(Name, <<>>)
+    end.
+
+-spec plain_dname(binary()) -> boolean().
+plain_dname(<<C, Rest/binary>>) when
+    $! =< C, C =< $~, C =/= $", C =/= $(, C =/= $), C =/= $;, C =/= $@, C =/= $$
+->
+    plain_dname(Rest);
+plain_dname(<<_, _/binary>>) ->
+    false;
+plain_dname(<<>>) ->
+    true.
+
+-spec escape_dname(binary(), binary()) -> binary().
+escape_dname(<<$\\, C, Rest/binary>>, Acc) ->
+    escape_dname(Rest, <<Acc/binary, $\\, C>>);
+escape_dname(<<C, Rest/binary>>, Acc) when C =< $\s; C > $~ ->
+    Escaped = iolist_to_binary(io_lib:format("\\~3..0B", [C])),
+    escape_dname(Rest, <<Acc/binary, Escaped/binary>>);
+escape_dname(<<C, Rest/binary>>, Acc) when
+    C =:= $"; C =:= $(; C =:= $); C =:= $;; C =:= $@; C =:= $$
+->
+    escape_dname(Rest, <<Acc/binary, $\\, C>>);
+escape_dname(<<C, Rest/binary>>, Acc) ->
+    escape_dname(Rest, <<Acc/binary, C>>);
+escape_dname(<<>>, Acc) ->
+    Acc.
+
+%% Ensure domain name is fully qualified (trailing dot) for absolute form. A dot
+%% a backslash escapes is within the last label, which the root still follows.
 -spec ensure_fqdn(dns:dname()) -> dns:dname().
 ensure_fqdn(Name) when is_binary(Name) ->
-    case 0 < byte_size(Name) andalso $. =:= binary:last(Name) of
+    case 0 < byte_size(Name) andalso unescaped_dot(Name, byte_size(Name) - 1) of
         true -> Name;
         false -> <<Name/binary, ".">>
+    end.
+
+%% Whether the octet at Pos is a dot that no backslash escapes: an even number of
+%% backslashes before it
+-spec unescaped_dot(binary(), non_neg_integer()) -> boolean().
+unescaped_dot(Name, Pos) ->
+    binary:at(Name, Pos) =:= $. andalso backslashes_before(Name, Pos, 0) rem 2 =:= 0.
+
+-spec backslashes_before(binary(), non_neg_integer(), non_neg_integer()) -> non_neg_integer().
+backslashes_before(_Name, 0, Count) ->
+    Count;
+backslashes_before(Name, Pos, Count) ->
+    case binary:at(Name, Pos - 1) of
+        $\\ -> backslashes_before(Name, Pos - 1, Count + 1);
+        _ -> Count
     end.
 
 %% Check if Name is a subdomain of Origin (or equals it)
@@ -116,9 +171,9 @@ is_subdomain(Name, Origin) ->
                     %% Name equals origin
                     true;
                 false ->
-                    %% Check there's a dot before the origin part
-                    BeforeOrigin = binary:part(Name, 0, NameLen - OriginLen),
-                    byte_size(BeforeOrigin) > 0 andalso binary:last(BeforeOrigin) =:= $.
+                    %% Check there's a dot before the origin part, which no backslash
+                    %% makes part of a label
+                    NameLen > OriginLen andalso unescaped_dot(Name, NameLen - OriginLen - 1)
             end;
         _ ->
             false
@@ -205,17 +260,26 @@ make_relative(Name, Origin) ->
             NameLen = byte_size(NameLower),
             case NameLen > SuffixLen of
                 true ->
-                    %% Extract the part before origin
-                    BeforeOrigin = binary:part(Name, 0, NameLen - SuffixLen - 1),
-                    %% Remove trailing dot if present
-                    case byte_size(BeforeOrigin) > 0 andalso binary:last(BeforeOrigin) =:= $. of
-                        true -> binary:part(BeforeOrigin, 0, byte_size(BeforeOrigin) - 1);
-                        false -> BeforeOrigin
-                    end;
+                    %% The part before the origin and the dot that parts them, which
+                    %% ends in a dot only when a backslash makes it part of the label
+                    binary:part(Name, 0, NameLen - SuffixLen - 1);
                 false ->
                     Name
             end
     end.
+
+%% RFC1035§3.3: a <character-string> is at most 255 octets, so a longer string is
+%% written as the strings of 255 octets and the rest that dns_encode writes it as,
+%% which other software reads
+-spec character_strings([binary()]) -> [binary()].
+character_strings(Strings) ->
+    lists:append([split_string(String) || String <- Strings]).
+
+-spec split_string(binary()) -> [binary(), ...].
+split_string(<<String:255/binary, Rest/binary>>) when Rest =/= <<>> ->
+    [String | split_string(Rest)];
+split_string(String) ->
+    [String].
 
 %% Encode quoted string (for TXT, SPF, etc.)
 %% TXT records can have multiple strings
@@ -305,10 +369,7 @@ build_zone_lines(Records, Origin, Opts) ->
 origin_line(<<>>) ->
     [];
 origin_line(Origin) ->
-    case binary:last(Origin) of
-        $. -> [~"$ORIGIN ", Origin | ~"\n"];
-        _ -> [~"$ORIGIN ", Origin, ~"." | ~"\n"]
-    end.
+    [~"$ORIGIN ", escape_dname(ensure_fqdn(Origin)) | ~"\n"].
 
 %% Add $TTL directive if default_ttl is set
 ttl_line(Opts) ->
@@ -348,6 +409,89 @@ ntoa({Word, B, C, D, E, F, G, H}) when Word =:= 16#fe80; Word =:= 16#ff02 ->
     string:lowercase(integer_to_list(Word, 16)) ++ tl(inet:ntoa({1, B, C, D, E, F, G, H}));
 ntoa(IP) ->
     "" ++ _ = inet:ntoa(IP).
+
+%% Helper: a LOC latitude or longitude, thousandths of a second of arc, positive
+%% to the north or the east
+-spec loc_angle(integer(), binary(), binary()) -> binary().
+loc_angle(Angle, Positive, Negative) ->
+    {Hemisphere, Abs} =
+        case Angle < 0 of
+            true -> {Negative, -Angle};
+            false -> {Positive, Angle}
+        end,
+    iolist_to_binary(
+        io_lib:format("~b ~b ~b.~3..0b ~s", [
+            Abs div 3600000, Abs div 60000 rem 60, Abs div 1000 rem 60, Abs rem 1000, Hemisphere
+        ])
+    ).
+
+%% Helper: centimetres as metres
+-spec loc_metres(integer()) -> binary().
+loc_metres(Cm) when Cm < 0 ->
+    <<$-, (loc_metres(-Cm))/binary>>;
+loc_metres(Cm) ->
+    iolist_to_binary(io_lib:format("~b.~2..0bm", [Cm div 100, Cm rem 100])).
+
+%% Helper: the RDATA of an RRSIG, its times written with Time
+-spec encode_rrsig(
+    dns:rrdata_rrsig(), fun((dns:uint32()) -> binary()), dns:dname(), boolean(), binary()
+) -> iodata().
+encode_rrsig(
+    #dns_rrdata_rrsig{
+        type_covered = TypeCovered,
+        alg = Alg,
+        labels = Labels,
+        original_ttl = OriginalTTL,
+        expiration = Expiration,
+        inception = Inception,
+        keytag = KeyTag,
+        signers_name = SignersName,
+        signature = Signature
+    },
+    Time,
+    Origin,
+    RelativeNames,
+    Separator
+) ->
+    join_rdata_fields(
+        [
+            encode_type(TypeCovered),
+            integer_to_binary(Alg),
+            integer_to_binary(Labels),
+            integer_to_binary(OriginalTTL),
+            Time(Expiration),
+            Time(Inception),
+            integer_to_binary(KeyTag),
+            encode_dname(dns_domain:to_lower(SignersName), Origin, RelativeNames),
+            base64:encode(Signature)
+        ],
+        Separator
+    ).
+
+%% Helper: a SIG time as RFC 2535 §7.2 writes it, YYYYMMDDHHmmSS, in UTC
+-spec sig_time(dns:uint32()) -> binary().
+sig_time(Seconds) ->
+    {{Y, Mo, D}, {H, Mi, S}} = calendar:gregorian_seconds_to_datetime(
+        Seconds + ?UNIX_EPOCH_GREGORIAN_SECONDS
+    ),
+    iolist_to_binary(io_lib:format("~4..0b~2..0b~2..0b~2..0b~2..0b~2..0b", [Y, Mo, D, H, Mi, S])).
+
+%% Helper: an EUI-48 or EUI-64 address
+-spec encode_eui(binary()) -> iodata().
+encode_eui(Addr) ->
+    lists:join(~"-", [binary:encode_hex(<<Octet>>, lowercase) || <<Octet>> <= Addr]).
+
+-spec alphanumeric(binary()) -> boolean().
+alphanumeric(<<>>) ->
+    false;
+alphanumeric(Bin) ->
+    lists:all(
+        fun(C) ->
+            ($a =< C andalso C =< $z) orelse ($A =< C andalso C =< $Z) orelse
+                ($0 =< C andalso C =< $9)
+        end,
+        binary_to_list(Bin)
+    ).
 
 %% Helper: Encode SVCB/HTTPS record with service parameters
 -spec encode_svcb_record(
@@ -438,9 +582,9 @@ encode_rdata(
     ExchangeStr = encode_dname(dns_domain:to_lower(Exchange), Origin, RelativeNames),
     [PrefBin, Separator | ExchangeStr];
 encode_rdata(?DNS_TYPE_TXT, #dns_rrdata_txt{txt = Strings}, _Origin, _RelativeNames, Separator) ->
-    encode_quoted_strings(Strings, Separator);
+    encode_quoted_strings(character_strings(Strings), Separator);
 encode_rdata(?DNS_TYPE_SPF, #dns_rrdata_spf{spf = Strings}, _Origin, _RelativeNames, Separator) ->
-    encode_quoted_strings(Strings, Separator);
+    encode_quoted_strings(character_strings(Strings), Separator);
 encode_rdata(
     ?DNS_TYPE_SOA,
     #dns_rrdata_soa{
@@ -498,9 +642,13 @@ encode_rdata(
     Separator
 ) ->
     FlagsBin = integer_to_binary(Flags),
-    %% CAA tag should always be quoted to ensure it's parsed as a string token
-    %% (unquoted tags like "9" might be parsed as integers)
-    TagBin = encode_quoted_string(Tag),
+    %% RFC8659§4.1.1: a tag is letters and digits, which BIND reads only unquoted.
+    %% One of other octets is quoted, as no other software reads it anyway.
+    TagBin =
+        case alphanumeric(Tag) of
+            true -> Tag;
+            false -> encode_quoted_string(Tag)
+        end,
     ValueBin = encode_quoted_string(Value),
     join_rdata_fields([FlagsBin, TagBin, ValueBin], Separator);
 encode_rdata(
@@ -711,50 +859,12 @@ encode_rdata(
 ) ->
     PublicKeyBin = public_key_to_wire_binary(Alg, PublicKey),
     encode_key_record(Flags, Protocol, Alg, PublicKeyBin, base64, Separator);
-encode_rdata(
-    ?DNS_TYPE_RRSIG,
-    #dns_rrdata_rrsig{
-        type_covered = TypeCovered,
-        alg = Alg,
-        labels = Labels,
-        original_ttl = OriginalTTL,
-        expiration = Expiration,
-        inception = Inception,
-        keytag = KeyTag,
-        signers_name = SignersName,
-        signature = Signature
-    },
-    Origin,
-    RelativeNames,
-    Separator
-) ->
-    TypeCoveredBin = encode_type(TypeCovered),
-    AlgBin = integer_to_binary(Alg),
-    LabelsBin = integer_to_binary(Labels),
-    OriginalTTLBin = integer_to_binary(OriginalTTL),
-    ExpirationBin = integer_to_binary(Expiration),
-    InceptionBin = integer_to_binary(Inception),
-    KeyTagBin = integer_to_binary(KeyTag),
-    SignersNameStr = encode_dname(dns_domain:to_lower(SignersName), Origin, RelativeNames),
-    SignatureB64 = base64:encode(Signature),
-    join_rdata_fields(
-        [
-            TypeCoveredBin,
-            AlgBin,
-            LabelsBin,
-            OriginalTTLBin,
-            ExpirationBin,
-            InceptionBin,
-            KeyTagBin,
-            SignersNameStr,
-            SignatureB64
-        ],
-        Separator
-    );
+encode_rdata(?DNS_TYPE_RRSIG, #dns_rrdata_rrsig{} = RRSig, Origin, RelativeNames, Separator) ->
+    encode_rrsig(RRSig, fun integer_to_binary/1, Origin, RelativeNames, Separator);
 encode_rdata(?DNS_TYPE_SIG, #dns_rrdata_sig{} = Sig, Origin, RelativeNames, Separator) ->
-    %% RFC 2535 §7.2: as RRSIG's, which took it over field for field
-    RRSig = dns_encode:sig_to_rrsig(Sig),
-    encode_rdata(?DNS_TYPE_RRSIG, RRSig, Origin, RelativeNames, Separator);
+    %% RFC 2535 §7.2: as RRSIG's, which took it over field for field, but for the
+    %% times, which RFC 2535 writes only as dates, and which BIND reads only so
+    encode_rrsig(dns_encode:sig_to_rrsig(Sig), fun sig_time/1, Origin, RelativeNames, Separator);
 encode_rdata(
     ?DNS_TYPE_NSEC,
     #dns_rrdata_nsec{
@@ -791,7 +901,8 @@ encode_rdata(
     ),
     IterationsBin = integer_to_binary(Iterations),
     SaltHex = encode_salt_hex(Salt),
-    HashHex = base32:encode(Hash, [hex]),
+    %% RFC5155§3.3: base32hex without padding
+    HashHex = base32:encode(Hash, [hex, nopad]),
     TypeBins = [encode_type(T) || T <- Types],
     join_rdata_fields(
         [HashAlgBin, FlagsBin, IterationsBin, SaltHex, HashHex | TypeBins], Separator
@@ -900,7 +1011,7 @@ encode_rdata(?DNS_TYPE_BRID, #dns_rrdata_brid{data = Data}, _Origin, _RelativeNa
 encode_rdata(
     ?DNS_TYPE_WALLET, #dns_rrdata_wallet{data = Strings}, _Origin, _RelativeNames, Separator
 ) ->
-    encode_quoted_strings(Strings, Separator);
+    encode_quoted_strings(character_strings(Strings), Separator);
 encode_rdata(
     ?DNS_TYPE_URI,
     #dns_rrdata_uri{
@@ -914,19 +1025,21 @@ encode_rdata(
 ) ->
     PriorityBin = integer_to_binary(Priority),
     WeightBin = integer_to_binary(Weight),
-    join_rdata_fields([PriorityBin, WeightBin, Target], Separator);
+    %% RFC7553§4.4: the target in quotes
+    join_rdata_fields([PriorityBin, WeightBin, encode_quoted_string(Target)], Separator);
 encode_rdata(
     ?DNS_TYPE_RESINFO, #dns_rrdata_resinfo{data = Strings}, _Origin, _RelativeNames, Separator
 ) ->
-    encode_quoted_strings(Strings, Separator);
+    encode_quoted_strings(character_strings(Strings), Separator);
+%% RFC7043§3.2, §4.2: the octets in hex, separated by hyphens
 encode_rdata(
     ?DNS_TYPE_EUI48, #dns_rrdata_eui48{address = Addr}, _Origin, _RelativeNames, _Separator
 ) ->
-    binary:encode_hex(Addr);
+    encode_eui(Addr);
 encode_rdata(
     ?DNS_TYPE_EUI64, #dns_rrdata_eui64{address = Addr}, _Origin, _RelativeNames, _Separator
 ) ->
-    binary:encode_hex(Addr);
+    encode_eui(Addr);
 encode_rdata(
     ?DNS_TYPE_NID,
     #dns_rrdata_nid{preference = Pref, node_id = NodeID},
@@ -1034,9 +1147,8 @@ encode_rdata(
     Separator
 ) ->
     encode_svcb_record(Priority, Target, Params, Origin, RelativeNames, Separator);
-%% LOC record (RFC 1876) - complex encoding
-%% TODO: Implement proper LOC encoding with degrees/minutes/seconds format
-%% Current implementation uses simplified integer format
+%% RFC1876§3: latitude and longitude in degrees, minutes and seconds, altitude,
+%% size and precisions in metres
 encode_rdata(
     ?DNS_TYPE_LOC,
     #dns_rrdata_loc{
@@ -1051,20 +1163,19 @@ encode_rdata(
     _RelativeNames,
     Separator
 ) ->
-    %% LOC format: lat lon alt size horiz_prec vert_prec
-    %% Coordinates are in 1/1000th of a second
-    %% Proper format should be: degrees minutes seconds.milliseconds N/S
-    %%   degrees minutes seconds.milliseconds E/W altm altcm sizem sizecm horizm vertm
-    %% For now, use simplified format
-    SizeBin = integer_to_binary(Size),
-    HorizBin = integer_to_binary(Horiz),
-    VertBin = integer_to_binary(Vert),
-    LatBin = integer_to_binary(Lat),
-    LonBin = integer_to_binary(Lon),
-    AltBin = integer_to_binary(Alt),
-    join_rdata_fields([LatBin, LonBin, AltBin, SizeBin, HorizBin, VertBin], Separator);
+    join_rdata_fields(
+        [
+            loc_angle(Lat, ~"N", ~"S"),
+            loc_angle(Lon, ~"E", ~"W"),
+            loc_metres(Alt),
+            loc_metres(Size),
+            loc_metres(Horiz),
+            loc_metres(Vert)
+        ],
+        Separator
+    );
 %% RFC4025§3.1: precedence, gateway type, algorithm, gateway, "." for none, and
-%% the key in base64, left out when there is none
+%% the key in base64
 encode_rdata(
     ?DNS_TYPE_IPSECKEY,
     #dns_rrdata_ipseckey{
@@ -1084,18 +1195,13 @@ encode_rdata(
             {_, _, _, _, _, _, _, _} -> {2, ntoa(Gateway)};
             DName when is_binary(DName) -> {3, encode_dname(DName, Origin, RelativeNames)}
         end,
-    Key =
-        case PublicKey of
-            <<>> -> [];
-            _ -> [base64:encode(PublicKey)]
-        end,
     join_rdata_fields(
         [
             integer_to_binary(Precedence),
             integer_to_binary(GatewayType),
             integer_to_binary(Alg),
-            GatewayStr
-            | Key
+            GatewayStr,
+            base64:encode(PublicKey)
         ],
         Separator
     );
@@ -1147,10 +1253,14 @@ encode_rdata(
     FlagsBin = integer_to_binary(Flags),
     ProtocolBin = integer_to_binary(Protocol),
     AlgBin = integer_to_binary(Alg),
-    %% public_key can be iodata, convert to binary first
-    PublicKeyBin = iolist_to_binary(PublicKey),
-    PublicKeyB64 = base64:encode(PublicKeyBin),
-    join_rdata_fields([FlagsBin, ProtocolBin, AlgBin, PublicKeyB64], Separator);
+    %% public_key can be iodata, convert to binary first. RFC2535§3.1.2: a key
+    %% whose flags say there is none is left out, and so is any empty one.
+    Key =
+        case iolist_to_binary(PublicKey) of
+            <<>> -> [];
+            PublicKeyBin -> [base64:encode(PublicKeyBin)]
+        end,
+    join_rdata_fields([FlagsBin, ProtocolBin, AlgBin | Key], Separator);
 encode_rdata(
     ?DNS_TYPE_NXT,
     #dns_rrdata_nxt{
@@ -1212,7 +1322,47 @@ encode_rdata(
     );
 %% RFC 3597 fallback for unknown types
 encode_rdata(_Type, Data, _Origin, _RelativeNames, Separator) when is_binary(Data) ->
-    Length = byte_size(Data),
-    Hex = binary:encode_hex(Data),
-    LengthBin = integer_to_binary(Length),
-    [~"\\#", Separator, LengthBin, Separator, Hex].
+    generic_rdata(Data, Separator).
+
+%% RFC3597§5: \# with the length and the hex of the RDATA, for any type
+-spec generic_rdata(binary(), binary()) -> iodata().
+generic_rdata(<<>>, Separator) ->
+    [~"\\#", Separator, ~"0"];
+generic_rdata(Data, Separator) ->
+    [~"\\#", Separator, integer_to_binary(byte_size(Data)), Separator, binary:encode_hex(Data)].
+
+%% RDATA with a field its presentation format has no way to write empty is
+%% written in RFC 3597's generic form, which reads back to the same octets
+-spec rdata_text(dns:type(), dns:rrdata(), dns:dname(), boolean(), binary()) -> iodata().
+rdata_text(Type, RData, Origin, RelativeNames, Separator) ->
+    case has_unwritable_field(RData) of
+        true -> generic_rdata(dns_encode:encode_rrdata(?DNS_CLASS_IN, RData), Separator);
+        false -> encode_rdata(Type, RData, Origin, RelativeNames, Separator)
+    end.
+
+-spec has_unwritable_field(dns:rrdata()) -> boolean().
+has_unwritable_field(#dns_rrdata_txt{txt = []}) -> true;
+has_unwritable_field(#dns_rrdata_spf{spf = []}) -> true;
+has_unwritable_field(#dns_rrdata_resinfo{data = []}) -> true;
+has_unwritable_field(#dns_rrdata_wallet{data = []}) -> true;
+has_unwritable_field(#dns_rrdata_ds{digest = <<>>}) -> true;
+has_unwritable_field(#dns_rrdata_cds{digest = <<>>}) -> true;
+has_unwritable_field(#dns_rrdata_dlv{digest = <<>>}) -> true;
+has_unwritable_field(#dns_rrdata_dnskey{public_key = <<>>}) -> true;
+has_unwritable_field(#dns_rrdata_cdnskey{public_key = <<>>}) -> true;
+has_unwritable_field(#dns_rrdata_rrsig{signature = <<>>}) -> true;
+has_unwritable_field(#dns_rrdata_sig{signature = <<>>}) -> true;
+has_unwritable_field(#dns_rrdata_sshfp{fp = <<>>}) -> true;
+has_unwritable_field(#dns_rrdata_tlsa{certificate = <<>>}) -> true;
+has_unwritable_field(#dns_rrdata_smimea{certificate = <<>>}) -> true;
+has_unwritable_field(#dns_rrdata_zonemd{hash = <<>>}) -> true;
+has_unwritable_field(#dns_rrdata_cert{cert = <<>>}) -> true;
+has_unwritable_field(#dns_rrdata_dhcid{data = <<>>}) -> true;
+has_unwritable_field(#dns_rrdata_openpgpkey{data = <<>>}) -> true;
+has_unwritable_field(#dns_rrdata_nsec3{hash = <<>>}) -> true;
+has_unwritable_field(#dns_rrdata_hip{hit = <<>>}) -> true;
+has_unwritable_field(#dns_rrdata_hip{public_key = <<>>}) -> true;
+%% RFC4025§3.1 has no form for an IPSECKEY without a key, which BIND refuses in
+%% any form, but which dnspython reads in this one
+has_unwritable_field(#dns_rrdata_ipseckey{public_key = <<>>}) -> true;
+has_unwritable_field(_RData) -> false.

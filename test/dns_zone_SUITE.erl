@@ -23,7 +23,8 @@ groups() ->
             prop_encode_decode_roundtrip,
             prop_decode_encode_roundtrip,
             prop_encode_rr_idempotent,
-            prop_encode_rr_options
+            prop_encode_rr_options,
+            prop_writer_output_reads_back
         ]},
         {decoding_tests, [parallel], [
             {group, basic_records},
@@ -349,6 +350,8 @@ groups() ->
             parse_rrsig_record_date_times,
             parse_keeps_rdata_name_case,
             encode_keeps_rdata_name_case,
+            encode_presentation_formats,
+            encode_names_and_strings_read_back,
             parse_zonemd_record,
             parse_cds_record,
             parse_dlv_record,
@@ -1676,6 +1679,176 @@ encode_keeps_rdata_name_case(_Config) ->
                 #dns_rrdata_svcb{svc_priority = 1, target_name = ~"Svc.example.", svc_params = #{}},
                 #{origin => ~"example."}
             )
+        )
+    ).
+
+%% The writer writes each type as its RFC does, which BIND 9.20 reads, the RFCs'
+%% own examples as they write them
+encode_presentation_formats(_Config) ->
+    Text = fun(Type, Data) -> iolist_to_binary(dns_zone:encode_rdata(Type, Data)) end,
+    %% RFC7043§3.2, §4.2
+    ?assertEqual(
+        ~"00-00-5e-00-53-2a",
+        Text(?DNS_TYPE_EUI48, #dns_rrdata_eui48{address = <<0, 0, 16#5e, 0, 16#53, 16#2a>>})
+    ),
+    ?assertEqual(
+        ~"00-00-5e-ef-10-00-00-2a",
+        Text(?DNS_TYPE_EUI64, #dns_rrdata_eui64{
+            address = <<0, 0, 16#5e, 16#ef, 16#10, 0, 0, 16#2a>>
+        })
+    ),
+    %% RFC8659§4.1.1: a tag of letters and digits unquoted; others only dns_zone reads
+    ?assertEqual(
+        ~"0 issue \"ca.example.net\"",
+        Text(?DNS_TYPE_CAA, #dns_rrdata_caa{flags = 0, tag = ~"issue", value = ~"ca.example.net"})
+    ),
+    ?assertEqual(
+        ~"0 \"is sue\" \"x\"",
+        Text(?DNS_TYPE_CAA, #dns_rrdata_caa{flags = 0, tag = ~"is sue", value = ~"x"})
+    ),
+    %% RFC7553§4.4
+    ?assertEqual(
+        ~"10 1 \"ftp://ftp1.example.com/public\"",
+        Text(?DNS_TYPE_URI, #dns_rrdata_uri{
+            priority = 10, weight = 1, target = ~"ftp://ftp1.example.com/public"
+        })
+    ),
+    %% RFC5155§3.3: base32hex without padding
+    ?assertEqual(
+        ~"1 1 12 AABBCCDD 0410610 A",
+        Text(?DNS_TYPE_NSEC3, #dns_rrdata_nsec3{
+            hash_alg = 1,
+            opt_out = true,
+            iterations = 12,
+            salt = <<16#AA, 16#BB, 16#CC, 16#DD>>,
+            hash = <<1, 2, 3, 4>>,
+            types = [?DNS_TYPE_A]
+        })
+    ),
+    %% RFC1876§3, its first example
+    ?assertEqual(
+        ~"42 21 54.000 N 71 6 18.000 W -24.00m 30.00m 10000.00m 10.00m",
+        Text(?DNS_TYPE_LOC, #dns_rrdata_loc{
+            lat = 152514000,
+            lon = -255978000,
+            alt = -2400,
+            size = 3000,
+            horiz = 1000000,
+            vert = 1000
+        })
+    ),
+    %% RFC2535§7.2: SIG times as dates
+    ?assertMatch(
+        <<"A 5 2 3600 20300101000000 20000101000000 1 example. ", _/binary>>,
+        Text(?DNS_TYPE_SIG, #dns_rrdata_sig{
+            type_covered = ?DNS_TYPE_A,
+            alg = 5,
+            labels = 2,
+            original_ttl = 3600,
+            expiration = 1893456000,
+            inception = 946684800,
+            keytag = 1,
+            signers_name = ~"example.",
+            signature = <<1>>
+        })
+    ),
+    %% RFC9460 Appendix D.2's Figure 10
+    ?assertEqual(
+        ~B"""
+        16 foo.example.org. alpn="f\\\\oo\\,bar,h2"
+        """,
+        Text(?DNS_TYPE_SVCB, #dns_rrdata_svcb{
+            svc_priority = 16,
+            target_name = ~"foo.example.org.",
+            svc_params = #{?DNS_SVCB_PARAM_ALPN => [~B"f\oo,bar", ~"h2"]}
+        })
+    ),
+    %% RFC1035§5.1: \DDD for blanks and octets that are not printable, a backslash
+    %% before what a zone file reads otherwise, as BIND writes names
+    ?assertEqual(
+        ~B"""
+        a\032b\"\(\)\;\@\$\200.c\.d.example.
+        """,
+        Text(?DNS_TYPE_NS, #dns_rrdata_ns{dname = <<"a b\"();@$", 200, ".c\\.d.example.">>})
+    ),
+    %% RFC2535§3.1.2: a KEY whose flags say there is no key has none
+    ?assertEqual(
+        ~"49152 3 1",
+        Text(?DNS_TYPE_KEY, #dns_rrdata_key{
+            type = 3, xt = 0, name_type = 0, sig = 0, protocol = 3, alg = 1, public_key = <<>>
+        })
+    ),
+    %% RFC3597§5: a field no presentation format writes empty, in the generic form
+    ?assertEqual(
+        ~"\\# 4 30390802",
+        Text(?DNS_TYPE_DS, #dns_rrdata_ds{keytag = 12345, alg = 8, digest_type = 2, digest = <<>>})
+    ),
+    ?assertEqual(~"\\# 0", Text(?DNS_TYPE_TXT, #dns_rrdata_txt{txt = []})).
+
+%% What the writer wrote wrongly: a label a backslash ends in a dot, right under
+%% the origin, lost that dot, so the backslash escaped what followed it; names it
+%% was told not to make relative it wrote without their final dot, which a zone
+%% reads as relative to its origin, and the root as nothing; and a string over 255
+%% octets as one, which no other software reads
+encode_names_and_strings_read_back(_Config) ->
+    Origin = #{origin => ~"example."},
+    Escaped = #dns_rr{
+        name = ~B"a\..example.",
+        type = ?DNS_TYPE_CNAME,
+        ttl = 300,
+        data = #dns_rrdata_cname{dname = ~B"b\..example."}
+    },
+    ?assertEqual(~B"a\. 300 IN CNAME b\.", iolist_to_binary(dns_zone:encode_rr(Escaped, Origin))),
+    ?assertEqual(
+        {ok, [Escaped]},
+        dns_zone:parse_string(iolist_to_binary(dns_zone:encode_string([Escaped], Origin)))
+    ),
+    Records = [
+        #dns_rr{
+            name = ~"www.example",
+            type = ?DNS_TYPE_CNAME,
+            ttl = 300,
+            data = #dns_rrdata_cname{dname = ~"host.example"}
+        },
+        #dns_rr{
+            name = ~"example",
+            type = ?DNS_TYPE_MX,
+            ttl = 300,
+            data = #dns_rrdata_mx{preference = 0, exchange = <<>>}
+        }
+    ],
+    Zone = iolist_to_binary(
+        dns_zone:encode_string(Records, #{origin => ~"example.", relative_names => false})
+    ),
+    ?assertEqual(
+        ~"""
+        $ORIGIN example.
+        example. 300 IN MX 0 .
+        www.example. 300 IN CNAME host.example.
+
+        """,
+        Zone
+    ),
+    ?assertMatch(
+        {ok, [
+            #dns_rr{name = ~"example.", data = #dns_rrdata_mx{exchange = ~"."}},
+            #dns_rr{name = ~"www.example.", data = #dns_rrdata_cname{dname = ~"host.example."}}
+        ]},
+        dns_zone:parse_string(Zone)
+    ),
+    Long = binary:copy(~"a", 300),
+    ?assertEqual(
+        <<"\"", (binary:copy(~"a", 255))/binary, "\" \"", (binary:copy(~"a", 45))/binary,
+            "\" \"\"">>,
+        iolist_to_binary(dns_zone:encode_rdata(?DNS_TYPE_TXT, #dns_rrdata_txt{txt = [Long, <<>>]}))
+    ),
+    %% RFC4025§3.1 has no form for an IPSECKEY without a key
+    ?assertEqual(
+        ~"\\# 3 0A0000",
+        iolist_to_binary(
+            dns_zone:encode_rdata(?DNS_TYPE_IPSECKEY, #dns_rrdata_ipseckey{
+                precedence = 10, alg = 0, gateway = <<>>, public_key = <<>>
+            })
         )
     ).
 
@@ -5587,7 +5760,7 @@ encode_sig_record(_Config) ->
         signature = <<0, 1, 2, 3>>
     },
     ?assertEqual(
-        ~"A 5 2 3600 1613604280 1611185080 2642 example.com. AAECAw==",
+        ~"A 5 2 3600 20210217232440 20210120232440 2642 example.com. AAECAw==",
         iolist_to_binary(dns_zone:encode_rdata(?DNS_TYPE_SIG, Sig))
     ).
 
@@ -5708,8 +5881,10 @@ encode_loc_record(_Config) ->
             alt = 0
         }
     },
-    Line = dns_zone:encode_rr(RR),
-    ?assertNotEqual(nomatch, string:find(Line, "LOC")).
+    ?assertEqual(
+        ~"example.com. 3600 IN LOC 10 29 1.900 N 33 54 24.500 W 0.00m 10.00m 20.00m 30.00m",
+        iolist_to_binary(dns_zone:encode_rr(RR))
+    ).
 
 encode_ipseckey_record(_Config) ->
     RR = #dns_rr{
@@ -6496,6 +6671,9 @@ prop_decode_encode_roundtrip(_Config) ->
     run_prop(?FUNCTION_NAME, dns_zone_prop:prop_decode_encode_roundtrip(), 1000).
 
 %% Property: encode_rr should be idempotent
+prop_writer_output_reads_back(_Config) ->
+    run_prop(?FUNCTION_NAME, dns_zone_prop:prop_writer_output_reads_back(), 3000).
+
 prop_encode_rr_idempotent(_Config) ->
     run_prop(?FUNCTION_NAME, dns_zone_prop:prop_encode_rr_idempotent(), 1000).
 
@@ -8065,8 +8243,7 @@ parse_string_of_characters_past_255(_Config) ->
         dns_zone:parse_string("example. 0 IN TXT \"é\"\n")
     ).
 
-%% RFC4025§3.1: the gateway is what its type says, and the key may be left out,
-%% as the writer leaves out an empty one
+%% RFC4025§3.1: the gateway is what its type says, and the key may be left out
 parse_ipseckey_gateways(_Config) ->
     [
         ?assertEqual(
@@ -8086,7 +8263,6 @@ parse_ipseckey_gateways(_Config) ->
     ],
     NoKey = #dns_rrdata_ipseckey{precedence = 10, alg = 0, gateway = <<>>, public_key = <<>>},
     ?assertEqual(NoKey, parse_rdata(~"IPSECKEY 10 0 0 .")),
-    ?assertEqual(~"10 0 0 .", iolist_to_binary(dns_zone:encode_rdata(?DNS_TYPE_IPSECKEY, NoKey))),
     [
         ?assertMatch(#{type := semantic}, parse_rdata_error(<<"IPSECKEY ", Text/binary>>), Text)
      || Text <- [

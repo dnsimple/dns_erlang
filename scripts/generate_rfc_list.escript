@@ -83,6 +83,7 @@
     ~"9859" => ~"Generalized DNS Notifications",
     ~"6891" => ~"Extension Mechanisms for DNS (EDNS(0))",
     ~"8976" => ~"Message Digest for DNS Zones",
+    ~"8659" => ~"DNS Certification Authority Authorization (CAA) Resource Record",
     ~"5001" => ~"DNS Name Server Identifier (NSID) Option",
     ~"7871" => ~"Client Subnet in DNS Queries",
     ~"7873" => ~"Domain Name System (DNS) Cookies",

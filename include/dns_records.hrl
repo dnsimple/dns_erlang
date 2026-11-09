@@ -181,14 +181,16 @@
     exchange :: dns:dname()
 }).
 
+%% Latitude and longitude are signed offsets from the equator and the prime
+%% meridian, in thousandths of a second of arc, and altitude is signed centimetres.
 %% LOC record for geographical location. See RFC 1876: §2.
 -record(dns_rrdata_loc, {
     size :: integer(),
     horiz :: integer(),
     vert :: integer(),
-    lat :: dns:uint32(),
-    lon :: dns:uint32(),
-    alt :: dns:uint32()
+    lat :: integer(),
+    lon :: integer(),
+    alt :: integer()
 }).
 
 %% MB record for mailbox domain name. See RFC 1035: §3.3.3.

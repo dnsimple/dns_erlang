@@ -274,8 +274,8 @@ to_zone_list(SvcParams, Acc, EscapeFun) ->
                 KeyNames = [svcb_param_name(K) || K <- Keys],
                 [[~"mandatory=\"", join_with_separator(~",", KeyNames), ~"\""] | Acc0];
             ({?DNS_SVCB_PARAM_ALPN, Protocols}, Acc0) ->
-                AlpnStr = encode_alpn_list(zone, Protocols),
-                [[~"alpn=\"", AlpnStr, ~"\""] | Acc0];
+                AlpnStr = iolist_to_binary(encode_alpn_list(zone, Protocols)),
+                [[~"alpn=", EscapeFun(AlpnStr)] | Acc0];
             ({?DNS_SVCB_PARAM_NO_DEFAULT_ALPN, none}, Acc0) ->
                 [~"no-default-alpn" | Acc0];
             ({?DNS_SVCB_PARAM_PORT, Port}, Acc0) ->
@@ -430,7 +430,16 @@ encode_unknown_key(_, _KeyNum, Value, _) ->
 encode_alpn_list(wire, Protocols) ->
     <<<<(alpn_id_size(P)):8, P/binary>> || P <- Protocols>>;
 encode_alpn_list(zone, Protocols) ->
-    join_with_separator(~",", Protocols).
+    %% RFC9460 Appendix A.1: a comma or a backslash within an alpn-id is escaped
+    join_with_separator(~",", [escape_alpn_id(P, <<>>) || P <- Protocols]).
+
+-spec escape_alpn_id(binary(), binary()) -> binary().
+escape_alpn_id(<<C, Rest/binary>>, Acc) when C =:= $,; C =:= $\\ ->
+    escape_alpn_id(Rest, <<Acc/binary, $\\, C>>);
+escape_alpn_id(<<C, Rest/binary>>, Acc) ->
+    escape_alpn_id(Rest, <<Acc/binary, C>>);
+escape_alpn_id(<<>>, Acc) ->
+    Acc.
 
 -spec decode_alpn_list(wire, binary()) -> [binary()].
 decode_alpn_list(wire, Bin) when is_binary(Bin) ->
