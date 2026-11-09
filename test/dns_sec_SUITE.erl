@@ -76,6 +76,7 @@ groups() ->
             sign_rr_groups_owner_names_as_names,
             sign_only_rrsets_the_signer_holds,
             sign_only_labels_the_signer_can_hold,
+            sign_rejects_expiration_before_inception,
             add_keytag_to_cdnskey_test,
             keytag_known_answers,
             keytag_rsamd5,
@@ -2839,6 +2840,31 @@ sign_rr_groups_owner_names_as_names(_Config) ->
     ],
     %% Other owners are other RRsets
     ?assertMatch([_, _], Sign([A(~"www.example", 1), A(~"ftp.example.", 2)])).
+
+%% RFC4034§3.1.5: inception and expiration compare in serial number arithmetic, which reads a
+%% period of 2^31 seconds or more as an expiration before the inception. An RRSIG with either
+%% never verifies, so sign_rrset/6 refuses them, where it signed them.
+sign_rejects_expiration_before_inception(_Config) ->
+    {_Pub, Priv} = crypto:generate_key(eddsa, ed25519),
+    A = #dns_rr{
+        name = ~"www.example",
+        type = ?DNS_TYPE_A,
+        class = ?DNS_CLASS_IN,
+        ttl = 3600,
+        data = #dns_rrdata_a{ip = {192, 0, 2, 1}}
+    },
+    Sign = fun(Opts) -> dns_sec:sign_rrset([A], ~"example", 1, ?DNS_ALG_ED25519, Priv, Opts) end,
+    Period = fun(Incept, Expire) -> #{inception => Incept, expiration => Expire} end,
+    Before = {badarg, expiration_before_inception},
+    ?assertError(Before, Sign(Period(2000000, 1999999))),
+    ?assertError(Before, Sign(Period(1000000, 1000000 + (1 bsl 31)))),
+    ?assertMatch(#dns_rr{type = ?DNS_TYPE_RRSIG}, Sign(Period(1000000, 1000000))),
+    ?assertMatch(#dns_rr{type = ?DNS_TYPE_RRSIG}, Sign(Period(1000000, 1000000 + (1 bsl 31) - 1))),
+    %% Across 2^32, as in 2106, the period is 200 seconds
+    ?assertMatch(#dns_rr{type = ?DNS_TYPE_RRSIG}, Sign(Period((1 bsl 32) - 100, (1 bsl 32) + 100))),
+    %% An inception after the default expiration, a year from now
+    Later = erlang:system_time(second) + 2 * 365 * 86400,
+    ?assertError(Before, Sign(#{inception => Later})).
 
 ed25519_basic_test(_Config) ->
     {Ed25519Pub, Ed25519Priv} = crypto:generate_key(eddsa, ed25519),

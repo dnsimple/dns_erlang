@@ -450,7 +450,8 @@ sign_rrset(RRSet, SignerName, KeyTag, Alg, Key) ->
 -doc """
 Signs a list of `t:dns:rr/0` of the same class and type.
 
-Raises:
+The validity period is `inception` and `expiration` in `Opts`, by default the current time and a
+year after it. Raises:
 
 - `{badarg, rrsig_rrset}` for an RRSIG RRset, which RFC 4035 §2.2 never signs;
 - `{badarg, mixed_rrset}` for records of more than one RRset, of another owner name, class or type
@@ -460,6 +461,9 @@ Raises:
   RRset, which RFC 4035 §2.2 leaves unsigned; an NSEC3 RRset not one label under it; a DS RRset not
   under it; any other not at it or under it; and an owner with fewer labels than the signer, not
   counting a leading `*`, as the apex of a zone whose name starts with `*`;
+- `{badarg, expiration_before_inception}` for a period whose expiration is before its inception
+  in serial number arithmetic (RFC 4034 §3.1.5), which reads a period of 2^31 seconds or more
+  that way too, as no RRSIG with one verifies;
 - `{badarg, Why}` for an RSA or DSA private key whose public key no DNSKEY of the algorithm can
   carry, `Why` as `dnskey_public_key/2` names it, such as `{rsa_modulus_bits, Bits}` for an RSA
   modulus that is not 512 to 4096 bits long, or 1024 to 4096 for RSA/SHA-512;
@@ -491,6 +495,9 @@ sign_rrset(
     Incept = maps:get(inception, Opts, Now),
     %% 1 year
     Expire = maps:get(expiration, Opts, Now + ?SECS_IN_YEAR),
+    %% RFC4034§3.1.5, RFC1982: the two compare as 32-bit serial numbers
+    (Expire - Incept) band 16#FFFFFFFF < 16#80000000 orelse
+        erlang:error({badarg, expiration_before_inception}),
     {Data0, BaseSigInput} = build_sig_input(RRs, SignersName, KeyTag, Alg, Incept, Expire),
     Signature = sign(Alg, BaseSigInput, Key),
     Data = Data0#dns_rrdata_rrsig{signature = Signature},
