@@ -551,6 +551,7 @@ groups() ->
             parse_algorithm_mnemonics,
             parse_refuses_malformed_fields,
             parse_owner_spelled_as_any_type,
+            parse_owner_that_reads_as_a_ttl,
             parse_string_of_characters_past_255,
             parse_ipseckey_gateways
         ]},
@@ -8098,3 +8099,47 @@ parse_ipseckey_gateways(_Config) ->
             ~"10 2 192.0.2.38 1234"
         ]
     ].
+
+%% RFC1035§5.1: a line that does not start with a blank starts with its owner. The
+%% parser took a number first for a TTL, and so refused the reverse zone the writer
+%% writes, whose owners are 1, 2 and so on before their TTL. Where the line reads
+%% with that first number as a TTL, as "3600 IN A ..." does, it still is one.
+parse_owner_that_reads_as_a_ttl(_Config) ->
+    PTR = fun(Owner, Host) ->
+        #dns_rr{
+            name = Owner,
+            type = ?DNS_TYPE_PTR,
+            ttl = 3600,
+            data = #dns_rrdata_ptr{dname = Host}
+        }
+    end,
+    Records = [
+        PTR(~"1.2.0.192.in-addr.arpa.", ~"one.example."),
+        PTR(~"2.2.0.192.in-addr.arpa.", ~"two.example.")
+    ],
+    Zone = iolist_to_binary(dns_zone:encode_string(Records, #{origin => ~"2.0.192.in-addr.arpa."})),
+    ?assertEqual(
+        ~"$ORIGIN 2.0.192.in-addr.arpa.\n1 3600 IN PTR one.example.\n2 3600 IN PTR two.example.\n",
+        Zone
+    ),
+    ?assertEqual({ok, Records}, dns_zone:parse_string(Zone)),
+    {ok, [Zero, Hour, Previous]} = dns_zone:parse_string(
+        ~"""
+        0 0 IN A 192.0.2.1
+        1h 60 A 192.0.2.2
+        3600 IN A 192.0.2.3
+        """
+    ),
+    ?assertMatch(#dns_rr{name = ~"0", ttl = 0}, Zero),
+    ?assertMatch(#dns_rr{name = ~"1h", ttl = 60}, Hour),
+    ?assertMatch(#dns_rr{name = ~"1h", ttl = 3600}, Previous),
+    %% A line that starts with a blank keeps the owner before it
+    ?assertMatch(
+        {error, #{type := parser}},
+        dns_zone:parse_string(~"www.example. 0 IN A 192.0.2.1\n 1 3600 IN A 192.0.2.2\n")
+    ),
+    %% And an error is the one the first reading gives
+    ?assertMatch(
+        {error, #{message := <<"Parse error: expected a TTL, a class or a type: 3600">>}},
+        dns_zone:parse_string(~"1 3600 3600 A 192.0.2.1\n")
+    ).

@@ -102,6 +102,10 @@
 %% with the line it starts on
 -type field() :: {word | quoted, binary(), pos_integer()}.
 -type patterns() :: {binary:cp(), binary:cp(), binary:cp()}.
+%% A record's TTL and class, if given, its type, as a number and as written, and
+%% its RDATA's fields
+-type header() ::
+    {dns:ttl() | undefined, dns:class() | undefined, dns:type(), binary(), [field()]}.
 -type entry() ::
     {rr, dns:rr(), ctx()}
     | {rrs, [dns:rr()], ctx()}
@@ -202,8 +206,8 @@ entries(Bin, Pos, Line, Ctx, Acc, Patterns) ->
     case next_entry(Bin, Pos, Line, Patterns) of
         eof ->
             {ok, lists:reverse(Acc)};
-        {Start, Fields, Next, NextLine} ->
-            case entry(Start, Fields, Ctx) of
+        {Start, Blank, Fields, Next, NextLine} ->
+            case entry(Start, Blank, Fields, Ctx) of
                 {rr, RR, Ctx1} ->
                     entries(Bin, Next, NextLine, Ctx1, [RR | Acc], Patterns);
                 {rrs, RRs, Ctx1} ->
@@ -222,8 +226,8 @@ entries(Bin, Pos, Line, Ctx, Acc, Patterns) ->
                 error_detail(parser, Message, undefined, {parser_error, Reason}, ErrorLine, Ctx)}
     end.
 
--spec entry(pos_integer(), [field(), ...], ctx()) -> entry().
-entry(Line, [{word, <<$$, _/binary>> = Name, _} | Args], Ctx) ->
+-spec entry(pos_integer(), boolean(), [field(), ...], ctx()) -> entry().
+entry(Line, _Blank, [{word, <<$$, _/binary>> = Name, _} | Args], Ctx) ->
     try
         directive(dns_domain:to_upper(Name), Args, Ctx)
     catch
@@ -231,9 +235,9 @@ entry(Line, [{word, <<$$, _/binary>> = Name, _} | Args], Ctx) ->
             Message = <<"Parse error: ", (reason_text(Reason))/binary>>,
             {error, error_detail(parser, Message, undefined, {parser_error, Reason}, Line, Ctx)}
     end;
-entry(Line, Fields, Ctx) ->
+entry(Line, Blank, Fields, Ctx) ->
     try
-        RR = record(Fields, Ctx),
+        RR = record(Blank, Fields, Ctx),
         {rr, RR, Ctx#ctx{last_owner = RR#dns_rr.name}}
     catch
         error:{?MODULE, {rdata_error, Message, Suggestion, Details}} ->
@@ -283,10 +287,9 @@ include(File, Origin, #ctx{base_dir = BaseDir} = Ctx) ->
 %% RFC1035§5.1: an owner, or none for the owner of the previous record, then
 %% [<TTL>] [<class>] <type> <RDATA>, TTL and class in either order. Owner names are
 %% lowercased; the names in RDATA keep their case.
--spec record([field(), ...], ctx()) -> dns:rr().
-record(Fields0, Ctx) ->
-    {Owner, Fields1} = owner(Fields0, Ctx),
-    {TTL, Class0, Type, Mnemonic, RDataFields} = header(Fields1, undefined, undefined),
+-spec record(boolean(), [field(), ...], ctx()) -> dns:rr().
+record(Blank, Fields, Ctx) ->
+    {Owner, {TTL, Class0, Type, Mnemonic, RDataFields}} = owner_and_header(Blank, Fields, Ctx),
     RDataFields =:= [] andalso ?FAIL({no_rdata, Mnemonic}),
     Class = default(Class0, Ctx#ctx.default_class),
     RR = #dns_rr{
@@ -326,6 +329,29 @@ owner([{word, Word, _} = Name | Rest] = Fields, Ctx) ->
     end;
 owner([{quoted, Text, _} | _], _Ctx) ->
     ?FAIL({quoted_owner, Text}).
+
+%% RFC1035§5.1: a line that does not start with a blank starts with its owner. Where
+%% the reading above takes its first field for a TTL, a class or a type and the
+%% rest does not read as a record's start, the first field is read as the owner,
+%% so that the 1 of a reverse zone, which the writer writes before its TTL, is
+%% an owner.
+-spec owner_and_header(boolean(), [field(), ...], ctx()) -> {dns:dname(), header()}.
+owner_and_header(Blank, [First | Rest] = Fields, Ctx) ->
+    case owner(Fields, Ctx) of
+        {Owner, Fields} when not Blank ->
+            try
+                {Owner, header(Fields, undefined, undefined)}
+            catch
+                error:{?MODULE, _} = Error:Stack ->
+                    try
+                        {dns_domain:to_lower(name(First, Ctx)), header(Rest, undefined, undefined)}
+                    catch
+                        error:{?MODULE, _} -> erlang:raise(error, Error, Stack)
+                    end
+            end;
+        {Owner, Remaining} ->
+            {Owner, header(Remaining, undefined, undefined)}
+    end.
 
 -spec word_kind(binary()) -> ttl | class | type | generic_type | name.
 word_kind(Word) ->
@@ -438,8 +464,7 @@ lexer_type(Word) when byte_size(Word) =< 10 ->
 lexer_type(_Word) ->
     name.
 
--spec header([field()], dns:ttl() | undefined, dns:class() | undefined) ->
-    {dns:ttl() | undefined, dns:class() | undefined, dns:type(), binary(), [field()]}.
+-spec header([field()], dns:ttl() | undefined, dns:class() | undefined) -> header().
 header([{word, Word, _} | Rest], TTL, Class) ->
     case classify(Word) of
         {ttl, Value} when TTL =:= undefined -> header(Rest, Value, Class);
@@ -516,15 +541,15 @@ generic_number(Number, TooLarge) ->
 %% Splitting entries into fields
 %% ============================================================================
 
-%% The fields of the next entry, the line its first field is on, and where the
-%% entry after it starts. Lines with no fields, blank or with only a comment, are
-%% skipped. The source is read by offset, without taking what follows a field as
-%% a binary of its own: each such binary would hold the whole source, and count it
-%% towards the process heap, so that the garbage collector would run every few
-%% fields.
+%% The fields of the next entry, the line its first field is on, whether that line
+%% starts with a blank, and where the entry after it starts. Lines with no fields,
+%% blank or with only a comment, are skipped. The source is read by offset, without
+%% taking what follows a field as a binary of its own: each such binary would hold
+%% the whole source, and count it towards the process heap, so that the garbage
+%% collector would run every few fields.
 -spec next_entry(binary(), non_neg_integer(), pos_integer(), patterns()) ->
     eof
-    | {pos_integer(), [field(), ...], non_neg_integer(), pos_integer()}
+    | {pos_integer(), boolean(), [field(), ...], non_neg_integer(), pos_integer()}
     | {error, term(), pos_integer()}.
 next_entry(Bin, Pos, _Line, _Patterns) when Pos >= byte_size(Bin) ->
     eof;
@@ -533,7 +558,8 @@ next_entry(Bin, Pos, Line, Patterns) ->
         {ok, [], Next, NextLine} ->
             next_entry(Bin, Next, NextLine, Patterns);
         {ok, [{_, _, Start} | _] = Fields, Next, NextLine} ->
-            {Start, Fields, Next, NextLine};
+            Blank = binary:at(Bin, Pos) =:= $\s orelse binary:at(Bin, Pos) =:= $\t,
+            {Start, Blank, Fields, Next, NextLine};
         {error, unclosed_parenthesis, _End} ->
             {error, unclosed_parenthesis, Line};
         {error, _, _} = Error ->
