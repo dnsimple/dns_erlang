@@ -17,6 +17,9 @@
 -define(IS_DIGIT(C), ($0 =< C andalso C =< $9)).
 %% A field a reader cannot read, or an entry a zone file cannot hold
 -define(FAIL(Reason), erlang:error({?MODULE, Reason})).
+%% No field holds a larger number, and reading digits past it, one at a time, would
+%% take time quadratic in their count
+-define(MAX_NUMBER, 16#FFFFFFFFFFFFFFFF).
 %% RFC1876§3: the size and precisions a LOC record has when they are left out, in cm
 -define(LOC_DEFAULT_SIZE, 100).
 -define(LOC_DEFAULT_HORIZ, 1000000).
@@ -131,7 +134,23 @@ parse_file(Filename, Options) ->
 parse_string(Data, Options) when is_binary(Data) ->
     parse(Data, Options);
 parse_string(Data, Options) when is_list(Data) ->
-    parse(chars_to_binary(Data), Options).
+    case chars_to_binary(Data) of
+        {ok, Bin} ->
+            parse(Bin, Options);
+        {error, Read} ->
+            Line = 1 + length(binary:matches(Read, ~"\n")),
+            Location =
+                case Options of
+                    #{filename := File} -> #{line => Line, file => File};
+                    _ -> #{line => Line}
+                end,
+            {error, #{
+                type => lexer,
+                message => ~"Lexical error: not a character",
+                details => {lexer_error, not_a_character},
+                location => Location
+            }}
+    end.
 
 -spec format_error(dns_zone:error_detail()) -> iolist().
 format_error(#{type := Type, message := Message} = Error) ->
@@ -152,16 +171,19 @@ format_error(#{type := Type, message := Message} = Error) ->
 %% ============================================================================
 
 %% A list of characters up to 255 is a string of octets, as it was before
-%% binaries were read; one with characters past 255 is read as UTF-8
--spec chars_to_binary(string()) -> binary().
+%% binaries were read; one with characters past 255 is read as UTF-8. Otherwise,
+%% what reads before the first element that is not a character.
+-spec chars_to_binary(string()) -> {ok, binary()} | {error, binary()}.
 chars_to_binary(Data) ->
     try
-        iolist_to_binary(Data)
+        {ok, iolist_to_binary(Data)}
     catch
         error:badarg ->
-            case unicode:characters_to_binary(Data) of
-                Bin when is_binary(Bin) -> Bin;
-                _ -> erlang:error(badarg, [Data])
+            try unicode:characters_to_binary(Data) of
+                Bin when is_binary(Bin) -> {ok, Bin};
+                {_, Read, _} -> {error, Read}
+            catch
+                error:badarg -> {error, <<>>}
             end
     end.
 
@@ -229,7 +251,7 @@ entries(Bin, Pos, Line, Ctx, Acc, Patterns) ->
 -spec entry(pos_integer(), boolean(), [field(), ...], ctx()) -> entry().
 entry(Line, _Blank, [{word, <<$$, _/binary>> = Name, _} | Args], Ctx) ->
     try
-        directive(dns_domain:to_upper(Name), Args, Ctx)
+        directive(dns_domain:to_upper(Name), Args, Line, Ctx)
     catch
         error:{?MODULE, Reason} ->
             Message = <<"Parse error: ", (reason_text(Reason))/binary>>,
@@ -249,39 +271,52 @@ entry(Line, Blank, Fields, Ctx) ->
 
 %% RFC1035§5.1 directives, and RFC2308§4's $TTL. BIND's $GENERATE is accepted and
 %% generates nothing.
--spec directive(binary(), [field()], ctx()) -> entry().
-directive(~"$ORIGIN", [Name], Ctx) ->
+-spec directive(binary(), [field()], pos_integer(), ctx()) -> entry().
+directive(~"$ORIGIN", [Name], _Line, Ctx) ->
     Origin = fqdn(name(Name, Ctx)),
     {ctx, Ctx#ctx{origin = Origin, last_owner = Origin}};
-directive(~"$TTL", [TTL], Ctx) ->
-    {ctx, Ctx#ctx{default_ttl = ttl(TTL)}};
-directive(~"$INCLUDE", [File], Ctx) ->
-    include(text(File), Ctx#ctx.origin, Ctx);
-directive(~"$INCLUDE", [File, Origin], Ctx) ->
-    include(text(File), fqdn(name(Origin, Ctx)), Ctx);
-directive(~"$GENERATE", _Args, Ctx) ->
+directive(~"$TTL", [Field], _Line, Ctx) ->
+    %% RFC2181§8
+    TTL = ttl(Field),
+    TTL =< 16#7FFFFFFF orelse ?FAIL({out_of_range, ~"TTL", TTL}),
+    {ctx, Ctx#ctx{default_ttl = TTL}};
+directive(~"$INCLUDE", [File], Line, Ctx) ->
+    include(text(File), Ctx#ctx.origin, Line, Ctx);
+directive(~"$INCLUDE", [File, Origin], Line, Ctx) ->
+    include(text(File), fqdn(name(Origin, Ctx)), Line, Ctx);
+directive(~"$GENERATE", _Args, _Line, Ctx) ->
     {ctx, Ctx};
-directive(Name, Args, _Ctx) ->
+directive(Name, Args, _Line, _Ctx) ->
     ?FAIL({bad_directive, Name, length(Args)}).
 
-%% RFC1035§5.1: the origin of the parent file is not changed by the included file
--spec include(binary(), dns:dname(), ctx()) -> entry().
-include(File, Origin, #ctx{base_dir = BaseDir} = Ctx) ->
+%% RFC1035§5.1: the origin of the parent file is not changed by the included file.
+%% A file that cannot be read is an error on the line of the $INCLUDE. An error
+%% within the file gives its line there, but not the text of that line: a zone
+%% can include any file, which need not be one to show.
+-spec include(binary(), dns:dname(), pos_integer(), ctx()) -> entry().
+include(File, Origin, Line, #ctx{base_dir = BaseDir} = Ctx) ->
     Path =
         case BaseDir of
             "" -> File;
             <<>> -> File;
             _ -> filename:join(BaseDir, File)
         end,
-    Options = #{
-        origin => Origin,
-        default_ttl => Ctx#ctx.default_ttl,
-        default_class => Ctx#ctx.default_class,
-        base_dir => BaseDir
-    },
-    case parse_file(Path, Options) of
-        {ok, RRs} -> {rrs, RRs, Ctx};
-        {error, _} = Error -> Error
+    case file:read_file(Path) of
+        {ok, Bin} ->
+            Options = #{
+                origin => Origin,
+                default_ttl => Ctx#ctx.default_ttl,
+                default_class => Ctx#ctx.default_class,
+                base_dir => filename:dirname(Path),
+                filename => Path
+            },
+            case parse(Bin, Options) of
+                {ok, RRs} -> {rrs, RRs, Ctx};
+                {error, Error} -> {error, maps:remove(context, Error)}
+            end;
+        {error, Reason} ->
+            #{message := Message} = file_error(Path, Reason),
+            {error, error_detail(file, Message, undefined, {file_error, Reason}, Line, Ctx)}
     end.
 
 %% RFC1035§5.1: an owner, or none for the owner of the previous record, then
@@ -554,8 +589,8 @@ type_number(Mnemonic) ->
 generic_number(Number, TooLarge) ->
     case digits(Number) of
         true ->
-            case binary_to_integer(Number) of
-                N when N =< 16#FFFF -> N;
+            case number(Number) of
+                N when is_integer(N), N =< 16#FFFF -> N;
                 _ -> TooLarge
             end;
         false ->
@@ -596,7 +631,7 @@ next_entry(Bin, Pos, Line, Patterns) ->
 -spec patterns() -> patterns().
 patterns() ->
     {
-        binary:compile_pattern([~" ", ~"\t", ~"\r", ~"\n", ~";", ~"(", ~")", ~"\"", ~"\\", ~"="]),
+        binary:compile_pattern([~" ", ~"\t", ~"\r", ~"\n", ~";", ~"(", ~")", ~"\"", ~"\\"]),
         binary:compile_pattern([~"\"", ~"\\", ~"\n"]),
         binary:compile_pattern(~"\n")
     }.
@@ -636,13 +671,9 @@ fields(Bin, Pos, Line, Depth, Acc, Patterns) ->
                     {error, unterminated_string, Line}
             end;
         _ ->
-            case word_end(Bin, Pos, Line, Patterns) of
-                {End, Next} ->
-                    Word = binary:part(Bin, Pos, End - Pos),
-                    fields(Bin, End, Next, Depth, [{word, Word, Line} | Acc], Patterns);
-                error ->
-                    {error, unterminated_string, Line}
-            end
+            {End, Next} = word_end(Bin, Pos, Line, Patterns),
+            Word = binary:part(Bin, Pos, End - Pos),
+            fields(Bin, End, Next, Depth, [{word, Word, Line} | Acc], Patterns)
     end.
 
 %% Where the pattern is next found from Pos, or the end of the source
@@ -655,11 +686,9 @@ find(Bin, Pos, Pattern) ->
     end.
 
 %% A word ends at a blank, a parenthesis, a semicolon, a quote or the end of the
-%% line, and a backslash escapes the character after it. A quote right after an
-%% equals sign quotes what follows it up to the next one within the word, so that
-%% an SVCB parameter key="a value" is one field.
+%% line, and a backslash escapes the character after it
 -spec word_end(binary(), non_neg_integer(), pos_integer(), patterns()) ->
-    {non_neg_integer(), pos_integer()} | error.
+    {non_neg_integer(), pos_integer()}.
 word_end(Bin, Pos, Line, {WordStops, _, _} = Patterns) ->
     Size = byte_size(Bin),
     case find(Bin, Pos, WordStops) of
@@ -674,24 +703,9 @@ word_end(Bin, Pos, Line, {WordStops, _, _} = Patterns) ->
                         $\n -> word_end(Bin, Stop + 2, Line + 1, Patterns);
                         _ -> word_end(Bin, Stop + 2, Line, Patterns)
                     end;
-                $= when Stop + 1 < Size ->
-                    case binary:at(Bin, Stop + 1) of
-                        $" -> equals_quoted_end(Bin, Stop + 2, Line, Patterns);
-                        _ -> word_end(Bin, Stop + 1, Line, Patterns)
-                    end;
-                $= ->
-                    {Size, Line};
                 _ ->
                     {Stop, Line}
             end
-    end.
-
--spec equals_quoted_end(binary(), non_neg_integer(), pos_integer(), patterns()) ->
-    {non_neg_integer(), pos_integer()} | error.
-equals_quoted_end(Bin, Pos, Line, Patterns) ->
-    case quoted_end(Bin, Pos, Line, Patterns) of
-        {End, Next} -> word_end(Bin, End + 1, Next, Patterns);
-        error -> error
     end.
 
 %% A quoted string ends at the next quote a backslash does not escape, and may
@@ -1069,8 +1083,8 @@ loc(Fields) ->
 
 -spec loc_rfc1876([binary()]) -> dns:rrdata().
 loc_rfc1876(Words) ->
-    {Lat, Rest1} = loc_coordinate(Words, [], ~"N", ~"S"),
-    {Lon, Rest2} = loc_coordinate(Rest1, [], ~"E", ~"W"),
+    {Lat, Rest1} = loc_coordinate(Words, [], {~"N", ~"S", 90}),
+    {Lon, Rest2} = loc_coordinate(Rest1, [], {~"E", ~"W", 180}),
     case Rest2 of
         [Alt | Precisions] ->
             {Size, Horiz, Vert} = loc_precisions(Precisions),
@@ -1083,26 +1097,35 @@ loc_rfc1876(Words) ->
 
 %% Degrees, and minutes and seconds if given, to thousandths of a second of arc,
 %% negative to the south and the west
--spec loc_coordinate([binary()], [binary()], binary(), binary()) -> {integer(), [binary()]}.
-loc_coordinate([Word | Rest], Parts, Positive, Negative) when Parts =/= [] ->
+-spec loc_coordinate([binary()], [binary()], {binary(), binary(), 90 | 180}) ->
+    {integer(), [binary()]}.
+loc_coordinate([Word | Rest], Parts, {Positive, Negative, MaxDegrees} = Axis) when Parts =/= [] ->
     case dns_domain:to_upper(Word) of
-        Positive -> {loc_angle(lists:reverse(Parts)), Rest};
-        Negative -> {-loc_angle(lists:reverse(Parts)), Rest};
-        _ when length(Parts) < 3 -> loc_coordinate(Rest, [Word | Parts], Positive, Negative);
+        Positive -> {loc_angle(lists:reverse(Parts), MaxDegrees), Rest};
+        Negative -> {-loc_angle(lists:reverse(Parts), MaxDegrees), Rest};
+        _ when length(Parts) < 3 -> loc_coordinate(Rest, [Word | Parts], Axis);
         _ -> ?FAIL(malformed)
     end;
-loc_coordinate([Word | Rest], [], Positive, Negative) ->
-    loc_coordinate(Rest, [Word], Positive, Negative);
-loc_coordinate([], _Parts, _Positive, _Negative) ->
+loc_coordinate([Word | Rest], [], Axis) ->
+    loc_coordinate(Rest, [Word], Axis);
+loc_coordinate([], _Parts, _Axis) ->
     ?FAIL(malformed).
 
--spec loc_angle([binary()]) -> non_neg_integer().
-loc_angle([Degrees]) ->
-    decimal(Degrees, 0) * 3600000;
-loc_angle([Degrees, Minutes]) ->
-    decimal(Degrees, 0) * 3600000 + decimal(Minutes, 0) * 60000;
-loc_angle([Degrees, Minutes, Seconds]) ->
-    decimal(Degrees, 0) * 3600000 + decimal(Minutes, 0) * 60000 + decimal(Seconds, 3).
+%% RFC1876§3: whole degrees, up to 90 of latitude and 180 of longitude, whole
+%% minutes below 60, and seconds below 60 with at most three decimals
+-spec loc_angle([binary()], 90 | 180) -> non_neg_integer().
+loc_angle([Degrees | MinutesSeconds] = Parts, MaxDegrees) ->
+    {Minutes, Seconds} =
+        case MinutesSeconds of
+            [] -> {0, 0};
+            [M] -> {decimal(M, 0), 0};
+            [M, S] -> {decimal(M, 0), decimal(S, 3)}
+        end,
+    Angle = decimal(Degrees, 0) * 3600000 + Minutes * 60000 + Seconds,
+    case Minutes < 60 andalso Seconds < 60000 andalso Angle =< MaxDegrees * 3600000 of
+        true -> Angle;
+        false -> ?FAIL({bad_coordinate, iolist_to_binary(lists:join(~" ", Parts))})
+    end.
 
 -spec loc_precisions([binary()]) -> {integer(), integer(), integer()}.
 loc_precisions([]) ->
@@ -1129,7 +1152,8 @@ loc_cm(Word) ->
 signed_decimal(<<$-, Number/binary>>, Scale) -> -decimal(Number, Scale);
 signed_decimal(Number, Scale) -> decimal(Number, Scale).
 
-%% A decimal number in units of 10^-Scale, rounded to the nearest
+%% A decimal number with at most Scale decimals, in units of 10^-Scale, as BIND
+%% reads the numbers of a LOC record
 -spec decimal(binary(), non_neg_integer()) -> non_neg_integer().
 decimal(Text, Scale) ->
     {Int, Frac} =
@@ -1137,31 +1161,41 @@ decimal(Text, Scale) ->
             [I] -> {I, <<>>};
             [I, F] -> {I, F}
         end,
-    case {digits(Int), Frac =:= <<>> orelse digits(Frac)} of
-        {true, true} ->
-            Unit = pow10(Scale),
-            Fraction =
-                case byte_size(Frac) of
-                    0 ->
-                        0;
-                    Digits when Digits =< Scale ->
-                        binary_to_integer(Frac) * pow10(Scale - Digits);
-                    Digits ->
-                        Divisor = pow10(Digits - Scale),
-                        (binary_to_integer(Frac) + Divisor div 2) div Divisor
-                end,
-            binary_to_integer(Int) * Unit + Fraction;
-        _ ->
-            ?FAIL({not_a_number, Text})
+    Padding = Scale - byte_size(Frac),
+    case Padding >= 0 andalso digits(Int) andalso (Frac =:= <<>> orelse digits(Frac)) of
+        true ->
+            case number(<<Int/binary, Frac/binary, (binary:copy(~"0", Padding))/binary>>) of
+                error -> ?FAIL({not_a_number, Text});
+                Number -> Number
+            end;
+        false ->
+            ?FAIL({bad_decimal, Text, Scale})
     end.
 
 -spec digits(binary()) -> boolean().
 digits(<<>>) -> false;
-digits(Text) -> lists:all(fun(C) -> ?IS_DIGIT(C) end, binary_to_list(Text)).
+digits(Text) -> all_digits(Text).
 
--spec pow10(non_neg_integer()) -> pos_integer().
-pow10(0) -> 1;
-pow10(N) -> 10 * pow10(N - 1).
+-spec all_digits(binary()) -> boolean().
+all_digits(<<C, Rest/binary>>) when ?IS_DIGIT(C) -> all_digits(Rest);
+all_digits(<<>>) -> true;
+all_digits(_) -> false.
+
+%% Digits as a number, or error when there are none, or more than ?MAX_NUMBER holds
+-spec number(binary()) -> non_neg_integer() | error.
+number(<<>>) -> error;
+number(Text) -> number(Text, 0).
+
+-spec number(binary(), non_neg_integer()) -> non_neg_integer() | error.
+number(<<C, Rest/binary>>, Acc) when ?IS_DIGIT(C) ->
+    case Acc * 10 + (C - $0) of
+        Number when Number =< ?MAX_NUMBER -> number(Rest, Number);
+        _ -> error
+    end;
+number(<<>>, Acc) ->
+    Acc;
+number(_, _Acc) ->
+    error.
 
 -spec signed_integer(binary()) -> integer() | error.
 signed_integer(<<$-, C, _/binary>> = Text) when ?IS_DIGIT(C) -> to_integer(Text);
@@ -1227,6 +1261,8 @@ escaped_name(<<$\\, A, B, C, Rest/binary>>, Text, Acc, Len) when
         Octet when Octet =< 255 -> escaped_name(Rest, Text, label_octet(Octet, Acc), Len + 1);
         _ -> ?FAIL({bad_escape, Text})
     end;
+escaped_name(<<$\\, D, _/binary>>, Text, _Acc, _Len) when ?IS_DIGIT(D) ->
+    ?FAIL({bad_escape, Text});
 escaped_name(<<$\\, C, Rest/binary>>, Text, Acc, Len) ->
     escaped_name(Rest, Text, label_octet(C, Acc), Len + 1);
 escaped_name(<<$\\>>, Text, _Acc, _Len) ->
@@ -1258,13 +1294,9 @@ fqdn(Name) ->
 
 %% RFC1035§5.1: a <character-string>, quoted or not. \DDD is the octet DDD and \X
 %% is X; \xHH is the octet HH, and \n, \t and \r a newline, a tab and a carriage
-%% return, as the parser always read them. Quotes within a word only group.
+%% return, as the parser always read them.
 -spec text(field()) -> binary().
 text({_, Text, _}) ->
-    unescape(Text).
-
--spec unescape(binary()) -> binary().
-unescape(Text) ->
     case plain_text(Text) of
         true -> binary:copy(Text);
         false -> unescape(Text, <<>>)
@@ -1272,9 +1304,36 @@ unescape(Text) ->
 
 -spec plain_text(binary()) -> boolean().
 plain_text(<<$\\, _/binary>>) -> false;
-plain_text(<<$", _/binary>>) -> false;
 plain_text(<<_, Rest/binary>>) -> plain_text(Rest);
 plain_text(<<>>) -> true.
+
+%% RFC1035§5.1, as RFC9460 Appendix A reads an SvcParam's value: \DDD is the octet
+%% DDD and \X is X
+-spec char_string(binary()) -> binary().
+char_string(Text) ->
+    case plain_text(Text) of
+        true -> binary:copy(Text);
+        false -> char_string(Text, Text, <<>>)
+    end.
+
+-spec char_string(binary(), binary(), binary()) -> binary().
+char_string(<<$\\, A, B, C, Rest/binary>>, Text, Acc) when
+    ?IS_DIGIT(A), ?IS_DIGIT(B), ?IS_DIGIT(C)
+->
+    case (A - $0) * 100 + (B - $0) * 10 + (C - $0) of
+        Octet when Octet =< 255 -> char_string(Rest, Text, <<Acc/binary, Octet>>);
+        _ -> ?FAIL({bad_string_escape, Text})
+    end;
+char_string(<<$\\, D, _/binary>>, Text, _Acc) when ?IS_DIGIT(D) ->
+    ?FAIL({bad_string_escape, Text});
+char_string(<<$\\, C, Rest/binary>>, Text, Acc) ->
+    char_string(Rest, Text, <<Acc/binary, C>>);
+char_string(<<$\\>>, Text, _Acc) ->
+    ?FAIL({bad_string_escape, Text});
+char_string(<<C, Rest/binary>>, Text, Acc) ->
+    char_string(Rest, Text, <<Acc/binary, C>>);
+char_string(<<>>, _Text, Acc) ->
+    Acc.
 
 -spec unescape(binary(), binary()) -> binary().
 unescape(<<$\\, A, B, C, Rest/binary>>, Acc) when ?IS_DIGIT(A), ?IS_DIGIT(B), ?IS_DIGIT(C) ->
@@ -1297,8 +1356,6 @@ unescape(<<$\\, $r, Rest/binary>>, Acc) ->
     unescape(Rest, <<Acc/binary, $\r>>);
 unescape(<<$\\, C, Rest/binary>>, Acc) ->
     unescape(Rest, <<Acc/binary, C>>);
-unescape(<<$", Rest/binary>>, Acc) ->
-    unescape(Rest, Acc);
 unescape(<<C, Rest/binary>>, Acc) ->
     unescape(Rest, <<Acc/binary, C>>);
 unescape(<<>>, Acc) ->
@@ -1352,14 +1409,22 @@ ttl_value(Text) ->
 ttl_value(<<C, Rest/binary>>, Pending, Total, Units) when ?IS_DIGIT(C) ->
     Number =
         case Pending of
-            none -> 0;
-            _ -> Pending
+            none -> C - $0;
+            _ -> Pending * 10 + (C - $0)
         end,
-    ttl_value(Rest, Number * 10 + (C - $0), Total, Units);
+    case Number =< ?MAX_NUMBER of
+        true -> ttl_value(Rest, Number, Total, Units);
+        false -> error
+    end;
 ttl_value(<<Unit, Rest/binary>>, Pending, Total, _Units) when is_integer(Pending) ->
     case ttl_unit(Unit) of
-        error -> error;
-        Seconds -> ttl_value(Rest, none, Total + Pending * Seconds, true)
+        error ->
+            error;
+        Seconds ->
+            case Total + Pending * Seconds of
+                Sum when Sum =< ?MAX_NUMBER -> ttl_value(Rest, none, Sum, true);
+                _ -> error
+            end
     end;
 ttl_value(<<>>, Pending, 0, false) when is_integer(Pending) ->
     Pending;
@@ -1484,7 +1549,7 @@ salt(Field) ->
 -spec base32hex(field()) -> binary().
 base32hex(Field) ->
     Text = text(Field),
-    Digits = string:trim(Text, trailing, "="),
+    Digits = trim_trailing(Text, $=),
     try <<<<(base32hex_digit(C)):5>> || <<C>> <= Digits>> of
         Bits ->
             Size = bit_size(Bits) div 8,
@@ -1507,9 +1572,11 @@ base32hex_digit(_) -> erlang:error(badarg).
 -spec uri(field()) -> binary().
 uri(Field) ->
     Target = text(Field),
-    case uri_string:normalize(Target) of
+    try uri_string:normalize(Target) of
         {error, _, _} -> ?FAIL({bad_uri, Target});
         _ -> Target
+    catch
+        error:_ -> ?FAIL({bad_uri, Target})
     end.
 
 %% RFC7043§3, §4: six or eight octets in hex, separated by hyphens; colons are
@@ -1557,22 +1624,29 @@ gateway(2, Field, _Ctx) -> ipv6(Field);
 gateway(3, Field, Ctx) -> name(Field, Ctx);
 gateway(Type, {_, Text, _}, _Ctx) -> ?FAIL({bad_gateway, Type, Text}).
 
-%% RFC9460§2.1: key=value, or a key alone, each value a <character-string>
+%% RFC9460§2.1: key=value, or a key alone, each value a <character-string>, which
+%% follows the "=" quoted, key="a value", as a field of its own
 -spec svcb([field()]) -> dns:svcb_svc_params().
 svcb(Fields) ->
-    case dns_svcb_params:from_zone([svcb_param(Field) || Field <- Fields]) of
+    case dns_svcb_params:from_zone(svcb_params(Fields)) of
         {ok, Params} -> Params;
         {error, Reason} -> ?FAIL(Reason)
     end.
 
--spec svcb_param(field()) -> {binary(), binary() | none}.
-svcb_param({word, Text, _}) ->
-    case binary:split(Text, ~"=") of
-        [Key] -> {Key, none};
-        [Key, Value] -> {Key, unescape(Value)}
+-spec svcb_params([field()]) -> [{binary(), binary() | none}].
+svcb_params([{word, Text, _} | Rest]) ->
+    case {binary:split(Text, ~"="), Rest} of
+        {[Key], _} ->
+            [{Key, none} | svcb_params(Rest)];
+        {[Key, <<>>], [{quoted, Value, _} | Rest1]} ->
+            [{Key, char_string(Value)} | svcb_params(Rest1)];
+        {[Key, Value], _} ->
+            [{Key, char_string(Value)} | svcb_params(Rest)]
     end;
-svcb_param({quoted, Text, _}) ->
-    ?FAIL({invalid_svcparam_format, Text}).
+svcb_params([{quoted, Text, _} | _]) ->
+    ?FAIL({invalid_svcparam_format, Text});
+svcb_params([]) ->
+    [].
 
 %% RFC4034 Appendix B
 -spec keytag(non_neg_integer(), non_neg_integer(), non_neg_integer(), binary()) -> dns:uint16().
@@ -1616,11 +1690,19 @@ source_line(Source, 1) ->
             nomatch -> Source;
             {Pos, _} -> binary:part(Source, 0, Pos)
         end,
-    binary:copy(string:trim(Line, trailing, "\r"));
+    binary:copy(trim_trailing(Line, $\r));
 source_line(Source, Line) ->
     case binary:match(Source, ~"\n") of
         nomatch -> undefined;
         {Pos, _} -> source_line(binary:part(Source, Pos + 1, byte_size(Source) - Pos - 1), Line - 1)
+    end.
+
+%% The binary without the octets it ends with that are the one given
+-spec trim_trailing(binary(), byte()) -> binary().
+trim_trailing(Bin, Octet) ->
+    case Bin of
+        <<Rest:(byte_size(Bin) - 1)/binary, Octet>> -> trim_trailing(Rest, Octet);
+        _ -> Bin
     end.
 
 -spec file_error(file:filename_all(), term()) -> dns_zone:error_detail().
@@ -1667,6 +1749,12 @@ reason_text({empty_label, Text}) ->
     <<"a name with an empty label: ", Text/binary>>;
 reason_text({bad_escape, Text}) ->
     <<"a name with a bad escape: ", Text/binary>>;
+reason_text({bad_string_escape, Text}) ->
+    <<"a string with a bad escape: ", Text/binary>>;
+reason_text({bad_decimal, Text, Scale}) ->
+    iolist_to_binary(io_lib:format("not a number with up to ~b decimals: ~s", [Scale, Text]));
+reason_text({bad_coordinate, Text}) ->
+    <<"degrees, minutes or seconds out of range: ", Text/binary>>;
 reason_text({unexpected_field, Text}) ->
     <<"expected a TTL, a class or a type: ", Text/binary>>;
 reason_text(no_type) ->
@@ -1687,16 +1775,17 @@ reason_text({rfc3597_length_mismatch, Length, Actual}) ->
     iolist_to_binary(io_lib:format("\\# of length ~b with ~b octets", [Length, Actual]));
 reason_text({bad_directive, Name, Args}) ->
     iolist_to_binary(
-        io_lib:format("unknown directive, or one with ~b arguments: ~ts", [Args, Name])
+        io_lib:format("unknown directive, or one with ~b arguments: ~s", [Args, Name])
     );
 reason_text({out_of_range, What, Value}) ->
-    iolist_to_binary(io_lib:format("~ts out of range: ~b", [What, Value]));
+    iolist_to_binary(io_lib:format("~s out of range: ~b", [What, Value]));
 reason_text({bad_time, Time}) ->
     iolist_to_binary(io_lib:format("not a time: ~b", [Time]));
 reason_text({bad_gateway, Type, Text}) ->
     <<"not a gateway of type ", (integer_to_binary(Type))/binary, ": ", Text/binary>>;
+%% The text of the zone is octets, which ~s and ~p write as they are
 reason_text(Reason) ->
-    iolist_to_binary(io_lib:format("~0tp", [Reason])).
+    iolist_to_binary(io_lib:format("~0p", [Reason])).
 
 %% Messages and suggestions for RDATA that does not have the fields of its type
 -spec rdata_error_message(binary(), [field()]) -> {binary(), binary() | undefined}.

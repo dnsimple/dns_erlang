@@ -557,7 +557,10 @@ groups() ->
             parse_owner_that_reads_as_a_ttl,
             parse_string_of_characters_past_255,
             parse_ipseckey_gateways,
-            parse_line_starting_with_a_blank
+            parse_line_starting_with_a_blank,
+            parse_returns_errors_for_any_input,
+            parse_long_numbers_in_linear_time,
+            parse_include_errors
         ]},
         {error_cases, [parallel], [
             parse_invalid_ipv4,
@@ -7797,6 +7800,53 @@ parse_svcb_value_lists(_Config) ->
         """
         )
     ),
+    %% Appendix A.1's example, where \p\a\r\t is "part", as RFC 1035 has it
+    [
+        ?assertMatch(
+            #dns_rrdata_svcb{
+                svc_params = #{?DNS_SVCB_PARAM_ALPN := [~"part1", ~"part2", ~B"part3,part4\"]}
+            },
+            parse_rdata(<<"SVCB 1 . alpn=", Value/binary>>),
+            Value
+        )
+     || Value <- [
+            ~B"""
+            "part1,part2,part3\\,part4\\\\"
+            """,
+            ~B"""
+            part1\,\p\a\r\t2\044part3\092,part4\092\\
+            """
+        ]
+    ],
+    %% A quoted value ends its parameter
+    ?assertMatch(
+        #dns_rrdata_svcb{
+            svc_params = #{?DNS_SVCB_PARAM_ALPN := [~"h2"], ?DNS_SVCB_PARAM_PORT := 53}
+        },
+        parse_rdata(~"SVCB 1 . alpn=\"h2\"port=\"53\"")
+    ),
+    %% §7.1.1, §7.3: no item is empty. An empty value is an empty list, as the parser
+    %% read it.
+    ?assertMatch(
+        #dns_rrdata_svcb{
+            svc_params = #{?DNS_SVCB_PARAM_ALPN := [], ?DNS_SVCB_PARAM_IPV4HINT := []}
+        },
+        parse_rdata(~"SVCB 1 . alpn=\"\" ipv4hint=")
+    ),
+    [
+        ?assertMatch(#{type := semantic}, parse_rdata_error(<<"SVCB 1 . ", Params/binary>>), Params)
+     || Params <- [
+            ~"alpn=h2,,h3",
+            ~"alpn=h2,",
+            ~"alpn=\",h2\"",
+            ~"ipv4hint=192.0.2.1,",
+            ~"ipv6hint=,2001:db8::1",
+            ~"mandatory=alpn, alpn=h2",
+            ~"ipv4hint=\"192.0.2.1, 192.0.2.2\"",
+            ~"port=\" 53\"",
+            ~"port=+53"
+        ]
+    ],
     ?assertMatch(
         #{type := semantic}, parse_rdata_error(~"SVCB 1 svc.example. alpn=h2 alpn=h3")
     ),
@@ -7822,9 +7872,12 @@ parse_svcb_keys_by_name(_Config) ->
     ?assertMatch(#{type := semantic}, parse_rdata_error(~"SVCB 1 . \"alpn=h2\"")).
 
 %% RFC1035§5.1: a <character-string> need not be quoted. The parser dropped the
-%% words that were not, and refused a string of them alone.
+%% words that were not, and refused a string of them alone. A quote starts a string
+%% of its own, within a word too, as BIND reads it.
 parse_unquoted_strings(_Config) ->
     ?assertEqual(#dns_rrdata_txt{txt = [~"a", ~"b", ~"0"]}, parse_rdata(~"TXT \"a\" b 0")),
+    ?assertEqual(#dns_rrdata_txt{txt = [~"a=", ~"b c"]}, parse_rdata(~"TXT a=\"b c\"")),
+    ?assertMatch(#{type := semantic}, parse_rdata_error(~"MR n=\"x y\"z")),
     ?assertEqual(#dns_rrdata_spf{spf = [~"v=spf1", ~"-all"]}, parse_rdata(~"SPF v=spf1 -all")),
     ?assertEqual(#dns_rrdata_hinfo{cpu = ~"PC", os = ~"Linux"}, parse_rdata(~"HINFO PC Linux")),
     ?assertEqual(
@@ -7902,6 +7955,7 @@ parse_errors_name_their_line(Config) ->
      || Z <- [
             ~"$FOO bar\n",
             ~"$TTL\n",
+            ~"$TTL 2147483648\nwww.example. IN A 192.0.2.1\n",
             ~"\"www.example.\" 300 IN A 192.0.2.1\n",
             ~"www.example. 300 IN\n",
             ~"www.example. 300 IN FOO bar\n",
@@ -7939,7 +7993,14 @@ parse_name_escapes(_Config) ->
     ],
     [
         ?assertMatch(#{type := semantic}, parse_rdata_error(<<"NS ", Text/binary>>), Text)
-     || Text <- [~"a..b.example.", ~".a.example.", ~B"a\256.example.", ~B"a\b..example."]
+     || Text <- [
+            ~"a..b.example.",
+            ~".a.example.",
+            ~B"a\256.example.",
+            ~B"a\b..example.",
+            ~B"\1a.example.",
+            ~B"a\12b.example."
+        ]
     ],
     ?assertMatch(
         {error, #{type := semantic}}, dns_zone:parse_string(~B"example. 0 IN NS a\")
@@ -8048,8 +8109,17 @@ parse_loc_rfc1876_forms(_Config) ->
         #dns_rrdata_loc{lat = -1, lon = -2, alt = -3, size = 100, horiz = 1000000, vert = 1000},
         parse_rdata(~"LOC -1 -2 -3 100 1000000 1000")
     ),
-    %% Thousandths of a second at most, the rest rounded
-    ?assertMatch(#dns_rrdata_loc{lat = 196001}, parse_rdata(~"LOC 0 3 16.0005 N 0 E 0m")),
+    %% RFC1876§3's bounds, which BIND keeps: 90 degrees of latitude and 180 of
+    %% longitude, whole minutes below 60, seconds below 60 with three decimals at
+    %% most, and two for metres
+    ?assertMatch(
+        #dns_rrdata_loc{lat = -324000000, lon = 648000000},
+        parse_rdata(~"LOC 90 0 0 S 180 0 0 E 0m")
+    ),
+    ?assertMatch(
+        #dns_rrdata_loc{lat = 3599999, alt = 1, size = 1},
+        parse_rdata(~"LOC 0 59 59.999 N 0 E 0.01m 0.01m")
+    ),
     [
         ?assertMatch(#{type := semantic}, parse_rdata_error(<<"LOC ", Text/binary>>), Text)
      || Text <- [
@@ -8059,7 +8129,18 @@ parse_loc_rfc1876_forms(_Config) ->
             ~"42 N 71 W 0 1 2 3 4",
             ~"42 21 54 1 N 71 W 0m",
             ~"42 N 71 W 1.x",
-            ~"N 71 W 0m"
+            ~"N 71 W 0m",
+            ~"91 N 0 E 0m",
+            ~"90 0 0.001 N 0 E 0m",
+            ~"0 N 181 E 0m",
+            ~"0 N 180 0 0.001 W 0m",
+            ~"42 60 N 0 E 0m",
+            ~"42 0 60 N 0 E 0m",
+            ~"42.5 N 0 E 0m",
+            ~"42 30.5 N 0 E 0m",
+            ~"0 3 16.0005 N 0 E 0m",
+            ~"0 N 0 E 0.001m",
+            ~"0 N 0 E 0m 0.001m"
         ]
     ].
 
@@ -8354,4 +8435,62 @@ parse_line_starting_with_a_blank(_Config) ->
             {~"mx.example.", ?DNS_TYPE_A, 300}
         ],
         [{Name, Type, TTL} || #dns_rr{name = Name, type = Type, ttl = TTL} <- RRs]
+    ).
+
+%% Any input gives a result or an error. These raised from within the parser.
+parse_returns_errors_for_any_input(_Config) ->
+    [
+        ?assertMatch({error, #{type := _, message := <<_/binary>>}}, dns_zone:parse_string(Z), Z)
+     || Z <- [
+            ~"a 0 IN SVCB 1 . port=\\255",
+            ~"a 0 IN SVCB 1 . ipv4hint=\"\\255\"",
+            ~"a 0 IN SVCB 1 . port=\\197\\167",
+            ~"a 0 IN URI 10 1 \"\\255\"",
+            <<"$", 197, 167, " 1\n">>,
+            <<"a 0 IN A 192.0.2.256 ;\r", 233, "\n">>
+        ]
+    ],
+    ?assertMatch(
+        {error, #{type := lexer, location := #{line := 2}}},
+        dns_zone:parse_string("a 0 IN TXT \"a\"\nb 0 IN TXT \"" ++ [16#D800] ++ "\"\n")
+    ).
+
+%% A number of any length is read in time linear in it, where reading digit by
+%% digit took 30 s for a million of them
+parse_long_numbers_in_linear_time(_Config) ->
+    Digits = binary:copy(~"9", 1000000),
+    [
+        begin
+            {Time, {_, _}} = timer:tc(fun() -> dns_zone:parse_string(Zone) end),
+            ?assert(Time < 2000000, Time)
+        end
+     || Zone <- [
+            <<"a ", Digits/binary, " IN A 192.0.2.1\n">>,
+            <<"$TTL ", Digits/binary, "\n">>,
+            <<"a 0 IN MX ", Digits/binary, " mail.example.\n">>,
+            <<"a 0 IN LOC 0 0 0.", Digits/binary, " N 0 E 0m\n">>,
+            <<"a 0 IN TYPE", Digits/binary, " \\# 0\n">>
+        ]
+    ].
+
+%% A file the zone includes and that cannot be read is an error on the line of the
+%% $INCLUDE. An error within the included file gives its line there, but not its
+%% text: a zone can include any file, which need not be one to show.
+parse_include_errors(Config) ->
+    Dir = proplists:get_value(priv_dir, Config),
+    Secret = filename:join(Dir, "include-secret.txt"),
+    ok = file:write_file(Secret, ~"secret hunter2\n"),
+    Zone = filename:join(Dir, "include-missing.zone"),
+    ok = file:write_file(Zone, ~"www.example. 0 IN A 192.0.2.1\n$INCLUDE missing.zone\n"),
+    {error, Included} = dns_zone:parse_string(iolist_to_binary(["$INCLUDE ", Secret, "\n"])),
+    ?assertMatch(#{type := parser, location := #{line := 1, file := _}}, Included),
+    ?assertNot(maps:is_key(context, Included)),
+    ?assertMatch(
+        {error, #{
+            type := file,
+            location := #{line := 2, file := Zone},
+            context := ~"$INCLUDE missing.zone",
+            details := {file_error, enoent}
+        }},
+        dns_zone:parse_file(Zone)
     ).

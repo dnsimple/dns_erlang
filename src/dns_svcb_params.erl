@@ -184,24 +184,31 @@ zone_key(Name, Error) ->
 
 -spec zone_value(dns:uint16(), binary() | none) -> dynamic().
 zone_value(?DNS_SVCB_PARAM_MANDATORY, Value) when is_binary(Value) ->
-    [zone_key(Name, invalid_mandatory_key) || Name <- zone_list(Value)];
+    [zone_key(Name, invalid_mandatory_key) || Name <- zone_list(?DNS_SVCB_PARAM_MANDATORY, Value)];
+zone_value(?DNS_SVCB_PARAM_ALPN, <<>>) ->
+    [];
 zone_value(?DNS_SVCB_PARAM_ALPN, Value) when is_binary(Value) ->
-    [Id || Id <- alpn_list(Value, <<>>, []), Id =/= <<>>];
+    Ids = alpn_list(Value, <<>>, []),
+    lists:member(<<>>, Ids) andalso
+        zone_error({svcb_param_invalid_value, ?DNS_SVCB_PARAM_ALPN, Value}),
+    Ids;
 zone_value(?DNS_SVCB_PARAM_NO_DEFAULT_ALPN, none) ->
     none;
 zone_value(?DNS_SVCB_PARAM_NO_DEFAULT_ALPN, _Value) ->
     zone_error({svcb_param_no_value_allowed, no_default_alpn});
-zone_value(?DNS_SVCB_PARAM_PORT, Value) when is_binary(Value) ->
-    try binary_to_integer(string:trim(Value)) of
-        Port when 0 =< Port, Port =< 65535 -> Port;
+zone_value(?DNS_SVCB_PARAM_PORT, <<C, _/binary>> = Value) when $0 =< C, C =< $9 ->
+    try binary_to_integer(Value) of
+        Port when Port =< 65535 -> Port;
         _ -> zone_error({invalid_port, Value})
     catch
         error:badarg -> zone_error({invalid_port, Value})
     end;
+zone_value(?DNS_SVCB_PARAM_PORT, Value) when is_binary(Value) ->
+    zone_error({invalid_port, Value});
 zone_value(?DNS_SVCB_PARAM_IPV4HINT, Value) when is_binary(Value) ->
     [
         zone_ip(inet:parse_ipv4strict_address(binary_to_list(IP)), invalid_ipv4_in_hint, IP)
-     || IP <- zone_list(Value)
+     || IP <- zone_list(?DNS_SVCB_PARAM_IPV4HINT, Value)
     ];
 zone_value(?DNS_SVCB_PARAM_ECH, Value) when is_binary(Value) ->
     case safe_base64_decode(Value) of
@@ -209,7 +216,7 @@ zone_value(?DNS_SVCB_PARAM_ECH, Value) when is_binary(Value) ->
         ECHConfig -> ECHConfig
     end;
 zone_value(?DNS_SVCB_PARAM_IPV6HINT, Value) when is_binary(Value) ->
-    [zone_ipv6(IP) || IP <- zone_list(Value)];
+    [zone_ipv6(IP) || IP <- zone_list(?DNS_SVCB_PARAM_IPV6HINT, Value)];
 zone_value(Key, none) when 7 =< Key ->
     none;
 zone_value(Key, <<>>) when 7 =< Key ->
@@ -235,10 +242,15 @@ zone_ip({ok, IP}, _Error, _Text) ->
 zone_ip({error, Reason}, Error, Text) ->
     zone_error({Error, Text, Reason}).
 
-%% A comma-separated list whose items hold no comma
--spec zone_list(binary()) -> [binary()].
-zone_list(Value) ->
-    [Item || Item <- [string:trim(I) || I <- binary:split(Value, ~",", [global])], Item =/= <<>>].
+%% RFC9460§7.1.1, §7.3, §8: a comma-separated list, none of whose items is empty
+%% or holds a comma. An empty value is an empty list, as the parser read it.
+-spec zone_list(dns:uint16(), binary()) -> [binary()].
+zone_list(_Key, <<>>) ->
+    [];
+zone_list(Key, Value) ->
+    Items = binary:split(Value, ~",", [global]),
+    lists:member(<<>>, Items) andalso zone_error({svcb_param_invalid_value, Key, Value}),
+    Items.
 
 %% RFC9460 Appendix A.1: after the <character-string> is decoded, "\," is a comma
 %% within an item and "\\" a backslash
