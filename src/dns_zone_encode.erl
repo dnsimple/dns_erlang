@@ -6,6 +6,7 @@
 -dialyzer(no_improper_lists).
 
 -export([encode_rdata/2, encode_rdata/3, encode_rr/2, encode_string/2, encode_file/3]).
+-export([ntoa/1]).
 
 -define(DEFAULT_ORIGIN, <<>>).
 -define(DEFAULT_RELATIVE_NAMES, true).
@@ -338,6 +339,16 @@ encode_salt_hex(Salt) ->
 encode_ilnp64(<<A:16, B:16, C:16, D:16>>) ->
     io_lib:format("~4.16.0b:~4.16.0b:~4.16.0b:~4.16.0b", [A, B, C, D]).
 
+%% inet:ntoa/1 writes a non-zero second word of an fe80::/16 or ff02::/16 address
+%% as a zone index, fe80:1:: as "fe80::%01", which is another address and isn't
+%% zone file text. With a first word of 1, which it doesn't single out and which
+%% is as non-zero, it puts the "::" in the same place, and tl/1 drops the 1.
+-spec ntoa(inet:ip_address()) -> string().
+ntoa({Word, B, C, D, E, F, G, H}) when Word =:= 16#fe80; Word =:= 16#ff02 ->
+    string:lowercase(integer_to_list(Word, 16)) ++ tl(inet:ntoa({1, B, C, D, E, F, G, H}));
+ntoa(IP) ->
+    "" ++ _ = inet:ntoa(IP).
+
 %% Helper: Encode SVCB/HTTPS record with service parameters
 -spec encode_svcb_record(
     dns:uint16(),
@@ -403,7 +414,7 @@ encode_key_record(Flags, Protocol, Alg, Data, Encoding, Separator) when is_binar
 encode_rdata(?DNS_TYPE_A, #dns_rrdata_a{ip = IP}, _Origin, _RelativeNames, _Separator) ->
     "" ++ _ = inet:ntoa(IP);
 encode_rdata(?DNS_TYPE_AAAA, #dns_rrdata_aaaa{ip = IP}, _Origin, _RelativeNames, _Separator) ->
-    "" ++ _ = inet:ntoa(IP);
+    ntoa(IP);
 encode_rdata(?DNS_TYPE_NS, #dns_rrdata_ns{dname = DName}, Origin, RelativeNames, _Separator) ->
     encode_dname(dns_domain:to_lower(DName), Origin, RelativeNames);
 encode_rdata(
@@ -1070,7 +1081,7 @@ encode_rdata(
         case Gateway of
             <<>> -> {0, ~"."};
             {_, _, _, _} -> {1, "" ++ _ = inet:ntoa(Gateway)};
-            {_, _, _, _, _, _, _, _} -> {2, "" ++ _ = inet:ntoa(Gateway)};
+            {_, _, _, _, _, _, _, _} -> {2, ntoa(Gateway)};
             DName when is_binary(DName) -> {3, encode_dname(DName, Origin, RelativeNames)}
         end,
     Key =
@@ -1105,7 +1116,7 @@ encode_rdata(
         case RelayType of
             0 -> ~".";
             3 -> encode_dname(Relay, Origin, RelativeNames);
-            _ -> "" ++ _ = inet:ntoa(Relay)
+            _ -> ntoa(Relay)
         end,
     DBin =
         case DiscoveryOptional of

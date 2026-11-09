@@ -54,6 +54,7 @@ groups() ->
             %% Basic record types
             encode_a_record,
             encode_aaaa_record,
+            encode_ipv6_fe80_ff02,
             encode_ns_record,
             encode_cname_record,
             encode_ptr_record,
@@ -4780,6 +4781,51 @@ encode_aaaa_record(_Config) ->
     Line = dns_zone:encode_rr(RR),
     ?assertNotEqual(nomatch, string:find(Line, "2001:db8::1")),
     ?assertNotEqual(nomatch, string:find(Line, "AAAA")).
+
+%% inet:ntoa/1 writes fe80:1:: as "fe80::%01", fe80:: with a zone index (RFC 4007
+%% §11), which zone files don't allow
+encode_ipv6_fe80_ff02(_Config) ->
+    RR = fun(Type, Data) ->
+        #dns_rr{name = ~"example.com.", type = Type, ttl = 3600, data = Data}
+    end,
+    Cases = [
+        {RR(?DNS_TYPE_AAAA, #dns_rrdata_aaaa{ip = {16#fe80, 1, 0, 0, 0, 0, 0, 0}}), " fe80:1::"},
+        {RR(?DNS_TYPE_AAAA, #dns_rrdata_aaaa{ip = {16#ff02, 2, 0, 0, 0, 0, 0, 1}}), " ff02:2::1"},
+        {
+            RR(?DNS_TYPE_AMTRELAY, #dns_rrdata_amtrelay{
+                precedence = 10,
+                discovery_optional = false,
+                relay_type = 2,
+                relay = {16#ff02, 1, 0, 0, 0, 0, 0, 16#fb}
+            }),
+            " ff02:1::fb"
+        },
+        {
+            RR(?DNS_TYPE_IPSECKEY, #dns_rrdata_ipseckey{
+                precedence = 10,
+                alg = 2,
+                gateway = {16#fe80, 16#db8, 0, 0, 1, 0, 0, 0},
+                public_key = <<16#ab, 2, 3, 4>>
+            }),
+            " fe80:db8:0:0:1:: "
+        },
+        {
+            RR(?DNS_TYPE_HTTPS, #dns_rrdata_https{
+                svc_priority = 1,
+                target_name = ~"example.com.",
+                svc_params = #{?DNS_SVCB_PARAM_IPV6HINT => [{16#fe80, 1, 0, 0, 0, 0, 0, 1}]}
+            }),
+            "ipv6hint=\"fe80:1::1\""
+        }
+    ],
+    [
+        begin
+            Line = iolist_to_binary(dns_zone:encode_rr(Record)),
+            ?assertNotEqual(nomatch, string:find(Line, Text), Line),
+            ?assertEqual({ok, [Record]}, dns_zone:parse_string(<<Line/binary, "\n">>))
+        end
+     || {Record, Text} <- Cases
+    ].
 
 encode_ns_record(_Config) ->
     RR = #dns_rr{

@@ -532,13 +532,16 @@ rdata(Type) ->
             #dns_rrdata_a{ip = {192, 0, 2, 1}}
     end.
 
-%% No address that starts with fe80 or ff02 and a non-zero word: inet:ntoa/1, and
-%% so the zone writer, writes fe80:1:: as "fe80::%01", which the zone parser rejects
+%% Any address, and fe80::/16 and ff02::/16 ones often enough to be drawn:
+%% inet:ntoa/1 wrote one whose second word is not zero with a zone index
 ip6() ->
-    ?SUCHTHAT(
-        {A, B, _, _, _, _, _, _},
-        ?LET(Words, vector(8, range(0, 65535)), list_to_tuple(Words)),
-        not ((A =:= 16#fe80 orelse A =:= 16#ff02) andalso B =/= 0)
+    ?LET(
+        {First, Rest},
+        {
+            frequency([{3, range(0, 65535)}, {1, oneof([16#fe80, 16#ff02])}]),
+            vector(7, range(0, 65535))
+        },
+        list_to_tuple([First | Rest])
     ).
 
 encode_options() ->

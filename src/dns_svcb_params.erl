@@ -284,7 +284,7 @@ to_zone_list(SvcParams, Acc, EscapeFun) ->
                 IPStrs = [inet:ntoa(IP) || IP <- IPs],
                 [[~"ipv4hint=\"", join_with_separator(~",", IPStrs), ~"\""] | Acc0];
             ({?DNS_SVCB_PARAM_IPV6HINT, IPs}, Acc0) ->
-                IPStrs = [inet:ntoa(IP) || IP <- IPs],
+                IPStrs = [dns_zone_encode:ntoa(IP) || IP <- IPs],
                 [[~"ipv6hint=\"", join_with_separator(~",", IPStrs), ~"\""] | Acc0];
             ({?DNS_SVCB_PARAM_ECH, ECHConfig}, Acc0) ->
                 [[~"ech=\"", base64:encode(ECHConfig), ~"\""] | Acc0];
@@ -357,7 +357,7 @@ encode_value_to_json(?DNS_SVCB_PARAM_IPV4HINT, Value) when is_list(Value) ->
 encode_value_to_json(?DNS_SVCB_PARAM_ECH, Value) when is_binary(Value) ->
     base64:encode(Value);
 encode_value_to_json(?DNS_SVCB_PARAM_IPV6HINT, Value) when is_list(Value) ->
-    [list_to_binary(inet:ntoa(V)) || V <- Value];
+    [list_to_binary(dns_zone_encode:ntoa(V)) || V <- Value];
 encode_value_to_json(Key, none) when is_integer(Key) ->
     null;
 encode_value_to_json(Key, Value) when is_integer(Key), is_binary(Value) ->

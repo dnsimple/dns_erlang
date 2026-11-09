@@ -396,7 +396,7 @@ to_map_value(Tag, Field, Value) when
             {Tag, Field} =:= {dns_rrdata_amtrelay, relay} orelse
             {Tag, Field} =:= {dns_rrdata_ipseckey, gateway})
 ->
-    list_to_binary(inet:ntoa(Value));
+    list_to_binary(dns_zone_encode:ntoa(Value));
 to_map_value(Tag, public_key, Value) when
     is_list(Value) andalso (dns_rrdata_dnskey =:= Tag orelse dns_rrdata_cdnskey =:= Tag)
 ->
