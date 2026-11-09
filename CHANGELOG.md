@@ -20,6 +20,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Wire: encoding a CAA tag, NSEC3 salt or hash, or HINFO, NAPTR or HIP string over 255 octets raises `{string_too_long, Size}`, where it wrapped the length, split the string or raised `function_clause`.
 - DNSSEC: an algorithm 1 (RSA/MD5) key tag is the third- and second-to-last octets of the modulus (RFC 4034 Appendix B.1), where it was the checksum of the other algorithms.
 - DNSSEC: `sign_rr` leaves RRSIG records out and `sign_rrset` raises `{badarg, rrsig_rrset}` for an RRSIG RRset, where both signed it (RFC 4035 §2.2).
+- DNSSEC: `sign_rrset` raises `{badarg, expiration_before_inception}` for a validity period that no RRSIG verifies with (RFC 4034 §3.1.5), where it signed it.
 
 ## v5.2.0
 

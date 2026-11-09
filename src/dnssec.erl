@@ -418,7 +418,13 @@ sign_rrset(RRSet, SignerName, KeyTag, Alg, Key) ->
 -doc """
 Signs a list of `t:dns:rr/0` of the same class and type.
 
-Raises `{badarg, rrsig_rrset}` for an RRSIG RRset, which RFC 4035 §2.2 never signs.
+The validity period is `inception` and `expiration` in `Opts`, by default the current time and a
+year after it. Raises:
+
+- `{badarg, rrsig_rrset}` for an RRSIG RRset, which RFC 4035 §2.2 never signs;
+- `{badarg, expiration_before_inception}` for a period whose expiration is before its inception
+  in serial number arithmetic (RFC 4034 §3.1.5), which reads a period of 2^31 seconds or more
+  that way too, as no RRSIG with one verifies.
 """.
 -spec sign_rrset([dns:rr(), ...], dns:dname(), keytag(), sigalg(), key(), sign_rr_opts()) ->
     dns:rr().
@@ -435,6 +441,9 @@ sign_rrset(
     Incept = maps:get(inception, Opts, Now),
     %% 1 year
     Expire = maps:get(expiration, Opts, Now + ?SECS_IN_YEAR),
+    %% RFC4034§3.1.5, RFC1982: the two compare as 32-bit serial numbers
+    (Expire - Incept) band 16#FFFFFFFF < 16#80000000 orelse
+        erlang:error({badarg, expiration_before_inception}),
     {Data0, BaseSigInput} = build_sig_input(RRs, SignersName, KeyTag, Alg, Incept, Expire),
     Signature = sign(Alg, BaseSigInput, Key),
     Data = Data0#dns_rrdata_rrsig{signature = Signature},
