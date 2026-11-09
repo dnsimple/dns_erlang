@@ -4672,42 +4672,55 @@ parse_loc_record(_Config) ->
     {ok, [RR]} = dns_zone:parse_string(Zone, #{}),
     ?assertMatch(#dns_rrdata_loc{}, RR#dns_rr.data).
 
+%% RFC4025§3.3's examples: precedence, gateway type, algorithm, gateway and the
+%% key in base64. They give the wire form dnspython gives them. The parser read
+%% another form, which the writer wrote, with no gateway type and the key in hex.
 parse_ipseckey_record(_Config) ->
-    %% Test IPSECKEY record decoding - happy path
-    %% Format: precedence algorithm gateway public_key(hex)
-    %% Use valid hex string (even number of hex digits)
-    %% Test with quoted hex string - first clause
-    Zone1 = ~"example.com. 3600 IN IPSECKEY 10 2 gateway.example.com. \"ABCDEF00\"\n",
-    {ok, [RR1]} = dns_zone:parse_string(Zone1, #{}),
-    ?assertEqual(?DNS_TYPE_IPSECKEY, RR1#dns_rr.type),
-    #dns_rrdata_ipseckey{
-        precedence = Precedence1,
-        alg = Alg1,
-        gateway = Gateway1,
-        public_key = PublicKey1
-    } = RR1#dns_rr.data,
-    ?assertEqual(10, Precedence1),
-    ?assertEqual(2, Alg1),
-    ?assert(is_binary(Gateway1) orelse Gateway1 =:= none),
-    ?assert(is_binary(PublicKey1)),
-    ?assert(byte_size(PublicKey1) > 0),
-    %% Test with unquoted hex (parsed as domain) - second clause
-    Zone2 = ~"example.com. 3600 IN IPSECKEY 10 2 gateway.example.com. ABCDEF00\n",
-    {ok, [RR2]} = dns_zone:parse_string(Zone2, #{}),
-    ?assertEqual(?DNS_TYPE_IPSECKEY, RR2#dns_rr.type),
-    #dns_rrdata_ipseckey{
-        precedence = Precedence2,
-        alg = Alg2,
-        gateway = Gateway2,
-        public_key = PublicKey2
-    } = RR2#dns_rr.data,
-    ?assertEqual(10, Precedence2),
-    ?assertEqual(2, Alg2),
-    ?assert(is_binary(Gateway2) orelse Gateway2 =:= none),
-    ?assert(is_binary(PublicKey2)),
-    ?assert(byte_size(PublicKey2) > 0),
-    %% Both should decode to the same public key
-    ?assertEqual(PublicKey1, PublicKey2).
+    {ok, RRs} = dns_zone:parse_string(
+        ~"""
+        38.2.0.192.in-addr.arpa. 7200 IN     IPSECKEY ( 10 1 2
+                         192.0.2.38
+                         AQNRU3mG7TVTO2BkR47usntb102uFJtugbo6BSGvgqt4AQ== )
+        38.2.0.192.in-addr.arpa. 7200 IN     IPSECKEY ( 10 0 2
+                         .
+                         AQNRU3mG7TVTO2BkR47usntb102uFJtugbo6BSGvgqt4AQ== )
+        38.2.0.192.in-addr.arpa. 7200 IN     IPSECKEY ( 10 1 2
+                         192.0.2.3
+                         AQNRU3mG7TVTO2BkR47usntb102uFJtugbo6BSGvgqt4AQ== )
+        38.1.0.192.in-addr.arpa. 7200 IN     IPSECKEY ( 10 3 2
+                         mygateway.example.com.
+                         AQNRU3mG7TVTO2BkR47usntb102uFJtugbo6BSGvgqt4AQ== )
+        $ORIGIN 1.0.0.0.0.0.2.8.B.D.0.1.0.0.2.ip6.arpa.
+        0.d.4.0.3.0.e.f.f.f.3.f.0.1.2.0 7200 IN     IPSECKEY ( 10 2 2
+                         2001:0DB8:0:8002::2000:1
+                         AQNRU3mG7TVTO2BkR47usntb102uFJtugbo6BSGvgqt4AQ== )
+        """
+    ),
+    Key = ~"010351537986ed35533b6064478eeeb27b5bd74dae149b6e81ba3a0521af82ab7801",
+    ?assertEqual(
+        [
+            <<"0a0102c0000226", Key/binary>>,
+            <<"0a0002", Key/binary>>,
+            <<"0a0102c0000203", Key/binary>>,
+            <<"0a0302096d7967617465776179076578616d706c6503636f6d00", Key/binary>>,
+            <<"0a020220010db8000080020000000020000001", Key/binary>>
+        ],
+        [
+            binary:encode_hex(dns_encode:encode_rrdata(?DNS_CLASS_IN, Data), lowercase)
+         || #dns_rr{type = ?DNS_TYPE_IPSECKEY, data = Data} <- RRs
+        ]
+    ),
+    %% And the writer writes them so, which reads back
+    [
+        ?assertEqual(
+            {ok, [RR]}, dns_zone:parse_string(iolist_to_binary([dns_zone:encode_rr(RR), "\n"]))
+        )
+     || RR <- RRs
+    ],
+    ?assertEqual(
+        ~"10 1 2 192.0.2.38 AQNRU3mG7TVTO2BkR47usntb102uFJtugbo6BSGvgqt4AQ==",
+        iolist_to_binary(dns_zone:encode_rdata(?DNS_TYPE_IPSECKEY, (hd(RRs))#dns_rr.data))
+    ).
 
 parse_file_nonexistent(Config) ->
     %% Test parse_file with non-existent file
@@ -5664,8 +5677,10 @@ encode_ipseckey_record(_Config) ->
             public_key = <<1, 2, 3, 4>>
         }
     },
-    Line = dns_zone:encode_rr(RR),
-    ?assertNotEqual(nomatch, string:find(Line, "IPSECKEY")).
+    ?assertEqual(
+        ~"example.com. 3600 IN IPSECKEY 10 1 2 192.0.2.1 AQIDBA==",
+        iolist_to_binary(dns_zone:encode_rr(RR))
+    ).
 
 %% ============================================================================
 %% Options Testing
@@ -6203,8 +6218,10 @@ encode_ipseckey_ipv6_gateway(_Config) ->
             public_key = <<1, 2, 3, 4>>
         }
     },
-    Line = dns_zone:encode_rr(RR),
-    ?assertNotEqual(nomatch, string:find(Line, "2001:db8::1")).
+    ?assertEqual(
+        ~"example.com. 3600 IN IPSECKEY 10 2 2 2001:db8::1 AQIDBA==",
+        iolist_to_binary(dns_zone:encode_rr(RR))
+    ).
 
 encode_ipseckey_dname_gateway(_Config) ->
     %% Test IPSECKEY with domain name gateway
@@ -6220,8 +6237,10 @@ encode_ipseckey_dname_gateway(_Config) ->
             public_key = <<1, 2, 3, 4>>
         }
     },
-    Line = dns_zone:encode_rr(RR),
-    ?assertNotEqual(nomatch, string:find(Line, "gateway.example.com.")).
+    ?assertEqual(
+        ~"example.com. 3600 IN IPSECKEY 10 3 2 gateway.example.com. AQIDBA==",
+        iolist_to_binary(dns_zone:encode_rr(RR))
+    ).
 
 encode_relative_name_not_subdomain(_Config) ->
     %% Test relative name encoding when name is not a subdomain of origin
@@ -7999,21 +8018,37 @@ parse_string_of_characters_past_255(_Config) ->
         dns_zone:parse_string("example. 0 IN TXT \"é\"\n")
     ).
 
-%% The zone writer's IPSECKEY: precedence, algorithm, gateway and the key in hex.
-%% The parser took an IPv4 gateway for none, and refused a key of hex digits.
+%% RFC4025§3.1: the gateway is what its type says, and the key may be left out,
+%% as the writer leaves out an empty one
 parse_ipseckey_gateways(_Config) ->
     [
         ?assertEqual(
             #dns_rrdata_ipseckey{
                 precedence = 10, alg = 2, gateway = Gateway, public_key = <<16#12, 16#34>>
             },
-            parse_rdata(<<"IPSECKEY 10 2 ", Text/binary, " 1234">>),
+            parse_rdata(<<"IPSECKEY 10 ", Text/binary, " EjQ=">>),
             Text
         )
      || {Text, Gateway} <- [
-            {~"192.0.2.38", {192, 0, 2, 38}},
-            {~"2001:db8::1", {16#2001, 16#db8, 0, 0, 0, 0, 0, 1}},
-            {~".", <<>>},
-            {~"gw.example.", ~"gw.example."}
+            {~"1 2 192.0.2.38", {192, 0, 2, 38}},
+            {~"2 2 2001:db8::1", {16#2001, 16#db8, 0, 0, 0, 0, 0, 1}},
+            {~"0 2 .", <<>>},
+            {~"3 2 gw.example.", ~"gw.example."},
+            {~"3 2 .", ~"."}
+        ]
+    ],
+    NoKey = #dns_rrdata_ipseckey{precedence = 10, alg = 0, gateway = <<>>, public_key = <<>>},
+    ?assertEqual(NoKey, parse_rdata(~"IPSECKEY 10 0 0 .")),
+    ?assertEqual(~"10 0 0 .", iolist_to_binary(dns_zone:encode_rdata(?DNS_TYPE_IPSECKEY, NoKey))),
+    [
+        ?assertMatch(#{type := semantic}, parse_rdata_error(<<"IPSECKEY ", Text/binary>>), Text)
+     || Text <- [
+            ~"10 0 2 gw.example. EjQ=",
+            ~"10 1 2 2001:db8::1 EjQ=",
+            ~"10 2 2 192.0.2.38 EjQ=",
+            ~"10 4 2 . EjQ=",
+            ~"10 1 2 192.0.2.38 1234!",
+            %% The form the writer wrote before
+            ~"10 2 192.0.2.38 1234"
         ]
     ].

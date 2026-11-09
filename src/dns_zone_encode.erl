@@ -1052,6 +1052,8 @@ encode_rdata(
     LonBin = integer_to_binary(Lon),
     AltBin = integer_to_binary(Alt),
     join_rdata_fields([LatBin, LonBin, AltBin, SizeBin, HorizBin, VertBin], Separator);
+%% RFC4025§3.1: precedence, gateway type, algorithm, gateway, "." for none, and
+%% the key in base64, left out when there is none
 encode_rdata(
     ?DNS_TYPE_IPSECKEY,
     #dns_rrdata_ipseckey{
@@ -1064,22 +1066,28 @@ encode_rdata(
     RelativeNames,
     Separator
 ) ->
-    PrecedenceBin = integer_to_binary(Precedence),
-    AlgBin = integer_to_binary(Alg),
-    GatewayStr =
+    {GatewayType, GatewayStr} =
         case Gateway of
-            {_, _, _, _} = IPv4 ->
-                %% IPv4 address
-                "" ++ _ = inet:ntoa(IPv4);
-            {_, _, _, _, _, _, _, _} = IPv6 ->
-                %% IPv6 address
-                "" ++ _ = inet:ntoa(IPv6);
-            DName when is_binary(DName) ->
-                %% Domain name
-                encode_dname(DName, Origin, RelativeNames)
+            <<>> -> {0, ~"."};
+            {_, _, _, _} -> {1, "" ++ _ = inet:ntoa(Gateway)};
+            {_, _, _, _, _, _, _, _} -> {2, "" ++ _ = inet:ntoa(Gateway)};
+            DName when is_binary(DName) -> {3, encode_dname(DName, Origin, RelativeNames)}
         end,
-    PublicKeyHex = binary:encode_hex(PublicKey),
-    join_rdata_fields([PrecedenceBin, AlgBin, GatewayStr, PublicKeyHex], Separator);
+    Key =
+        case PublicKey of
+            <<>> -> [];
+            _ -> [base64:encode(PublicKey)]
+        end,
+    join_rdata_fields(
+        [
+            integer_to_binary(Precedence),
+            integer_to_binary(GatewayType),
+            integer_to_binary(Alg),
+            GatewayStr
+            | Key
+        ],
+        Separator
+    );
 encode_rdata(
     ?DNS_TYPE_AMTRELAY,
     #dns_rrdata_amtrelay{

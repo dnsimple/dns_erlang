@@ -916,14 +916,14 @@ rdata(?DNS_TYPE_AMTRELAY, [Precedence, D, RelayType, Relay], Ctx) ->
         relay_type = Type,
         relay = gateway(Type, Relay, Ctx)
     };
-%% As the zone writer writes it: precedence, algorithm, gateway, "." for none, and
-%% the key in hex
-rdata(?DNS_TYPE_IPSECKEY, [Precedence, Alg, Gateway, Key], Ctx) ->
+%% RFC4025§3.1: precedence, gateway type, algorithm, gateway, as AMTRELAY's relay,
+%% and the key in base64, which may be left out
+rdata(?DNS_TYPE_IPSECKEY, [Precedence, GatewayType, Alg, Gateway | Key], Ctx) ->
     #dns_rrdata_ipseckey{
         precedence = uint(Precedence),
         alg = uint(Alg),
-        gateway = ipseckey_gateway(Gateway, Ctx),
-        public_key = hex([Key])
+        gateway = gateway(uint(GatewayType), Gateway, Ctx),
+        public_key = base64(Key)
     };
 %% RFC8005§6: the HIT in hex and the key in base64, each one word
 rdata(?DNS_TYPE_HIP, [Alg, HIT, Key | Servers], Ctx) ->
@@ -1498,18 +1498,7 @@ discovery_optional({word, ~"0", _}) -> false;
 discovery_optional({word, ~"1", _}) -> true;
 discovery_optional({_, Text, _}) -> ?FAIL({bad_discovery_optional, Text}).
 
--spec ipseckey_gateway(field(), ctx()) -> <<>> | inet:ip_address() | dns:dname().
-ipseckey_gateway({word, ~".", _}, _Ctx) ->
-    <<>>;
-ipseckey_gateway({word, Text, _} = Field, Ctx) ->
-    case inet:parse_strict_address(binary_to_list(Text)) of
-        {ok, IP} -> IP;
-        {error, _} -> name(Field, Ctx)
-    end;
-ipseckey_gateway({quoted, Text, Line}, Ctx) ->
-    ipseckey_gateway({word, Text, Line}, Ctx).
-
-%% RFC8777§4.3.1: the relay of each type
+%% RFC4025§3.1, RFC8777§4.3.1: the gateway or relay of each type
 -spec gateway(non_neg_integer(), field(), ctx()) -> <<>> | inet:ip_address() | dns:dname().
 gateway(0, {word, ~".", _}, _Ctx) -> <<>>;
 gateway(1, Field, _Ctx) -> ipv4(Field);
@@ -1803,6 +1792,17 @@ rdata_error_message(~"AMTRELAY", _Fields) ->
         being "." for type 0, an IPv4 address for type 1, an IPv6 address for type 2 and a
         domain name for type 3
             Example: 12.100.51.198.in-addr.arpa. 3600 IN AMTRELAY 10 0 1 203.0.113.15
+        """
+    };
+rdata_error_message(~"IPSECKEY", _Fields) ->
+    {
+        <<"Invalid IPSECKEY record: expected a precedence, a gateway type, an algorithm ",
+            "and a gateway">>,
+        ~"""
+        IPSECKEY requires: precedence gateway-type algorithm gateway [base64-key], the
+        gateway being "." for type 0, an IPv4 address for type 1, an IPv6 address for
+        type 2 and a domain name for type 3 (RFC 4025)
+            Example: 38.2.0.192.in-addr.arpa. 7200 IN IPSECKEY 10 1 2 192.0.2.38 AQNRU3mG...
         """
     };
 rdata_error_message(TypeName, _Fields) when TypeName =:= ~"HHIT"; TypeName =:= ~"BRID" ->

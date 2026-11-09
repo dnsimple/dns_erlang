@@ -22,6 +22,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Zone files: a field that does not read as its type is refused, where an unknown type name was read as A, a bad salt or hash as empty, and unquoted strings were dropped.
 - Zone files: a KEY may have no key, CERT data is only base64, LOC takes RFC 1876's optional fields, names take escapes, and a relative `$ORIGIN` follows the one before.
 - Zone files: `dns_zone` writes the names in SVCB, HTTPS, NSEC, HIP, IPSECKEY, AMTRELAY, LP and DSYNC RDATA in the case DNSSEC signs them in, where it lowercased them.
+- Zone files: IPSECKEY is written and read in RFC 4025's form, with the gateway type and the key in base64, where the writer left out the type and wrote the key in hex.
 
 - Wire: a name is held to 255 octets counted on the wire (RFC 1035): decoding took 256 and refused 255 with escapes or a pointer, and compressing took 256 and over.
 - Wire: encoding RDATA over 65535 octets raises `{rdata_too_long, Size}`, where it wrapped RDLENGTH.
