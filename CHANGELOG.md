@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Wire: NSEC, NSEC3 and CSYNC RDATA with a type bitmap window over 32 octets is malformed, where it decoded as types of the next windows.
 - Wire: `encode_message/2` sets TC and keeps the OPT RR when the answers fit only without it, where it dropped the OPT RR and left TC unset.
 - Wire: encoding a CAA tag, NSEC3 salt or hash, or HINFO, NAPTR or HIP string over 255 octets raises `{string_too_long, Size}`, where it wrapped the length, split the string or raised `function_clause`.
+- DNSSEC: an algorithm 1 (RSA/MD5) key tag is the third- and second-to-last octets of the modulus (RFC 4034 Appendix B.1), where it was the checksum of the other algorithms.
 
 ## v5.2.0
 

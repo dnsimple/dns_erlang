@@ -1236,7 +1236,14 @@ decode_text(<<Len, String:Len/binary, Rest/binary>>) ->
 decode_string(<<Len, Bin:Len/binary, Rest/binary>>) ->
     {Rest, Bin}.
 
+%% RFC4034 Appendix B, from the DNSKEY RDATA. Algorithm 1, RSA/MD5, takes it from the end of the
+%% modulus instead, which ends the RDATA: its third- and second-to-last octets, as erratum 193
+%% corrects Appendix B.1.
 -spec bin_to_key_tag(<<_:32, _:_*8>>) -> dns:uint16().
+bin_to_key_tag(<<_:24, ?DNS_ALG_RSAMD5_NUMBER, _/binary>> = Binary) ->
+    Skip = byte_size(Binary) - 3,
+    <<_:Skip/binary, KeyTag:16, _:8>> = Binary,
+    KeyTag;
 bin_to_key_tag(Binary) when is_binary(Binary) ->
     do_bin_to_key_tag(Binary, 0).
 

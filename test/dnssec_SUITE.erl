@@ -46,6 +46,7 @@ groups() ->
             sign_rr_and_rrset_5arg,
             add_keytag_to_cdnskey_test,
             keytag_known_answers,
+            keytag_rsamd5,
             canonical_rrdata_form_test,
             canonical_form_matches_bind,
             signers_name_in_canonical_form,
@@ -362,7 +363,23 @@ keytag_known_answers(_Config) ->
         {<<255, 255, 255, 255, 255>>, 65280},
         %% Even length, exercises the carry fold:
         %% 3 * 0xFFFF = 196605; 196605 >> 16 = 2; 196607 band 0xFFFF = 65535
-        {<<255, 255, 255, 255, 255, 255>>, 65535}
+        {<<255, 255, 255, 255, 255, 255>>, 65535},
+        %% The example zone keys of RFC9563§6, SM2SM3, and RFC9558§2.2, ECC-GOST12, with the
+        %% key tags those RFCs give
+        {
+            <<1, 0, 3, 17,
+                (base64:decode(
+                    ~"7EQ32PTAp+1ac6R9Ze2nfB8pPc2OJqkHSjugALr4SuD9awuQxhfw7wMpiXv7JK4/VwwTrCxJwu+qUuDsgoBK4w=="
+                ))/binary>>,
+            65042
+        },
+        {
+            <<1, 0, 3, 23,
+                (base64:decode(
+                    ~"XGiiHlKUJd5fSeAK5O3L4tUNCPxs4pGqum6wKbqjdkquIQ8nOXrilXZ9HcY8b2AETkWrtWHfwvJD4twPPJFQSA=="
+                ))/binary>>,
+            47355
+        }
     ],
     [
         begin
@@ -392,6 +409,43 @@ keytag_known_answers(_Config) ->
             ?assertEqual(Expected, KeyTag, Rdata)
         end
      || {Rdata, Expected} <- Cases
+    ].
+
+%% RFC4034 Appendix B.1, as erratum 193 corrects it: algorithm 1, RSA/MD5, takes its key tag
+%% from the third- and second-to-last octets of the modulus, which ends the RDATA. dnspython
+%% 2.9.1's dns.dnssec.key_id gives these key tags for the same keys, where the Appendix B
+%% checksum gives 63057, 50386 and 26146.
+keytag_rsamd5(_Config) ->
+    Modulus = fun(Size, K) ->
+        <<First, Rest/binary>> = <<<<((I * K + 3) rem 256)>> || I <- lists:seq(1, Size)>>,
+        <<(First bor 16#80), Rest/binary>>
+    end,
+    Cases = [
+        {<<3, 1, 0, 1, (Modulus(64, 7))/binary>>, 46524},
+        {<<3, 1, 0, 1, (Modulus(65, 11))/binary>>, 47299},
+        %% RFC3110§2: the exponent's length in three octets
+        {<<0, 0, 3, 1, 0, 1, (Modulus(128, 13))/binary>>, 26998}
+    ],
+    [
+        begin
+            Rdata = <<1, 0, 3, ?DNS_ALG_RSAMD5, PublicKey/binary>>,
+            DNSKEY = dns_decode:decode_rrdata(<<>>, ?DNS_CLASS_IN, ?DNS_TYPE_DNSKEY, Rdata),
+            ?assertEqual(Expected, DNSKEY#dns_rrdata_dnskey.keytag, Expected),
+            CDNSKEY = dns_decode:decode_rrdata(<<>>, ?DNS_CLASS_IN, ?DNS_TYPE_CDNSKEY, Rdata),
+            ?assertEqual(Expected, CDNSKEY#dns_rrdata_cdnskey.keytag, Expected),
+            RR = #dns_rr{
+                name = ~"example",
+                type = ?DNS_TYPE_DNSKEY,
+                class = ?DNS_CLASS_IN,
+                ttl = 3600,
+                data = #dns_rrdata_dnskey{
+                    flags = 256, protocol = 3, alg = ?DNS_ALG_RSAMD5, public_key = PublicKey
+                }
+            },
+            #dns_rr{data = #dns_rrdata_dnskey{keytag = KeyTag}} = dnssec:add_keytag_to_dnskey(RR),
+            ?assertEqual(Expected, KeyTag, Expected)
+        end
+     || {PublicKey, Expected} <- Cases
     ].
 
 canonical_rrdata_form_test(_Config) ->
