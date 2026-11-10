@@ -23,6 +23,9 @@
 %% No field holds a larger number, and reading digits past it, one at a time, would
 %% take time quadratic in their count
 -define(MAX_NUMBER, 16#FFFFFFFFFFFFFFFF).
+%% Below it, ten times a number and a digit is still a small integer, so digits are
+%% added without comparing the sum with ?MAX_NUMBER, a bignum
+-define(SMALL_NUMBER, 16#80000000000000).
 
 %% SWAR checks of 7 octets at a time, taken as one 56-bit word so that every value
 %% stays a small integer. Each check first requires all 7 octets to be ASCII,
@@ -666,22 +669,26 @@ classify(<<C, _/binary>> = Word) when ?IS_DIGIT(C) ->
         error -> unknown;
         TTL -> {ttl, TTL}
     end;
+classify(~"IN") ->
+    {class, ?DNS_CLASS_IN};
 classify(Word) ->
     case classify_mnemonic(Word) of
         unknown -> classify_mnemonic(dns_domain:to_upper(Word));
         Kind -> Kind
     end.
 
+%% A type first, as a record has one and seldom a class other than IN; no class is
+%% spelled as a type
 -spec classify_mnemonic(binary()) -> {class, dns:class()} | {type, dns:type(), binary()} | unknown.
 classify_mnemonic(Word) ->
-    case class_number(Word) of
+    case type_number(Word) of
         undefined ->
-            case type_number(Word) of
+            case class_number(Word) of
                 undefined -> unknown;
-                Type -> {type, Type, Word}
+                Class -> {class, Class}
             end;
-        Class ->
-            {class, Class}
+        Type ->
+            {type, Type, Word}
     end.
 
 %% RFC3597§5: CLASSnnn for any class. A number past 16 bits is read as IN, as the
@@ -1310,6 +1317,8 @@ number(<<>>) -> error;
 number(Text) -> number(Text, 0).
 
 -spec number(binary(), non_neg_integer()) -> non_neg_integer() | error.
+number(<<C, Rest/binary>>, Acc) when ?IS_DIGIT(C) andalso Acc < ?SMALL_NUMBER ->
+    number(Rest, Acc * 10 + (C - $0));
 number(<<C, Rest/binary>>, Acc) when ?IS_DIGIT(C) ->
     case Acc * 10 + (C - $0) of
         Number when Number =< ?MAX_NUMBER -> number(Rest, Number);
@@ -1555,15 +1564,16 @@ ttl_value(Text) ->
 
 -spec ttl_value(binary(), non_neg_integer() | none, non_neg_integer(), boolean()) ->
     non_neg_integer() | error.
+ttl_value(<<C, Rest/binary>>, none, Total, Units) when ?IS_DIGIT(C) ->
+    ttl_value(Rest, C - $0, Total, Units);
+ttl_value(<<C, Rest/binary>>, Pending, Total, Units) when
+    ?IS_DIGIT(C) andalso Pending < ?SMALL_NUMBER
+->
+    ttl_value(Rest, Pending * 10 + (C - $0), Total, Units);
 ttl_value(<<C, Rest/binary>>, Pending, Total, Units) when ?IS_DIGIT(C) ->
-    Number =
-        case Pending of
-            none -> C - $0;
-            _ -> Pending * 10 + (C - $0)
-        end,
-    case Number =< ?MAX_NUMBER of
-        true -> ttl_value(Rest, Number, Total, Units);
-        false -> error
+    case Pending * 10 + (C - $0) of
+        Number when Number =< ?MAX_NUMBER -> ttl_value(Rest, Number, Total, Units);
+        _ -> error
     end;
 ttl_value(<<Unit, Rest/binary>>, Pending, Total, _Units) when is_integer(Pending) ->
     case ttl_unit(Unit) of
