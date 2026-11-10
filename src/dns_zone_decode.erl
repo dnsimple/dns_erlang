@@ -1813,7 +1813,22 @@ ttl({quoted, Text}) ->
 
 %% RFC2308§4, as BIND reads it: seconds, or numbers each followed by a unit, which
 %% add up, as 1h30m, in either case: w, d, h, m and s, and y for 365 days
+%% Digits alone, as most TTLs and numbers are, are read by binary_to_integer/1,
+%% at once and without starting a match: after a first octet that is a digit, it
+%% takes nothing but digits. Up to 19 of them stay below ?MAX_NUMBER.
 -spec ttl_value(binary()) -> non_neg_integer() | error.
+ttl_value(Text) when byte_size(Text) > 0, byte_size(Text) =< 19 ->
+    First = binary:first(Text),
+    case ?IS_DIGIT(First) of
+        true ->
+            try
+                binary_to_integer(Text)
+            catch
+                error:badarg -> ttl_value(Text, none, 0, false)
+            end;
+        false ->
+            error
+    end;
 ttl_value(Text) ->
     ttl_value(Text, none, 0, false).
 
