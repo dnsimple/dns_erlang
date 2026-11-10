@@ -7807,7 +7807,7 @@ parse_svcb_value_lists(_Config) ->
     [
         ?assertMatch(
             #dns_rrdata_svcb{
-                svc_params = #{?DNS_SVCB_PARAM_ALPN := [~"part1", ~"part2", ~B"part3,part4\"]}
+                svc_params = #{?DNS_SVCB_PARAM_ALPN := [~"part1", ~"part2", <<"part3,part4\\">>]}
             },
             parse_rdata(<<"SVCB 1 . alpn=", Value/binary>>),
             Value
@@ -8006,7 +8006,7 @@ parse_name_escapes(_Config) ->
         ]
     ],
     ?assertMatch(
-        {error, #{type := semantic}}, dns_zone:parse_string(~B"example. 0 IN NS a\")
+        {error, #{type := semantic}}, dns_zone:parse_string(<<"example. 0 IN NS a\\">>)
     ),
     ?assertMatch(
         {error, #{type := parser}}, dns_zone:parse_string(~"a..b.example. 0 IN A 192.0.2.1\n")
@@ -8508,7 +8508,10 @@ parse_file_reads_in_the_calling_process(Config) ->
     ok = file:write_file(Included, ~"included.example. 300 IN A 192.0.2.1\n"),
     Zone = filename:join(Dir, "raw.zone"),
     ok = file:write_file(Zone, ["www.example. 300 IN A 192.0.2.1\n$INCLUDE ", Included, "\n"]),
-    FileServer = whereis(file_server_2),
+    FileServer =
+        case whereis(file_server_2) of
+            Pid when is_pid(Pid) -> Pid
+        end,
     Session = trace:session_create(?MODULE, self(), []),
     try
         1 = trace:process(Session, FileServer, true, ['receive']),
@@ -8520,7 +8523,9 @@ parse_file_reads_in_the_calling_process(Config) ->
     after
         trace:session_destroy(Session)
     end,
-    ?assertEqual([], file_server_reads([unicode:characters_to_binary(F) || F <- [Zone, Included]])).
+    ?assertEqual(
+        [], file_server_reads([unicode:characters_to_binary(F) || F <- [Zone, Included]], [])
+    ).
 
 %% Records of the types whose names the parser checks without encoding them are
 %% refused exactly where dns_check:rr/1, which encodes them, refuses them: at labels
@@ -8555,35 +8560,44 @@ parse_checks_names_as_the_encoder_does(_Config) ->
     ],
     Cases =
         [
-            {<<Text/binary, " 0 IN A 192.0.2.1\n">>, #{}, Name, #dns_rrdata_a{ip = {192, 0, 2, 1}}}
+            {<<Text/binary, " 0 IN A 192.0.2.1\n">>, #{}, Name, ?DNS_TYPE_A, #dns_rrdata_a{
+                ip = {192, 0, 2, 1}
+            }}
          || {Text, Name} <- Names
         ] ++
             [
-                {<<"a. 0 IN NS ", Text/binary, "\n">>, #{}, ~"a.", #dns_rrdata_ns{dname = Name}}
+                {<<"a. 0 IN NS ", Text/binary, "\n">>, #{}, ~"a.", ?DNS_TYPE_NS, #dns_rrdata_ns{
+                    dname = Name
+                }}
              || {Text, Name} <- Names
             ] ++
             [
-                {<<"a. 0 IN MX 1 ", Text/binary, "\n">>, #{}, ~"a.", #dns_rrdata_mx{
+                {<<"a. 0 IN MX 1 ", Text/binary, "\n">>, #{}, ~"a.", ?DNS_TYPE_MX, #dns_rrdata_mx{
                     preference = 1, exchange = Name
                 }}
              || {Text, Name} <- Names
             ] ++
             [
-                {~"@ 0 IN AAAA ::1\n", #{origin => Origin}, Origin, #dns_rrdata_aaaa{
-                    ip = {0, 0, 0, 0, 0, 0, 0, 1}
-                }}
+                {
+                    ~"@ 0 IN AAAA ::1\n",
+                    #{origin => Origin},
+                    Origin,
+                    ?DNS_TYPE_AAAA,
+                    #dns_rrdata_aaaa{
+                        ip = {0, 0, 0, 0, 0, 0, 0, 1}
+                    }
+                }
              || Origin <- Origins
             ],
     Expected = [
         {Zone, dns_check:rr(#dns_rr{name = Owner, type = Type, class = ?DNS_CLASS_IN, data = Data})}
-     || {Zone, _, Owner, Data} <- Cases,
-        Type <- [dns_record_type(Data)]
+     || {Zone, _, Owner, Type, Data} <- Cases
     ],
     ?assertEqual(
         Expected,
         [
             {Zone, element(1, dns_zone:parse_string(Zone, Options)) =:= ok}
-         || {Zone, Options, _, _} <- Cases
+         || {Zone, Options, _, _, _} <- Cases
         ]
     ),
     ?assertEqual([false, true], lists:usort([Fits || {_, Fits} <- Expected])).
@@ -8645,20 +8659,15 @@ parse_ipv6_as_inet_does(_Config) ->
     ],
     ok.
 
-dns_record_type(#dns_rrdata_a{}) -> ?DNS_TYPE_A;
-dns_record_type(#dns_rrdata_aaaa{}) -> ?DNS_TYPE_AAAA;
-dns_record_type(#dns_rrdata_ns{}) -> ?DNS_TYPE_NS;
-dns_record_type(#dns_rrdata_mx{}) -> ?DNS_TYPE_MX.
-
 %% Which of Names the file server was asked to read, from the trace messages of
-%% what it received.
-file_server_reads(Names) ->
+%% what it received, after those in Reads
+file_server_reads(Names, Reads) ->
     receive
         {trace, _, 'receive', {'$gen_call', _, {read_file, Path}}} ->
             Name = unicode:characters_to_binary(Path),
-            [Name || lists:member(Name, Names)] ++ file_server_reads(Names);
+            file_server_reads(Names, Reads ++ [Name || lists:member(Name, Names)]);
         {trace, _, 'receive', _} ->
-            file_server_reads(Names)
+            file_server_reads(Names, Reads)
     after 0 ->
-        []
+        Reads
     end.

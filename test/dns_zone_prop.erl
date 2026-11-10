@@ -184,7 +184,7 @@ any_dname() ->
 any_label() ->
     ?LET(
         {Label, End},
-        {?LET(L, range(1, 8), binary(L)), oneof([<<>>, ~".", ~"\\"])},
+        {?LET(L, range(1, 8), binary(L)), oneof([<<>>, ~".", <<"\\">>])},
         escape_label(<<Label/binary, End/binary>>)
     ).
 
@@ -192,7 +192,7 @@ escape_label(Label) ->
     <<<<(escape_octet(C))/binary>> || <<C>> <= Label>>.
 
 escape_octet($.) -> ~"\\.";
-escape_octet($\\) -> ~"\\\\";
+escape_octet($\\) -> <<"\\\\">>;
 escape_octet(C) -> <<C>>.
 
 svcb_rrdata() ->
