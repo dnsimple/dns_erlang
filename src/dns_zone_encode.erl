@@ -1367,6 +1367,8 @@ has_unwritable_field(#dns_rrdata_hip{public_key = <<>>}) -> true;
 %% any form, but which dnspython reads in this one
 has_unwritable_field(#dns_rrdata_ipseckey{public_key = <<>>}) -> true;
 has_unwritable_field(#dns_rrdata_loc{lat = Lat, lon = Lon}) -> not loc_writable(Lat, Lon);
+has_unwritable_field(#dns_rrdata_svcb{svc_params = Params}) -> repeats_mandatory_key(Params);
+has_unwritable_field(#dns_rrdata_https{svc_params = Params}) -> repeats_mandatory_key(Params);
 has_unwritable_field(_RData) -> false.
 
 %% RFC1876§3 writes latitudes up to 90 degrees and longitudes up to 180, which the
@@ -1374,3 +1376,11 @@ has_unwritable_field(_RData) -> false.
 -spec loc_writable(integer(), integer()) -> boolean().
 loc_writable(Lat, Lon) ->
     abs(Lat) =< 90 * 3600000 andalso abs(Lon) =< 180 * 3600000.
+
+%% RFC9460§8 lists a key in mandatory once, which the reader holds to, and the wire
+%% format can list it more than once
+-spec repeats_mandatory_key(dns:svcb_svc_params()) -> boolean().
+repeats_mandatory_key(#{?DNS_SVCB_PARAM_MANDATORY := Keys}) when is_list(Keys) ->
+    length(lists:usort(Keys)) =/= length(Keys);
+repeats_mandatory_key(_Params) ->
+    false.

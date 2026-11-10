@@ -188,8 +188,15 @@ zone_key(Name, Error) ->
     end.
 
 -spec zone_value(dns:uint16(), binary() | none) -> dynamic().
+%% RFC9460§8: keys in mandatory MUST NOT appear more than once, by name or number
 zone_value(?DNS_SVCB_PARAM_MANDATORY, Value) when is_binary(Value) ->
-    [zone_key(Name, invalid_mandatory_key) || Name <- zone_list(?DNS_SVCB_PARAM_MANDATORY, Value)];
+    Keys = [
+        zone_key(Name, invalid_mandatory_key)
+     || Name <- zone_list(?DNS_SVCB_PARAM_MANDATORY, Value)
+    ],
+    length(lists:usort(Keys)) =:= length(Keys) orelse
+        zone_error({duplicate_mandatory_key, Value}),
+    Keys;
 zone_value(?DNS_SVCB_PARAM_ALPN, <<>>) ->
     [];
 zone_value(?DNS_SVCB_PARAM_ALPN, Value) when is_binary(Value) ->

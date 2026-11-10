@@ -543,6 +543,7 @@ groups() ->
             parse_svcb_quoted_values,
             parse_svcb_value_lists,
             parse_svcb_keys_by_name,
+            parse_svcb_mandatory_keys_once,
             parse_unquoted_strings,
             parse_types_in_rdata,
             parse_errors_name_their_line,
@@ -7937,6 +7938,33 @@ parse_svcb_keys_by_name(_Config) ->
         ]
     ],
     ok.
+
+%% RFC9460§8: a key appears in mandatory once, by its name or its number. The wire
+%% format can list it twice, and the writer then writes the record in RFC 3597's
+%% generic form, which reads back to the same octets.
+parse_svcb_mandatory_keys_once(_Config) ->
+    ?assertMatch(
+        #dns_rrdata_svcb{svc_params = #{?DNS_SVCB_PARAM_MANDATORY := [_, _]}},
+        parse_rdata(~"SVCB 1 . mandatory=port,alpn alpn=h2 port=443")
+    ),
+    [
+        ?assertMatch(#{type := semantic}, parse_rdata_error(<<"SVCB 1 . ", Params/binary>>), Params)
+     || Params <- [
+            ~"mandatory=alpn,alpn alpn=h2",
+            ~"mandatory=alpn,key1 alpn=h2",
+            ~"mandatory=port,alpn,port alpn=h2 port=443"
+        ]
+    ],
+    Data = #dns_rrdata_https{
+        svc_priority = 1,
+        target_name = ~".",
+        svc_params = #{?DNS_SVCB_PARAM_MANDATORY => [1, 1], ?DNS_SVCB_PARAM_ALPN => [~"h2"]}
+    },
+    Written = iolist_to_binary(dns_zone:encode_rdata(?DNS_TYPE_HTTPS, Data)),
+    ?assertMatch(<<"\\# ", _/binary>>, Written),
+    ?assertEqual(
+        dns_encode:encode_rrdata(?DNS_CLASS_IN, Data), parse_rdata(<<"HTTPS ", Written/binary>>)
+    ).
 
 %% RFC1035§5.1: a <character-string> need not be quoted. The parser dropped the
 %% words that were not, and refused a string of them alone. A quote starts a string
