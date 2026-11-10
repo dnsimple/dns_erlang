@@ -46,6 +46,14 @@
 ).
 %% 7 octets of a comment: no line end
 -define(COMMENT7(W), (?ASCII7(W) andalso ?NO_OCTET(W, $\n))).
+%% 7 octets of text without escapes: no backslash
+-define(PLAIN7(W), (?ASCII7(W) andalso ?NO_OCTET(W, $\\))).
+%% The high bits of the octets of 7 that are dots. A borrow can also flag an octet
+%% next to a dot, which then reads one octet at a time.
+-define(DOTS7(W), ((((W) bxor (?ONES7 * $.)) - ?ONES7) band ?HIGHS7)).
+%% 7 octets of a name without escapes or an empty label: no backslash, and no dot
+%% next to another
+-define(NAME7(W), (?PLAIN7(W) andalso ?DOTS7(W) band (?DOTS7(W) bsr 8) =:= 0)).
 %% The octets that end a word, other than the end of the source
 -define(WORD_END(C),
     (C =:= $\s orelse C =:= $\t orelse C =:= $\r orelse C =:= $\n orelse C =:= $; orelse
@@ -1286,12 +1294,21 @@ presentation_name(Text) ->
         empty_label -> ?FAIL({empty_label, Text})
     end.
 
-%% Whether a name has no escapes, and no empty label either
+%% Whether a name has no escapes, and no empty label either. Previous is the octet
+%% before, which a dot must not follow a dot across 7 octets read at once either.
 -spec plain_name(binary(), byte()) -> plain | escaped | empty_label.
-plain_name(<<$\\, _/binary>>, _Previous) -> escaped;
-plain_name(<<$., _/binary>>, $.) -> empty_label;
-plain_name(<<C, Rest/binary>>, _Previous) -> plain_name(Rest, C);
-plain_name(<<>>, _Previous) -> plain.
+plain_name(<<W:56, Rest/binary>>, Previous) when
+    ?NAME7(W) andalso not (Previous =:= $. andalso W bsr 48 =:= $.)
+->
+    plain_name(Rest, W band 16#FF);
+plain_name(<<$\\, _/binary>>, _Previous) ->
+    escaped;
+plain_name(<<$., _/binary>>, $.) ->
+    empty_label;
+plain_name(<<C, Rest/binary>>, _Previous) ->
+    plain_name(Rest, C);
+plain_name(<<>>, _Previous) ->
+    plain.
 
 -spec escaped_name(binary(), binary(), binary(), non_neg_integer()) -> {binary(), boolean()}.
 escaped_name(<<$\\, A, B, C, Rest/binary>>, Text, Acc, Len) when
@@ -1342,7 +1359,24 @@ text({_, Text, _}) ->
         false -> unescape(Text, <<>>)
     end.
 
+%% The same text, to be decoded at once rather than kept: without escapes it is the
+%% field's own binary, part of the source, which what it decodes to does not hold
+-spec raw_text(field()) -> binary().
+raw_text({_, Text, _}) ->
+    case plain_text(Text) of
+        true -> Text;
+        false -> unescape(Text, <<>>)
+    end.
+
+%% The raw texts of fields one after another, as hex or base64 RDATA is split
+-spec joined_text([field()]) -> binary().
+joined_text([Field]) ->
+    raw_text(Field);
+joined_text(Fields) ->
+    iolist_to_binary([raw_text(Field) || Field <- Fields]).
+
 -spec plain_text(binary()) -> boolean().
+plain_text(<<W:56, Rest/binary>>) when ?PLAIN7(W) -> plain_text(Rest);
 plain_text(<<$\\, _/binary>>) -> false;
 plain_text(<<_, Rest/binary>>) -> plain_text(Rest);
 plain_text(<<>>) -> true.
@@ -1557,7 +1591,7 @@ ipv6({quoted, Text, _}) ->
 
 -spec hex([field()]) -> binary().
 hex(Fields) ->
-    decode_hex(iolist_to_binary([text(Field) || Field <- Fields])).
+    decode_hex(joined_text(Fields)).
 
 -spec decode_hex(binary()) -> binary().
 decode_hex(Hex) ->
@@ -1569,7 +1603,7 @@ decode_hex(Hex) ->
 
 -spec base64([field()]) -> binary().
 base64(Fields) ->
-    Base64 = iolist_to_binary([text(Field) || Field <- Fields]),
+    Base64 = joined_text(Fields),
     try
         base64:decode(Base64)
     catch
@@ -1579,7 +1613,7 @@ base64(Fields) ->
 %% RFC5155§3.3: "-" for no salt
 -spec salt(field()) -> binary().
 salt(Field) ->
-    case text(Field) of
+    case raw_text(Field) of
         ~"-" -> <<>>;
         Hex -> decode_hex(Hex)
     end.
@@ -1588,7 +1622,7 @@ salt(Field) ->
 %% padding is read too, as the zone writer wrote it
 -spec base32hex(field()) -> binary().
 base32hex(Field) ->
-    Text = text(Field),
+    Text = raw_text(Field),
     Digits = trim_trailing(Text, $=),
     try <<<<(base32hex_digit(C)):5>> || <<C>> <= Digits>> of
         Bits ->
@@ -1623,7 +1657,7 @@ uri(Field) ->
 %% read too, as are the hex digits alone, as the zone writer writes them
 -spec eui(field(), 6 | 8) -> binary().
 eui(Field, Size) ->
-    Text = text(Field),
+    Text = raw_text(Field),
     case decode_hex(<<<<C>> || <<C>> <= Text, C =/= $-, C =/= $:>>) of
         <<_:Size/binary>> = Address -> Address;
         _ -> ?FAIL({bad_eui, Text})
