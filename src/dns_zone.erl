@@ -106,6 +106,8 @@ Options for parsing zone files.
 - `default_class` - Default DNS class (default: `?DNS_CLASS_IN`)
 - `base_dir` - Base directory for $INCLUDE directives (default: `""`)
 - `filename` - Source filename for error reporting (internal, set by parse_file)
+- `chunk_size` - Ignored: a file is read whole. It was the size of the chunks a
+  file was read in.
 """.
 -type parse_options() :: #{
     origin => dns:dname(),
