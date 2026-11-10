@@ -562,7 +562,8 @@ groups() ->
             parse_long_numbers_in_linear_time,
             parse_include_errors,
             parse_file_reads_in_the_calling_process,
-            parse_checks_names_as_the_encoder_does
+            parse_checks_names_as_the_encoder_does,
+            parse_ipv6_as_inet_does
         ]},
         {error_cases, [parallel], [
             parse_invalid_ipv4,
@@ -8586,6 +8587,63 @@ parse_checks_names_as_the_encoder_does(_Config) ->
         ]
     ),
     ?assertEqual([false, true], lists:usort([Fits || {_, Fits} <- Expected])).
+
+%% AAAA addresses read as inet:parse_ipv6strict_address/1 reads them, which the
+%% reader did before it read them on the binary: up to 8 groups of 1 to 4 hex digits
+%% in either case, one "::" for at least one zero group, and an IPv4 address in the
+%% last 32 bits. A zone index is refused.
+parse_ipv6_as_inet_does(_Config) ->
+    Addresses = [
+        ~"::",
+        ~"::1",
+        ~"1::",
+        ~"1:2:3:4:5:6:7:8",
+        ~"1:2:3:4:5:6:7::",
+        ~"::2:3:4:5:6:7:8",
+        ~"1::8",
+        ~"1:2:3::6:7:8",
+        ~"ABCD:ef01:2345:6789:aBcD:EF01:0:0",
+        ~"0001:02:003:0004::",
+        ~"1:2:3:4:5:6:7:8:9",
+        ~"1:2:3:4:5:6:7",
+        ~"1:2:3:4:5:6:7:8::",
+        ~"::1:2:3:4:5:6:7:8",
+        ~"1:2:3:4:5:6:7::8",
+        ~":::",
+        ~"1:::2",
+        ~"1::2::3",
+        ~":1:2:3:4:5:6:7",
+        ~"1:2:3:4:5:6:7:",
+        ~"12345::",
+        ~"00000::1",
+        ~"g::1",
+        ~"::1.2.3.4",
+        ~"::ffff:192.0.2.1",
+        ~"1:2:3:4:5:6:1.2.3.4",
+        ~"1:2:3:4:5:6:7:1.2.3.4",
+        ~"1::1.2.3.4.5",
+        ~"::01.2.3.4",
+        ~"::1.+2.3.4",
+        ~"::.1.2.3",
+        ~"fe80::1%eth0",
+        ~"fe80::1%1"
+    ],
+    [
+        ?assertEqual(
+            {Address,
+                case inet:parse_ipv6strict_address(binary_to_list(Address)) of
+                    {ok, IP} when Address =/= ~"fe80::1%eth0", Address =/= ~"fe80::1%1" -> {ok, IP};
+                    _ -> error
+                end},
+            {Address,
+                case dns_zone:parse_string(<<"a. 0 IN AAAA ", Address/binary, "\n">>) of
+                    {ok, [#dns_rr{data = #dns_rrdata_aaaa{ip = Read}}]} -> {ok, Read};
+                    {error, _} -> error
+                end}
+        )
+     || Address <- Addresses
+    ],
+    ok.
 
 dns_record_type(#dns_rrdata_a{}) -> ?DNS_TYPE_A;
 dns_record_type(#dns_rrdata_aaaa{}) -> ?DNS_TYPE_AAAA;

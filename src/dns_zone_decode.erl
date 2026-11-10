@@ -1649,9 +1649,20 @@ ipv4_rest(<<$., Rest/binary>>, Acc) when length(Acc) < 4 -> ipv4_octets(Rest, Ac
 ipv4_rest(_, _Acc) -> error.
 
 %% An IPv6 address, without the "%" and zone index that inet would take and drop,
-%% which have no place in a zone file
+%% which have no place in a zone file. An address ending in an IPv4 address is read
+%% by inet, as before, and the others the way inet reads them.
 -spec ipv6(field()) -> inet:ip6_address().
 ipv6({word, Text, _}) ->
+    case ipv6_address(Text) of
+        error -> ?FAIL({bad_ipv6, Text});
+        ipv4_tail -> inet_ipv6(Text);
+        IP -> IP
+    end;
+ipv6({quoted, Text, _}) ->
+    ?FAIL({bad_ipv6, Text}).
+
+-spec inet_ipv6(binary()) -> inet:ip6_address().
+inet_ipv6(Text) ->
     case binary:match(Text, ~"%") of
         nomatch ->
             case inet:parse_ipv6strict_address(binary_to_list(Text)) of
@@ -1660,9 +1671,78 @@ ipv6({word, Text, _}) ->
             end;
         _ ->
             ?FAIL({bad_ipv6, Text})
-    end;
-ipv6({quoted, Text, _}) ->
-    ?FAIL({bad_ipv6, Text}).
+    end.
+
+%% inet:parse_ipv6strict_address/1 on the binary: groups of 1 to 4 hex digits,
+%% and one "::" for the zero groups the others leave out. ipv4_tail where a group
+%% is followed by a dot.
+-spec ipv6_address(binary()) -> inet:ip6_address() | ipv4_tail | error.
+ipv6_address(~"::") ->
+    {0, 0, 0, 0, 0, 0, 0, 0};
+ipv6_address(<<"::", Rest/binary>>) ->
+    ipv6_group(Rest, after_gap, [], [], 0, 0, 0);
+ipv6_address(Text) ->
+    ipv6_group(Text, before_gap, [], [], 0, 0, 0).
+
+%% Before and After are the groups before and after the "::", last first, and Count
+%% how many there are of both
+-spec ipv6_group(
+    binary(),
+    before_gap | after_gap,
+    [0..16#FFFF],
+    [0..16#FFFF],
+    non_neg_integer(),
+    non_neg_integer(),
+    0..16#FFFF
+) -> inet:ip6_address() | ipv4_tail | error.
+ipv6_group(<<C, Rest/binary>>, Gap, Before, After, Count, Digits, Value) when
+    Digits < 4 andalso ?IS_DIGIT(C)
+->
+    ipv6_group(Rest, Gap, Before, After, Count, Digits + 1, Value * 16 + C - $0);
+ipv6_group(<<C, Rest/binary>>, Gap, Before, After, Count, Digits, Value) when
+    Digits < 4 andalso $a =< C andalso C =< $f
+->
+    ipv6_group(Rest, Gap, Before, After, Count, Digits + 1, Value * 16 + C - $a + 10);
+ipv6_group(<<C, Rest/binary>>, Gap, Before, After, Count, Digits, Value) when
+    Digits < 4 andalso $A =< C andalso C =< $F
+->
+    ipv6_group(Rest, Gap, Before, After, Count, Digits + 1, Value * 16 + C - $A + 10);
+ipv6_group(_Rest, _Gap, _Before, _After, _Count, 0, _Value) ->
+    error;
+ipv6_group(Rest, before_gap, Before, [], Count, _Digits, Value) ->
+    ipv6_before_gap(Rest, [Value | Before], Count + 1);
+ipv6_group(Rest, after_gap, Before, After, Count, _Digits, Value) ->
+    ipv6_after_gap(Rest, Before, [Value | After], Count + 1).
+
+-spec ipv6_before_gap(binary(), [0..16#FFFF], pos_integer()) ->
+    inet:ip6_address() | ipv4_tail | error.
+ipv6_before_gap(<<>>, Before, 8) ->
+    list_to_tuple(lists:reverse(Before));
+ipv6_before_gap(~"::", Before, Count) when Count =< 7 ->
+    ipv6_zeros(Before, [], Count);
+ipv6_before_gap(<<"::", Rest/binary>>, Before, Count) when Count =< 6 ->
+    ipv6_group(Rest, after_gap, Before, [], Count, 0, 0);
+ipv6_before_gap(<<$:, Rest/binary>>, Before, Count) when Count =< 7 ->
+    ipv6_group(Rest, before_gap, Before, [], Count, 0, 0);
+ipv6_before_gap(<<$., _/binary>>, _Before, _Count) ->
+    ipv4_tail;
+ipv6_before_gap(_Rest, _Before, _Count) ->
+    error.
+
+-spec ipv6_after_gap(binary(), [0..16#FFFF], [0..16#FFFF], pos_integer()) ->
+    inet:ip6_address() | ipv4_tail | error.
+ipv6_after_gap(<<>>, Before, After, Count) when Count =< 7 ->
+    ipv6_zeros(Before, After, Count);
+ipv6_after_gap(<<$:, Rest/binary>>, Before, After, Count) when Count =< 6 ->
+    ipv6_group(Rest, after_gap, Before, After, Count, 0, 0);
+ipv6_after_gap(<<$., _/binary>>, _Before, _After, _Count) ->
+    ipv4_tail;
+ipv6_after_gap(_Rest, _Before, _After, _Count) ->
+    error.
+
+-spec ipv6_zeros([0..16#FFFF], [0..16#FFFF], non_neg_integer()) -> inet:ip6_address().
+ipv6_zeros(Before, After, Count) ->
+    list_to_tuple(lists:reverse(Before, lists:duplicate(8 - Count, 0) ++ lists:reverse(After))).
 
 -spec hex([field()]) -> binary().
 hex(Fields) ->
