@@ -566,7 +566,8 @@ groups() ->
             parse_ipv6_as_inet_does,
             parse_repeated_owner,
             parse_checks_signed_records_as_the_encoder_does,
-            parse_owner_from_an_origin_in_capitals
+            parse_owner_from_an_origin_in_capitals,
+            parse_type_and_class_numbers_of_16_bits
         ]},
         {error_cases, [parallel], [
             parse_invalid_ipv4,
@@ -4225,24 +4226,21 @@ parse_uncommon_type_numbers(_Config) ->
         Tests
     ).
 
-%% Test parse_generic_type with invalid format
+%% TYPEnnn past 65535 is refused, where the parser read it as A
 parse_generic_type_invalid(_Config) ->
-    %% Test lines 900, 903, 906: parse_generic_type error paths
-    %% When TYPE number is out of range, it falls back to A (TYPE1)
     Zone = ~"example.com. 3600 IN TYPE99999 \\# 4 C0000201\n",
-    %% TYPE99999 is out of range (> 65535), falls back to A
-    {ok, [RR]} = dns_zone:parse_string(Zone, #{origin => ~"example.com."}),
-    %% Verify it falls back to TYPE A
-    ?assertEqual(?DNS_TYPE_A, RR#dns_rr.type).
+    ?assertMatch(
+        {error, #{type := parser, message := ~"Parse error: type out of range: TYPE99999"}},
+        dns_zone:parse_string(Zone, #{origin => ~"example.com."})
+    ).
 
-%% Test parse_generic_class with invalid format
+%% CLASSnnn past 65535 is refused, where the parser read it as IN
 parse_generic_class_invalid(_Config) ->
-    %% Test lines 916, 919, 922: parse_generic_class error paths
-    %% When CLASS number is out of range, it falls back to IN (CLASS1)
     Zone = ~"example.com. 3600 CLASS99999 A 192.0.2.1\n",
-    %% CLASS99999 is out of range (> 65535), falls back to IN
-    {ok, [RR]} = dns_zone:parse_string(Zone, #{origin => ~"example.com."}),
-    ?assertEqual(?DNS_CLASS_IN, RR#dns_rr.class).
+    ?assertMatch(
+        {error, #{type := parser, message := ~"Parse error: class out of range: CLASS99999"}},
+        dns_zone:parse_string(Zone, #{origin => ~"example.com."})
+    ).
 
 %% Test NS record with invalid domain
 parse_ns_invalid_domain(_Config) ->
@@ -8738,6 +8736,43 @@ parse_owner_from_an_origin_in_capitals(_Config) ->
             ~"  300 IN A 192.0.2.1\n",
             ~"A 192.0.2.1\n",
             ~"@ 300 IN A 192.0.2.1\n  300 IN A 192.0.2.2\n"
+        ]
+    ],
+    ok.
+
+%% RFC3597§5: TYPEnnn and CLASSnnn up to 65535, in a record's header and where its
+%% RDATA has a type, in either case. The parser read a larger number as A or IN.
+parse_type_and_class_numbers_of_16_bits(_Config) ->
+    ?assertMatch(
+        {ok, [#dns_rr{type = 65535, class = 65535, data = <<>>}]},
+        dns_zone:parse_string(~"a. 0 CLASS65535 TYPE65535 \\# 0\n")
+    ),
+    ?assertMatch(
+        {ok, [#dns_rr{data = #dns_rrdata_nsec{types = [?DNS_TYPE_A, 65535]}}]},
+        dns_zone:parse_string(~"a. 0 IN NSEC b. A type65535\n")
+    ),
+    Signature = ~"20250101000000 20240101000000 1 a. AAAA",
+    [
+        ?assertEqual(
+            {error, Message},
+            case dns_zone:parse_string(<<Zone/binary, "\n">>) of
+                {error, #{message := Read}} -> {error, Read};
+                Read -> Read
+            end
+        )
+     || {Zone, Message} <- [
+            {~"a. 0 IN TYPE65536 \\# 0", ~"Parse error: type out of range: TYPE65536"},
+            {~"a. 0 CLASS65536 A 192.0.2.1", ~"Parse error: class out of range: CLASS65536"},
+            {
+                ~"a. 0 IN TYPE99999999999999999999 \\# 0",
+                ~"Parse error: type out of range: TYPE99999999999999999999"
+            },
+            {~"a. 0 IN NSEC b. A TYPE65536", ~"Invalid NSEC record: type out of range: TYPE65536"},
+            {~"a. 0 IN NSEC b. A type65536", ~"Invalid NSEC record: type out of range: TYPE65536"},
+            {
+                <<"a. 0 IN RRSIG TYPE65536 8 1 300 ", Signature/binary>>,
+                ~"Invalid RRSIG record: type out of range: TYPE65536"
+            }
         ]
     ],
     ok.

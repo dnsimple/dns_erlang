@@ -785,36 +785,36 @@ classify_mnemonic(Word) ->
             {type, Type, Word}
     end.
 
-%% RFC3597§5: CLASSnnn for any class. A number past 16 bits is read as IN, as the
-%% parser read it.
+%% RFC3597§5: CLASSnnn for any class
 -spec class_number(binary()) -> dns:class() | undefined.
 class_number(~"IN") -> ?DNS_CLASS_IN;
 class_number(~"CH") -> ?DNS_CLASS_CH;
 class_number(~"HS") -> ?DNS_CLASS_HS;
 class_number(~"CS") -> ?DNS_CLASS_CS;
-class_number(<<"CLASS", Number/binary>>) -> generic_number(Number, ?DNS_CLASS_IN);
+class_number(<<"CLASS", Number/binary>> = Mnemonic) -> generic_number(Number, ~"class", Mnemonic);
 class_number(_) -> undefined.
 
-%% RFC3597§5: TYPEnnn for any type. A number past 16 bits is read as A, as the
-%% parser read it. ALIAS, PowerDNS's, is read as a CNAME.
+%% RFC3597§5: TYPEnnn for any type. ALIAS, PowerDNS's, is read as a CNAME.
 -spec type_number(binary()) -> dns:type() | undefined.
 type_number(~"ALIAS") ->
     ?DNS_TYPE_CNAME;
 type_number(<<"TYPE", Number/binary>> = Mnemonic) ->
-    case generic_number(Number, ?DNS_TYPE_A) of
+    case generic_number(Number, ~"type", Mnemonic) of
         undefined -> dns_names:name_type(Mnemonic);
         Type -> Type
     end;
 type_number(Mnemonic) ->
     dns_names:name_type(Mnemonic).
 
--spec generic_number(binary(), dns:uint16()) -> dns:uint16() | undefined.
-generic_number(Number, TooLarge) ->
+%% The number of TYPEnnn or CLASSnnn, undefined if it is not digits, and refused
+%% past 16 bits, where the parser read TYPE65536 as A and CLASS65536 as IN
+-spec generic_number(binary(), binary(), binary()) -> dns:uint16() | undefined.
+generic_number(Number, What, Mnemonic) ->
     case digits(Number) of
         true ->
             case number(Number) of
                 N when is_integer(N), N =< 16#FFFF -> N;
-                _ -> TooLarge
+                _ -> ?FAIL({out_of_range, What, Mnemonic})
             end;
         false ->
             undefined
@@ -2126,6 +2126,8 @@ reason_text({bad_directive, Name, Args}) ->
     iolist_to_binary(
         io_lib:format("unknown directive, or one with ~b arguments: ~s", [Args, Name])
     );
+reason_text({out_of_range, What, Text}) when is_binary(What), is_binary(Text) ->
+    <<What/binary, " out of range: ", Text/binary>>;
 reason_text({out_of_range, What, Value}) ->
     iolist_to_binary(io_lib:format("~s out of range: ~b", [What, Value]));
 reason_text({bad_time, Time}) ->
