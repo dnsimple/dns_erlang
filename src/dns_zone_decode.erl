@@ -144,8 +144,6 @@
     origin = <<>> :: dns:dname(),
     default_ttl = 0 :: dns:ttl(),
     default_class = ?DNS_CLASS_IN :: dns:class(),
-    last_owner = <<>> :: dns:dname(),
-    owner_memo = undefined :: owner_memo(),
     base_dir = "" :: file:filename_all(),
     filename = undefined :: file:filename_all() | undefined,
     %% How many files include this one
@@ -168,6 +166,7 @@
     {dns:ttl() | undefined, dns:class() | undefined, dns:type(), binary(), [field()]}.
 -type entry() ::
     {rrs, [dns:rr()], ctx()}
+    | {origin, ctx()}
     | {ctx, ctx()}
     | {error, dns_zone:error_detail()}.
 
@@ -262,13 +261,14 @@ parse(Bin, Options, IncludeDepth) ->
         origin = Origin,
         default_ttl = maps:get(default_ttl, Options, 0),
         default_class = maps:get(default_class, Options, ?DNS_CLASS_IN),
-        last_owner = dns_domain:to_lower(Origin),
         base_dir = filename:flatten(maps:get(base_dir, Options, "")),
         filename = filename(maps:get(filename, Options, undefined)),
         include_depth = IncludeDepth,
         source = Bin
     },
-    with_binary_heap(byte_size(Bin), fun() -> entries(Bin, 0, 1, Ctx, []) end).
+    with_binary_heap(byte_size(Bin), fun() ->
+        entries(Bin, 0, 1, Ctx, dns_domain:to_lower(Origin), undefined, [])
+    end).
 
 %% A file name of the options as an error location gives it: parse_options() takes
 %% the atoms and deep lists of file:name_all(), which are made flat
@@ -299,34 +299,41 @@ with_binary_heap(Size, Fun) ->
     end.
 
 %% Each entry is read as its fields are cut out of the source, a directive or a
-%% record. A record goes on the list without a tuple around it, and the state goes
-%% on to the next entry as it is, without a copy, when the record has the owner and
-%% the owner memo it already holds, as the records of one owner do.
--spec entries(binary(), non_neg_integer(), pos_integer(), ctx(), [dns:rr()]) ->
+%% record. A record goes on the list without a tuple around it. The owner of the
+%% last record, which a record without one takes, and the owner memo change from
+%% record to record, and go from one to the next as arguments rather than in the
+%% state, which would be copied for each.
+-spec entries(
+    binary(), non_neg_integer(), pos_integer(), ctx(), dns:dname(), owner_memo(), [dns:rr()]
+) ->
     {ok, [dns:rr()]} | {error, dns_zone:error_detail()}.
-entries(Bin, Pos, _Line, _Ctx, Acc) when Pos >= byte_size(Bin) ->
+entries(Bin, Pos, _Line, _Ctx, _Owner, _Memo, Acc) when Pos >= byte_size(Bin) ->
     {ok, lists:reverse(Acc)};
-entries(Bin, Pos, Line, Ctx, Acc) ->
+entries(Bin, Pos, Line, Ctx, Owner, Memo, Acc) ->
     case entry_fields(Bin, Pos, Line) of
         {ok, [], Next, NextLine} ->
-            entries(Bin, Next, NextLine, Ctx, Acc);
+            entries(Bin, Next, NextLine, Ctx, Owner, Memo, Acc);
         {ok, [{Kind, First, Start} | Args] = Fields, Next, NextLine} ->
             case Kind =:= word andalso binary:first(First) =:= $$ of
                 true ->
                     case directive_entry(First, Args, Start, Ctx) of
                         {rrs, RRs, Ctx1} ->
-                            entries(Bin, Next, NextLine, Ctx1, lists:reverse(RRs, Acc));
+                            entries(
+                                Bin, Next, NextLine, Ctx1, Owner, Memo, lists:reverse(RRs, Acc)
+                            );
                         {ctx, Ctx1} ->
-                            entries(Bin, Next, NextLine, Ctx1, Acc);
+                            entries(Bin, Next, NextLine, Ctx1, Owner, Memo, Acc);
+                        {origin, #ctx{origin = Origin} = Ctx1} ->
+                            Owner1 = dns_domain:to_lower(Origin),
+                            entries(Bin, Next, NextLine, Ctx1, Owner1, Memo, Acc);
                         {error, _} = Error ->
                             Error
                     end;
                 false ->
                     Blank = binary:at(Bin, Pos) =:= $\s orelse binary:at(Bin, Pos) =:= $\t,
-                    try record(Blank, Fields, Ctx) of
-                        {RR, Memo} ->
-                            Ctx1 = next_owner(Ctx, RR#dns_rr.name, Memo),
-                            entries(Bin, Next, NextLine, Ctx1, [RR | Acc])
+                    try record(Blank, Fields, Ctx, Owner, Memo) of
+                        {#dns_rr{name = Owner1} = RR, Memo1} ->
+                            entries(Bin, Next, NextLine, Ctx, Owner1, Memo1, [RR | Acc])
                     catch
                         error:{?MODULE, Reason} -> {error, record_error(Reason, Start, Ctx)}
                     end
@@ -360,21 +367,12 @@ record_error(Reason, Line, Ctx) ->
     Message = <<"Parse error: ", (reason_text(Reason))/binary>>,
     error_detail(parser, Message, undefined, {parser_error, Reason}, Line, Ctx).
 
-%% The state for the entry after a record: the same, when it already has the
-%% record's owner and owner memo, the same terms where the memo was used
--spec next_owner(ctx(), dns:dname(), owner_memo()) -> ctx().
-next_owner(#ctx{last_owner = Owner, owner_memo = Memo} = Ctx, Owner, Memo) ->
-    Ctx;
-next_owner(Ctx, Owner, Memo) ->
-    Ctx#ctx{last_owner = Owner, owner_memo = Memo}.
-
 %% RFC1035§5.1 directives, and RFC2308§4's $TTL. BIND's $GENERATE is accepted and
-%% generates nothing. The origin is the owner of a record that gives none, and is
-%% lowercased as owners are.
+%% generates nothing. After $ORIGIN, the origin is the owner of a record that gives
+%% none, lowercased as owners are.
 -spec directive(binary(), [field()], pos_integer(), ctx()) -> entry().
 directive(~"$ORIGIN", [Name], _Line, Ctx) ->
-    Origin = fqdn(name(Name, Ctx)),
-    {ctx, Ctx#ctx{origin = Origin, last_owner = dns_domain:to_lower(Origin)}};
+    {origin, Ctx#ctx{origin = fqdn(name(Name, Ctx))}};
 directive(~"$TTL", [Field], _Line, Ctx) ->
     %% RFC2181§8
     TTL = ttl(Field),
@@ -467,33 +465,35 @@ type_text(semantic) -> ~"Invalid record".
 %% lowercased; the names in RDATA keep their case. A line that starts with a blank
 %% has no owner, unless it only reads as a record with its first field taken for
 %% one, as the grammar this parser replaced took it.
--spec record(boolean(), [field(), ...], ctx()) -> {dns:rr(), owner_memo()}.
-record(true, Fields, #ctx{owner_memo = Memo} = Ctx) ->
+-spec record(boolean(), [field(), ...], ctx(), dns:dname(), owner_memo()) ->
+    {dns:rr(), owner_memo()}.
+record(true, Fields, Ctx, LastOwner, Memo) ->
     try
-        {rr(Ctx#ctx.last_owner, header(Fields, undefined, undefined), Ctx), Memo}
+        {rr(LastOwner, header(Fields, undefined, undefined), Ctx, Memo), Memo}
     catch
         error:{?MODULE, _} = Error:Stack ->
-            case owner_record(Fields, Ctx) of
+            case owner_record(Fields, Ctx, LastOwner, Memo) of
                 {ok, RR} -> {RR, Memo};
                 error -> erlang:raise(error, Error, Stack)
             end
     end;
-record(false, Fields, Ctx) ->
-    {Owner, Header, Memo} = owner_and_header(Fields, Ctx),
-    {rr(Owner, Header, Ctx), Memo}.
+record(false, Fields, Ctx, LastOwner, Memo) ->
+    {Owner, Header, Memo1} = owner_and_header(Fields, Ctx, LastOwner, Memo),
+    {rr(Owner, Header, Ctx, Memo), Memo1}.
 
--spec owner_record([field(), ...], ctx()) -> {ok, dns:rr()} | error.
-owner_record(Fields, Ctx) ->
+-spec owner_record([field(), ...], ctx(), dns:dname(), owner_memo()) -> {ok, dns:rr()} | error.
+owner_record(Fields, Ctx, LastOwner, Memo) ->
     try
-        {Owner, Rest, _Memo} = owner(Fields, Ctx),
+        {Owner, Rest, _Memo} = owner(Fields, Ctx, LastOwner, Memo),
         Rest =/= Fields orelse ?FAIL(no_owner),
-        {ok, rr(Owner, header(Rest, undefined, undefined), Ctx)}
+        {ok, rr(Owner, header(Rest, undefined, undefined), Ctx, Memo)}
     catch
         error:{?MODULE, _} -> error
     end.
 
--spec rr(dns:dname(), header(), ctx()) -> dns:rr().
-rr(Owner, {TTL, Class, Type, Mnemonic, RDataFields}, Ctx) ->
+%% The memo is that of the records before this one, whose owner was accepted
+-spec rr(dns:dname(), header(), ctx(), owner_memo()) -> dns:rr().
+rr(Owner, {TTL, Class, Type, Mnemonic, RDataFields}, Ctx, Memo) ->
     RDataFields =:= [] andalso ?FAIL({no_rdata, Mnemonic}),
     RR = #dns_rr{
         name = Owner,
@@ -502,7 +502,7 @@ rr(Owner, {TTL, Class, Type, Mnemonic, RDataFields}, Ctx) ->
         ttl = default(TTL, Ctx#ctx.default_ttl),
         data = rdata(Type, Mnemonic, RDataFields, Ctx)
     },
-    fits(RR, Ctx#ctx.owner_memo) orelse rdata_fail(Mnemonic, RDataFields, does_not_fit),
+    fits(RR, Memo) orelse rdata_fail(Mnemonic, RDataFields, does_not_fit),
     RR.
 
 %% dns_check:rr/1, which encodes the RDATA to see that it fits. For the types most
@@ -653,34 +653,34 @@ default(Value, _Default) -> Value.
 %% previous record. A type is an owner when a class follows it, or a TTL and a
 %% class. The words are told apart as that grammar's lexer told them, which took
 %% only uppercase mnemonics.
--spec owner([field(), ...], ctx()) -> {dns:dname(), [field()], owner_memo()}.
-owner([{word, ~"@", _} | Fields], #ctx{origin = Origin, owner_memo = Memo}) ->
+-spec owner([field(), ...], ctx(), dns:dname(), owner_memo()) ->
+    {dns:dname(), [field()], owner_memo()}.
+owner([{word, ~"@", _} | Fields], #ctx{origin = Origin}, _LastOwner, Memo) ->
     {dns_domain:to_lower(Origin), Fields, Memo};
-owner([{word, Word, _} = Name | Rest] = Fields, #ctx{owner_memo = Memo} = Ctx) ->
+owner([{word, Word, _} = Name | Rest] = Fields, Ctx, LastOwner, Memo) ->
     case word_kind(Word) of
         name ->
-            owner_name(Name, Rest, Ctx);
+            owner_name(Name, Rest, Ctx, Memo);
         type ->
             case [word_kind(Next) || {word, Next, _} <- lists:sublist(Rest, 2)] of
                 [class | _] -> {dns_domain:to_lower(name(Name, Ctx)), Rest, Memo};
                 [ttl, class] -> {dns_domain:to_lower(name(Name, Ctx)), Rest, Memo};
-                _ -> {Ctx#ctx.last_owner, Fields, Memo}
+                _ -> {LastOwner, Fields, Memo}
             end;
         _ ->
-            {Ctx#ctx.last_owner, Fields, Memo}
+            {LastOwner, Fields, Memo}
     end;
-owner([{quoted, Text, _} | _], _Ctx) ->
+owner([{quoted, Text, _} | _], _Ctx, _LastOwner, _Memo) ->
     ?FAIL({quoted_owner, Text}).
 
 %% Zone files often spell the same owner line after line. Spelled as the memo's,
 %% under the same origin, it is the memo's name, the same binary, rather than read,
 %% copied and lowercased again.
--spec owner_name(field(), [field()], ctx()) -> {dns:dname(), [field()], owner_memo()}.
-owner_name(
-    {word, Text, _}, Rest, #ctx{origin = Origin, owner_memo = {Text, Origin, Owner} = Memo}
-) ->
+-spec owner_name(field(), [field()], ctx(), owner_memo()) ->
+    {dns:dname(), [field()], owner_memo()}.
+owner_name({word, Text, _}, Rest, #ctx{origin = Origin}, {Text, Origin, Owner} = Memo) ->
     {Owner, Rest, Memo};
-owner_name({word, Text, _} = Field, Rest, #ctx{origin = Origin} = Ctx) ->
+owner_name({word, Text, _} = Field, Rest, #ctx{origin = Origin} = Ctx, _Memo) ->
     Owner = dns_domain:to_lower(name(Field, Ctx)),
     {Owner, Rest, {Text, Origin, Owner}}.
 
@@ -689,9 +689,10 @@ owner_name({word, Text, _} = Field, Rest, #ctx{origin = Origin} = Ctx) ->
 %% rest does not read as a record's start, the first field is read as the owner,
 %% so that the 1 of a reverse zone, which the writer writes before its TTL, is
 %% an owner.
--spec owner_and_header([field(), ...], ctx()) -> {dns:dname(), header(), owner_memo()}.
-owner_and_header([First | Rest] = Fields, Ctx) ->
-    case owner(Fields, Ctx) of
+-spec owner_and_header([field(), ...], ctx(), dns:dname(), owner_memo()) ->
+    {dns:dname(), header(), owner_memo()}.
+owner_and_header([First | Rest] = Fields, Ctx, LastOwner, Memo0) ->
+    case owner(Fields, Ctx, LastOwner, Memo0) of
         {Owner, Fields, Memo} ->
             try
                 {Owner, header(Fields, undefined, undefined), Memo}
@@ -831,41 +832,46 @@ lexer_type(Word) when byte_size(Word) =< 10 ->
 lexer_type(_Word) ->
     name.
 
+%% A record's TTL and class, in either order, then its type, each word told as it
+%% is read: a TTL by its first octet, IN by equality, and a type by its number,
+%% with no tuple to say which it was. A word that is no type or class as written
+%% is tried in uppercase.
 -spec header([field()], dns:ttl() | undefined, dns:class() | undefined) -> header().
 header([{word, Word, _} | Rest], TTL, Class) ->
-    case classify(Word) of
-        {ttl, Value} when TTL =:= undefined -> header(Rest, Value, Class);
-        {class, Value} when Class =:= undefined -> header(Rest, TTL, Value);
-        {type, Type, Mnemonic} -> {TTL, Class, Type, Mnemonic, Rest};
-        _ -> ?FAIL({unexpected_field, Word})
+    case binary:first(Word) of
+        C when ?IS_DIGIT(C) ->
+            case ttl_value(Word) of
+                Value when is_integer(Value), TTL =:= undefined -> header(Rest, Value, Class);
+                _ -> ?FAIL({unexpected_field, Word})
+            end;
+        _ when Word =:= ~"IN", Class =:= undefined ->
+            header(Rest, TTL, ?DNS_CLASS_IN);
+        _ ->
+            case type_or_class(Word) of
+                Type when is_integer(Type) ->
+                    {TTL, Class, Type, Word, Rest};
+                {class, Value} when Class =:= undefined ->
+                    header(Rest, TTL, Value);
+                unknown ->
+                    Upper = dns_domain:to_upper(Word),
+                    case type_or_class(Upper) of
+                        Type when is_integer(Type) -> {TTL, Class, Type, Upper, Rest};
+                        {class, Value} when Class =:= undefined -> header(Rest, TTL, Value);
+                        _ -> ?FAIL({unexpected_field, Word})
+                    end;
+                _ ->
+                    ?FAIL({unexpected_field, Word})
+            end
     end;
 header([{quoted, Text, _} | _], _TTL, _Class) ->
     ?FAIL({unexpected_field, Text});
 header([], _TTL, _Class) ->
     ?FAIL(no_type).
 
--spec classify(binary()) ->
-    {ttl, non_neg_integer()} | {class, dns:class()} | {type, dns:type(), binary()} | unknown.
-classify(Word) ->
-    case binary:first(Word) of
-        C when ?IS_DIGIT(C) ->
-            case ttl_value(Word) of
-                error -> unknown;
-                TTL -> {ttl, TTL}
-            end;
-        _ when Word =:= ~"IN" ->
-            {class, ?DNS_CLASS_IN};
-        _ ->
-            case classify_mnemonic(Word) of
-                unknown -> classify_mnemonic(dns_domain:to_upper(Word));
-                Kind -> Kind
-            end
-    end.
-
 %% A type first, as a record has one and seldom a class other than IN; no class is
 %% spelled as a type
--spec classify_mnemonic(binary()) -> {class, dns:class()} | {type, dns:type(), binary()} | unknown.
-classify_mnemonic(Word) ->
+-spec type_or_class(binary()) -> dns:type() | {class, dns:class()} | unknown.
+type_or_class(Word) ->
     case type_number(Word) of
         undefined ->
             case class_number(Word) of
@@ -873,7 +879,7 @@ classify_mnemonic(Word) ->
                 Class -> {class, Class}
             end;
         Type ->
-            {type, Type, Word}
+            Type
     end.
 
 %% RFC3597§5: CLASSnnn for any class
