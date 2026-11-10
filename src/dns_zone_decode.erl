@@ -1223,7 +1223,7 @@ rrsig_time(Field) ->
 %% RFC1876§3: d1 [m1 [s1]] N|S d2 [m2 [s2]] E|W alt[m] [siz[m] [hp[m] [vp[m]]]].
 %% The six integers the zone writer writes are read too.
 -spec loc([field()]) -> dns:rrdata().
-loc(Fields) ->
+loc([_, _, _, _, _, _] = Fields) ->
     case [signed_integer(Text) || {word, Text, _} <- Fields] of
         [Lat, Lon, Alt, Size, Horiz, Vert] when
             is_integer(Lat),
@@ -1231,15 +1231,16 @@ loc(Fields) ->
             is_integer(Alt),
             is_integer(Size),
             is_integer(Horiz),
-            is_integer(Vert),
-            length(Fields) =:= 6
+            is_integer(Vert)
         ->
             #dns_rrdata_loc{
                 lat = Lat, lon = Lon, alt = Alt, size = Size, horiz = Horiz, vert = Vert
             };
         _ ->
             loc_rfc1876([text(Field) || Field <- Fields])
-    end.
+    end;
+loc(Fields) ->
+    loc_rfc1876([text(Field) || Field <- Fields]).
 
 -spec loc_rfc1876([binary()]) -> dns:rrdata().
 loc_rfc1876(Words) ->
@@ -1261,10 +1262,15 @@ loc_rfc1876(Words) ->
     {integer(), [binary()]}.
 loc_coordinate([Word | Rest], Parts, {Positive, Negative, MaxDegrees} = Axis) when Parts =/= [] ->
     case dns_domain:to_upper(Word) of
-        Positive -> {loc_angle(lists:reverse(Parts), MaxDegrees), Rest};
-        Negative -> {-loc_angle(lists:reverse(Parts), MaxDegrees), Rest};
-        _ when length(Parts) < 3 -> loc_coordinate(Rest, [Word | Parts], Axis);
-        _ -> ?FAIL(malformed)
+        Positive ->
+            {loc_angle(lists:reverse(Parts), MaxDegrees), Rest};
+        Negative ->
+            {-loc_angle(lists:reverse(Parts), MaxDegrees), Rest};
+        _ ->
+            case Parts of
+                [_, _, _] -> ?FAIL(malformed);
+                _ -> loc_coordinate(Rest, [Word | Parts], Axis)
+            end
     end;
 loc_coordinate([Word | Rest], [], Axis) ->
     loc_coordinate(Rest, [Word], Axis);
@@ -1656,39 +1662,42 @@ types(Fields) ->
 %% octal elsewhere
 -spec ipv4(field()) -> inet:ip4_address().
 ipv4({word, Text, _}) ->
-    case ipv4_octets(Text, []) of
-        [D, C, B, A] -> {A, B, C, D};
-        _ -> ?FAIL({bad_ipv4, Text})
+    case ipv4_octet(Text, 0, 0, 0, 0) of
+        error -> ?FAIL({bad_ipv4, Text});
+        IP -> IP
     end;
 ipv4({quoted, Text, _}) ->
     ?FAIL({bad_ipv4, Text}).
 
-%% The octets, last first, or error
--spec ipv4_octets(binary(), [byte()]) -> [byte()] | error.
-ipv4_octets(Text, Acc) when length(Acc) < 4 ->
-    case Text of
-        <<D1, D2, D3, Rest/binary>> when
-            $1 =< D1,
-            D1 =< $2,
-            ?IS_DIGIT(D2),
-            ?IS_DIGIT(D3),
-            (D1 - $0) * 100 + (D2 - $0) * 10 + (D3 - $0) =< 255
-        ->
-            ipv4_rest(Rest, [(D1 - $0) * 100 + (D2 - $0) * 10 + (D3 - $0) | Acc]);
-        <<D1, D2, Rest/binary>> when $1 =< D1, D1 =< $9, ?IS_DIGIT(D2) ->
-            ipv4_rest(Rest, [(D1 - $0) * 10 + (D2 - $0) | Acc]);
-        <<D, Rest/binary>> when ?IS_DIGIT(D) ->
-            ipv4_rest(Rest, [D - $0 | Acc]);
-        _ ->
-            error
-    end;
-ipv4_octets(_Text, _Acc) ->
+%% The next octet, after Count of them, A, B and C as far as they are read
+-spec ipv4_octet(binary(), 0..3, byte(), byte(), byte()) -> inet:ip4_address() | error.
+ipv4_octet(<<D1, D2, D3, Rest/binary>>, Count, A, B, C) when
+    $1 =< D1,
+    D1 =< $2,
+    ?IS_DIGIT(D2),
+    ?IS_DIGIT(D3),
+    (D1 - $0) * 100 + (D2 - $0) * 10 + (D3 - $0) =< 255
+->
+    ipv4_dot(Rest, Count, A, B, C, (D1 - $0) * 100 + (D2 - $0) * 10 + (D3 - $0));
+ipv4_octet(<<D1, D2, Rest/binary>>, Count, A, B, C) when $1 =< D1, D1 =< $9, ?IS_DIGIT(D2) ->
+    ipv4_dot(Rest, Count, A, B, C, (D1 - $0) * 10 + (D2 - $0));
+ipv4_octet(<<D, Rest/binary>>, Count, A, B, C) when ?IS_DIGIT(D) ->
+    ipv4_dot(Rest, Count, A, B, C, D - $0);
+ipv4_octet(_Rest, _Count, _A, _B, _C) ->
     error.
 
--spec ipv4_rest(binary(), [byte()]) -> [byte()] | error.
-ipv4_rest(<<>>, Acc) when length(Acc) =:= 4 -> Acc;
-ipv4_rest(<<$., Rest/binary>>, Acc) when length(Acc) < 4 -> ipv4_octets(Rest, Acc);
-ipv4_rest(_, _Acc) -> error.
+%% A dot after each of the first three octets, and nothing after the fourth
+-spec ipv4_dot(binary(), 0..3, byte(), byte(), byte(), byte()) -> inet:ip4_address() | error.
+ipv4_dot(<<$., Rest/binary>>, 0, _A, _B, _C, Octet) ->
+    ipv4_octet(Rest, 1, Octet, 0, 0);
+ipv4_dot(<<$., Rest/binary>>, 1, A, _B, _C, Octet) ->
+    ipv4_octet(Rest, 2, A, Octet, 0);
+ipv4_dot(<<$., Rest/binary>>, 2, A, B, _C, Octet) ->
+    ipv4_octet(Rest, 3, A, B, Octet);
+ipv4_dot(<<>>, 3, A, B, C, Octet) ->
+    {A, B, C, Octet};
+ipv4_dot(_Rest, _Count, _A, _B, _C, _Octet) ->
+    error.
 
 %% An IPv6 address, without the "%" and zone index that inet would take and drop,
 %% which have no place in a zone file. An address ending in an IPv4 address is read
