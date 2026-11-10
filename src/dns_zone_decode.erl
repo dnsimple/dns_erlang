@@ -167,8 +167,7 @@
 -type header() ::
     {dns:ttl() | undefined, dns:class() | undefined, dns:type(), binary(), [field()]}.
 -type entry() ::
-    {rr, dns:rr(), ctx()}
-    | {rrs, [dns:rr()], ctx()}
+    {rrs, [dns:rr()], ctx()}
     | {ctx, ctx()}
     | {error, dns_zone:error_detail()}.
 
@@ -299,23 +298,42 @@ with_binary_heap(Size, Fun) ->
             Fun()
     end.
 
+%% Each entry is read as its fields are cut out of the source, a directive or a
+%% record. A record goes on the list without a tuple around it, and the state goes
+%% on to the next entry as it is, without a copy, when the record has the owner and
+%% the owner memo it already holds, as the records of one owner do.
 -spec entries(binary(), non_neg_integer(), pos_integer(), ctx(), [dns:rr()]) ->
     {ok, [dns:rr()]} | {error, dns_zone:error_detail()}.
+entries(Bin, Pos, _Line, _Ctx, Acc) when Pos >= byte_size(Bin) ->
+    {ok, lists:reverse(Acc)};
 entries(Bin, Pos, Line, Ctx, Acc) ->
-    case next_entry(Bin, Pos, Line) of
-        eof ->
-            {ok, lists:reverse(Acc)};
-        {Start, Blank, Fields, Next, NextLine} ->
-            case entry(Start, Blank, Fields, Ctx) of
-                {rr, RR, Ctx1} ->
-                    entries(Bin, Next, NextLine, Ctx1, [RR | Acc]);
-                {rrs, RRs, Ctx1} ->
-                    entries(Bin, Next, NextLine, Ctx1, lists:reverse(RRs, Acc));
-                {ctx, Ctx1} ->
-                    entries(Bin, Next, NextLine, Ctx1, Acc);
-                {error, _} = Error ->
-                    Error
+    case entry_fields(Bin, Pos, Line) of
+        {ok, [], Next, NextLine} ->
+            entries(Bin, Next, NextLine, Ctx, Acc);
+        {ok, [{Kind, First, Start} | Args] = Fields, Next, NextLine} ->
+            case Kind =:= word andalso binary:first(First) =:= $$ of
+                true ->
+                    case directive_entry(First, Args, Start, Ctx) of
+                        {rrs, RRs, Ctx1} ->
+                            entries(Bin, Next, NextLine, Ctx1, lists:reverse(RRs, Acc));
+                        {ctx, Ctx1} ->
+                            entries(Bin, Next, NextLine, Ctx1, Acc);
+                        {error, _} = Error ->
+                            Error
+                    end;
+                false ->
+                    Blank = binary:at(Bin, Pos) =:= $\s orelse binary:at(Bin, Pos) =:= $\t,
+                    try record(Blank, Fields, Ctx) of
+                        {RR, Memo} ->
+                            Ctx1 = next_owner(Ctx, RR#dns_rr.name, Memo),
+                            entries(Bin, Next, NextLine, Ctx1, [RR | Acc])
+                    catch
+                        error:{?MODULE, Reason} -> {error, record_error(Reason, Start, Ctx)}
+                    end
             end;
+        {error, unclosed_parenthesis = Reason, _End} ->
+            Message = <<"Parse error: ", (reason_text(Reason))/binary>>,
+            {error, error_detail(parser, Message, undefined, {parser_error, Reason}, Line, Ctx)};
         {error, unterminated_string = Reason, ErrorLine} ->
             Message = <<"Lexical error: ", (reason_text(Reason))/binary>>,
             {error, error_detail(lexer, Message, undefined, {lexer_error, Reason}, ErrorLine, Ctx)};
@@ -325,26 +343,30 @@ entries(Bin, Pos, Line, Ctx, Acc) ->
                 error_detail(parser, Message, undefined, {parser_error, Reason}, ErrorLine, Ctx)}
     end.
 
--spec entry(pos_integer(), boolean(), [field(), ...], ctx()) -> entry().
-entry(Line, _Blank, [{word, <<$$, _/binary>> = Name, _} | Args], Ctx) ->
+-spec directive_entry(binary(), [field()], pos_integer(), ctx()) -> entry().
+directive_entry(Name, Args, Line, Ctx) ->
     try
         directive(dns_domain:to_upper(Name), Args, Line, Ctx)
     catch
         error:{?MODULE, Reason} ->
             Message = <<"Parse error: ", (reason_text(Reason))/binary>>,
             {error, error_detail(parser, Message, undefined, {parser_error, Reason}, Line, Ctx)}
-    end;
-entry(Line, Blank, Fields, Ctx) ->
-    try
-        {RR, Memo} = record(Blank, Fields, Ctx),
-        {rr, RR, Ctx#ctx{last_owner = RR#dns_rr.name, owner_memo = Memo}}
-    catch
-        error:{?MODULE, {rdata_error, Message, Suggestion, Details}} ->
-            {error, error_detail(semantic, Message, Suggestion, Details, Line, Ctx)};
-        error:{?MODULE, Reason} ->
-            Message = <<"Parse error: ", (reason_text(Reason))/binary>>,
-            {error, error_detail(parser, Message, undefined, {parser_error, Reason}, Line, Ctx)}
     end.
+
+-spec record_error(dynamic(), pos_integer(), ctx()) -> dns_zone:error_detail().
+record_error({rdata_error, Message, Suggestion, Details}, Line, Ctx) ->
+    error_detail(semantic, Message, Suggestion, Details, Line, Ctx);
+record_error(Reason, Line, Ctx) ->
+    Message = <<"Parse error: ", (reason_text(Reason))/binary>>,
+    error_detail(parser, Message, undefined, {parser_error, Reason}, Line, Ctx).
+
+%% The state for the entry after a record: the same, when it already has the
+%% record's owner and owner memo, the same terms where the memo was used
+-spec next_owner(ctx(), dns:dname(), owner_memo()) -> ctx().
+next_owner(#ctx{last_owner = Owner, owner_memo = Memo} = Ctx, Owner, Memo) ->
+    Ctx;
+next_owner(Ctx, Owner, Memo) ->
+    Ctx#ctx{last_owner = Owner, owner_memo = Memo}.
 
 %% RFC1035§5.1 directives, and RFC2308§4's $TTL. BIND's $GENERATE is accepted and
 %% generates nothing. The origin is the owner of a record that gives none, and is
@@ -878,9 +900,8 @@ generic_number(Number, What, Mnemonic) ->
 %% Splitting entries into fields
 %% ============================================================================
 
-%% The fields of the next entry, the line its first field is on, whether that line
-%% starts with a blank, and where the entry after it starts. Lines with no fields,
-%% blank or with only a comment, are skipped.
+%% The fields of the entry at Pos, and where the entry after it starts. Lines with
+%% no fields, blank or with only a comment, are entries of no fields.
 %%
 %% The scanner reads the source the way OTP's json module does. Each function
 %% matches the octets ahead and passes the rest on in a tail call, so the compiler
@@ -888,25 +909,6 @@ generic_number(Number, What, Mnemonic) ->
 %% while Pos follows where that rest starts in the source, to cut fields out of it
 %% with binary_part/3. The rest is never kept or returned: as a binary of its own
 %% it would hold the whole source, and count it towards the process heap.
--spec next_entry(binary(), non_neg_integer(), pos_integer()) ->
-    eof
-    | {pos_integer(), boolean(), [field(), ...], non_neg_integer(), pos_integer()}
-    | {error, term(), pos_integer()}.
-next_entry(Bin, Pos, _Line) when Pos >= byte_size(Bin) ->
-    eof;
-next_entry(Bin, Pos, Line) ->
-    case entry_fields(Bin, Pos, Line) of
-        {ok, [], Next, NextLine} ->
-            next_entry(Bin, Next, NextLine);
-        {ok, [{_, _, Start} | _] = Fields, Next, NextLine} ->
-            Blank = binary:at(Bin, Pos) =:= $\s orelse binary:at(Bin, Pos) =:= $\t,
-            {Start, Blank, Fields, Next, NextLine};
-        {error, unclosed_parenthesis, _End} ->
-            {error, unclosed_parenthesis, Line};
-        {error, _, _} = Error ->
-            Error
-    end.
-
 -spec entry_fields(binary(), non_neg_integer(), pos_integer()) -> fields_result().
 entry_fields(Bin, Pos, Line) ->
     <<_:Pos/binary, Rest/binary>> = Bin,
