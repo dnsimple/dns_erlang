@@ -15,6 +15,9 @@
 %% calendar:datetime_to_gregorian_seconds({{1970, 1, 1}, {0, 0, 0}})
 -define(UNIX_EPOCH_GREGORIAN_SECONDS, 62_167_219_200).
 -define(IS_DIGIT(C), ($0 =< C andalso C =< $9)).
+-define(IS_UINT(Bits, X), (is_integer(X) andalso 0 =< X andalso X < (1 bsl (Bits)))).
+%% The classes an address is written in, as dns_encode has them
+-define(IS_IN_OR_NONE(Class), ((Class) =:= ?DNS_CLASS_IN orelse (Class) =:= ?DNS_CLASS_NONE)).
 %% A field a reader cannot read, or an entry a zone file cannot hold
 -define(FAIL(Reason), erlang:error({?MODULE, Reason})).
 %% No field holds a larger number, and reading digits past it, one at a time, would
@@ -406,8 +409,80 @@ rr(Owner, {TTL, Class, Type, Mnemonic, RDataFields}, Ctx) ->
         ttl = default(TTL, Ctx#ctx.default_ttl),
         data = rdata(Type, Mnemonic, RDataFields, Ctx)
     },
-    dns_check:rr(RR) orelse rdata_fail(Mnemonic, RDataFields, does_not_fit),
+    fits(RR) orelse rdata_fail(Mnemonic, RDataFields, does_not_fit),
     RR.
+
+%% dns_check:rr/1, which encodes the RDATA to see that it fits. Of the RDATA of the
+%% types most zones are made of, an address or a name, the encoder refuses only an
+%% address of the wrong shape or in a class other than IN or NONE, a preference past
+%% 16 bits, and a name dns_domain:to_wire/1 refuses, which is told without writing
+%% it. Other types are left to dns_check:rr/1.
+-spec fits(dns:rr()) -> boolean().
+fits(#dns_rr{name = Owner, type = Type, class = Class, ttl = TTL, data = Data} = RR) ->
+    case Data of
+        #dns_rrdata_a{ip = IP} ->
+            header_fits(Type, Class, TTL) andalso ?IS_IN_OR_NONE(Class) andalso
+                inet:is_ipv4_address(IP) andalso dname_fits(Owner);
+        #dns_rrdata_aaaa{ip = IP} ->
+            header_fits(Type, Class, TTL) andalso ?IS_IN_OR_NONE(Class) andalso
+                inet:is_ipv6_address(IP) andalso dname_fits(Owner);
+        #dns_rrdata_ns{dname = Name} ->
+            header_fits(Type, Class, TTL) andalso dname_fits(Owner) andalso dname_fits(Name);
+        #dns_rrdata_cname{dname = Name} ->
+            header_fits(Type, Class, TTL) andalso dname_fits(Owner) andalso dname_fits(Name);
+        #dns_rrdata_ptr{dname = Name} ->
+            header_fits(Type, Class, TTL) andalso dname_fits(Owner) andalso dname_fits(Name);
+        #dns_rrdata_mx{preference = Preference, exchange = Name} ->
+            header_fits(Type, Class, TTL) andalso ?IS_UINT(16, Preference) andalso
+                dname_fits(Owner) andalso dname_fits(Name);
+        _ ->
+            dns_check:rr(RR)
+    end.
+
+-spec header_fits(dns:type(), dns:class(), dns:ttl()) -> boolean().
+header_fits(Type, Class, TTL) ->
+    ?IS_UINT(16, Type) andalso ?IS_UINT(16, Class) andalso ?IS_UINT(31, TTL).
+
+%% Whether dns_domain:to_wire/1 takes a name, told the way it splits the name: no
+%% empty label but a first one, labels of up to 63 octets, and up to 254 octets of
+%% labels and their lengths before the root's. A name with an escape is given to it.
+-spec dname_fits(binary()) -> boolean().
+dname_fits(Name) ->
+    case labels_size(Name, 0, 0) of
+        escaped ->
+            try dns_domain:to_wire(Name) of
+                _ -> true
+            catch
+                error:_ -> false
+            end;
+        false ->
+            false;
+        Size ->
+            Size =< 254
+    end.
+
+%% The octets of the labels read so far and their lengths, Size, and of the label
+%% being read, Label
+-spec labels_size(binary(), non_neg_integer(), non_neg_integer()) ->
+    non_neg_integer() | false | escaped.
+labels_size(<<W:56, Rest/binary>>, Label, Size) when ?PLAIN7(W) andalso ?DOTS7(W) =:= 0 ->
+    labels_size(Rest, Label + 7, Size);
+labels_size(<<$., $., _/binary>>, _Label, _Size) ->
+    false;
+labels_size(<<$.>>, 0, Size) ->
+    Size;
+labels_size(<<$., Rest/binary>>, Label, Size) when Label =< 63 ->
+    labels_size(Rest, 0, Size + 1 + Label);
+labels_size(<<$\\, _/binary>>, _Label, _Size) ->
+    escaped;
+labels_size(<<C, Rest/binary>>, Label, Size) when C =/= $. ->
+    labels_size(Rest, Label + 1, Size);
+labels_size(<<>>, 0, Size) ->
+    Size;
+labels_size(<<>>, Label, Size) when Label =< 63 ->
+    Size + 1 + Label;
+labels_size(_, _Label, _Size) ->
+    false.
 
 -spec default(Value | undefined, Value) -> Value.
 default(undefined, Default) -> Default;

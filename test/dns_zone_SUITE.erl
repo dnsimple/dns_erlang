@@ -561,7 +561,8 @@ groups() ->
             parse_returns_errors_for_any_input,
             parse_long_numbers_in_linear_time,
             parse_include_errors,
-            parse_file_reads_in_the_calling_process
+            parse_file_reads_in_the_calling_process,
+            parse_checks_names_as_the_encoder_does
         ]},
         {error_cases, [parallel], [
             parse_invalid_ipv4,
@@ -8519,6 +8520,77 @@ parse_file_reads_in_the_calling_process(Config) ->
         trace:session_destroy(Session)
     end,
     ?assertEqual([], file_server_reads([unicode:characters_to_binary(F) || F <- [Zone, Included]])).
+
+%% Records of the types whose names the parser checks without encoding them are
+%% refused exactly where dns_check:rr/1, which encodes them, refuses them: at labels
+%% of 64 octets, at 256 octets on the wire, and on an empty label but a first one.
+%% Each name is written as a zone spells it and as dns_erlang keeps it, \065 as A
+%% and \. as it is. Names with escapes are checked by encoding them.
+parse_checks_names_as_the_encoder_does(_Config) ->
+    Label = fun(Size) -> binary:copy(~"a", Size) end,
+    Long = <<(Label(63))/binary, $., (Label(63))/binary, $., (Label(63))/binary, $.>>,
+    Plain = [
+        ~".",
+        <<(Label(63))/binary, $.>>,
+        <<(Label(64))/binary, $.>>,
+        <<(Label(64))/binary, ".a.">>,
+        <<Long/binary, (Label(61))/binary, $.>>,
+        <<Long/binary, (Label(62))/binary, $.>>,
+        <<Long/binary, (Label(61))/binary>>,
+        <<Long/binary, (Label(62))/binary>>,
+        <<Long/binary, (Label(29))/binary, $., (Label(30))/binary, $.>>,
+        <<Long/binary, (Label(29))/binary, $., (Label(31))/binary, $.>>,
+        <<Long/binary, (Label(59))/binary, "\\..">>,
+        <<Long/binary, (Label(60))/binary, "\\..">>
+    ],
+    Names =
+        [{Name, Name} || Name <- Plain] ++
+            [
+                {<<(Label(62))/binary, "\\065.">>, <<(Label(62))/binary, "A.">>},
+                {<<(Label(63))/binary, "\\065.">>, <<(Label(63))/binary, "A.">>}
+            ],
+    Origins = [
+        ~".a.", ~"a..b.", <<(Label(64))/binary, $.>>, <<Long/binary, (Label(61))/binary, $.>>
+    ],
+    Cases =
+        [
+            {<<Text/binary, " 0 IN A 192.0.2.1\n">>, #{}, Name, #dns_rrdata_a{ip = {192, 0, 2, 1}}}
+         || {Text, Name} <- Names
+        ] ++
+            [
+                {<<"a. 0 IN NS ", Text/binary, "\n">>, #{}, ~"a.", #dns_rrdata_ns{dname = Name}}
+             || {Text, Name} <- Names
+            ] ++
+            [
+                {<<"a. 0 IN MX 1 ", Text/binary, "\n">>, #{}, ~"a.", #dns_rrdata_mx{
+                    preference = 1, exchange = Name
+                }}
+             || {Text, Name} <- Names
+            ] ++
+            [
+                {~"@ 0 IN AAAA ::1\n", #{origin => Origin}, Origin, #dns_rrdata_aaaa{
+                    ip = {0, 0, 0, 0, 0, 0, 0, 1}
+                }}
+             || Origin <- Origins
+            ],
+    Expected = [
+        {Zone, dns_check:rr(#dns_rr{name = Owner, type = Type, class = ?DNS_CLASS_IN, data = Data})}
+     || {Zone, _, Owner, Data} <- Cases,
+        Type <- [dns_record_type(Data)]
+    ],
+    ?assertEqual(
+        Expected,
+        [
+            {Zone, element(1, dns_zone:parse_string(Zone, Options)) =:= ok}
+         || {Zone, Options, _, _} <- Cases
+        ]
+    ),
+    ?assertEqual([false, true], lists:usort([Fits || {_, Fits} <- Expected])).
+
+dns_record_type(#dns_rrdata_a{}) -> ?DNS_TYPE_A;
+dns_record_type(#dns_rrdata_aaaa{}) -> ?DNS_TYPE_AAAA;
+dns_record_type(#dns_rrdata_ns{}) -> ?DNS_TYPE_NS;
+dns_record_type(#dns_rrdata_mx{}) -> ?DNS_TYPE_MX.
 
 %% Which of Names the file server was asked to read, from the trace messages of
 %% what it received.
