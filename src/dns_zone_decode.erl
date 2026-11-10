@@ -16,6 +16,7 @@
 -define(UNIX_EPOCH_GREGORIAN_SECONDS, 62_167_219_200).
 -define(IS_DIGIT(C), ($0 =< C andalso C =< $9)).
 -define(IS_UINT(Bits, X), (is_integer(X) andalso 0 =< X andalso X < (1 bsl (Bits)))).
+-define(MAX_RDLENGTH, 16#FFFF).
 %% The classes an address is written in, as dns_encode has them
 -define(IS_IN_OR_NONE(Class), ((Class) =:= ?DNS_CLASS_IN orelse (Class) =:= ?DNS_CLASS_NONE)).
 %% A field a reader cannot read, or an entry a zone file cannot hold
@@ -427,12 +428,15 @@ rr(Owner, {TTL, Class, Type, Mnemonic, RDataFields}, Ctx) ->
     fits(RR, Ctx#ctx.owner_memo) orelse rdata_fail(Mnemonic, RDataFields, does_not_fit),
     RR.
 
-%% dns_check:rr/1, which encodes the RDATA to see that it fits. Of the RDATA of the
-%% types most zones are made of, an address or a name, the encoder refuses only an
-%% address of the wrong shape or in a class other than IN or NONE, a preference past
-%% 16 bits, and a name dns_domain:to_wire/1 refuses, which is told without writing
-%% it. Other types are left to dns_check:rr/1. The owner of the memo was accepted
-%% with a record already.
+%% dns_check:rr/1, which encodes the RDATA to see that it fits. For the types most
+%% zones are made of, and those of DNSSEC, the same is told without writing them:
+%% the fields dns_check:fits/1 checks, and what the encoder refuses on top, in any
+%% class but where it says. That is an address of the wrong shape or in a class
+%% other than IN or NONE, a name dns_domain:to_wire/1 refuses, told without writing
+%% it, a DNSKEY whose key is not a binary, an NSEC3 opt-out that is not a boolean,
+%% and RDATA past 65535 octets, which an NSEC's or an NSEC3's cannot reach. Other
+%% types are left to dns_check:rr/1. The owner of the memo was accepted with a
+%% record already.
 -spec fits(dns:rr(), owner_memo()) -> boolean().
 fits(#dns_rr{name = Owner, type = Type, class = Class, ttl = TTL, data = Data} = RR, Memo) ->
     case Data of
@@ -451,9 +455,63 @@ fits(#dns_rr{name = Owner, type = Type, class = Class, ttl = TTL, data = Data} =
         #dns_rrdata_mx{preference = Preference, exchange = Name} ->
             header_fits(Type, Class, TTL) andalso ?IS_UINT(16, Preference) andalso
                 owner_fits(Owner, Memo) andalso dname_fits(Name);
+        #dns_rrdata_ds{keytag = KeyTag, alg = Alg, digest_type = DigestType, digest = Digest} when
+            is_binary(Digest)
+        ->
+            header_fits(Type, Class, TTL) andalso owner_fits(Owner, Memo) andalso
+                ?IS_UINT(16, KeyTag) andalso ?IS_UINT(8, Alg) andalso
+                ?IS_UINT(8, DigestType) andalso 4 + byte_size(Digest) =< ?MAX_RDLENGTH;
+        #dns_rrdata_dnskey{flags = Flags, protocol = Protocol, alg = Alg, public_key = Key} when
+            is_binary(Key)
+        ->
+            header_fits(Type, Class, TTL) andalso owner_fits(Owner, Memo) andalso
+                ?IS_UINT(16, Flags) andalso ?IS_UINT(8, Protocol) andalso ?IS_UINT(8, Alg) andalso
+                4 + byte_size(Key) =< ?MAX_RDLENGTH;
+        #dns_rrdata_rrsig{signers_name = Signer, signature = Signature} = RRSIG when
+            is_binary(Signer), is_binary(Signature)
+        ->
+            header_fits(Type, Class, TTL) andalso owner_fits(Owner, Memo) andalso
+                rrsig_fields_fit(RRSIG) andalso
+                case dname_size(Signer) of
+                    false -> false;
+                    Size -> 18 + Size + byte_size(Signature) =< ?MAX_RDLENGTH
+                end;
+        #dns_rrdata_nsec{next_dname = Next, types = Types} when is_binary(Next), is_list(Types) ->
+            header_fits(Type, Class, TTL) andalso owner_fits(Owner, Memo) andalso
+                dname_fits(Next) andalso types_fit(Types);
+        #dns_rrdata_nsec3{
+            hash_alg = HashAlg,
+            opt_out = OptOut,
+            iterations = Iterations,
+            salt = Salt,
+            hash = Hash,
+            types = Types
+        } when is_binary(Salt), is_binary(Hash), is_list(Types) ->
+            header_fits(Type, Class, TTL) andalso owner_fits(Owner, Memo) andalso
+                ?IS_UINT(8, HashAlg) andalso is_boolean(OptOut) andalso
+                ?IS_UINT(16, Iterations) andalso byte_size(Salt) =< 255 andalso
+                byte_size(Hash) =< 255 andalso types_fit(Types);
         _ ->
             dns_check:rr(RR)
     end.
+
+-spec rrsig_fields_fit(dns:rrdata()) -> boolean().
+rrsig_fields_fit(#dns_rrdata_rrsig{
+    type_covered = TypeCovered,
+    alg = Alg,
+    labels = Labels,
+    original_ttl = OriginalTTL,
+    expiration = Expiration,
+    inception = Inception,
+    keytag = KeyTag
+}) ->
+    ?IS_UINT(16, TypeCovered) andalso ?IS_UINT(8, Alg) andalso ?IS_UINT(8, Labels) andalso
+        ?IS_UINT(32, OriginalTTL) andalso ?IS_UINT(32, Expiration) andalso
+        ?IS_UINT(32, Inception) andalso ?IS_UINT(16, KeyTag).
+
+-spec types_fit([dns:type()]) -> boolean().
+types_fit(Types) ->
+    lists:all(fun(Type) -> ?IS_UINT(16, Type) end, Types).
 
 -spec owner_fits(dns:dname(), owner_memo()) -> boolean().
 owner_fits(Owner, {_, _, Owner}) -> true;
@@ -463,22 +521,27 @@ owner_fits(Owner, _Memo) -> dname_fits(Owner).
 header_fits(Type, Class, TTL) ->
     ?IS_UINT(16, Type) andalso ?IS_UINT(16, Class) andalso ?IS_UINT(31, TTL).
 
-%% Whether dns_domain:to_wire/1 takes a name, told the way it splits the name: no
-%% empty label but a first one, labels of up to 63 octets, and up to 254 octets of
-%% labels and their lengths before the root's. A name with an escape is given to it.
 -spec dname_fits(binary()) -> boolean().
 dname_fits(Name) ->
+    is_integer(dname_size(Name)).
+
+%% The octets dns_domain:to_wire/1 writes a name in, or false where it refuses the
+%% name, told the way it splits the name: no empty label but a first one, labels of
+%% up to 63 octets, and up to 254 octets of labels and their lengths before the
+%% root's. A name with an escape is given to it.
+-spec dname_size(binary()) -> pos_integer() | false.
+dname_size(Name) ->
     case labels_size(Name, 0, 0) of
         escaped ->
             try dns_domain:to_wire(Name) of
-                _ -> true
+                Wire -> byte_size(Wire)
             catch
                 error:_ -> false
             end;
-        false ->
-            false;
-        Size ->
-            Size =< 254
+        Size when is_integer(Size), Size =< 254 ->
+            Size + 1;
+        _ ->
+            false
     end.
 
 %% The octets of the labels read so far and their lengths, Size, and of the label

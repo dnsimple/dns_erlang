@@ -564,7 +564,8 @@ groups() ->
             parse_file_reads_in_the_calling_process,
             parse_checks_names_as_the_encoder_does,
             parse_ipv6_as_inet_does,
-            parse_repeated_owner
+            parse_repeated_owner,
+            parse_checks_signed_records_as_the_encoder_does
         ]},
         {error_cases, [parallel], [
             parse_invalid_ipv4,
@@ -8602,6 +8603,88 @@ parse_checks_names_as_the_encoder_does(_Config) ->
         ]
     ),
     ?assertEqual([false, true], lists:usort([Fits || {_, Fits} <- Expected])).
+
+%% DS, DNSKEY, RRSIG, NSEC and NSEC3 records, which the parser checks without
+%% encoding them, are refused exactly where dns_check:rr/1, which encodes them,
+%% refuses them: at a field past its width, at RDATA of 65536 octets, at a signer or
+%% next name dns_domain:to_wire/1 refuses, and at a salt or hash of 256 octets. The
+%% zone writer writes each record, which the parser reads back.
+parse_checks_signed_records_as_the_encoder_does(_Config) ->
+    Octets = fun(Size) -> binary:copy(<<16#A5>>, Size) end,
+    Long = <<(binary:copy(~"a", 64))/binary, ".">>,
+    Rrsig = fun(Signer, Signature) ->
+        #dns_rrdata_rrsig{
+            type_covered = ?DNS_TYPE_A,
+            alg = 8,
+            labels = 1,
+            original_ttl = 3600,
+            expiration = 1700000000,
+            inception = 1600000000,
+            keytag = 12345,
+            signers_name = Signer,
+            signature = Signature
+        }
+    end,
+    Nsec3 = fun(Iterations, Salt, Hash) ->
+        #dns_rrdata_nsec3{
+            hash_alg = 1,
+            opt_out = true,
+            iterations = Iterations,
+            salt = Salt,
+            hash = Hash,
+            types = [?DNS_TYPE_A, 65535]
+        }
+    end,
+    TypeOf = fun
+        (#dns_rrdata_ds{}) -> ?DNS_TYPE_DS;
+        (#dns_rrdata_dnskey{}) -> ?DNS_TYPE_DNSKEY;
+        (#dns_rrdata_rrsig{}) -> ?DNS_TYPE_RRSIG;
+        (#dns_rrdata_nsec{}) -> ?DNS_TYPE_NSEC;
+        (#dns_rrdata_nsec3{}) -> ?DNS_TYPE_NSEC3
+    end,
+    Records = [
+        #dns_rrdata_ds{keytag = 65535, alg = 255, digest_type = 255, digest = Octets(65531)},
+        #dns_rrdata_ds{keytag = 1, alg = 8, digest_type = 2, digest = Octets(65532)},
+        #dns_rrdata_ds{keytag = 65536, alg = 8, digest_type = 2, digest = Octets(32)},
+        #dns_rrdata_ds{keytag = 1, alg = 8, digest_type = 256, digest = Octets(32)},
+        #dns_rrdata_dnskey{flags = 65535, protocol = 255, alg = 8, public_key = Octets(65531)},
+        #dns_rrdata_dnskey{flags = 257, protocol = 3, alg = 8, public_key = Octets(65532)},
+        #dns_rrdata_dnskey{flags = 65536, protocol = 3, alg = 8, public_key = Octets(32)},
+        #dns_rrdata_dnskey{flags = 257, protocol = 256, alg = 8, public_key = Octets(32)},
+        Rrsig(~"a.", Octets(65514)),
+        Rrsig(~"a.", Octets(65515)),
+        Rrsig(~"a\\.b.", Octets(65512)),
+        Rrsig(~"a\\.b.", Octets(65513)),
+        Rrsig(Long, Octets(64)),
+        (Rrsig(~"a.", Octets(64)))#dns_rrdata_rrsig{labels = 256},
+        (Rrsig(~"a.", Octets(64)))#dns_rrdata_rrsig{keytag = 65536},
+        (Rrsig(~"a.", Octets(64)))#dns_rrdata_rrsig{original_ttl = 4294967296},
+        #dns_rrdata_nsec{next_dname = ~"b.", types = [?DNS_TYPE_A, ?DNS_TYPE_RRSIG, 65535]},
+        #dns_rrdata_nsec{next_dname = Long, types = [?DNS_TYPE_A]},
+        Nsec3(65535, Octets(255), Octets(255)),
+        Nsec3(65536, Octets(8), Octets(20)),
+        Nsec3(1, Octets(256), Octets(20)),
+        Nsec3(1, Octets(8), Octets(256))
+    ],
+    Cases = [
+        {
+            iolist_to_binary([
+                "a. 0 IN ",
+                dns_names:type_name(Type),
+                " ",
+                dns_zone:encode_rdata(Type, Data),
+                "\n"
+            ]),
+            dns_check:rr(#dns_rr{name = ~"a.", type = Type, class = ?DNS_CLASS_IN, data = Data})
+        }
+     || Data <- Records,
+        Type <- [TypeOf(Data)]
+    ],
+    ?assertEqual(
+        [Fits || {_, Fits} <- Cases],
+        [element(1, dns_zone:parse_string(Zone)) =:= ok || {Zone, _} <- Cases]
+    ),
+    ?assertEqual([false, true], lists:usort([Fits || {_, Fits} <- Cases])).
 
 %% An owner spelled as the one before, under the same origin, is that record's
 %% name, the same binary. Spelled otherwise, or under another origin, it is read
