@@ -19,6 +19,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - Zone files: hex and base64 that read as a number or a TTL, such as the salt `1234` or the CDS `0 0 0 00`, are read as hex and base64, where they were lost or refused.
 - Zone files: SVCB and HTTPS values may be quoted and escaped, as RFC 9460 has them and `dns_zone` writes `alpn`, `mandatory`, `ipv4hint` and `ipv6hint`, and a key may not repeat.
+- Zone files: SVCB `tls-supported-groups` is key 9, as IANA has it, with its groups 2 octets each, where it was read as key 13 holding the text.
 - Zone files: a field that does not read as its type is refused, where an unknown type name or `TYPE65536` was read as A, a bad salt or hash as empty, and unquoted strings were dropped.
 - Zone files: a KEY may have no key, CERT data is only base64, LOC takes RFC 1876's optional fields, names take escapes, and a relative `$ORIGIN` follows the one before.
 - Zone files: `dns_zone` writes the names in SVCB, HTTPS, NSEC, HIP, IPSECKEY, AMTRELAY, LP and DSYNC RDATA in the case DNSSEC signs them in, where it lowercased them.

@@ -7886,24 +7886,57 @@ parse_svcb_value_lists(_Config) ->
     ),
     ?assertMatch(#{type := semantic}, parse_rdata_error(~"SVCB 1 svc.example. key3=1 port=2")).
 
-%% The names of keys 7, 8 and 13, as the parser read them, and every name in a
-%% mandatory list, where the parser read only some
+%% The names of keys 7, 8 and 9, as the parser read them but for 9, and every name
+%% in a mandatory list, where the parser read only some. The parser took
+%% tls-supported-groups for key 13, which is unassigned, and kept its value as
+%% written; it is key 9, its groups 2 octets each on the wire, as
+%% draft-ietf-tls-key-share-prediction has them. As key9, its value is those
+%% octets (RFC9460§2.1), and the writer writes it so.
 parse_svcb_keys_by_name(_Config) ->
+    Params =
+        (parse_rdata(
+            ~"SVCB 1 . mandatory=ech,dohpath,ohttp,tls-supported-groups ech=YWJjZGVm dohpath=/dns-query{?dns} ohttp tls-supported-groups=29,23"
+        ))#dns_rrdata_svcb.svc_params,
     ?assertEqual(
         #{
-            ?DNS_SVCB_PARAM_MANDATORY => [?DNS_SVCB_PARAM_ECH, 7, 8],
+            ?DNS_SVCB_PARAM_MANDATORY => [?DNS_SVCB_PARAM_ECH, 7, 8, 9],
             ?DNS_SVCB_PARAM_ECH => ~"abcdef",
             7 => ~"/dns-query{?dns}",
             8 => none,
-            13 => ~"29,23"
+            9 => <<0, 29, 0, 23>>
         },
-        (parse_rdata(
-            ~"SVCB 1 . mandatory=ech,dohpath,ohttp ech=YWJjZGVm dohpath=/dns-query{?dns} ohttp tls-supported-groups=29,23"
-        ))#dns_rrdata_svcb.svc_params
+        Params
     ),
-    ?assertMatch(#{type := semantic}, parse_rdata_error(~"SVCB 1 . unknown=1")),
-    ?assertMatch(#{type := semantic}, parse_rdata_error(~"SVCB 1 . mandatory=unknown")),
-    ?assertMatch(#{type := semantic}, parse_rdata_error(~"SVCB 1 . \"alpn=h2\"")).
+    Data = #dns_rrdata_svcb{svc_priority = 1, target_name = ~".", svc_params = Params},
+    Written = iolist_to_binary(dns_zone:encode_rdata(?DNS_TYPE_SVCB, Data)),
+    ?assertEqual(Data, parse_rdata(<<"SVCB ", Written/binary>>), Written),
+    ?assertMatch(
+        #{9 := <<0, 0, 255, 255, 1, 0, 0, 29>>},
+        (parse_rdata(~"SVCB 1 . tls-supported-groups=0,65535,00256,000000029"))#dns_rrdata_svcb.svc_params
+    ),
+    ?assertMatch(
+        #{9 := ~"29,23", 13 := ~"29"},
+        (parse_rdata(~"SVCB 1 . key9=29,23 key13=29"))#dns_rrdata_svcb.svc_params
+    ),
+    [
+        ?assertMatch(#{type := semantic}, parse_rdata_error(<<"SVCB 1 . ", Param/binary>>), Param)
+     || Param <- [
+            ~"unknown=1",
+            ~"mandatory=unknown",
+            ~"\"alpn=h2\"",
+            ~"tls-supported-groups",
+            ~"tls-supported-groups=",
+            ~"tls-supported-groups=29,29",
+            ~"tls-supported-groups=29,,23",
+            ~"tls-supported-groups=65536",
+            ~"tls-supported-groups=0065536",
+            ~"tls-supported-groups=29,029",
+            ~"tls-supported-groups=x25519",
+            ~"tls-supported-groups=+29",
+            ~"tls-supported-groups=29 key9=29"
+        ]
+    ],
+    ok.
 
 %% RFC1035§5.1: a <character-string> need not be quoted. The parser dropped the
 %% words that were not, and refused a string of them alone. A quote starts a string

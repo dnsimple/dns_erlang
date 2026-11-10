@@ -165,17 +165,22 @@ from_zone_param({Name, Value}, Acc) ->
     Key = zone_key(Name, invalid_svcparam_format),
     %% RFC9460§2.1: SvcParamKeys SHALL NOT be repeated
     maps:is_key(Key, Acc) andalso zone_error({duplicate_svcparam_key, Name}),
-    Acc#{Key => zone_value(Key, Value)}.
+    Parsed =
+        case Name of
+            ~"tls-supported-groups" -> tls_supported_groups(Value);
+            _ -> zone_value(Key, Value)
+        end,
+    Acc#{Key => Parsed}.
 
-%% RFC9460§14.3.2's names, and those of keys 7, 8 and 13: dohpath (RFC9461),
-%% ohttp (RFC9540) and tls-supported-groups
+%% RFC9460§14.3.2's names, and those of keys 7, 8 and 9: dohpath (RFC9461),
+%% ohttp (RFC9540) and tls-supported-groups (draft-ietf-tls-key-share-prediction)
 -spec zone_key(binary(), atom()) -> dns:uint16().
 zone_key(~"dohpath", _Error) ->
     7;
 zone_key(~"ohttp", _Error) ->
     8;
 zone_key(~"tls-supported-groups", _Error) ->
-    13;
+    9;
 zone_key(Name, Error) ->
     case dns_names:name_svcb_param(Name) of
         undefined -> zone_error({Error, Name});
@@ -225,6 +230,39 @@ zone_value(Key, Value) when 7 =< Key, is_binary(Value) ->
     Value;
 zone_value(Key, Value) ->
     zone_error({svcb_param_invalid_value, Key, Value}).
+
+%% draft-ietf-tls-key-share-prediction-05§3.1: a non-empty list of decimal numbers
+%% up to 65535, none twice, kept as its wire format, 2 octets each, as the values
+%% of the other keys past 6 are. Written as key9, which is how the writer writes
+%% it, the value is those octets (RFC9460§2.1).
+-spec tls_supported_groups(binary() | none) -> binary().
+tls_supported_groups(Value) when is_binary(Value), Value =/= <<>> ->
+    Groups = [tls_group(Item, Value) || Item <- zone_list(9, Value)],
+    length(lists:usort(Groups)) =:= length(Groups) orelse
+        zone_error({svcb_param_invalid_value, 9, Value}),
+    <<<<Group:16>> || Group <- Groups>>;
+tls_supported_groups(Value) ->
+    zone_error({svcb_param_invalid_value, 9, Value}).
+
+%% A group's number, in digits, past any leading zeros
+-spec tls_group(binary(), binary()) -> dns:uint16().
+tls_group(Item, Value) ->
+    Significant = skip_zeros(Item),
+    case [C || <<C>> <= Item, C < $0 orelse C > $9] of
+        [] when Significant =:= <<>> ->
+            0;
+        [] when byte_size(Significant) =< 5 ->
+            case binary_to_integer(Significant) of
+                Group when Group =< 65535 -> Group;
+                _ -> zone_error({svcb_param_invalid_value, 9, Value})
+            end;
+        _ ->
+            zone_error({svcb_param_invalid_value, 9, Value})
+    end.
+
+-spec skip_zeros(binary()) -> binary().
+skip_zeros(<<$0, Rest/binary>>) -> skip_zeros(Rest);
+skip_zeros(Rest) -> Rest.
 
 %% An IPv6 address, without the "%" and zone index that inet would take and drop
 -spec zone_ipv6(binary()) -> inet:ip6_address().
