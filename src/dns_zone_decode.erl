@@ -194,7 +194,7 @@ parse_string(Data, Options) when is_list(Data) ->
             Line = 1 + length(binary:matches(Read, ~"\n")),
             Location =
                 case Options of
-                    #{filename := File} -> #{line => Line, file => File};
+                    #{filename := File} -> #{line => Line, file => filename(File)};
                     _ -> #{line => Line}
                 end,
             {error, #{
@@ -249,11 +249,19 @@ parse(Bin, Options) ->
         default_ttl = maps:get(default_ttl, Options, 0),
         default_class = maps:get(default_class, Options, ?DNS_CLASS_IN),
         last_owner = Origin,
-        base_dir = maps:get(base_dir, Options, ""),
-        filename = maps:get(filename, Options, undefined),
+        base_dir = filename:flatten(maps:get(base_dir, Options, "")),
+        filename = filename(maps:get(filename, Options, undefined)),
         source = Bin
     },
     with_binary_heap(byte_size(Bin), fun() -> entries(Bin, 0, 1, Ctx, []) end).
+
+%% A file name of the options as an error location gives it: parse_options() takes
+%% the atoms and deep lists of file:name_all(), which are made flat
+-spec filename(file:name_all() | undefined) -> file:filename_all() | undefined.
+filename(undefined) ->
+    undefined;
+filename(Name) ->
+    filename:flatten(Name).
 
 %% The source is referenced from the process heap while it is read, and counts
 %% towards the process's binary heap. With the default minimum, a large source
@@ -1567,10 +1575,12 @@ ttl_value(Text) ->
 ttl_value(<<C, Rest/binary>>, none, Total, Units) when ?IS_DIGIT(C) ->
     ttl_value(Rest, C - $0, Total, Units);
 ttl_value(<<C, Rest/binary>>, Pending, Total, Units) when
-    ?IS_DIGIT(C) andalso Pending < ?SMALL_NUMBER
+    ?IS_DIGIT(C) andalso is_integer(Pending) andalso Pending < ?SMALL_NUMBER
 ->
     ttl_value(Rest, Pending * 10 + (C - $0), Total, Units);
-ttl_value(<<C, Rest/binary>>, Pending, Total, Units) when ?IS_DIGIT(C) ->
+ttl_value(<<C, Rest/binary>>, Pending, Total, Units) when
+    ?IS_DIGIT(C) andalso is_integer(Pending)
+->
     case Pending * 10 + (C - $0) of
         Number when Number =< ?MAX_NUMBER -> ttl_value(Rest, Number, Total, Units);
         _ -> error
@@ -1726,8 +1736,8 @@ ipv6_group(Rest, after_gap, Before, After, Count, _Digits, Value) ->
 
 -spec ipv6_before_gap(binary(), [0..16#FFFF], pos_integer()) ->
     inet:ip6_address() | ipv4_tail | error.
-ipv6_before_gap(<<>>, Before, 8) ->
-    list_to_tuple(lists:reverse(Before));
+ipv6_before_gap(<<>>, [H, G, F, E, D, C, B, A], 8) ->
+    {A, B, C, D, E, F, G, H};
 ipv6_before_gap(~"::", Before, Count) when Count =< 7 ->
     ipv6_zeros(Before, [], Count);
 ipv6_before_gap(<<"::", Rest/binary>>, Before, Count) when Count =< 6 ->
@@ -1752,7 +1762,10 @@ ipv6_after_gap(_Rest, _Before, _After, _Count) ->
 
 -spec ipv6_zeros([0..16#FFFF], [0..16#FFFF], non_neg_integer()) -> inet:ip6_address().
 ipv6_zeros(Before, After, Count) ->
-    list_to_tuple(lists:reverse(Before, lists:duplicate(8 - Count, 0) ++ lists:reverse(After))).
+    [A, B, C, D, E, F, G, H] = lists:reverse(
+        Before, lists:duplicate(8 - Count, 0) ++ lists:reverse(After)
+    ),
+    {A, B, C, D, E, F, G, H}.
 
 -spec hex([field()]) -> binary().
 hex(Fields) ->
@@ -1953,52 +1966,54 @@ file_error(Filename, Reason) ->
         location => #{file => Filename}
     }.
 
+%% Each reason's fields are checked as the message uses them; a reason of another
+%% shape is written as a term
 -spec reason_text(term()) -> binary().
-reason_text({not_a_number, Text}) ->
+reason_text({not_a_number, Text}) when is_binary(Text) ->
     <<"not a number: ", Text/binary>>;
-reason_text({bad_ttl, Text}) ->
+reason_text({bad_ttl, Text}) when is_binary(Text) ->
     <<"not a TTL: ", Text/binary>>;
-reason_text({bad_ipv4, Text}) ->
+reason_text({bad_ipv4, Text}) when is_binary(Text) ->
     <<"not an IPv4 address: ", Text/binary>>;
-reason_text({bad_ipv6, Text}) ->
+reason_text({bad_ipv6, Text}) when is_binary(Text) ->
     <<"not an IPv6 address: ", Text/binary>>;
-reason_text({bad_hex, Text}) ->
+reason_text({bad_hex, Text}) when is_binary(Text) ->
     <<"not hex: ", Text/binary>>;
-reason_text({bad_base64, Text}) ->
+reason_text({bad_base64, Text}) when is_binary(Text) ->
     <<"not base64: ", Text/binary>>;
-reason_text({bad_base32hex, Text}) ->
+reason_text({bad_base32hex, Text}) when is_binary(Text) ->
     <<"not base32hex: ", Text/binary>>;
-reason_text({bad_uri, Text}) ->
+reason_text({bad_uri, Text}) when is_binary(Text) ->
     <<"not a URI: ", Text/binary>>;
-reason_text({bad_eui, Text}) ->
+reason_text({bad_eui, Text}) when is_binary(Text) ->
     <<"not an EUI address: ", Text/binary>>;
-reason_text({bad_ilnp64, Text}) ->
+reason_text({bad_ilnp64, Text}) when is_binary(Text) ->
     <<"not four groups of hex digits: ", Text/binary>>;
-reason_text({bad_discovery_optional, Text}) ->
+reason_text({bad_discovery_optional, Text}) when is_binary(Text) ->
     <<"the D-bit is not 0 or 1: ", Text/binary>>;
-reason_text({unknown_type, Text}) ->
+reason_text({unknown_type, Text}) when is_binary(Text) ->
     <<"unknown type: ", Text/binary>>;
-reason_text({unknown_algorithm, Text}) ->
+reason_text({unknown_algorithm, Text}) when is_binary(Text) ->
     <<"unknown algorithm: ", Text/binary>>;
-reason_text({quoted_name, Text}) ->
+reason_text({quoted_name, Text}) when is_binary(Text) ->
     <<"a name cannot be quoted: ", Text/binary>>;
-reason_text({quoted_owner, Text}) ->
+reason_text({quoted_owner, Text}) when is_binary(Text) ->
     <<"an owner name cannot be quoted: ", Text/binary>>;
-reason_text({empty_label, Text}) ->
+reason_text({empty_label, Text}) when is_binary(Text) ->
     <<"a name with an empty label: ", Text/binary>>;
-reason_text({bad_escape, Text}) ->
+reason_text({bad_escape, Text}) when is_binary(Text) ->
     <<"a name with a bad escape: ", Text/binary>>;
-reason_text({bad_string_escape, Text}) ->
+reason_text({bad_string_escape, Text}) when is_binary(Text) ->
     <<"a string with a bad escape: ", Text/binary>>;
-reason_text({bad_decimal, Text, Scale}) ->
+reason_text({bad_decimal, Text, Scale}) when is_binary(Text), is_integer(Scale) ->
     iolist_to_binary(io_lib:format("not a number with up to ~b decimals: ~s", [Scale, Text]));
-reason_text({bad_coordinate, Text}) ->
+reason_text({bad_coordinate, Text}) when is_binary(Text) ->
     <<"degrees, minutes or seconds out of range: ", Text/binary>>;
-reason_text({unexpected_field, Text}) ->
+reason_text({unexpected_field, Text}) when is_binary(Text) ->
     <<"expected a TTL, a class or a type: ", Text/binary>>;
 reason_text(no_type) ->
     ~"no type";
-reason_text({no_rdata, Mnemonic}) ->
+reason_text({no_rdata, Mnemonic}) when is_binary(Mnemonic) ->
     <<"no RDATA for ", Mnemonic/binary>>;
 reason_text(unbalanced_parenthesis) ->
     ~"a closing parenthesis without an opening one";
@@ -2020,7 +2035,7 @@ reason_text({out_of_range, What, Value}) ->
     iolist_to_binary(io_lib:format("~s out of range: ~b", [What, Value]));
 reason_text({bad_time, Time}) ->
     iolist_to_binary(io_lib:format("not a time: ~b", [Time]));
-reason_text({bad_gateway, Type, Text}) ->
+reason_text({bad_gateway, Type, Text}) when is_integer(Type), is_binary(Text) ->
     <<"not a gateway of type ", (integer_to_binary(Type))/binary, ": ", Text/binary>>;
 %% The text of the zone is octets, which ~s and ~p write as they are
 reason_text(Reason) ->

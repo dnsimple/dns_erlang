@@ -403,10 +403,11 @@ encode_ilnp64(<<A:16, B:16, C:16, D:16>>) ->
 %% inet:ntoa/1 writes a non-zero second word of an fe80::/16 or ff02::/16 address
 %% as a zone index, fe80:1:: as "fe80::%01", which is another address and isn't
 %% zone file text. With a first word of 1, which it doesn't single out and which
-%% is as non-zero, it puts the "::" in the same place, and tl/1 drops the 1.
+%% is as non-zero, it puts the "::" in the same place, and the 1 is dropped.
 -spec ntoa(inet:ip_address()) -> string().
 ntoa({Word, B, C, D, E, F, G, H}) when Word =:= 16#fe80; Word =:= 16#ff02 ->
-    string:lowercase(integer_to_list(Word, 16)) ++ tl(inet:ntoa({1, B, C, D, E, F, G, H}));
+    [$1 | Rest] = inet:ntoa({1, B, C, D, E, F, G, H}),
+    string:lowercase(integer_to_list(Word, 16)) ++ Rest;
 ntoa(IP) ->
     "" ++ _ = inet:ntoa(IP).
 
@@ -1219,10 +1220,10 @@ encode_rdata(
 ) ->
     %% RFC 8777 §4.3.1: the relay is "." when there is none
     RelayStr =
-        case RelayType of
-            0 -> ~".";
-            3 -> encode_dname(Relay, Origin, RelativeNames);
-            _ -> ntoa(Relay)
+        case {RelayType, Relay} of
+            {0, _} -> ~".";
+            {3, Name} when is_binary(Name) -> encode_dname(Name, Origin, RelativeNames);
+            {_, IP} when is_tuple(IP) -> ntoa(IP)
         end,
     DBin =
         case DiscoveryOptional of
