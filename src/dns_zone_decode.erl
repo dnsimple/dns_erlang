@@ -155,11 +155,15 @@
 %% the name it gave, which a record has been accepted with
 -type owner_memo() :: {binary(), dns:dname(), dns:dname()} | undefined.
 
-%% A word, or a quoted string without its quotes, as written, escapes included,
-%% with the line it starts on
--type field() :: {word | quoted, binary(), pos_integer()}.
+%% A word, as its binary alone, or a quoted string without its quotes, as
+%% {quoted, Text}, either as written, escapes included. Most fields are words, and
+%% a tuple around each would be most of what a field allocates.
+-type field() :: binary() | {quoted, binary()}.
+%% The fields of an entry, the line of its first field, which is 0 while there is
+%% none, and where and on which line the entry after it starts
 -type fields_result() ::
-    {ok, [field()], non_neg_integer(), pos_integer()} | {error, term(), pos_integer()}.
+    {ok, [field()], non_neg_integer(), non_neg_integer(), pos_integer()}
+    | {error, term(), pos_integer()}.
 %% A record's TTL and class, if given, its type, as a number and as written, and
 %% its RDATA's fields
 -type header() ::
@@ -311,12 +315,12 @@ entries(Bin, Pos, _Line, _Ctx, _Owner, _Memo, Acc) when Pos >= byte_size(Bin) ->
     {ok, lists:reverse(Acc)};
 entries(Bin, Pos, Line, Ctx, Owner, Memo, Acc) ->
     case entry_fields(Bin, Pos, Line) of
-        {ok, [], Next, NextLine} ->
+        {ok, [], _Start, Next, NextLine} ->
             entries(Bin, Next, NextLine, Ctx, Owner, Memo, Acc);
-        {ok, [{Kind, First, Start} | Args] = Fields, Next, NextLine} ->
-            case Kind =:= word andalso binary:first(First) =:= $$ of
-                true ->
-                    case directive_entry(First, Args, Start, Ctx) of
+        {ok, [First | Args] = Fields, Start, Next, NextLine} ->
+            case directive_name(First) of
+                Name when is_binary(Name) ->
+                    case directive_entry(Name, Args, Start, Ctx) of
                         {rrs, RRs, Ctx1} ->
                             entries(
                                 Bin, Next, NextLine, Ctx1, Owner, Memo, lists:reverse(RRs, Acc)
@@ -349,6 +353,17 @@ entries(Bin, Pos, Line, Ctx, Owner, Memo, Acc) ->
             {error,
                 error_detail(parser, Message, undefined, {parser_error, Reason}, ErrorLine, Ctx)}
     end.
+
+%% The name of a directive, a word that starts with $, told by its first octet
+-compile({inline, [directive_name/1]}).
+-spec directive_name(field()) -> binary() | false.
+directive_name(Word) when is_binary(Word) ->
+    case binary:first(Word) of
+        $$ -> Word;
+        _ -> false
+    end;
+directive_name({quoted, _}) ->
+    false.
 
 -spec directive_entry(binary(), [field()], pos_integer(), ctx()) -> entry().
 directive_entry(Name, Args, Line, Ctx) ->
@@ -655,33 +670,33 @@ default(Value, _Default) -> Value.
 %% only uppercase mnemonics.
 -spec owner([field(), ...], ctx(), dns:dname(), owner_memo()) ->
     {dns:dname(), [field()], owner_memo()}.
-owner([{word, ~"@", _} | Fields], #ctx{origin = Origin}, _LastOwner, Memo) ->
+owner([~"@" | Fields], #ctx{origin = Origin}, _LastOwner, Memo) ->
     {dns_domain:to_lower(Origin), Fields, Memo};
-owner([{word, Word, _} = Name | Rest] = Fields, Ctx, LastOwner, Memo) ->
+owner([Word | Rest] = Fields, Ctx, LastOwner, Memo) when is_binary(Word) ->
     case word_kind(Word) of
         name ->
-            owner_name(Name, Rest, Ctx, Memo);
+            owner_name(Word, Rest, Ctx, Memo);
         type ->
-            case [word_kind(Next) || {word, Next, _} <- lists:sublist(Rest, 2)] of
-                [class | _] -> {dns_domain:to_lower(name(Name, Ctx)), Rest, Memo};
-                [ttl, class] -> {dns_domain:to_lower(name(Name, Ctx)), Rest, Memo};
+            case [word_kind(Next) || Next <- lists:sublist(Rest, 2), is_binary(Next)] of
+                [class | _] -> {dns_domain:to_lower(name(Word, Ctx)), Rest, Memo};
+                [ttl, class] -> {dns_domain:to_lower(name(Word, Ctx)), Rest, Memo};
                 _ -> {LastOwner, Fields, Memo}
             end;
         _ ->
             {LastOwner, Fields, Memo}
     end;
-owner([{quoted, Text, _} | _], _Ctx, _LastOwner, _Memo) ->
+owner([{quoted, Text} | _], _Ctx, _LastOwner, _Memo) ->
     ?FAIL({quoted_owner, Text}).
 
 %% Zone files often spell the same owner line after line. Spelled as the memo's,
 %% under the same origin, it is the memo's name, the same binary, rather than read,
 %% copied and lowercased again.
--spec owner_name(field(), [field()], ctx(), owner_memo()) ->
+-spec owner_name(binary(), [field()], ctx(), owner_memo()) ->
     {dns:dname(), [field()], owner_memo()}.
-owner_name({word, Text, _}, Rest, #ctx{origin = Origin}, {Text, Origin, Owner} = Memo) ->
+owner_name(Text, Rest, #ctx{origin = Origin}, {Text, Origin, Owner} = Memo) ->
     {Owner, Rest, Memo};
-owner_name({word, Text, _} = Field, Rest, #ctx{origin = Origin} = Ctx, _Memo) ->
-    Owner = dns_domain:to_lower(name(Field, Ctx)),
+owner_name(Text, Rest, #ctx{origin = Origin} = Ctx, _Memo) ->
+    Owner = dns_domain:to_lower(name(Text, Ctx)),
     {Owner, Rest, {Text, Origin, Owner}}.
 
 %% RFC1035§5.1: a line that does not start with a blank starts with its owner. Where
@@ -837,7 +852,7 @@ lexer_type(_Word) ->
 %% with no tuple to say which it was. A word that is no type or class as written
 %% is tried in uppercase.
 -spec header([field()], dns:ttl() | undefined, dns:class() | undefined) -> header().
-header([{word, Word, _} | Rest], TTL, Class) ->
+header([Word | Rest], TTL, Class) when is_binary(Word) ->
     case binary:first(Word) of
         C when ?IS_DIGIT(C) ->
             case ttl_value(Word) of
@@ -863,7 +878,7 @@ header([{word, Word, _} | Rest], TTL, Class) ->
                     ?FAIL({unexpected_field, Word})
             end
     end;
-header([{quoted, Text, _} | _], _TTL, _Class) ->
+header([{quoted, Text} | _], _TTL, _Class) ->
     ?FAIL({unexpected_field, Text});
 header([], _TTL, _Class) ->
     ?FAIL(no_type).
@@ -948,53 +963,71 @@ generic_number(Number, What, Mnemonic) ->
 -spec entry_fields(binary(), non_neg_integer(), pos_integer()) -> fields_result().
 entry_fields(Bin, Pos, Line) ->
     <<_:Pos/binary, Rest/binary>> = Bin,
-    fields(Rest, Bin, Pos, Line, 0, []).
+    fields(Rest, Bin, Pos, Line, 0, 0, []).
 
 %% RFC1035§5.1: a semicolon starts a comment, which ends with the line, and
-%% parentheses group fields across lines
--spec fields(binary(), binary(), non_neg_integer(), pos_integer(), non_neg_integer(), [field()]) ->
-    fields_result().
-fields(<<C, Rest/binary>>, Bin, Pos, Line, Depth, Acc) when C =:= $\s; C =:= $\t; C =:= $\r ->
-    fields(Rest, Bin, Pos + 1, Line, Depth, Acc);
-fields(<<$\n, _/binary>>, _Bin, Pos, Line, 0, Acc) ->
-    {ok, lists:reverse(Acc), Pos + 1, Line + 1};
-fields(<<$\n, Rest/binary>>, Bin, Pos, Line, Depth, Acc) ->
-    fields(Rest, Bin, Pos + 1, Line + 1, Depth, Acc);
-fields(<<$;, Rest/binary>>, Bin, Pos, Line, Depth, Acc) ->
-    comment(Rest, Bin, Pos + 1, Line, Depth, Acc);
-fields(<<$(, Rest/binary>>, Bin, Pos, Line, Depth, Acc) ->
-    fields(Rest, Bin, Pos + 1, Line, Depth + 1, Acc);
-fields(<<$), _/binary>>, _Bin, _Pos, Line, 0, _Acc) ->
+%% parentheses group fields across lines. First is the line of the first field,
+%% 0 until there is one.
+-spec fields(
+    binary(),
+    binary(),
+    non_neg_integer(),
+    pos_integer(),
+    non_neg_integer(),
+    non_neg_integer(),
+    [field()]
+) -> fields_result().
+fields(<<C, Rest/binary>>, Bin, Pos, Line, Depth, First, Acc) when
+    C =:= $\s; C =:= $\t; C =:= $\r
+->
+    fields(Rest, Bin, Pos + 1, Line, Depth, First, Acc);
+fields(<<$\n, _/binary>>, _Bin, Pos, Line, 0, First, Acc) ->
+    {ok, lists:reverse(Acc), First, Pos + 1, Line + 1};
+fields(<<$\n, Rest/binary>>, Bin, Pos, Line, Depth, First, Acc) ->
+    fields(Rest, Bin, Pos + 1, Line + 1, Depth, First, Acc);
+fields(<<$;, Rest/binary>>, Bin, Pos, Line, Depth, First, Acc) ->
+    comment(Rest, Bin, Pos + 1, Line, Depth, First, Acc);
+fields(<<$(, Rest/binary>>, Bin, Pos, Line, Depth, First, Acc) ->
+    fields(Rest, Bin, Pos + 1, Line, Depth + 1, First, Acc);
+fields(<<$), _/binary>>, _Bin, _Pos, Line, 0, _First, _Acc) ->
     {error, unbalanced_parenthesis, Line};
-fields(<<$), Rest/binary>>, Bin, Pos, Line, Depth, Acc) ->
-    fields(Rest, Bin, Pos + 1, Line, Depth - 1, Acc);
-fields(<<$", Rest/binary>>, Bin, Pos, Line, Depth, Acc) ->
-    quoted(Rest, Bin, Pos + 1, Pos + 1, Line, Line, Depth, Acc);
-fields(<<>>, _Bin, Pos, Line, 0, Acc) ->
-    {ok, lists:reverse(Acc), Pos, Line};
-fields(<<>>, _Bin, _Pos, Line, _Depth, _Acc) ->
+fields(<<$), Rest/binary>>, Bin, Pos, Line, Depth, First, Acc) ->
+    fields(Rest, Bin, Pos + 1, Line, Depth - 1, First, Acc);
+fields(<<$", Rest/binary>>, Bin, Pos, Line, Depth, First, Acc) ->
+    quoted(Rest, Bin, Pos + 1, Pos + 1, Line, Line, Depth, First, Acc);
+fields(<<>>, _Bin, Pos, Line, 0, First, Acc) ->
+    {ok, lists:reverse(Acc), First, Pos, Line};
+fields(<<>>, _Bin, _Pos, Line, _Depth, _First, _Acc) ->
     {error, unclosed_parenthesis, Line};
-fields(Rest, Bin, Pos, Line, Depth, Acc) ->
-    word(Rest, Bin, Pos, Pos, Line, Line, Depth, Acc).
+fields(Rest, Bin, Pos, Line, Depth, First, Acc) ->
+    word(Rest, Bin, Pos, Pos, first_line(First, Line), Line, Depth, Acc).
 
 %% A comment ends at the end of its line, which then ends the entry as it would
 %% without the comment
--spec comment(binary(), binary(), non_neg_integer(), pos_integer(), non_neg_integer(), [field()]) ->
-    fields_result().
-comment(<<W:56, Rest/binary>>, Bin, Pos, Line, Depth, Acc) when ?COMMENT7(W) ->
-    comment(Rest, Bin, Pos + 7, Line, Depth, Acc);
-comment(<<$\n, _/binary>>, _Bin, Pos, Line, 0, Acc) ->
-    {ok, lists:reverse(Acc), Pos + 1, Line + 1};
-comment(<<$\n, Rest/binary>>, Bin, Pos, Line, Depth, Acc) ->
-    fields(Rest, Bin, Pos + 1, Line + 1, Depth, Acc);
-comment(<<_, Rest/binary>>, Bin, Pos, Line, Depth, Acc) ->
-    comment(Rest, Bin, Pos + 1, Line, Depth, Acc);
-comment(<<>>, Bin, Pos, Line, Depth, Acc) ->
-    fields(<<>>, Bin, Pos, Line, Depth, Acc).
+-spec comment(
+    binary(),
+    binary(),
+    non_neg_integer(),
+    pos_integer(),
+    non_neg_integer(),
+    non_neg_integer(),
+    [field()]
+) -> fields_result().
+comment(<<W:56, Rest/binary>>, Bin, Pos, Line, Depth, First, Acc) when ?COMMENT7(W) ->
+    comment(Rest, Bin, Pos + 7, Line, Depth, First, Acc);
+comment(<<$\n, _/binary>>, _Bin, Pos, Line, 0, First, Acc) ->
+    {ok, lists:reverse(Acc), First, Pos + 1, Line + 1};
+comment(<<$\n, Rest/binary>>, Bin, Pos, Line, Depth, First, Acc) ->
+    fields(Rest, Bin, Pos + 1, Line + 1, Depth, First, Acc);
+comment(<<_, Rest/binary>>, Bin, Pos, Line, Depth, First, Acc) ->
+    comment(Rest, Bin, Pos + 1, Line, Depth, First, Acc);
+comment(<<>>, Bin, Pos, Line, Depth, First, Acc) ->
+    fields(<<>>, Bin, Pos, Line, Depth, First, Acc).
 
 %% A word ends at a blank, a parenthesis, a semicolon, a quote or the end of the
 %% line, and a backslash escapes the octet after it. Start is where the word
-%% starts, and StartLine its line, which escaped line ends move Line past.
+%% starts, and First the line of the entry's first field, this word's if it is the
+%% first, which escaped line ends do not move, as they move Line.
 -spec word(
     binary(),
     binary(),
@@ -1005,20 +1038,20 @@ comment(<<>>, Bin, Pos, Line, Depth, Acc) ->
     non_neg_integer(),
     [field()]
 ) -> fields_result().
-word(<<W:56, Rest/binary>>, Bin, Start, Pos, StartLine, Line, Depth, Acc) when ?WORD7(W) ->
-    word(Rest, Bin, Start, Pos + 7, StartLine, Line, Depth, Acc);
-word(<<$\\, $\n, Rest/binary>>, Bin, Start, Pos, StartLine, Line, Depth, Acc) ->
-    word(Rest, Bin, Start, Pos + 2, StartLine, Line + 1, Depth, Acc);
-word(<<$\\, _, Rest/binary>>, Bin, Start, Pos, StartLine, Line, Depth, Acc) ->
-    word(Rest, Bin, Start, Pos + 2, StartLine, Line, Depth, Acc);
-word(<<$\\>>, Bin, Start, Pos, StartLine, Line, Depth, Acc) ->
+word(<<W:56, Rest/binary>>, Bin, Start, Pos, First, Line, Depth, Acc) when ?WORD7(W) ->
+    word(Rest, Bin, Start, Pos + 7, First, Line, Depth, Acc);
+word(<<$\\, $\n, Rest/binary>>, Bin, Start, Pos, First, Line, Depth, Acc) ->
+    word(Rest, Bin, Start, Pos + 2, First, Line + 1, Depth, Acc);
+word(<<$\\, _, Rest/binary>>, Bin, Start, Pos, First, Line, Depth, Acc) ->
+    word(Rest, Bin, Start, Pos + 2, First, Line, Depth, Acc);
+word(<<$\\>>, Bin, Start, Pos, First, Line, Depth, Acc) ->
     Word = binary_part(Bin, Start, Pos + 1 - Start),
-    fields(<<>>, Bin, Pos + 1, Line, Depth, [{word, Word, StartLine} | Acc]);
-word(<<C, Rest/binary>>, Bin, Start, Pos, StartLine, Line, Depth, Acc) when not ?WORD_END(C) ->
-    word(Rest, Bin, Start, Pos + 1, StartLine, Line, Depth, Acc);
-word(Rest, Bin, Start, Pos, StartLine, Line, Depth, Acc) ->
+    fields(<<>>, Bin, Pos + 1, Line, Depth, First, [Word | Acc]);
+word(<<C, Rest/binary>>, Bin, Start, Pos, First, Line, Depth, Acc) when not ?WORD_END(C) ->
+    word(Rest, Bin, Start, Pos + 1, First, Line, Depth, Acc);
+word(Rest, Bin, Start, Pos, First, Line, Depth, Acc) ->
     Word = binary_part(Bin, Start, Pos - Start),
-    fields(Rest, Bin, Pos, Line, Depth, [{word, Word, StartLine} | Acc]).
+    fields(Rest, Bin, Pos, Line, Depth, First, [Word | Acc]).
 
 %% A quoted string ends at the next quote a backslash does not escape, and may
 %% span lines. Start is where its text starts, after the quote, and StartLine the
@@ -1031,23 +1064,33 @@ word(Rest, Bin, Start, Pos, StartLine, Line, Depth, Acc) ->
     pos_integer(),
     pos_integer(),
     non_neg_integer(),
+    non_neg_integer(),
     [field()]
 ) -> fields_result().
-quoted(<<W:56, Rest/binary>>, Bin, Start, Pos, StartLine, Line, Depth, Acc) when ?QUOTED7(W) ->
-    quoted(Rest, Bin, Start, Pos + 7, StartLine, Line, Depth, Acc);
-quoted(<<$", Rest/binary>>, Bin, Start, Pos, StartLine, Line, Depth, Acc) ->
+quoted(<<W:56, Rest/binary>>, Bin, Start, Pos, StartLine, Line, Depth, First, Acc) when
+    ?QUOTED7(W)
+->
+    quoted(Rest, Bin, Start, Pos + 7, StartLine, Line, Depth, First, Acc);
+quoted(<<$", Rest/binary>>, Bin, Start, Pos, StartLine, Line, Depth, First, Acc) ->
     Text = binary_part(Bin, Start, Pos - Start),
-    fields(Rest, Bin, Pos + 1, Line, Depth, [{quoted, Text, StartLine} | Acc]);
-quoted(<<$\n, Rest/binary>>, Bin, Start, Pos, StartLine, Line, Depth, Acc) ->
-    quoted(Rest, Bin, Start, Pos + 1, StartLine, Line + 1, Depth, Acc);
-quoted(<<$\\, $\n, Rest/binary>>, Bin, Start, Pos, StartLine, Line, Depth, Acc) ->
-    quoted(Rest, Bin, Start, Pos + 2, StartLine, Line + 1, Depth, Acc);
-quoted(<<$\\, _, Rest/binary>>, Bin, Start, Pos, StartLine, Line, Depth, Acc) ->
-    quoted(Rest, Bin, Start, Pos + 2, StartLine, Line, Depth, Acc);
-quoted(<<C, Rest/binary>>, Bin, Start, Pos, StartLine, Line, Depth, Acc) when C =/= $\\ ->
-    quoted(Rest, Bin, Start, Pos + 1, StartLine, Line, Depth, Acc);
-quoted(_, _Bin, _Start, _Pos, StartLine, _Line, _Depth, _Acc) ->
+    fields(Rest, Bin, Pos + 1, Line, Depth, first_line(First, StartLine), [{quoted, Text} | Acc]);
+quoted(<<$\n, Rest/binary>>, Bin, Start, Pos, StartLine, Line, Depth, First, Acc) ->
+    quoted(Rest, Bin, Start, Pos + 1, StartLine, Line + 1, Depth, First, Acc);
+quoted(<<$\\, $\n, Rest/binary>>, Bin, Start, Pos, StartLine, Line, Depth, First, Acc) ->
+    quoted(Rest, Bin, Start, Pos + 2, StartLine, Line + 1, Depth, First, Acc);
+quoted(<<$\\, _, Rest/binary>>, Bin, Start, Pos, StartLine, Line, Depth, First, Acc) ->
+    quoted(Rest, Bin, Start, Pos + 2, StartLine, Line, Depth, First, Acc);
+quoted(<<C, Rest/binary>>, Bin, Start, Pos, StartLine, Line, Depth, First, Acc) when C =/= $\\ ->
+    quoted(Rest, Bin, Start, Pos + 1, StartLine, Line, Depth, First, Acc);
+quoted(_, _Bin, _Start, _Pos, StartLine, _Line, _Depth, _First, _Acc) ->
     {error, unterminated_string, StartLine}.
+
+%% The line of an entry's first field: that of the field just read, if there was
+%% none before it
+-compile({inline, [first_line/2]}).
+-spec first_line(non_neg_integer(), pos_integer()) -> pos_integer().
+first_line(0, Line) -> Line;
+first_line(First, _Line) -> First.
 
 %% ============================================================================
 %% RDATA
@@ -1059,7 +1102,7 @@ quoted(_, _Bin, _Start, _Pos, StartLine, _Line, _Depth, _Acc) ->
 rdata(Type, Mnemonic, Fields, Ctx) ->
     try
         case Fields of
-            [{word, ~"\\#", _} | Generic] -> generic(Generic);
+            [~"\\#" | Generic] -> generic(Generic);
             _ -> rdata(Type, Fields, Ctx)
         end
     catch
@@ -1069,7 +1112,7 @@ rdata(Type, Mnemonic, Fields, Ctx) ->
 -spec rdata_fail(binary(), [field()], term()) -> no_return().
 rdata_fail(Mnemonic, Fields, does_not_fit) ->
     Message = <<"Invalid ", Mnemonic/binary, " record: a value does not fit its field">>,
-    Texts = [Text || {_, Text, _} <- Fields],
+    Texts = [field_text(Field) || Field <- Fields],
     ?FAIL({rdata_error, Message, undefined, {invalid_record, Mnemonic, Texts}});
 rdata_fail(Mnemonic, Fields, Reason) ->
     {ShapeMessage, Suggestion} = rdata_error_message(Mnemonic, Fields),
@@ -1380,7 +1423,7 @@ rrsig_time(Field) ->
 %% The six integers the zone writer writes are read too.
 -spec loc([field()]) -> dns:rrdata().
 loc([_, _, _, _, _, _] = Fields) ->
-    case [signed_integer(Text) || {word, Text, _} <- Fields] of
+    case [signed_integer(Text) || Text <- Fields, is_binary(Text)] of
         [Lat, Lon, Alt, Size, Horiz, Vert] when
             is_integer(Lat),
             is_integer(Lon),
@@ -1546,12 +1589,12 @@ to_integer(Text) ->
 %% first and last octets are read with binary:first/1 and binary:last/1, which
 %% start no match.
 -spec name(field(), ctx()) -> dns:dname().
-name({word, Text, _}, #ctx{origin = Origin}) when Text =:= ~"@" ->
+name(Text, #ctx{origin = Origin}) when Text =:= ~"@" ->
     case Origin =:= <<>> of
         true -> ~".";
         false -> fqdn(Origin)
     end;
-name({word, Text, _}, #ctx{origin = Origin}) ->
+name(Text, #ctx{origin = Origin}) when is_binary(Text) ->
     case binary:first(Text) =:= $. of
         true when Text =:= ~"." ->
             ~".";
@@ -1573,7 +1616,7 @@ name({word, Text, _}, #ctx{origin = Origin}) ->
                     ?FAIL({empty_label, Text})
             end
     end;
-name({quoted, Text, _}, _Ctx) ->
+name({quoted, Text}, _Ctx) ->
     ?FAIL({quoted_name, Text}).
 
 %% A relative name under an origin that is not empty, as a new binary
@@ -1642,7 +1685,8 @@ fqdn(Name) ->
 %% is X; \xHH is the octet HH, and \n, \t and \r a newline, a tab and a carriage
 %% return, as the parser always read them.
 -spec text(field()) -> binary().
-text({_, Text, _}) ->
+text(Field) ->
+    Text = field_text(Field),
     case plain_text(Text) of
         true -> binary:copy(Text);
         false -> unescape(Text, <<>>)
@@ -1651,11 +1695,17 @@ text({_, Text, _}) ->
 %% The same text, to be decoded at once rather than kept: without escapes it is the
 %% field's own binary, part of the source, which what it decodes to does not hold
 -spec raw_text(field()) -> binary().
-raw_text({_, Text, _}) ->
+raw_text(Field) ->
+    Text = field_text(Field),
     case plain_text(Text) of
         true -> Text;
         false -> unescape(Text, <<>>)
     end.
+
+%% A field's text, a word's or a quoted string's, as written
+-spec field_text(field()) -> binary().
+field_text({quoted, Text}) -> Text;
+field_text(Text) -> Text.
 
 %% The raw texts of fields one after another, as hex or base64 RDATA is split
 -spec joined_text([field()]) -> binary().
@@ -1732,33 +1782,33 @@ hex_digit(_) -> error.
 
 %% A number, written as a TTL may be, 1h for 3600, as the parser read numbers
 -spec uint(field()) -> non_neg_integer().
-uint({word, Text, _}) ->
+uint(Text) when is_binary(Text) ->
     case ttl_value(Text) of
         error -> ?FAIL({not_a_number, Text});
         Number -> Number
     end;
-uint({quoted, Text, _}) ->
+uint({quoted, Text}) ->
     ?FAIL({not_a_number, Text}).
 
 %% RFC4034§2.2, §3.2, §5.3: an algorithm number, or its mnemonic
 -spec alg(field()) -> dns:uint8().
-alg({word, <<C, _/binary>>, _} = Field) when ?IS_DIGIT(C) ->
+alg(<<C, _/binary>> = Field) when ?IS_DIGIT(C) ->
     uint(Field);
-alg({word, Text, _}) ->
+alg(Text) when is_binary(Text) ->
     case dns_names:name_alg(dns_domain:to_upper(Text)) of
         undefined -> ?FAIL({unknown_algorithm, Text});
         Alg -> Alg
     end;
-alg({quoted, Text, _}) ->
+alg({quoted, Text}) ->
     ?FAIL({unknown_algorithm, Text}).
 
 -spec ttl(field()) -> non_neg_integer().
-ttl({word, Text, _}) ->
+ttl(Text) when is_binary(Text) ->
     case ttl_value(Text) of
         error -> ?FAIL({bad_ttl, Text});
         TTL -> TTL
     end;
-ttl({quoted, Text, _}) ->
+ttl({quoted, Text}) ->
     ?FAIL({bad_ttl, Text}).
 
 %% RFC2308§4, as BIND reads it: seconds, or numbers each followed by a unit, which
@@ -1810,7 +1860,7 @@ ttl_unit(_) -> error.
 
 %% RFC3597§5: a type's mnemonic, or TYPEnnn
 -spec type(field()) -> dns:type().
-type({word, Text, _}) ->
+type(Text) when is_binary(Text) ->
     case type_number(Text) of
         undefined ->
             case type_number(dns_domain:to_upper(Text)) of
@@ -1820,7 +1870,7 @@ type({word, Text, _}) ->
         Type ->
             Type
     end;
-type({quoted, Text, _}) ->
+type({quoted, Text}) ->
     ?FAIL({unknown_type, Text}).
 
 -spec types([field()]) -> [dns:type()].
@@ -1830,12 +1880,12 @@ types(Fields) ->
 %% RFC1035§3.4.1: four decimal octets, with no leading zeros, which would read as
 %% octal elsewhere
 -spec ipv4(field()) -> inet:ip4_address().
-ipv4({word, Text, _}) ->
+ipv4(Text) when is_binary(Text) ->
     case ipv4_octet(Text, 0, 0, 0, 0) of
         error -> ?FAIL({bad_ipv4, Text});
         IP -> IP
     end;
-ipv4({quoted, Text, _}) ->
+ipv4({quoted, Text}) ->
     ?FAIL({bad_ipv4, Text}).
 
 %% The next octet, after Count of them, A, B and C as far as they are read
@@ -1872,13 +1922,13 @@ ipv4_dot(_Rest, _Count, _A, _B, _C, _Octet) ->
 %% which have no place in a zone file. An address ending in an IPv4 address is read
 %% by inet, as before, and the others the way inet reads them.
 -spec ipv6(field()) -> inet:ip6_address().
-ipv6({word, Text, _}) ->
+ipv6(Text) when is_binary(Text) ->
     case ipv6_address(Text) of
         error -> ?FAIL({bad_ipv6, Text});
         ipv4_tail -> inet_ipv6(Text);
         IP -> IP
     end;
-ipv6({quoted, Text, _}) ->
+ipv6({quoted, Text}) ->
     ?FAIL({bad_ipv6, Text}).
 
 -spec inet_ipv6(binary()) -> inet:ip6_address().
@@ -2044,14 +2094,14 @@ eui(Field, Size) ->
 %% RFC6742§2.1, §2.3: a NodeID or Locator64 is four colon-separated groups of one
 %% to four hex digits, as in an AAAA record, but never with the "::" shorthand
 -spec ilnp64(field()) -> <<_:64>>.
-ilnp64({word, Text, _}) ->
+ilnp64(Text) when is_binary(Text) ->
     case binary:split(Text, ~":", [global]) of
         [_, _, _, _] = Groups ->
             iolist_to_binary([ilnp64_group(Group, Text) || Group <- Groups]);
         _ ->
             ?FAIL({bad_ilnp64, Text})
     end;
-ilnp64({quoted, Text, _}) ->
+ilnp64({quoted, Text}) ->
     ?FAIL({bad_ilnp64, Text}).
 
 -spec ilnp64_group(binary(), binary()) -> <<_:16>>.
@@ -2064,17 +2114,17 @@ ilnp64_group(_Group, Text) ->
     ?FAIL({bad_ilnp64, Text}).
 
 -spec discovery_optional(field()) -> boolean().
-discovery_optional({word, ~"0", _}) -> false;
-discovery_optional({word, ~"1", _}) -> true;
-discovery_optional({_, Text, _}) -> ?FAIL({bad_discovery_optional, Text}).
+discovery_optional(~"0") -> false;
+discovery_optional(~"1") -> true;
+discovery_optional(Field) -> ?FAIL({bad_discovery_optional, field_text(Field)}).
 
 %% RFC4025§3.1, RFC8777§4.3.1: the gateway or relay of each type
 -spec gateway(non_neg_integer(), field(), ctx()) -> <<>> | inet:ip_address() | dns:dname().
-gateway(0, {word, ~".", _}, _Ctx) -> <<>>;
+gateway(0, ~".", _Ctx) -> <<>>;
 gateway(1, Field, _Ctx) -> ipv4(Field);
 gateway(2, Field, _Ctx) -> ipv6(Field);
 gateway(3, Field, Ctx) -> name(Field, Ctx);
-gateway(Type, {_, Text, _}, _Ctx) -> ?FAIL({bad_gateway, Type, Text}).
+gateway(Type, Field, _Ctx) -> ?FAIL({bad_gateway, Type, field_text(Field)}).
 
 %% RFC9460§2.1: key=value, or a key alone, each value a <character-string>, which
 %% follows the "=" quoted, key="a value", as a field of its own
@@ -2086,16 +2136,16 @@ svcb(Fields) ->
     end.
 
 -spec svcb_params([field()]) -> [{binary(), binary() | none}].
-svcb_params([{word, Text, _} | Rest]) ->
+svcb_params([Text | Rest]) when is_binary(Text) ->
     case {binary:split(Text, ~"="), Rest} of
         {[Key], _} ->
             [{Key, none} | svcb_params(Rest)];
-        {[Key, <<>>], [{quoted, Value, _} | Rest1]} ->
+        {[Key, <<>>], [{quoted, Value} | Rest1]} ->
             [{Key, char_string(Value)} | svcb_params(Rest1)];
         {[Key, Value], _} ->
             [{Key, char_string(Value)} | svcb_params(Rest)]
     end;
-svcb_params([{quoted, Text, _} | _]) ->
+svcb_params([{quoted, Text} | _]) ->
     ?FAIL({invalid_svcparam_format, Text});
 svcb_params([]) ->
     [].
