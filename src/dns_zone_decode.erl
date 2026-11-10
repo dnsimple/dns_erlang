@@ -358,8 +358,9 @@ directive(Name, Args, _Line, _Ctx) ->
 
 %% RFC1035§5.1: the origin of the parent file is not changed by the included file.
 %% A file that cannot be read is an error on the line of the $INCLUDE. An error
-%% within the file gives its line there, but not the text of that line: a zone
-%% can include any file, which need not be one to show.
+%% within the file gives its line there and the kind of error, but nothing the
+%% file holds, neither the text of the line nor the field or number the error is
+%% about: a zone can include any file, which need not be one to show.
 -spec include(binary(), dns:dname(), pos_integer(), ctx()) -> entry().
 include(File, Origin, Line, #ctx{base_dir = BaseDir} = Ctx) ->
     Path =
@@ -379,12 +380,52 @@ include(File, Origin, Line, #ctx{base_dir = BaseDir} = Ctx) ->
             },
             case parse(Bin, Options) of
                 {ok, RRs} -> {rrs, RRs, Ctx};
-                {error, Error} -> {error, maps:remove(context, Error)}
+                {error, Error} -> {error, included_error(Error)}
             end;
         {error, Reason} ->
             #{message := Message} = file_error(Path, Reason),
             {error, error_detail(file, Message, undefined, {file_error, Reason}, Line, Ctx)}
     end.
+
+%% An error within an included file, with its type, location and suggestion, and
+%% the kind of its reason in place of the reason, which holds what it is about.
+%% The message of a record that does not fit names only its type, and that of a
+%% file that cannot be read only why.
+-spec included_error(dns_zone:error_detail()) -> dns_zone:error_detail().
+included_error(#{type := Type} = Error) ->
+    Without = maps:remove(context, Error),
+    case Error of
+        #{details := {file_error, _}} ->
+            Without;
+        #{details := {invalid_record, Mnemonic, _Texts}} ->
+            Without#{details => {invalid_record, Mnemonic, []}};
+        #{details := {Stage, Reason}} ->
+            Kind = reason_kind(Reason),
+            Message = <<
+                (type_text(Type))/binary, " in an included file: ", (atom_to_binary(Kind))/binary
+            >>,
+            Without#{message => Message, details => {Stage, Kind}};
+        _ ->
+            Without#{message => <<(type_text(Type))/binary, " in an included file">>}
+    end.
+
+%% The atom a reason is, or is tagged with
+-spec reason_kind(term()) -> atom().
+reason_kind(Reason) when is_atom(Reason) ->
+    Reason;
+reason_kind(Reason) when is_tuple(Reason), tuple_size(Reason) > 0 ->
+    case element(1, Reason) of
+        Kind when is_atom(Kind) -> Kind;
+        _ -> unknown
+    end;
+reason_kind(_Reason) ->
+    unknown.
+
+-spec type_text(dns_zone:error_type()) -> binary().
+type_text(file) -> ~"File error";
+type_text(lexer) -> ~"Lexical error";
+type_text(parser) -> ~"Parse error";
+type_text(semantic) -> ~"Invalid record".
 
 %% RFC1035§5.1: an owner, or none for the owner of the previous record, then
 %% [<TTL>] [<class>] <type> <RDATA>, TTL and class in either order. Owner names are

@@ -8478,17 +8478,58 @@ parse_long_numbers_in_linear_time(_Config) ->
     ].
 
 %% A file the zone includes and that cannot be read is an error on the line of the
-%% $INCLUDE. An error within the included file gives its line there, but not its
-%% text: a zone can include any file, which need not be one to show.
+%% $INCLUDE. An error within the included file, or within a file that one
+%% includes, gives its line there and its kind, but nothing the file holds, in no
+%% field of the error: a zone can include any file, which need not be one to show.
 parse_include_errors(Config) ->
     Dir = proplists:get_value(priv_dir, Config),
-    Secret = filename:join(Dir, "include-secret.txt"),
-    ok = file:write_file(Secret, ~"secret hunter2\n"),
+    Label = binary:copy(~"a", 60),
+    Secrets = [
+        {~"secret hunter2", parser, {parser_error, unexpected_field}},
+        {~"$hunter2 1", parser, {parser_error, bad_directive}},
+        {~"a. 0 IN TYPE7774247 \\# 0", parser, {parser_error, out_of_range}},
+        {~"a. 0 IN TXT \"hunter2", lexer, {lexer_error, unterminated_string}},
+        {~"a. 0 IN A hunter2", semantic, {semantic_error, bad_ipv4}},
+        {~"a. 0 IN MX 7774247 mail.example.", semantic, {invalid_record, ~"MX", []}},
+        {~"a. 0 IN NSEC3 1 7774247 0 - VVVVVVVV A", semantic, {semantic_error, out_of_range}},
+        {~"a. 0 IN DS 1 8 2 hunter2", semantic, {semantic_error, bad_hex}},
+        {~"a. 0 IN SVCB 1 . hunter2=1", semantic, {semantic_error, invalid_svcparam_format}},
+        {<<"a. 0 IN NS hunter2", Label/binary, ".">>, semantic, {invalid_record, ~"NS", []}}
+    ],
+    [
+        begin
+            Name = "include-secret-" ++ integer_to_list(N) ++ ".txt",
+            Secret = filename:join(Dir, Name),
+            ok = file:write_file(Secret, <<"\n", Text/binary, "\n">>),
+            Nested = filename:join(Dir, "include-nested-" ++ integer_to_list(N) ++ ".zone"),
+            ok = file:write_file(Nested, ["$INCLUDE ", Name, "\n"]),
+            [
+                begin
+                    {error, Error} = dns_zone:parse_string(
+                        iolist_to_binary(["www.example. 0 IN A 192.0.2.1\n$INCLUDE ", Path, "\n"])
+                    ),
+                    ?assertMatch(
+                        #{type := Type, details := Details, location := #{line := 2, file := _}},
+                        Error,
+                        Text
+                    ),
+                    ?assertEqual(
+                        Secret,
+                        unicode:characters_to_list(maps:get(file, maps:get(location, Error)))
+                    ),
+                    ?assertNot(maps:is_key(context, Error), Text),
+                    Shown = iolist_to_binary(
+                        [io_lib:format("~0p", [Error]), dns_zone:format_error(Error)]
+                    ),
+                    ?assertEqual(nomatch, binary:match(Shown, [~"hunter2", ~"7774247"]), Shown)
+                end
+             || Path <- [Secret, Nested]
+            ]
+        end
+     || {N, {Text, Type, Details}} <- lists:enumerate(Secrets)
+    ],
     Zone = filename:join(Dir, "include-missing.zone"),
     ok = file:write_file(Zone, ~"www.example. 0 IN A 192.0.2.1\n$INCLUDE missing.zone\n"),
-    {error, Included} = dns_zone:parse_string(iolist_to_binary(["$INCLUDE ", Secret, "\n"])),
-    ?assertMatch(#{type := parser, location := #{line := 1, file := _}}, Included),
-    ?assertNot(maps:is_key(context, Included)),
     ?assertMatch(
         {error, #{
             type := file,
