@@ -431,7 +431,7 @@ rrdata() ->
                 loc_precision(),
                 loc_coord(),
                 loc_coord(),
-                integer(-100000, 100000)
+                loc_alt()
             },
             #dns_rrdata_loc{size = Sz, horiz = H, vert = V, lat = La, lon = Lo, alt = Al}
         ),
@@ -608,7 +608,22 @@ nxt_types() -> ?LET(L, list(integer(0, 127)), lists:usort(L)).
 
 %% RFC1876§2: base * 10^exp with both in 0..9, the only exactly representable values
 loc_precision() -> ?LET({B, E}, {integer(0, 9), integer(0, 9)}, B * pow10(E)).
-loc_coord() -> integer(-2147483648, 2147483647).
+%% A latitude or longitude: near the reference point, at and past RFC1876§3's 90
+%% and 180 degrees, and anywhere in its 32 bits, which integer/2 alone, staying
+%% within a few thousand of 0, never reaches
+loc_coord() ->
+    oneof([
+        integer(-2147483648, 2147483647),
+        ?LET(
+            {Degrees, Offset, Sign},
+            {oneof([90, 180]), integer(-1, 1), oneof([-1, 1])},
+            Sign * (Degrees * 3600000 + Offset)
+        ),
+        ?LET(<<Coord:32/signed>>, binary(4), Coord)
+    ]).
+%% RFC1876§2: centimetres from 100 km below the reference spheroid, in 32 bits
+loc_alt() ->
+    oneof([integer(-100000, 100000), ?LET(<<Alt:32>>, binary(4), Alt - 10000000)]).
 
 pow10(E) -> pow10(E, 1).
 pow10(0, Acc) -> Acc;

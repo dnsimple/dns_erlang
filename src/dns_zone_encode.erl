@@ -1366,4 +1366,11 @@ has_unwritable_field(#dns_rrdata_hip{public_key = <<>>}) -> true;
 %% RFC4025§3.1 has no form for an IPSECKEY without a key, which BIND refuses in
 %% any form, but which dnspython reads in this one
 has_unwritable_field(#dns_rrdata_ipseckey{public_key = <<>>}) -> true;
+has_unwritable_field(#dns_rrdata_loc{lat = Lat, lon = Lon}) -> not loc_writable(Lat, Lon);
 has_unwritable_field(_RData) -> false.
+
+%% RFC1876§3 writes latitudes up to 90 degrees and longitudes up to 180, which the
+%% 32 bits of the wire format go past, and which the reader holds to, as BIND does
+-spec loc_writable(integer(), integer()) -> boolean().
+loc_writable(Lat, Lon) ->
+    abs(Lat) =< 90 * 3600000 andalso abs(Lon) =< 180 * 3600000.

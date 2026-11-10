@@ -1750,6 +1750,34 @@ encode_presentation_formats(_Config) ->
             vert = 1000
         })
     ),
+    %% RFC1876§3 writes up to 90 degrees of latitude and 180 of longitude. Past them,
+    %% where the 32 bits of the wire format reach, RFC 3597's generic form, which
+    %% reads back to the same octets.
+    Loc = fun(Lat, Lon) ->
+        #dns_rrdata_loc{lat = Lat, lon = Lon, alt = 0, size = 100, horiz = 1000000, vert = 1000}
+    end,
+    ?assertEqual(
+        ~"90 0 0.000 S 180 0 0.000 E 0.00m 1.00m 10000.00m 10.00m",
+        Text(?DNS_TYPE_LOC, Loc(-324000000, 648000000))
+    ),
+    [
+        begin
+            Written = Text(?DNS_TYPE_LOC, Loc(Lat, Lon)),
+            ?assertMatch(<<"\\# 16 ", _/binary>>, Written),
+            {ok, [#dns_rr{data = Read}]} =
+                dns_zone:parse_string(<<"a. 0 IN LOC ", Written/binary, "\n">>),
+            ?assertEqual(
+                Loc(Lat, Lon), dns_decode:decode_rrdata(Read, ?DNS_CLASS_IN, ?DNS_TYPE_LOC)
+            )
+        end
+     || {Lat, Lon} <- [
+            {324000001, 0},
+            {-324000001, 0},
+            {0, 648000001},
+            {0, -648000001},
+            {-2147483648, 2147483647}
+        ]
+    ],
     %% RFC2535§7.2: SIG times as dates
     ?assertMatch(
         <<"A 5 2 3600 20300101000000 20000101000000 1 example. ", _/binary>>,
