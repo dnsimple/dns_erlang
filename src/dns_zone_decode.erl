@@ -141,11 +141,15 @@
     default_ttl = 0 :: dns:ttl(),
     default_class = ?DNS_CLASS_IN :: dns:class(),
     last_owner = <<>> :: dns:dname(),
+    owner_memo = undefined :: owner_memo(),
     base_dir = "" :: file:filename_all(),
     filename = undefined :: file:filename_all() | undefined,
     source = <<>> :: binary()
 }).
 -type ctx() :: #ctx{}.
+%% The text of the last owner read from a name, the origin it was read under, and
+%% the name it gave, which a record has been accepted with
+-type owner_memo() :: {binary(), dns:dname(), dns:dname()} | undefined.
 
 %% A word, or a quoted string without its quotes, as written, escapes included,
 %% with the line it starts on
@@ -320,8 +324,8 @@ entry(Line, _Blank, [{word, <<$$, _/binary>> = Name, _} | Args], Ctx) ->
     end;
 entry(Line, Blank, Fields, Ctx) ->
     try
-        RR = record(Blank, Fields, Ctx),
-        {rr, RR, Ctx#ctx{last_owner = RR#dns_rr.name}}
+        {RR, Memo} = record(Blank, Fields, Ctx),
+        {rr, RR, Ctx#ctx{last_owner = RR#dns_rr.name, owner_memo = Memo}}
     catch
         error:{?MODULE, {rdata_error, Message, Suggestion, Details}} ->
             {error, error_detail(semantic, Message, Suggestion, Details, Line, Ctx)};
@@ -385,25 +389,25 @@ include(File, Origin, Line, #ctx{base_dir = BaseDir} = Ctx) ->
 %% lowercased; the names in RDATA keep their case. A line that starts with a blank
 %% has no owner, unless it only reads as a record with its first field taken for
 %% one, as the grammar this parser replaced took it.
--spec record(boolean(), [field(), ...], ctx()) -> dns:rr().
-record(true, Fields, Ctx) ->
+-spec record(boolean(), [field(), ...], ctx()) -> {dns:rr(), owner_memo()}.
+record(true, Fields, #ctx{owner_memo = Memo} = Ctx) ->
     try
-        rr(Ctx#ctx.last_owner, header(Fields, undefined, undefined), Ctx)
+        {rr(Ctx#ctx.last_owner, header(Fields, undefined, undefined), Ctx), Memo}
     catch
         error:{?MODULE, _} = Error:Stack ->
             case owner_record(Fields, Ctx) of
-                {ok, RR} -> RR;
+                {ok, RR} -> {RR, Memo};
                 error -> erlang:raise(error, Error, Stack)
             end
     end;
 record(false, Fields, Ctx) ->
-    {Owner, Header} = owner_and_header(Fields, Ctx),
-    rr(Owner, Header, Ctx).
+    {Owner, Header, Memo} = owner_and_header(Fields, Ctx),
+    {rr(Owner, Header, Ctx), Memo}.
 
 -spec owner_record([field(), ...], ctx()) -> {ok, dns:rr()} | error.
 owner_record(Fields, Ctx) ->
     try
-        {Owner, Rest} = owner(Fields, Ctx),
+        {Owner, Rest, _Memo} = owner(Fields, Ctx),
         Rest =/= Fields orelse ?FAIL(no_owner),
         {ok, rr(Owner, header(Rest, undefined, undefined), Ctx)}
     catch
@@ -420,35 +424,40 @@ rr(Owner, {TTL, Class, Type, Mnemonic, RDataFields}, Ctx) ->
         ttl = default(TTL, Ctx#ctx.default_ttl),
         data = rdata(Type, Mnemonic, RDataFields, Ctx)
     },
-    fits(RR) orelse rdata_fail(Mnemonic, RDataFields, does_not_fit),
+    fits(RR, Ctx#ctx.owner_memo) orelse rdata_fail(Mnemonic, RDataFields, does_not_fit),
     RR.
 
 %% dns_check:rr/1, which encodes the RDATA to see that it fits. Of the RDATA of the
 %% types most zones are made of, an address or a name, the encoder refuses only an
 %% address of the wrong shape or in a class other than IN or NONE, a preference past
 %% 16 bits, and a name dns_domain:to_wire/1 refuses, which is told without writing
-%% it. Other types are left to dns_check:rr/1.
--spec fits(dns:rr()) -> boolean().
-fits(#dns_rr{name = Owner, type = Type, class = Class, ttl = TTL, data = Data} = RR) ->
+%% it. Other types are left to dns_check:rr/1. The owner of the memo was accepted
+%% with a record already.
+-spec fits(dns:rr(), owner_memo()) -> boolean().
+fits(#dns_rr{name = Owner, type = Type, class = Class, ttl = TTL, data = Data} = RR, Memo) ->
     case Data of
         #dns_rrdata_a{ip = IP} ->
             header_fits(Type, Class, TTL) andalso ?IS_IN_OR_NONE(Class) andalso
-                inet:is_ipv4_address(IP) andalso dname_fits(Owner);
+                inet:is_ipv4_address(IP) andalso owner_fits(Owner, Memo);
         #dns_rrdata_aaaa{ip = IP} ->
             header_fits(Type, Class, TTL) andalso ?IS_IN_OR_NONE(Class) andalso
-                inet:is_ipv6_address(IP) andalso dname_fits(Owner);
+                inet:is_ipv6_address(IP) andalso owner_fits(Owner, Memo);
         #dns_rrdata_ns{dname = Name} ->
-            header_fits(Type, Class, TTL) andalso dname_fits(Owner) andalso dname_fits(Name);
+            header_fits(Type, Class, TTL) andalso owner_fits(Owner, Memo) andalso dname_fits(Name);
         #dns_rrdata_cname{dname = Name} ->
-            header_fits(Type, Class, TTL) andalso dname_fits(Owner) andalso dname_fits(Name);
+            header_fits(Type, Class, TTL) andalso owner_fits(Owner, Memo) andalso dname_fits(Name);
         #dns_rrdata_ptr{dname = Name} ->
-            header_fits(Type, Class, TTL) andalso dname_fits(Owner) andalso dname_fits(Name);
+            header_fits(Type, Class, TTL) andalso owner_fits(Owner, Memo) andalso dname_fits(Name);
         #dns_rrdata_mx{preference = Preference, exchange = Name} ->
             header_fits(Type, Class, TTL) andalso ?IS_UINT(16, Preference) andalso
-                dname_fits(Owner) andalso dname_fits(Name);
+                owner_fits(Owner, Memo) andalso dname_fits(Name);
         _ ->
             dns_check:rr(RR)
     end.
+
+-spec owner_fits(dns:dname(), owner_memo()) -> boolean().
+owner_fits(Owner, {_, _, Owner}) -> true;
+owner_fits(Owner, _Memo) -> dname_fits(Owner).
 
 -spec header_fits(dns:type(), dns:class(), dns:ttl()) -> boolean().
 header_fits(Type, Class, TTL) ->
@@ -504,46 +513,59 @@ default(Value, _Default) -> Value.
 %% previous record. A type is an owner when a class follows it, or a TTL and a
 %% class. The words are told apart as that grammar's lexer told them, which took
 %% only uppercase mnemonics.
--spec owner([field(), ...], ctx()) -> {dns:dname(), [field()]}.
-owner([{word, ~"@", _} | Fields], #ctx{origin = Origin}) ->
-    {dns_domain:to_lower(Origin), Fields};
-owner([{word, Word, _} = Name | Rest] = Fields, Ctx) ->
+-spec owner([field(), ...], ctx()) -> {dns:dname(), [field()], owner_memo()}.
+owner([{word, ~"@", _} | Fields], #ctx{origin = Origin, owner_memo = Memo}) ->
+    {dns_domain:to_lower(Origin), Fields, Memo};
+owner([{word, Word, _} = Name | Rest] = Fields, #ctx{owner_memo = Memo} = Ctx) ->
     case word_kind(Word) of
         name ->
-            {dns_domain:to_lower(name(Name, Ctx)), Rest};
+            owner_name(Name, Rest, Ctx);
         type ->
             case [word_kind(Next) || {word, Next, _} <- lists:sublist(Rest, 2)] of
-                [class | _] -> {dns_domain:to_lower(name(Name, Ctx)), Rest};
-                [ttl, class] -> {dns_domain:to_lower(name(Name, Ctx)), Rest};
-                _ -> {Ctx#ctx.last_owner, Fields}
+                [class | _] -> {dns_domain:to_lower(name(Name, Ctx)), Rest, Memo};
+                [ttl, class] -> {dns_domain:to_lower(name(Name, Ctx)), Rest, Memo};
+                _ -> {Ctx#ctx.last_owner, Fields, Memo}
             end;
         _ ->
-            {Ctx#ctx.last_owner, Fields}
+            {Ctx#ctx.last_owner, Fields, Memo}
     end;
 owner([{quoted, Text, _} | _], _Ctx) ->
     ?FAIL({quoted_owner, Text}).
+
+%% Zone files often spell the same owner line after line. Spelled as the memo's,
+%% under the same origin, it is the memo's name, the same binary, rather than read,
+%% copied and lowercased again.
+-spec owner_name(field(), [field()], ctx()) -> {dns:dname(), [field()], owner_memo()}.
+owner_name(
+    {word, Text, _}, Rest, #ctx{origin = Origin, owner_memo = {Text, Origin, Owner} = Memo}
+) ->
+    {Owner, Rest, Memo};
+owner_name({word, Text, _} = Field, Rest, #ctx{origin = Origin} = Ctx) ->
+    Owner = dns_domain:to_lower(name(Field, Ctx)),
+    {Owner, Rest, {Text, Origin, Owner}}.
 
 %% RFC1035§5.1: a line that does not start with a blank starts with its owner. Where
 %% the reading above takes its first field for a TTL, a class or a type and the
 %% rest does not read as a record's start, the first field is read as the owner,
 %% so that the 1 of a reverse zone, which the writer writes before its TTL, is
 %% an owner.
--spec owner_and_header([field(), ...], ctx()) -> {dns:dname(), header()}.
+-spec owner_and_header([field(), ...], ctx()) -> {dns:dname(), header(), owner_memo()}.
 owner_and_header([First | Rest] = Fields, Ctx) ->
     case owner(Fields, Ctx) of
-        {Owner, Fields} ->
+        {Owner, Fields, Memo} ->
             try
-                {Owner, header(Fields, undefined, undefined)}
+                {Owner, header(Fields, undefined, undefined), Memo}
             catch
                 error:{?MODULE, _} = Error:Stack ->
                     try
-                        {dns_domain:to_lower(name(First, Ctx)), header(Rest, undefined, undefined)}
+                        Header = header(Rest, undefined, undefined),
+                        {dns_domain:to_lower(name(First, Ctx)), Header, Memo}
                     catch
                         error:{?MODULE, _} -> erlang:raise(error, Error, Stack)
                     end
             end;
-        {Owner, Remaining} ->
-            {Owner, header(Remaining, undefined, undefined)}
+        {Owner, Remaining, Memo} ->
+            {Owner, header(Remaining, undefined, undefined), Memo}
     end.
 
 -spec word_kind(binary()) -> ttl | class | type | generic_type | name.

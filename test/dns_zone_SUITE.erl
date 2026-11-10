@@ -563,7 +563,8 @@ groups() ->
             parse_include_errors,
             parse_file_reads_in_the_calling_process,
             parse_checks_names_as_the_encoder_does,
-            parse_ipv6_as_inet_does
+            parse_ipv6_as_inet_does,
+            parse_repeated_owner
         ]},
         {error_cases, [parallel], [
             parse_invalid_ipv4,
@@ -8601,6 +8602,36 @@ parse_checks_names_as_the_encoder_does(_Config) ->
         ]
     ),
     ?assertEqual([false, true], lists:usort([Fits || {_, Fits} <- Expected])).
+
+%% An owner spelled as the one before, under the same origin, is that record's
+%% name, the same binary. Spelled otherwise, or under another origin, it is read
+%% again.
+parse_repeated_owner(_Config) ->
+    {ok, RRs} = dns_zone:parse_string(
+        ~"""
+        $ORIGIN example.
+        www 0 IN A 192.0.2.1
+        www 0 IN A 192.0.2.2
+        WWW 0 IN A 192.0.2.3
+        $ORIGIN other.
+        www 0 IN A 192.0.2.4
+            IN A 192.0.2.5
+        www.example. 0 IN A 192.0.2.6
+        """
+    ),
+    ?assertEqual(
+        [
+            ~"www.example.",
+            ~"www.example.",
+            ~"www.example.",
+            ~"www.other.",
+            ~"www.other.",
+            ~"www.example."
+        ],
+        [Name || #dns_rr{name = Name} <- RRs]
+    ),
+    [First, Second | _] = RRs,
+    ?assert(erts_debug:same(First#dns_rr.name, Second#dns_rr.name)).
 
 %% AAAA addresses read as inet:parse_ipv6strict_address/1 reads them, which the
 %% reader did before it read them on the binary: up to 8 groups of 1 to 4 hex digits
