@@ -708,14 +708,26 @@ owner_and_header([First | Rest] = Fields, Ctx) ->
             {Owner, header(Remaining, undefined, undefined), Memo}
     end.
 
+%% Told by the first octet, which binary:first/1 reads without starting a match:
+%% a class or a type is spelled in uppercase, as that lexer took them, and most
+%% owners are not
 -spec word_kind(binary()) -> ttl | class | type | generic_type | name.
 word_kind(Word) ->
-    case Word of
-        <<C, _/binary>> when ?IS_DIGIT(C) ->
+    case binary:first(Word) of
+        C when ?IS_DIGIT(C) ->
             case lexer_ttl(Word) of
                 true -> ttl;
                 false -> name
             end;
+        C when $A =< C, C =< $Z ->
+            uppercase_word_kind(Word);
+        _ ->
+            name
+    end.
+
+-spec uppercase_word_kind(binary()) -> class | type | generic_type | name.
+uppercase_word_kind(Word) ->
+    case Word of
         ~"IN" ->
             class;
         ~"CH" ->
@@ -834,17 +846,20 @@ header([], _TTL, _Class) ->
 
 -spec classify(binary()) ->
     {ttl, non_neg_integer()} | {class, dns:class()} | {type, dns:type(), binary()} | unknown.
-classify(<<C, _/binary>> = Word) when ?IS_DIGIT(C) ->
-    case ttl_value(Word) of
-        error -> unknown;
-        TTL -> {ttl, TTL}
-    end;
-classify(~"IN") ->
-    {class, ?DNS_CLASS_IN};
 classify(Word) ->
-    case classify_mnemonic(Word) of
-        unknown -> classify_mnemonic(dns_domain:to_upper(Word));
-        Kind -> Kind
+    case binary:first(Word) of
+        C when ?IS_DIGIT(C) ->
+            case ttl_value(Word) of
+                error -> unknown;
+                TTL -> {ttl, TTL}
+            end;
+        _ when Word =:= ~"IN" ->
+            {class, ?DNS_CLASS_IN};
+        _ ->
+            case classify_mnemonic(Word) of
+                unknown -> classify_mnemonic(dns_domain:to_upper(Word));
+                Kind -> Kind
+            end
     end.
 
 %% A type first, as a record has one and seldom a class other than IN; no class is
@@ -870,17 +885,32 @@ class_number(~"CS") -> ?DNS_CLASS_CS;
 class_number(<<"CLASS", Number/binary>> = Mnemonic) -> generic_number(Number, ~"class", Mnemonic);
 class_number(_) -> undefined.
 
-%% RFC3597§5: TYPEnnn for any type. ALIAS, PowerDNS's, is read as a CNAME.
+%% RFC3597§5: TYPEnnn for any type. ALIAS, PowerDNS's, is read as a CNAME. The
+%% types most zones are made of are told by equality, which starts no match, as
+%% dns_names:name_type/1 and a TYPE prefix do.
 -spec type_number(binary()) -> dns:type() | undefined.
-type_number(~"ALIAS") ->
-    ?DNS_TYPE_CNAME;
-type_number(<<"TYPE", Number/binary>> = Mnemonic) ->
-    case generic_number(Number, ~"type", Mnemonic) of
-        undefined -> dns_names:name_type(Mnemonic);
-        Type -> Type
-    end;
+type_number(Mnemonic) when Mnemonic =:= ~"A" -> ?DNS_TYPE_A;
+type_number(Mnemonic) when Mnemonic =:= ~"NS" -> ?DNS_TYPE_NS;
+type_number(Mnemonic) when Mnemonic =:= ~"AAAA" -> ?DNS_TYPE_AAAA;
+type_number(Mnemonic) when Mnemonic =:= ~"CNAME" -> ?DNS_TYPE_CNAME;
+type_number(Mnemonic) when Mnemonic =:= ~"MX" -> ?DNS_TYPE_MX;
+type_number(Mnemonic) when Mnemonic =:= ~"TXT" -> ?DNS_TYPE_TXT;
+type_number(Mnemonic) when Mnemonic =:= ~"DS" -> ?DNS_TYPE_DS;
+type_number(Mnemonic) when Mnemonic =:= ~"RRSIG" -> ?DNS_TYPE_RRSIG;
+type_number(Mnemonic) when Mnemonic =:= ~"NSEC" -> ?DNS_TYPE_NSEC;
 type_number(Mnemonic) ->
-    dns_names:name_type(Mnemonic).
+    case dns_names:name_type(Mnemonic) of
+        undefined -> other_type_number(Mnemonic);
+        Type -> Type
+    end.
+
+-spec other_type_number(binary()) -> dns:type() | undefined.
+other_type_number(~"ALIAS") ->
+    ?DNS_TYPE_CNAME;
+other_type_number(<<"TYPE", Number/binary>> = Mnemonic) ->
+    generic_number(Number, ~"type", Mnemonic);
+other_type_number(_Mnemonic) ->
+    undefined.
 
 %% The number of TYPEnnn or CLASSnnn, undefined if it is not digits, and refused
 %% past 16 bits, where the parser read TYPE65536 as A and CLASS65536 as IN
@@ -1503,36 +1533,49 @@ to_integer(Text) ->
 %% ============================================================================
 
 %% RFC1035§5.1: a domain name, relative to the origin unless it ends with a dot,
-%% and "@" for the origin itself
+%% and "@" for the origin itself. The name is as dns_erlang keeps it: \X stands
+%% for X and \DDD for the octet DDD, which are kept as they are, but for a dot or
+%% a backslash, kept escaped as dns_erlang keeps them within a label. A name
+%% without escapes is copied once, alone or with the origin after it, and its
+%% first and last octets are read with binary:first/1 and binary:last/1, which
+%% start no match.
 -spec name(field(), ctx()) -> dns:dname().
-name({word, ~"@", _}, #ctx{origin = <<>>}) ->
-    ~".";
-name({word, ~"@", _}, #ctx{origin = Origin}) ->
-    fqdn(Origin);
+name({word, Text, _}, #ctx{origin = Origin}) when Text =:= ~"@" ->
+    case Origin =:= <<>> of
+        true -> ~".";
+        false -> fqdn(Origin)
+    end;
 name({word, Text, _}, #ctx{origin = Origin}) ->
-    case presentation_name(Text) of
-        {Name, true} -> Name;
-        {Name, false} when Origin =:= <<>> -> Name;
-        {Name, false} when Origin =:= ~"." -> <<Name/binary, $.>>;
-        {Name, false} -> <<Name/binary, $., Origin/binary>>
+    case binary:first(Text) =:= $. of
+        true when Text =:= ~"." ->
+            ~".";
+        true ->
+            ?FAIL({empty_label, Text});
+        false ->
+            case plain_name(Text, $.) of
+                plain ->
+                    case binary:last(Text) =:= $. orelse Origin =:= <<>> of
+                        true -> binary:copy(Text);
+                        false -> under_origin(Text, Origin)
+                    end;
+                escaped ->
+                    case escaped_name(Text, Text, <<>>, 0) of
+                        {Name, Absolute} when Absolute; Origin =:= <<>> -> Name;
+                        {Name, false} -> under_origin(Name, Origin)
+                    end;
+                empty_label ->
+                    ?FAIL({empty_label, Text})
+            end
     end;
 name({quoted, Text, _}, _Ctx) ->
     ?FAIL({quoted_name, Text}).
 
-%% The name as dns_erlang keeps it, and whether it ends with a dot. RFC1035§5.1:
-%% \X stands for X and \DDD for the octet DDD, which are kept as they are, but for
-%% a dot or a backslash, kept escaped as dns_erlang keeps them within a label.
--spec presentation_name(binary()) -> {dns:dname(), boolean()}.
-presentation_name(~".") ->
-    {~".", true};
-presentation_name(<<$., _/binary>> = Text) ->
-    ?FAIL({empty_label, Text});
-presentation_name(Text) ->
-    case plain_name(Text, $.) of
-        plain -> {binary:copy(Text), binary:last(Text) =:= $.};
-        escaped -> escaped_name(Text, Text, <<>>, 0);
-        empty_label -> ?FAIL({empty_label, Text})
-    end.
+%% A relative name under an origin that is not empty, as a new binary
+-spec under_origin(binary(), dns:dname()) -> dns:dname().
+under_origin(Name, Origin) when Origin =:= ~"." ->
+    <<Name/binary, $.>>;
+under_origin(Name, Origin) ->
+    <<Name/binary, $., Origin/binary>>.
 
 %% Whether a name has no escapes, and no empty label either. Previous is the octet
 %% before, which a dot must not follow a dot across 7 octets read at once either.
