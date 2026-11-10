@@ -565,7 +565,8 @@ groups() ->
             parse_checks_names_as_the_encoder_does,
             parse_ipv6_as_inet_does,
             parse_repeated_owner,
-            parse_checks_signed_records_as_the_encoder_does
+            parse_checks_signed_records_as_the_encoder_does,
+            parse_owner_from_an_origin_in_capitals
         ]},
         {error_cases, [parallel], [
             parse_invalid_ipv4,
@@ -8715,6 +8716,31 @@ parse_repeated_owner(_Config) ->
     ),
     [First, Second | _] = RRs,
     ?assert(erts_debug:same(First#dns_rr.name, Second#dns_rr.name)).
+
+%% Owner names are lowercased, the origin's too where a record has it for owner
+%% without writing it: on a line that starts with a blank, or with a TTL, a class
+%% or a type, after $ORIGIN or with the origin of the options, as with "@"
+parse_owner_from_an_origin_in_capitals(_Config) ->
+    Owners = fun(Zone, Options) ->
+        {ok, RRs} = dns_zone:parse_string(Zone, Options),
+        lists:usort([Name || #dns_rr{name = Name} <- RRs])
+    end,
+    Origin = #{origin => ~"Example.COM."},
+    [
+        ?assertEqual(
+            [~"example.com."], Owners(<<"$ORIGIN Example.COM.\n", Line/binary>>, #{}), Line
+        )
+     || Line <- [~"  300 IN A 192.0.2.1\n", ~"300 IN A 192.0.2.1\n", ~"IN A 192.0.2.1\n"]
+    ],
+    [
+        ?assertEqual([~"example.com."], Owners(Zone, Origin), Zone)
+     || Zone <- [
+            ~"  300 IN A 192.0.2.1\n",
+            ~"A 192.0.2.1\n",
+            ~"@ 300 IN A 192.0.2.1\n  300 IN A 192.0.2.2\n"
+        ]
+    ],
+    ok.
 
 %% AAAA addresses read as inet:parse_ipv6strict_address/1 reads them, which the
 %% reader did before it read them on the binary: up to 8 groups of 1 to 4 hex digits

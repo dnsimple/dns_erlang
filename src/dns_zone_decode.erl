@@ -253,7 +253,7 @@ parse(Bin, Options) ->
         origin = Origin,
         default_ttl = maps:get(default_ttl, Options, 0),
         default_class = maps:get(default_class, Options, ?DNS_CLASS_IN),
-        last_owner = Origin,
+        last_owner = dns_domain:to_lower(Origin),
         base_dir = filename:flatten(maps:get(base_dir, Options, "")),
         filename = filename(maps:get(filename, Options, undefined)),
         source = Bin
@@ -336,11 +336,12 @@ entry(Line, Blank, Fields, Ctx) ->
     end.
 
 %% RFC1035§5.1 directives, and RFC2308§4's $TTL. BIND's $GENERATE is accepted and
-%% generates nothing.
+%% generates nothing. The origin is the owner of a record that gives none, and is
+%% lowercased as owners are.
 -spec directive(binary(), [field()], pos_integer(), ctx()) -> entry().
 directive(~"$ORIGIN", [Name], _Line, Ctx) ->
     Origin = fqdn(name(Name, Ctx)),
-    {ctx, Ctx#ctx{origin = Origin, last_owner = Origin}};
+    {ctx, Ctx#ctx{origin = Origin, last_owner = dns_domain:to_lower(Origin)}};
 directive(~"$TTL", [Field], _Line, Ctx) ->
     %% RFC2181§8
     TTL = ttl(Field),
