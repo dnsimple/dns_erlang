@@ -71,6 +71,9 @@
 -define(LOC_DEFAULT_SIZE, 100).
 -define(LOC_DEFAULT_HORIZ, 1000000).
 -define(LOC_DEFAULT_VERT, 1000).
+%% How deep files may include files. A file that includes itself, at any remove,
+%% stops here, where it recursed until the process ran out of memory.
+-define(MAX_INCLUDE_DEPTH, 16).
 %% The types whose RDATA has a presentation format read here; the others are read
 %% only in RFC 3597's generic form
 -define(READABLE_TYPES, [
@@ -145,6 +148,8 @@
     owner_memo = undefined :: owner_memo(),
     base_dir = "" :: file:filename_all(),
     filename = undefined :: file:filename_all() | undefined,
+    %% How many files include this one
+    include_depth = 0 :: non_neg_integer(),
     source = <<>> :: binary()
 }).
 -type ctx() :: #ctx{}.
@@ -248,6 +253,11 @@ chars_to_binary(Data) ->
 -spec parse(binary(), dns_zone:parse_options()) ->
     {ok, [dns:rr()]} | {error, dns_zone:error_detail()}.
 parse(Bin, Options) ->
+    parse(Bin, Options, 0).
+
+-spec parse(binary(), dns_zone:parse_options(), non_neg_integer()) ->
+    {ok, [dns:rr()]} | {error, dns_zone:error_detail()}.
+parse(Bin, Options, IncludeDepth) ->
     Origin = maps:get(origin, Options, <<>>),
     Ctx = #ctx{
         origin = Origin,
@@ -256,6 +266,7 @@ parse(Bin, Options) ->
         last_owner = dns_domain:to_lower(Origin),
         base_dir = filename:flatten(maps:get(base_dir, Options, "")),
         filename = filename(maps:get(filename, Options, undefined)),
+        include_depth = IncludeDepth,
         source = Bin
     },
     with_binary_heap(byte_size(Bin), fun() -> entries(Bin, 0, 1, Ctx, []) end).
@@ -360,9 +371,11 @@ directive(Name, Args, _Line, _Ctx) ->
 %% A file that cannot be read is an error on the line of the $INCLUDE. An error
 %% within the file gives its line there and the kind of error, but nothing the
 %% file holds, neither the text of the line nor the field or number the error is
-%% about: a zone can include any file, which need not be one to show.
+%% about: a zone can include any file, which need not be one to show. An $INCLUDE
+%% in a file included ?MAX_INCLUDE_DEPTH deep is an error.
 -spec include(binary(), dns:dname(), pos_integer(), ctx()) -> entry().
-include(File, Origin, Line, #ctx{base_dir = BaseDir} = Ctx) ->
+include(File, Origin, Line, #ctx{base_dir = BaseDir, include_depth = Depth} = Ctx) ->
+    Depth < ?MAX_INCLUDE_DEPTH orelse ?FAIL(include_too_deep),
     Path =
         case BaseDir of
             "" -> File;
@@ -378,7 +391,7 @@ include(File, Origin, Line, #ctx{base_dir = BaseDir} = Ctx) ->
                 base_dir => filename:dirname(Path),
                 filename => Path
             },
-            case parse(Bin, Options) of
+            case parse(Bin, Options, Depth + 1) of
                 {ok, RRs} -> {rrs, RRs, Ctx};
                 {error, Error} -> {error, included_error(Error)}
             end;

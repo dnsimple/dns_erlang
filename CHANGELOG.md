@@ -29,6 +29,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Zone files: everything `dns_zone` writes reads back: it escapes names and ALPN values, splits strings over 255 octets, ends names with a dot when `relative_names` is false, and writes a field no presentation format has empty, such as a DS digest or an IPSECKEY key, in RFC 3597's generic form.
 - Zone files: `dns_zone` writes URI targets quoted, NSEC3 hashes without padding, SIG times as dates, LOC, EUI-48 and EUI-64 as their RFCs do, and CAA tags unquoted, which BIND did not read.
 - Zone files: an error within a file that `$INCLUDE` reads gives its line and the kind of error, but none of the file's text.
+- Zone files: `$INCLUDE` stops at files included 16 deep, where a file that included itself ran the process out of memory.
 - `#dns_rrdata_loc{}` types `lat`, `lon` and `alt` as `integer()`, the signed offsets they hold, where it said `dns:uint32()`.
 - Wire: a name is held to 255 octets counted on the wire (RFC 1035): decoding took 256 and refused 255 with escapes or a pointer, and compressing took 256 and over.
 - Wire: encoding RDATA over 65535 octets raises `{rdata_too_long, Size}`, where it wrapped RDLENGTH.

@@ -561,6 +561,7 @@ groups() ->
             parse_returns_errors_for_any_input,
             parse_long_numbers_in_linear_time,
             parse_include_errors,
+            parse_include_depth,
             parse_file_reads_in_the_calling_process,
             parse_checks_names_as_the_encoder_does,
             parse_ipv6_as_inet_does,
@@ -8540,6 +8541,58 @@ parse_include_errors(Config) ->
         }},
         dns_zone:parse_file(Zone)
     ).
+
+%% Files include files up to 16 deep, and an $INCLUDE in a file included 16 deep
+%% is an error there. A file that includes itself, or one that includes it, stops
+%% at that depth, where the parser recursed until the process ran out of memory;
+%% each is parsed here in a process killed if it does.
+parse_include_depth(Config) ->
+    Dir = proplists:get_value(priv_dir, Config),
+    Name = fun(Chain, N) -> Chain ++ "-" ++ integer_to_list(N) ++ ".zone" end,
+    Path = fun(Chain, N) -> filename:join(Dir, Name(Chain, N)) end,
+    Write = fun(Chain, Depth) ->
+        [
+            ok = file:write_file(Path(Chain, N), ["$INCLUDE ", Name(Chain, N + 1), "\n"])
+         || N <- lists:seq(0, Depth - 1)
+        ],
+        ok = file:write_file(Path(Chain, Depth), ~"a.example. 0 IN A 192.0.2.1\n")
+    end,
+    Write("include-16", 16),
+    ?assertMatch(
+        {ok, [#dns_rr{name = ~"a.example."}]},
+        bounded(fun() -> dns_zone:parse_file(Path("include-16", 0)) end)
+    ),
+    Write("include-17", 17),
+    ok = file:write_file(Path("include-self", 0), [~"$INCLUDE ", Name("include-self", 0), "\n"]),
+    ok = file:write_file(Path("include-pair", 0), [~"$INCLUDE ", Name("include-pair", 1), "\n"]),
+    ok = file:write_file(Path("include-pair", 1), [~"$INCLUDE ", Name("include-pair", 0), "\n"]),
+    [
+        ?assertMatch(
+            {error, #{
+                type := parser,
+                details := {parser_error, include_too_deep},
+                location := #{line := 1, file := _}
+            }},
+            bounded(fun() -> dns_zone:parse_file(Path(Chain, 0)) end),
+            Chain
+        )
+     || Chain <- ["include-17", "include-self", "include-pair"]
+    ],
+    ok.
+
+%% What Fun returns, in a process killed past 100 MB of heap or after 10 s
+bounded(Fun) ->
+    Limit = #{
+        size => 100000000 div erlang:system_info(wordsize), kill => true, error_logger => false
+    },
+    {Pid, Ref} = spawn_opt(fun() -> exit({returned, Fun()}) end, [monitor, {max_heap_size, Limit}]),
+    receive
+        {'DOWN', Ref, process, Pid, {returned, Result}} -> Result;
+        {'DOWN', Ref, process, Pid, Reason} -> {down, Reason}
+    after 10000 ->
+        exit(Pid, kill),
+        timeout
+    end.
 
 %% A zone file, and a file it includes, are read in the process that parses them.
 %% The file server, asked to read them, would keep their text referenced until it
