@@ -20,6 +20,38 @@
 %% No field holds a larger number, and reading digits past it, one at a time, would
 %% take time quadratic in their count
 -define(MAX_NUMBER, 16#FFFFFFFFFFFFFFFF).
+
+%% SWAR checks of 7 octets at a time, taken as one 56-bit word so that every value
+%% stays a small integer. Each check first requires all 7 octets to be ASCII,
+%% which lets ?NO_ZERO_OCTET leave out the (bnot V) term of Mycroft's test: the
+%% XOR of two ASCII octets is below 128, so subtracting 1 sets an octet's high bit
+%% only where it is zero, or where a zero octet below borrowed from it. Such a
+%% borrow can flag an octet that is not zero, but only next to one that is, and the
+%% callers then read those octets one at a time.
+-define(ONES7, 16#01010101010101).
+-define(HIGHS7, 16#80808080808080).
+-define(ASCII7(W), ((W) band ?HIGHS7 =:= 0)).
+-define(NO_ZERO_OCTET(V), (((V) - ?ONES7) band ?HIGHS7 =:= 0)).
+-define(NO_OCTET(W, C), ?NO_ZERO_OCTET((W) bxor (?ONES7 * (C)))).
+%% 7 octets of a word: from $* up, which leaves out the blanks, the line end, the
+%% quote and the parentheses, and neither ; nor \. Adding 16#56 to an octet below
+%% 128 sets its high bit iff it is $* (16#2A) or above, and carries into no other.
+-define(WORD7(W),
+    (?ASCII7(W) andalso ((W) + 16#56565656565656) band ?HIGHS7 =:= ?HIGHS7 andalso
+        ?NO_OCTET(W, $;) andalso ?NO_OCTET(W, $\\))
+).
+%% 7 octets of a quoted string: no quote, backslash or line end
+-define(QUOTED7(W),
+    (?ASCII7(W) andalso ?NO_OCTET(W, $") andalso ?NO_OCTET(W, $\\) andalso ?NO_OCTET(W, $\n))
+).
+%% 7 octets of a comment: no line end
+-define(COMMENT7(W), (?ASCII7(W) andalso ?NO_OCTET(W, $\n))).
+%% The octets that end a word, other than the end of the source
+-define(WORD_END(C),
+    (C =:= $\s orelse C =:= $\t orelse C =:= $\r orelse C =:= $\n orelse C =:= $; orelse
+        C =:= $( orelse C =:= $) orelse C =:= $")
+).
+
 %% RFC1876§3: the size and precisions a LOC record has when they are left out, in cm
 -define(LOC_DEFAULT_SIZE, 100).
 -define(LOC_DEFAULT_HORIZ, 1000000).
@@ -104,7 +136,8 @@
 %% A word, or a quoted string without its quotes, as written, escapes included,
 %% with the line it starts on
 -type field() :: {word | quoted, binary(), pos_integer()}.
--type patterns() :: {binary:cp(), binary:cp(), binary:cp()}.
+-type fields_result() ::
+    {ok, [field()], non_neg_integer(), pos_integer()} | {error, term(), pos_integer()}.
 %% A record's TTL and class, if given, its type, as a number and as written, and
 %% its RDATA's fields
 -type header() ::
@@ -206,7 +239,7 @@ parse(Bin, Options) ->
         filename = maps:get(filename, Options, undefined),
         source = Bin
     },
-    with_binary_heap(byte_size(Bin), fun() -> entries(Bin, 0, 1, Ctx, [], patterns()) end).
+    with_binary_heap(byte_size(Bin), fun() -> entries(Bin, 0, 1, Ctx, []) end).
 
 %% The source is referenced from the process heap while it is read, and counts
 %% towards the process's binary heap. With the default minimum, a large source
@@ -228,20 +261,20 @@ with_binary_heap(Size, Fun) ->
             Fun()
     end.
 
--spec entries(binary(), non_neg_integer(), pos_integer(), ctx(), [dns:rr()], patterns()) ->
+-spec entries(binary(), non_neg_integer(), pos_integer(), ctx(), [dns:rr()]) ->
     {ok, [dns:rr()]} | {error, dns_zone:error_detail()}.
-entries(Bin, Pos, Line, Ctx, Acc, Patterns) ->
-    case next_entry(Bin, Pos, Line, Patterns) of
+entries(Bin, Pos, Line, Ctx, Acc) ->
+    case next_entry(Bin, Pos, Line) of
         eof ->
             {ok, lists:reverse(Acc)};
         {Start, Blank, Fields, Next, NextLine} ->
             case entry(Start, Blank, Fields, Ctx) of
                 {rr, RR, Ctx1} ->
-                    entries(Bin, Next, NextLine, Ctx1, [RR | Acc], Patterns);
+                    entries(Bin, Next, NextLine, Ctx1, [RR | Acc]);
                 {rrs, RRs, Ctx1} ->
-                    entries(Bin, Next, NextLine, Ctx1, lists:reverse(RRs, Acc), Patterns);
+                    entries(Bin, Next, NextLine, Ctx1, lists:reverse(RRs, Acc));
                 {ctx, Ctx1} ->
-                    entries(Bin, Next, NextLine, Ctx1, Acc, Patterns);
+                    entries(Bin, Next, NextLine, Ctx1, Acc);
                 {error, _} = Error ->
                     Error
             end;
@@ -609,20 +642,24 @@ generic_number(Number, TooLarge) ->
 
 %% The fields of the next entry, the line its first field is on, whether that line
 %% starts with a blank, and where the entry after it starts. Lines with no fields,
-%% blank or with only a comment, are skipped. The source is read by offset, without
-%% taking what follows a field as a binary of its own: each such binary would hold
-%% the whole source, and count it towards the process heap, so that the garbage
-%% collector would run every few fields.
--spec next_entry(binary(), non_neg_integer(), pos_integer(), patterns()) ->
+%% blank or with only a comment, are skipped.
+%%
+%% The scanner reads the source the way OTP's json module does. Each function
+%% matches the octets ahead and passes the rest on in a tail call, so the compiler
+%% keeps one match context throughout and nothing is allocated for each octet,
+%% while Pos follows where that rest starts in the source, to cut fields out of it
+%% with binary_part/3. The rest is never kept or returned: as a binary of its own
+%% it would hold the whole source, and count it towards the process heap.
+-spec next_entry(binary(), non_neg_integer(), pos_integer()) ->
     eof
     | {pos_integer(), boolean(), [field(), ...], non_neg_integer(), pos_integer()}
     | {error, term(), pos_integer()}.
-next_entry(Bin, Pos, _Line, _Patterns) when Pos >= byte_size(Bin) ->
+next_entry(Bin, Pos, _Line) when Pos >= byte_size(Bin) ->
     eof;
-next_entry(Bin, Pos, Line, Patterns) ->
-    case fields(Bin, Pos, Line, 0, [], Patterns) of
+next_entry(Bin, Pos, Line) ->
+    case entry_fields(Bin, Pos, Line) of
         {ok, [], Next, NextLine} ->
-            next_entry(Bin, Next, NextLine, Patterns);
+            next_entry(Bin, Next, NextLine);
         {ok, [{_, _, Start} | _] = Fields, Next, NextLine} ->
             Blank = binary:at(Bin, Pos) =:= $\s orelse binary:at(Bin, Pos) =:= $\t,
             {Start, Blank, Fields, Next, NextLine};
@@ -632,112 +669,109 @@ next_entry(Bin, Pos, Line, Patterns) ->
             Error
     end.
 
-%% The octets where a word may end or needs a closer look, those where a quoted
-%% string does, and the end of a line, which ends a comment
--spec patterns() -> patterns().
-patterns() ->
-    {
-        binary:compile_pattern([~" ", ~"\t", ~"\r", ~"\n", ~";", ~"(", ~")", ~"\"", ~"\\"]),
-        binary:compile_pattern([~"\"", ~"\\", ~"\n"]),
-        binary:compile_pattern(~"\n")
-    }.
+-spec entry_fields(binary(), non_neg_integer(), pos_integer()) -> fields_result().
+entry_fields(Bin, Pos, Line) ->
+    <<_:Pos/binary, Rest/binary>> = Bin,
+    fields(Rest, Bin, Pos, Line, 0, []).
 
 %% RFC1035§5.1: a semicolon starts a comment, which ends with the line, and
 %% parentheses group fields across lines
--spec fields(
-    binary(), non_neg_integer(), pos_integer(), non_neg_integer(), [field()], patterns()
-) ->
-    {ok, [field()], non_neg_integer(), pos_integer()} | {error, term(), pos_integer()}.
-fields(Bin, Pos, Line, 0, Acc, _Patterns) when Pos >= byte_size(Bin) ->
+-spec fields(binary(), binary(), non_neg_integer(), pos_integer(), non_neg_integer(), [field()]) ->
+    fields_result().
+fields(<<C, Rest/binary>>, Bin, Pos, Line, Depth, Acc) when C =:= $\s; C =:= $\t; C =:= $\r ->
+    fields(Rest, Bin, Pos + 1, Line, Depth, Acc);
+fields(<<$\n, _/binary>>, _Bin, Pos, Line, 0, Acc) ->
+    {ok, lists:reverse(Acc), Pos + 1, Line + 1};
+fields(<<$\n, Rest/binary>>, Bin, Pos, Line, Depth, Acc) ->
+    fields(Rest, Bin, Pos + 1, Line + 1, Depth, Acc);
+fields(<<$;, Rest/binary>>, Bin, Pos, Line, Depth, Acc) ->
+    comment(Rest, Bin, Pos + 1, Line, Depth, Acc);
+fields(<<$(, Rest/binary>>, Bin, Pos, Line, Depth, Acc) ->
+    fields(Rest, Bin, Pos + 1, Line, Depth + 1, Acc);
+fields(<<$), _/binary>>, _Bin, _Pos, Line, 0, _Acc) ->
+    {error, unbalanced_parenthesis, Line};
+fields(<<$), Rest/binary>>, Bin, Pos, Line, Depth, Acc) ->
+    fields(Rest, Bin, Pos + 1, Line, Depth - 1, Acc);
+fields(<<$", Rest/binary>>, Bin, Pos, Line, Depth, Acc) ->
+    quoted(Rest, Bin, Pos + 1, Pos + 1, Line, Line, Depth, Acc);
+fields(<<>>, _Bin, Pos, Line, 0, Acc) ->
     {ok, lists:reverse(Acc), Pos, Line};
-fields(Bin, Pos, Line, _Depth, _Acc, _Patterns) when Pos >= byte_size(Bin) ->
+fields(<<>>, _Bin, _Pos, Line, _Depth, _Acc) ->
     {error, unclosed_parenthesis, Line};
-fields(Bin, Pos, Line, Depth, Acc, Patterns) ->
-    case binary:at(Bin, Pos) of
-        C when C =:= $\s; C =:= $\t; C =:= $\r ->
-            fields(Bin, Pos + 1, Line, Depth, Acc, Patterns);
-        $\n when Depth =:= 0 ->
-            {ok, lists:reverse(Acc), Pos + 1, Line + 1};
-        $\n ->
-            fields(Bin, Pos + 1, Line + 1, Depth, Acc, Patterns);
-        $; ->
-            fields(Bin, find(Bin, Pos + 1, element(3, Patterns)), Line, Depth, Acc, Patterns);
-        $( ->
-            fields(Bin, Pos + 1, Line, Depth + 1, Acc, Patterns);
-        $) when Depth =:= 0 ->
-            {error, unbalanced_parenthesis, Line};
-        $) ->
-            fields(Bin, Pos + 1, Line, Depth - 1, Acc, Patterns);
-        $" ->
-            case quoted_end(Bin, Pos + 1, Line, Patterns) of
-                {End, Next} ->
-                    Text = binary:part(Bin, Pos + 1, End - Pos - 1),
-                    fields(Bin, End + 1, Next, Depth, [{quoted, Text, Line} | Acc], Patterns);
-                error ->
-                    {error, unterminated_string, Line}
-            end;
-        _ ->
-            {End, Next} = word_end(Bin, Pos, Line, Patterns),
-            Word = binary:part(Bin, Pos, End - Pos),
-            fields(Bin, End, Next, Depth, [{word, Word, Line} | Acc], Patterns)
-    end.
+fields(Rest, Bin, Pos, Line, Depth, Acc) ->
+    word(Rest, Bin, Pos, Pos, Line, Line, Depth, Acc).
 
-%% Where the pattern is next found from Pos, or the end of the source
--spec find(binary(), non_neg_integer(), binary:cp()) -> non_neg_integer().
-find(Bin, Pos, Pattern) ->
-    Size = byte_size(Bin),
-    case binary:match(Bin, Pattern, [{scope, {Pos, Size - Pos}}]) of
-        nomatch -> Size;
-        {Found, _} -> Found
-    end.
+%% A comment ends at the end of its line, which then ends the entry as it would
+%% without the comment
+-spec comment(binary(), binary(), non_neg_integer(), pos_integer(), non_neg_integer(), [field()]) ->
+    fields_result().
+comment(<<W:56, Rest/binary>>, Bin, Pos, Line, Depth, Acc) when ?COMMENT7(W) ->
+    comment(Rest, Bin, Pos + 7, Line, Depth, Acc);
+comment(<<$\n, _/binary>>, _Bin, Pos, Line, 0, Acc) ->
+    {ok, lists:reverse(Acc), Pos + 1, Line + 1};
+comment(<<$\n, Rest/binary>>, Bin, Pos, Line, Depth, Acc) ->
+    fields(Rest, Bin, Pos + 1, Line + 1, Depth, Acc);
+comment(<<_, Rest/binary>>, Bin, Pos, Line, Depth, Acc) ->
+    comment(Rest, Bin, Pos + 1, Line, Depth, Acc);
+comment(<<>>, Bin, Pos, Line, Depth, Acc) ->
+    fields(<<>>, Bin, Pos, Line, Depth, Acc).
 
 %% A word ends at a blank, a parenthesis, a semicolon, a quote or the end of the
-%% line, and a backslash escapes the character after it
--spec word_end(binary(), non_neg_integer(), pos_integer(), patterns()) ->
-    {non_neg_integer(), pos_integer()}.
-word_end(Bin, Pos, Line, {WordStops, _, _} = Patterns) ->
-    Size = byte_size(Bin),
-    case find(Bin, Pos, WordStops) of
-        Size ->
-            {Size, Line};
-        Stop ->
-            case binary:at(Bin, Stop) of
-                $\\ when Stop + 1 =:= Size ->
-                    {Size, Line};
-                $\\ ->
-                    case binary:at(Bin, Stop + 1) of
-                        $\n -> word_end(Bin, Stop + 2, Line + 1, Patterns);
-                        _ -> word_end(Bin, Stop + 2, Line, Patterns)
-                    end;
-                _ ->
-                    {Stop, Line}
-            end
-    end.
+%% line, and a backslash escapes the octet after it. Start is where the word
+%% starts, and StartLine its line, which escaped line ends move Line past.
+-spec word(
+    binary(),
+    binary(),
+    non_neg_integer(),
+    non_neg_integer(),
+    pos_integer(),
+    pos_integer(),
+    non_neg_integer(),
+    [field()]
+) -> fields_result().
+word(<<W:56, Rest/binary>>, Bin, Start, Pos, StartLine, Line, Depth, Acc) when ?WORD7(W) ->
+    word(Rest, Bin, Start, Pos + 7, StartLine, Line, Depth, Acc);
+word(<<$\\, $\n, Rest/binary>>, Bin, Start, Pos, StartLine, Line, Depth, Acc) ->
+    word(Rest, Bin, Start, Pos + 2, StartLine, Line + 1, Depth, Acc);
+word(<<$\\, _, Rest/binary>>, Bin, Start, Pos, StartLine, Line, Depth, Acc) ->
+    word(Rest, Bin, Start, Pos + 2, StartLine, Line, Depth, Acc);
+word(<<$\\>>, Bin, Start, Pos, StartLine, Line, Depth, Acc) ->
+    Word = binary_part(Bin, Start, Pos + 1 - Start),
+    fields(<<>>, Bin, Pos + 1, Line, Depth, [{word, Word, StartLine} | Acc]);
+word(<<C, Rest/binary>>, Bin, Start, Pos, StartLine, Line, Depth, Acc) when not ?WORD_END(C) ->
+    word(Rest, Bin, Start, Pos + 1, StartLine, Line, Depth, Acc);
+word(Rest, Bin, Start, Pos, StartLine, Line, Depth, Acc) ->
+    Word = binary_part(Bin, Start, Pos - Start),
+    fields(Rest, Bin, Pos, Line, Depth, [{word, Word, StartLine} | Acc]).
 
 %% A quoted string ends at the next quote a backslash does not escape, and may
-%% span lines
--spec quoted_end(binary(), non_neg_integer(), pos_integer(), patterns()) ->
-    {non_neg_integer(), pos_integer()} | error.
-quoted_end(Bin, Pos, Line, {_, QuotedStops, _} = Patterns) ->
-    Size = byte_size(Bin),
-    case find(Bin, Pos, QuotedStops) of
-        Size ->
-            error;
-        Stop ->
-            case binary:at(Bin, Stop) of
-                $" ->
-                    {Stop, Line};
-                $\n ->
-                    quoted_end(Bin, Stop + 1, Line + 1, Patterns);
-                $\\ when Stop + 1 =:= Size ->
-                    error;
-                $\\ ->
-                    case binary:at(Bin, Stop + 1) of
-                        $\n -> quoted_end(Bin, Stop + 2, Line + 1, Patterns);
-                        _ -> quoted_end(Bin, Stop + 2, Line, Patterns)
-                    end
-            end
-    end.
+%% span lines. Start is where its text starts, after the quote, and StartLine the
+%% line of the quote, which an unterminated string is reported on.
+-spec quoted(
+    binary(),
+    binary(),
+    non_neg_integer(),
+    non_neg_integer(),
+    pos_integer(),
+    pos_integer(),
+    non_neg_integer(),
+    [field()]
+) -> fields_result().
+quoted(<<W:56, Rest/binary>>, Bin, Start, Pos, StartLine, Line, Depth, Acc) when ?QUOTED7(W) ->
+    quoted(Rest, Bin, Start, Pos + 7, StartLine, Line, Depth, Acc);
+quoted(<<$", Rest/binary>>, Bin, Start, Pos, StartLine, Line, Depth, Acc) ->
+    Text = binary_part(Bin, Start, Pos - Start),
+    fields(Rest, Bin, Pos + 1, Line, Depth, [{quoted, Text, StartLine} | Acc]);
+quoted(<<$\n, Rest/binary>>, Bin, Start, Pos, StartLine, Line, Depth, Acc) ->
+    quoted(Rest, Bin, Start, Pos + 1, StartLine, Line + 1, Depth, Acc);
+quoted(<<$\\, $\n, Rest/binary>>, Bin, Start, Pos, StartLine, Line, Depth, Acc) ->
+    quoted(Rest, Bin, Start, Pos + 2, StartLine, Line + 1, Depth, Acc);
+quoted(<<$\\, _, Rest/binary>>, Bin, Start, Pos, StartLine, Line, Depth, Acc) ->
+    quoted(Rest, Bin, Start, Pos + 2, StartLine, Line, Depth, Acc);
+quoted(<<C, Rest/binary>>, Bin, Start, Pos, StartLine, Line, Depth, Acc) when C =/= $\\ ->
+    quoted(Rest, Bin, Start, Pos + 1, StartLine, Line, Depth, Acc);
+quoted(_, _Bin, _Start, _Pos, StartLine, _Line, _Depth, _Acc) ->
+    {error, unterminated_string, StartLine}.
 
 %% ============================================================================
 %% RDATA
