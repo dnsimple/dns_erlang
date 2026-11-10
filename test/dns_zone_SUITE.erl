@@ -567,7 +567,8 @@ groups() ->
             parse_repeated_owner,
             parse_checks_signed_records_as_the_encoder_does,
             parse_owner_from_an_origin_in_capitals,
-            parse_type_and_class_numbers_of_16_bits
+            parse_type_and_class_numbers_of_16_bits,
+            parse_errors_keep_no_part_of_the_source
         ]},
         {error_cases, [parallel], [
             parse_invalid_ipv4,
@@ -8780,6 +8781,38 @@ parse_owner_from_an_origin_in_capitals(_Config) ->
         ]
     ],
     ok.
+
+%% An error keeps no part of the source: the texts it holds are copies of the
+%% fields they come from, which are parts of the source, and would keep all of it
+%% for as long as the error is kept
+parse_errors_keep_no_part_of_the_source(_Config) ->
+    Padding = binary:copy(~"; a comment that makes the source large\n", 1000),
+    [
+        begin
+            Source = <<Padding/binary, Line/binary, "\n">>,
+            {error, Error} = dns_zone:parse_string(Source),
+            [
+                ?assert(binary:referenced_byte_size(Bin) < byte_size(Padding), {Line, Bin})
+             || Bin <- binaries(Error)
+            ]
+        end
+     || Line <- [
+            ~"secret hunter2",
+            ~"$hunter2 1",
+            ~"a. 0 IN A 192.0.2.256",
+            ~"a. 0 IN NSEC3 1 0 0 hunter2 VVVVVVVV A",
+            ~"a. 0 IN SVCB 1 . hunter2=1",
+            <<"a. 0 IN NS ", (binary:copy(~"a", 64))/binary, ".">>
+        ]
+    ],
+    ok.
+
+%% The binaries within a term
+binaries(Bin) when is_binary(Bin) -> [Bin];
+binaries([Head | Tail]) -> binaries(Head) ++ binaries(Tail);
+binaries(Tuple) when is_tuple(Tuple) -> binaries(tuple_to_list(Tuple));
+binaries(Map) when is_map(Map) -> binaries(maps:to_list(Map));
+binaries(_) -> [].
 
 %% RFC3597§5: TYPEnnn and CLASSnnn up to 65535, in a record's header and where its
 %% RDATA has a type, in either case. The parser read a larger number as A or IN.

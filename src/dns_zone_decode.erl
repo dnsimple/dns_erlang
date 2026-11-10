@@ -2060,7 +2060,9 @@ error_detail(Type, Message, Suggestion, Details, Line, #ctx{filename = File, sou
             undefined -> #{line => Line};
             _ -> #{line => Line, file => File}
         end,
-    Error = #{type => Type, message => Message, details => Details, location => Location},
+    Error = #{
+        type => Type, message => Message, details => copy_binaries(Details), location => Location
+    },
     WithContext =
         case source_line(Source, Line) of
             undefined -> Error;
@@ -2070,6 +2072,21 @@ error_detail(Type, Message, Suggestion, Details, Line, #ctx{filename = File, sou
         undefined -> WithContext;
         _ -> WithContext#{suggestion => Suggestion}
     end.
+
+%% The texts in an error's details are fields, cut out of the source without a
+%% copy, and each would keep the whole source for as long as the error is kept.
+%% They are copied, as the text of the line is.
+-spec copy_binaries(dynamic()) -> dynamic().
+copy_binaries(Bin) when is_binary(Bin) ->
+    binary:copy(Bin);
+copy_binaries([Head | Tail]) ->
+    [copy_binaries(Head) | copy_binaries(Tail)];
+copy_binaries(Tuple) when is_tuple(Tuple) ->
+    list_to_tuple(copy_binaries(tuple_to_list(Tuple)));
+copy_binaries(Map) when is_map(Map) ->
+    maps:from_list(copy_binaries(maps:to_list(Map)));
+copy_binaries(Term) ->
+    Term.
 
 -spec source_line(binary(), pos_integer()) -> binary() | undefined.
 source_line(Source, 1) ->
