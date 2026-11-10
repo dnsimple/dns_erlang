@@ -122,12 +122,18 @@
 -spec parse_file(file:filename(), dns_zone:parse_options()) ->
     {ok, [dns:rr()]} | {error, dns_zone:error_detail()}.
 parse_file(Filename, Options) ->
-    case file:read_file(Filename) of
+    case read_file(Filename) of
         {ok, Bin} ->
             parse(Bin, Options#{base_dir => filename:dirname(Filename), filename => Filename});
         {error, Reason} ->
             {error, file_error(Filename, Reason)}
     end.
+
+%% Read in this process: file:read_file/1 reads in the file server, which then keeps
+%% the zone's text referenced until it next collects its garbage.
+-spec read_file(file:name_all()) -> {ok, binary()} | {error, term()}.
+read_file(Filename) ->
+    file:read_file(Filename, [raw]).
 
 -spec parse_string(binary() | string(), dns_zone:parse_options()) ->
     {ok, [dns:rr()]} | {error, dns_zone:error_detail()}.
@@ -301,7 +307,7 @@ include(File, Origin, Line, #ctx{base_dir = BaseDir} = Ctx) ->
             <<>> -> File;
             _ -> filename:join(BaseDir, File)
         end,
-    case file:read_file(Path) of
+    case read_file(Path) of
         {ok, Bin} ->
             Options = #{
                 origin => Origin,

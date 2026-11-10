@@ -560,7 +560,8 @@ groups() ->
             parse_line_starting_with_a_blank,
             parse_returns_errors_for_any_input,
             parse_long_numbers_in_linear_time,
-            parse_include_errors
+            parse_include_errors,
+            parse_file_reads_in_the_calling_process
         ]},
         {error_cases, [parallel], [
             parse_invalid_ipv4,
@@ -8494,3 +8495,40 @@ parse_include_errors(Config) ->
         }},
         dns_zone:parse_file(Zone)
     ).
+
+%% A zone file, and a file it includes, are read in the process that parses them.
+%% The file server, asked to read them, would keep their text referenced until it
+%% next collected its garbage. Whether it still holds them afterwards depends on
+%% when it last did, so what is checked is that it is never asked.
+parse_file_reads_in_the_calling_process(Config) ->
+    Dir = proplists:get_value(priv_dir, Config),
+    Included = filename:join(Dir, "raw-included.zone"),
+    ok = file:write_file(Included, ~"included.example. 300 IN A 192.0.2.1\n"),
+    Zone = filename:join(Dir, "raw.zone"),
+    ok = file:write_file(Zone, ["www.example. 300 IN A 192.0.2.1\n$INCLUDE ", Included, "\n"]),
+    FileServer = whereis(file_server_2),
+    Session = trace:session_create(?MODULE, self(), []),
+    try
+        1 = trace:process(Session, FileServer, true, ['receive']),
+        ?assertMatch({ok, [_, _]}, dns_zone:parse_file(Zone)),
+        Delivered = erlang:trace_delivered(FileServer),
+        receive
+            {trace_delivered, FileServer, Delivered} -> ok
+        end
+    after
+        trace:session_destroy(Session)
+    end,
+    ?assertEqual([], file_server_reads([unicode:characters_to_binary(F) || F <- [Zone, Included]])).
+
+%% Which of Names the file server was asked to read, from the trace messages of
+%% what it received.
+file_server_reads(Names) ->
+    receive
+        {trace, _, 'receive', {'$gen_call', _, {read_file, Path}}} ->
+            Name = unicode:characters_to_binary(Path),
+            [Name || lists:member(Name, Names)] ++ file_server_reads(Names);
+        {trace, _, 'receive', _} ->
+            file_server_reads(Names)
+    after 0 ->
+        []
+    end.
