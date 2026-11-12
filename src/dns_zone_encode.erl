@@ -16,6 +16,23 @@
 %% calendar:datetime_to_gregorian_seconds({{1970, 1, 1}, {0, 0, 0}})
 -define(UNIX_EPOCH_GREGORIAN_SECONDS, 62_167_219_200).
 
+%% SWAR checks of 7 octets at a time, as dns_zone_decode reads zone text: one
+%% 56-bit word, so that every value stays a small integer, all ASCII, for which
+%% ?NO_OCTET tells an octet equal to C by the high bit of its difference. A borrow
+%% can flag an octet next to one that is C, which then reads one at a time.
+-define(ONES7, 16#01010101010101).
+-define(HIGHS7, 16#80808080808080).
+-define(NO_OCTET(W, C), ((((W) bxor (?ONES7 * (C))) - ?ONES7) band ?HIGHS7 =:= 0)).
+%% 7 octets a name is written with as they are: ASCII from $! up, which adding 16#5F
+%% to an octet below 128 tells by its high bit, carrying into no other, and none
+%% of DEL and the octets escape_dname/2 escapes
+-define(PLAIN_NAME7(W),
+    ((W) band ?HIGHS7 =:= 0 andalso ((W) + ?ONES7 * 16#5F) band ?HIGHS7 =:= ?HIGHS7 andalso
+        ?NO_OCTET(W, 16#7F) andalso ?NO_OCTET(W, $") andalso ?NO_OCTET(W, $() andalso
+        ?NO_OCTET(W, $)) andalso ?NO_OCTET(W, $;) andalso ?NO_OCTET(W, $@) andalso
+        ?NO_OCTET(W, $$))
+).
+
 -spec encode_file([dns:rr()], file:filename(), dns_zone:encode_options()) ->
     ok | {error, term()}.
 encode_file(Records, Filename, Opts) ->
@@ -111,6 +128,8 @@ escape_dname(Name) ->
     end.
 
 -spec plain_dname(binary()) -> boolean().
+plain_dname(<<W:56, Rest/binary>>) when ?PLAIN_NAME7(W) ->
+    plain_dname(Rest);
 plain_dname(<<C, Rest/binary>>) when
     $! =< C, C =< $~, C =/= $", C =/= $(, C =/= $), C =/= $;, C =/= $@, C =/= $$
 ->
