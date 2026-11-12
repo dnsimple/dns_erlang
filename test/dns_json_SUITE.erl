@@ -30,6 +30,7 @@ groups() ->
             test_dnskey_formats,
             test_nsec3_salt,
             test_ipseckey_gateway,
+            test_ipv6_fe80_ff02,
             test_records_that_do_not_fit_rejected,
             test_ilnp_records,
             test_amtrelay_records,
@@ -1017,6 +1018,31 @@ test_nsec3_salt(_Config) ->
         }
     },
     assert_transcode(Nsec3paramSalt).
+
+%% inet:ntoa/1 writes fe80:1:: as "fe80::%01", fe80:: with a zone index (RFC 4007
+%% §11), which inet's parsers read back as fe80:1::, and nothing outside Erlang does
+test_ipv6_fe80_ff02(_Config) ->
+    AAAA = #dns_rr{
+        name = ~"example.com",
+        type = ?DNS_TYPE_AAAA,
+        ttl = 3600,
+        data = #dns_rrdata_aaaa{ip = {16#fe80, 1, 0, 0, 0, 0, 0, 0}}
+    },
+    ?assertMatch(#{~"data" := #{~"ip" := ~"fe80:1::"}}, assert_transcode(AAAA)),
+    HTTPS = #dns_rr{
+        name = ~"example.com",
+        type = ?DNS_TYPE_HTTPS,
+        ttl = 3600,
+        data = #dns_rrdata_https{
+            svc_priority = 1,
+            target_name = ~"example.com",
+            svc_params = #{?DNS_SVCB_PARAM_IPV6HINT => [{16#ff02, 2, 0, 0, 0, 0, 0, 1}]}
+        }
+    },
+    ?assertMatch(
+        #{~"data" := #{~"svc_params" := #{~"ipv6hint" := [~"ff02:2::1"]}}},
+        assert_transcode(HTTPS)
+    ).
 
 test_ipseckey_gateway(_Config) ->
     %% RRDATA records must be wrapped in dns_rr

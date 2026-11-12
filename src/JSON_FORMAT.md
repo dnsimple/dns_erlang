@@ -759,9 +759,9 @@ Non-RR records (message, query, OPT records) use a two-level nested map format:
 - `size` (`t:integer/0`): Direct value
 - `horiz` (`t:integer/0`): Direct value
 - `vert` (`t:integer/0`): Direct value
-- `lat` (`t:dns:uint32/0`): Direct value
-- `lon` (`t:dns:uint32/0`): Direct value
-- `alt` (`t:dns:uint32/0`): Direct value
+- `lat` (`t:integer/0`): Direct value
+- `lon` (`t:integer/0`): Direct value
+- `alt` (`t:integer/0`): Direct value
 
 **Example:**
 

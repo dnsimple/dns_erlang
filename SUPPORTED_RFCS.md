@@ -28,6 +28,7 @@ functionality such as socket handling or query resolution.
 - **[RFC 4398](https://tools.ietf.org/html/rfc4398)**: Storing Certificates in the Domain Name System (DNS)
 - **[RFC 4408](https://tools.ietf.org/html/rfc4408)**: Sender Policy Framework (SPF) for Authorizing Use of Domains in E-Mail, Version 1
 - **[RFC 4431](https://tools.ietf.org/html/rfc4431)**: The DNSSEC Lookaside Validation (DLV) DNS Resource Record
+- **[RFC 4648](https://tools.ietf.org/html/rfc4648)**: The Base16, Base32, and Base64 Data Encodings
 - **[RFC 4701](https://tools.ietf.org/html/rfc4701)**: A DNS Resource Record (RR) for Encoding Dynamic Host Configuration Protocol (DHCP) Information (DHCID RR)
 - **[RFC 5001](https://tools.ietf.org/html/rfc5001)**: DNS Name Server Identifier (NSID) Option
 - **[RFC 5155](https://tools.ietf.org/html/rfc5155)**: DNS Security (DNSSEC) Hashed Authenticated Denial of Existence
@@ -49,12 +50,15 @@ functionality such as socket handling or query resolution.
 - **[RFC 8005](https://tools.ietf.org/html/rfc8005)**: Host Identity Protocol (HIP) Domain Name System (DNS) Extension
 - **[RFC 8080](https://tools.ietf.org/html/rfc8080)**: Ed25519 and Ed448 for DNSSEC
 - **[RFC 8162](https://tools.ietf.org/html/rfc8162)**: Using Secure DNS to Associate Certificates with Domain Names for S/MIME
+- **[RFC 8659](https://tools.ietf.org/html/rfc8659)**: DNS Certification Authority Authorization (CAA) Resource Record
 - **[RFC 8764](https://tools.ietf.org/html/rfc8764)**: DNS Long-Lived Queries (LLQ)
 - **[RFC 8777](https://tools.ietf.org/html/rfc8777)**: DNS Reverse IP Automatic Multicast Tunneling (AMT) Discovery
 - **[RFC 8914](https://tools.ietf.org/html/rfc8914)**: Extended DNS Errors
 - **[RFC 8976](https://tools.ietf.org/html/rfc8976)**: Message Digest for DNS Zones
 - **[RFC 9077](https://tools.ietf.org/html/rfc9077)**: NSEC and NSEC3 TTL Values
 - **[RFC 9460](https://tools.ietf.org/html/rfc9460)**: Service Binding and Parameter Specification via the DNS (DNS SVCB and HTTPS Resource Records)
+- **[RFC 9461](https://tools.ietf.org/html/rfc9461)**: Service Binding Mapping for DNS Servers
+- **[RFC 9540](https://tools.ietf.org/html/rfc9540)**: Discovery of Oblivious Services via Service Binding Records
 - **[RFC 9558](https://tools.ietf.org/html/rfc9558)**: Use of GOST 2012 Signature Algorithms in DNSKEY and RRSIG Resource Records for DNSSEC
 - **[RFC 9563](https://tools.ietf.org/html/rfc9563)**: SM2 Digital Signature Algorithm for DNSSEC
 - **[RFC 9606](https://tools.ietf.org/html/rfc9606)**: DNS Resolver Information

@@ -3,23 +3,13 @@
 
 -include_lib("dns_erlang/include/dns.hrl").
 
--type zone_rdata() ::
-    {int, integer()}
-    | {string, string()}
-    | {ipv4, string()}
-    | {ipv6, string()}
-    | {domain, string()}
-    | {rfc3597, string()}.
-
--type error_callback() :: fun((dynamic()) -> dynamic()).
-
 -type escape_callback() :: fun((binary()) -> binary()).
 
--export_type([zone_rdata/0, error_callback/0, escape_callback/0]).
+-export_type([escape_callback/0]).
 
 -export([to_wire/1, from_wire/1]).
 -export([to_json/1, from_json/1]).
--export([to_zone/3, from_zone/2]).
+-export([to_zone/3, from_zone/1]).
 
 -spec to_wire(dns:svcb_svc_params()) -> binary().
 to_wire(SvcParams) ->
@@ -159,175 +149,169 @@ parse_svcb_params_from_json([{Key, Value} | Rest], Acc) ->
         end,
     parse_svcb_params_from_json(Rest, NewAcc).
 
-%% Parse SVCB/HTTPS service parameters from zone parser's rdata format
-%% Handles both parsed key=value pairs and labels containing = (from lexer)
--spec from_zone([zone_rdata()], error_callback()) ->
-    {ok, dns:svcb_svc_params()} | {error, dynamic()}.
-from_zone(SvcParams, MakeError) ->
-    from_zone(SvcParams, MakeError, #{}).
+%% RFC9460 Appendix A: the SvcParams of a zone file, each a key and its value, the
+%% value's <character-string> already decoded, or none for a key alone
+-spec from_zone([{binary(), binary() | none}]) -> {ok, dns:svcb_svc_params()} | {error, term()}.
+from_zone(Params) ->
+    try lists:foldl(fun from_zone_param/2, #{}, Params) of
+        SvcParams -> validate_mandatory_params(zone, SvcParams)
+    catch
+        error:{?MODULE, Reason} -> {error, Reason}
+    end.
 
--spec from_zone([zone_rdata()], error_callback(), dns:svcb_svc_params()) ->
-    {ok, dns:svcb_svc_params()} | {error, term()}.
-from_zone([], MakeError, Acc) ->
-    case validate_mandatory_params(zone, Acc) of
-        {ok, Validated} -> {ok, Validated};
-        {error, Error} -> {error, MakeError(Error)}
+-spec from_zone_param({binary(), binary() | none}, dns:svcb_svc_params()) ->
+    dns:svcb_svc_params().
+from_zone_param({Name, Value}, Acc) ->
+    Key = zone_key(Name, invalid_svcparam_format),
+    %% RFC9460§2.1: SvcParamKeys SHALL NOT be repeated
+    maps:is_key(Key, Acc) andalso zone_error({duplicate_svcparam_key, Name}),
+    Parsed =
+        case Name of
+            ~"tls-supported-groups" -> tls_supported_groups(Value);
+            _ -> zone_value(Key, Value)
+        end,
+    Acc#{Key => Parsed}.
+
+%% RFC9460§14.3.2's names, and those of keys 7, 8 and 9: dohpath (RFC9461),
+%% ohttp (RFC9540) and tls-supported-groups (draft-ietf-tls-key-share-prediction)
+-spec zone_key(binary(), atom()) -> dns:uint16().
+zone_key(~"dohpath", _Error) ->
+    7;
+zone_key(~"ohttp", _Error) ->
+    8;
+zone_key(~"tls-supported-groups", _Error) ->
+    9;
+zone_key(Name, Error) ->
+    case dns_names:name_svcb_param(Name) of
+        undefined -> zone_error({Error, Name});
+        Key -> Key
+    end.
+
+-spec zone_value(dns:uint16(), binary() | none) -> dynamic().
+%% RFC9460§8: keys in mandatory MUST NOT appear more than once, by name or number
+zone_value(?DNS_SVCB_PARAM_MANDATORY, Value) when is_binary(Value) ->
+    Keys = [
+        zone_key(Name, invalid_mandatory_key)
+     || Name <- zone_list(?DNS_SVCB_PARAM_MANDATORY, Value)
+    ],
+    length(lists:usort(Keys)) =:= length(Keys) orelse
+        zone_error({duplicate_mandatory_key, Value}),
+    Keys;
+zone_value(?DNS_SVCB_PARAM_ALPN, <<>>) ->
+    [];
+zone_value(?DNS_SVCB_PARAM_ALPN, Value) when is_binary(Value) ->
+    Ids = alpn_list(Value, <<>>, []),
+    lists:member(<<>>, Ids) andalso
+        zone_error({svcb_param_invalid_value, ?DNS_SVCB_PARAM_ALPN, Value}),
+    Ids;
+zone_value(?DNS_SVCB_PARAM_NO_DEFAULT_ALPN, none) ->
+    none;
+zone_value(?DNS_SVCB_PARAM_NO_DEFAULT_ALPN, _Value) ->
+    zone_error({svcb_param_no_value_allowed, no_default_alpn});
+zone_value(?DNS_SVCB_PARAM_PORT, <<C, _/binary>> = Value) when $0 =< C, C =< $9 ->
+    try binary_to_integer(Value) of
+        Port when Port =< 65535 -> Port;
+        _ -> zone_error({invalid_port, Value})
+    catch
+        error:badarg -> zone_error({invalid_port, Value})
     end;
-from_zone([{domain, "no-default-alpn"} | Rest], MakeError, Acc) ->
-    NewAcc = Acc#{?DNS_SVCB_PARAM_NO_DEFAULT_ALPN => none},
-    from_zone(Rest, MakeError, NewAcc);
-from_zone([{domain, "alpn=" ++ Alpn} | Rest], MakeError, Acc) ->
-    Protocols = decode_alpn_list(zone, Alpn),
-    NewAcc = Acc#{?DNS_SVCB_PARAM_ALPN => Protocols},
-    from_zone(Rest, MakeError, NewAcc);
-from_zone([{domain, "port=" ++ PortStr} | Rest], MakeError, Acc) when PortStr =/= "" ->
-    case string:to_integer(PortStr) of
-        {Port, ""} when Port >= 0, Port =< 65535 ->
-            NewAcc = Acc#{?DNS_SVCB_PARAM_PORT => Port},
-            from_zone(Rest, MakeError, NewAcc);
-        _ ->
-            {error, MakeError({invalid_port, PortStr})}
-    end;
-%% port="8080" splits into port= + quoted string token
-from_zone([{domain, "port="}, {string, PortStr} | Rest], MakeError, Acc) ->
-    parse_svcb_port_value(PortStr, Rest, MakeError, Acc);
-from_zone([{domain, "port="}, {domain, PortStr} | Rest], MakeError, Acc) ->
-    parse_svcb_port_value(PortStr, Rest, MakeError, Acc);
-%% RFC 9460 key 8 (OHTTP) — flag with no value in some presentations
-from_zone([{domain, "ohttp"} | Rest], MakeError, Acc) ->
-    NewAcc = Acc#{8 => none},
-    from_zone(Rest, MakeError, NewAcc);
-%% RFC 9460 key 13
-from_zone([{domain, "tls-supported-groups=" ++ Value} | Rest], MakeError, Acc) ->
-    NewAcc = Acc#{13 => unicode:characters_to_binary(Value)},
-    from_zone(Rest, MakeError, NewAcc);
-%% RFC 9460 key 7 — value may contain reserved characters as one label (e.g. dohpath=/…{?dns})
-from_zone([{domain, "dohpath=" ++ Value} | Rest], MakeError, Acc) when Value =/= "" ->
-    NewAcc = Acc#{7 => unicode:characters_to_binary(Value)},
-    from_zone(Rest, MakeError, NewAcc);
-from_zone([{domain, "ipv4hint=" ++ Value} | Rest], MakeError, Acc) ->
-    IPs = [string:trim(IP) || IP <- string:split(Value, ",", all), IP =/= ""],
-    case parse_ipv4_list_for_zone(IPs, MakeError) of
-        {ok, IPList} ->
-            NewAcc = Acc#{?DNS_SVCB_PARAM_IPV4HINT => IPList},
-            from_zone(Rest, MakeError, NewAcc);
-        {error, _} = Error ->
-            Error
-    end;
-from_zone([{domain, "ipv6hint=" ++ Value} | Rest], MakeError, Acc) ->
-    IPs = [string:trim(IP) || IP <- string:split(Value, ",", all), IP =/= ""],
-    case parse_ipv6_list_for_zone(IPs, MakeError) of
-        {ok, IPList} ->
-            NewAcc = Acc#{?DNS_SVCB_PARAM_IPV6HINT => IPList},
-            from_zone(Rest, MakeError, NewAcc);
-        {error, _} = Error ->
-            Error
-    end;
-from_zone([{domain, "mandatory=" ++ Mandatory} | Rest], MakeError, Acc) ->
-    Keys = [string:trim(K) || K <- string:split(Mandatory, ",", all), K =/= ""],
-    case parse_mandatory_keys_for_zone(Keys, MakeError) of
-        {ok, KeyNums} ->
-            NewAcc = Acc#{?DNS_SVCB_PARAM_MANDATORY => KeyNums},
-            from_zone(Rest, MakeError, NewAcc);
-        {error, _} = Error ->
-            Error
-    end;
-from_zone([{domain, "ech="}, {string, Value} | Rest], MakeError, Acc) ->
+zone_value(?DNS_SVCB_PARAM_PORT, Value) when is_binary(Value) ->
+    zone_error({invalid_port, Value});
+zone_value(?DNS_SVCB_PARAM_IPV4HINT, Value) when is_binary(Value) ->
+    [
+        zone_ip(inet:parse_ipv4strict_address(binary_to_list(IP)), invalid_ipv4_in_hint, IP)
+     || IP <- zone_list(?DNS_SVCB_PARAM_IPV4HINT, Value)
+    ];
+zone_value(?DNS_SVCB_PARAM_ECH, Value) when is_binary(Value) ->
     case safe_base64_decode(Value) of
-        error ->
-            {error, MakeError({invalid_svcparam_format, Value})};
-        ECHConfig when is_binary(ECHConfig) ->
-            NewAcc = Acc#{?DNS_SVCB_PARAM_ECH => ECHConfig},
-            from_zone(Rest, MakeError, NewAcc)
+        error -> zone_error({invalid_svcparam_format, Value});
+        ECHConfig -> ECHConfig
     end;
-from_zone([{domain, "key" ++ RestStr}, {string, Value} | Rest], MakeError, Acc) ->
-    %% keyNNNNN="value"; key0-key6 redirect to named-param tokens
-    case string:split(RestStr, "=", leading) of
-        [KeyNumStr] ->
-            apply_key_with_value(KeyNumStr, Value, Rest, MakeError, Acc);
-        [KeyNumStr, ""] ->
-            apply_key_with_value(KeyNumStr, Value, Rest, MakeError, Acc);
-        [_NumStr, _AfterEq] ->
-            {error, MakeError({invalid_svcparam_format, RestStr})}
-    end;
-from_zone([{domain, "key" ++ KeyNumStr} | Rest], MakeError, Acc) ->
-    %% keyNNNNN (no value) or keyNNNN=value (value may be empty or contain =)
-    case string:split(KeyNumStr, "=", leading) of
-        [NumStr] ->
-            %% No = in key part; keyNNNN (no value)
-            case string:to_integer(NumStr) of
-                {?DNS_SVCB_PARAM_NO_DEFAULT_ALPN, ""} ->
-                    NewAcc = Acc#{?DNS_SVCB_PARAM_NO_DEFAULT_ALPN => none},
-                    from_zone(Rest, MakeError, NewAcc);
-                {KeyNum, ""} when 7 =< KeyNum, KeyNum =< 65535 ->
-                    NewAcc = Acc#{KeyNum => none},
-                    from_zone(Rest, MakeError, NewAcc);
-                _ ->
-                    {error, MakeError({invalid_svcparam_format, KeyNumStr})}
-            end;
-        [NumStr, ValueStr] ->
-            %% keyNNNN=value (value may be empty or contain =)
-            apply_key_with_value(NumStr, ValueStr, Rest, MakeError, Acc)
-    end;
-from_zone([Other | _], MakeError, _) ->
-    {error, MakeError({invalid_svcparam_format, Other})}.
+zone_value(?DNS_SVCB_PARAM_IPV6HINT, Value) when is_binary(Value) ->
+    [zone_ipv6(IP) || IP <- zone_list(?DNS_SVCB_PARAM_IPV6HINT, Value)];
+zone_value(Key, none) when 7 =< Key ->
+    none;
+zone_value(Key, <<>>) when 7 =< Key ->
+    none;
+zone_value(Key, Value) when 7 =< Key, is_binary(Value) ->
+    Value;
+zone_value(Key, Value) ->
+    zone_error({svcb_param_invalid_value, Key, Value}).
 
--spec parse_svcb_port_value(string(), [zone_rdata()], error_callback(), dns:svcb_svc_params()) ->
-    {ok, dns:svcb_svc_params()} | {error, term()}.
-parse_svcb_port_value(PortStr, Rest, MakeError, Acc) ->
-    case string:to_integer(string:trim(PortStr)) of
-        {Port, ""} when Port >= 0, Port =< 65535 ->
-            NewAcc = Acc#{?DNS_SVCB_PARAM_PORT => Port},
-            from_zone(Rest, MakeError, NewAcc);
+%% draft-ietf-tls-key-share-prediction-05§3.1: a non-empty list of decimal numbers
+%% up to 65535, none twice, kept as its wire format, 2 octets each, as the values
+%% of the other keys past 6 are. Written as key9, which is how the writer writes
+%% it, the value is those octets (RFC9460§2.1).
+-spec tls_supported_groups(binary() | none) -> binary().
+tls_supported_groups(Value) when is_binary(Value), Value =/= <<>> ->
+    Groups = [tls_group(Item, Value) || Item <- zone_list(9, Value)],
+    length(lists:usort(Groups)) =:= length(Groups) orelse
+        zone_error({svcb_param_invalid_value, 9, Value}),
+    <<<<Group:16>> || Group <- Groups>>;
+tls_supported_groups(Value) ->
+    zone_error({svcb_param_invalid_value, 9, Value}).
+
+%% A group's number, in digits, past any leading zeros
+-spec tls_group(binary(), binary()) -> dns:uint16().
+tls_group(Item, Value) ->
+    Significant = skip_zeros(Item),
+    case [C || <<C>> <= Item, C < $0 orelse C > $9] of
+        [] when Significant =:= <<>> ->
+            0;
+        [] when byte_size(Significant) =< 5 ->
+            case binary_to_integer(Significant) of
+                Group when Group =< 65535 -> Group;
+                _ -> zone_error({svcb_param_invalid_value, 9, Value})
+            end;
         _ ->
-            {error, MakeError({invalid_port, PortStr})}
+            zone_error({svcb_param_invalid_value, 9, Value})
     end.
 
-%% keyNNNN="value" path: key 0-6 -> named tokens + recurse
--spec apply_key_with_value(
-    unicode:chardata(), term(), [zone_rdata()], error_callback(), dns:svcb_svc_params()
-) -> {ok, dns:svcb_svc_params()} | {error, term()}.
-apply_key_with_value(KeyNumStr, Value, Rest, MakeError, Acc) ->
-    case {string:to_integer(KeyNumStr), Value} of
-        {{KeyNum, ""}, _} when 0 =< KeyNum, KeyNum =< 6 ->
-            case key_num_to_named_tokens(KeyNum, Value, Rest) of
-                {error, Reason} ->
-                    {error, MakeError(Reason)};
-                Tokens when is_list(Tokens) ->
-                    from_zone(Tokens, MakeError, Acc)
-            end;
-        {{KeyNum, ""}, ""} when 7 =< KeyNum, KeyNum =< 65535 ->
-            NewAcc = Acc#{KeyNum => none},
-            from_zone(Rest, MakeError, NewAcc);
-        {{KeyNum, ""}, _} when 7 =< KeyNum, KeyNum =< 65535 ->
-            %% Quoted value for key>=7: store as literal binary (same as unquoted)
-            Bin = unicode:characters_to_binary(Value),
-            NewAcc = Acc#{KeyNum => Bin},
-            from_zone(Rest, MakeError, NewAcc);
+-spec skip_zeros(binary()) -> binary().
+skip_zeros(<<$0, Rest/binary>>) -> skip_zeros(Rest);
+skip_zeros(Rest) -> Rest.
+
+%% An IPv6 address, without the "%" and zone index that inet would take and drop
+-spec zone_ipv6(binary()) -> inet:ip6_address().
+zone_ipv6(IP) ->
+    case binary:match(IP, ~"%") of
+        nomatch ->
+            zone_ip(inet:parse_ipv6strict_address(binary_to_list(IP)), invalid_ipv6_in_hint, IP);
         _ ->
-            {error, MakeError({invalid_key_number, KeyNumStr})}
+            zone_error({invalid_ipv6_in_hint, IP, einval})
     end.
 
-%% Map key0-key6 + value to the equivalent named-param token list so from_zone reuses validation.
--spec key_num_to_named_tokens(dns:uint16(), string() | binary(), [zone_rdata()]) ->
-    [zone_rdata()] | {error, term()}.
-key_num_to_named_tokens(?DNS_SVCB_PARAM_MANDATORY, Value, Rest) ->
-    [{domain, "mandatory=" ++ ensure_list(Value)} | Rest];
-key_num_to_named_tokens(?DNS_SVCB_PARAM_ALPN, Value, Rest) ->
-    [{domain, "alpn=" ++ ensure_list(Value)} | Rest];
-key_num_to_named_tokens(?DNS_SVCB_PARAM_NO_DEFAULT_ALPN, _Value, _) ->
-    {error, {svcb_param_no_value_allowed, no_default_alpn}};
-key_num_to_named_tokens(?DNS_SVCB_PARAM_PORT, Value, Rest) ->
-    [{domain, "port=" ++ ensure_list(Value)} | Rest];
-key_num_to_named_tokens(?DNS_SVCB_PARAM_IPV4HINT, Value, Rest) ->
-    [{domain, "ipv4hint=" ++ ensure_list(Value)} | Rest];
-key_num_to_named_tokens(?DNS_SVCB_PARAM_ECH, Value, Rest) ->
-    [{domain, "ech="}, {string, ensure_list(Value)} | Rest];
-key_num_to_named_tokens(?DNS_SVCB_PARAM_IPV6HINT, Value, Rest) ->
-    [{domain, "ipv6hint=" ++ ensure_list(Value)} | Rest].
+-spec zone_ip({ok, IP} | {error, term()}, atom(), binary()) -> IP.
+zone_ip({ok, IP}, _Error, _Text) ->
+    IP;
+zone_ip({error, Reason}, Error, Text) ->
+    zone_error({Error, Text, Reason}).
 
-ensure_list(Bin) when is_binary(Bin) -> binary_to_list(Bin);
-ensure_list(L) when is_list(L) -> L.
+%% RFC9460§7.1.1, §7.3, §8: a comma-separated list, none of whose items is empty
+%% or holds a comma. An empty value is an empty list, as the parser read it.
+-spec zone_list(dns:uint16(), binary()) -> [binary()].
+zone_list(_Key, <<>>) ->
+    [];
+zone_list(Key, Value) ->
+    Items = binary:split(Value, ~",", [global]),
+    lists:member(<<>>, Items) andalso zone_error({svcb_param_invalid_value, Key, Value}),
+    Items.
+
+%% RFC9460 Appendix A.1: after the <character-string> is decoded, "\," is a comma
+%% within an item and "\\" a backslash
+-spec alpn_list(binary(), binary(), [binary()]) -> [binary()].
+alpn_list(<<$\\, C, Rest/binary>>, Item, Acc) ->
+    alpn_list(Rest, <<Item/binary, C>>, Acc);
+alpn_list(<<$,, Rest/binary>>, Item, Acc) ->
+    alpn_list(Rest, <<>>, [Item | Acc]);
+alpn_list(<<C, Rest/binary>>, Item, Acc) ->
+    alpn_list(Rest, <<Item/binary, C>>, Acc);
+alpn_list(<<>>, Item, Acc) ->
+    lists:reverse([Item | Acc]).
+
+-spec zone_error(term()) -> no_return().
+zone_error(Reason) ->
+    erlang:error({?MODULE, Reason}).
 
 %% Encode SVCB/HTTPS service parameters to zone file format
 %% Takes params, separator, and an escape function for unknown key values
@@ -347,8 +331,8 @@ to_zone_list(SvcParams, Acc, EscapeFun) ->
                 KeyNames = [svcb_param_name(K) || K <- Keys],
                 [[~"mandatory=\"", join_with_separator(~",", KeyNames), ~"\""] | Acc0];
             ({?DNS_SVCB_PARAM_ALPN, Protocols}, Acc0) ->
-                AlpnStr = encode_alpn_list(zone, Protocols),
-                [[~"alpn=\"", AlpnStr, ~"\""] | Acc0];
+                AlpnStr = iolist_to_binary(encode_alpn_list(zone, Protocols)),
+                [[~"alpn=", EscapeFun(AlpnStr)] | Acc0];
             ({?DNS_SVCB_PARAM_NO_DEFAULT_ALPN, none}, Acc0) ->
                 [~"no-default-alpn" | Acc0];
             ({?DNS_SVCB_PARAM_PORT, Port}, Acc0) ->
@@ -357,7 +341,7 @@ to_zone_list(SvcParams, Acc, EscapeFun) ->
                 IPStrs = [inet:ntoa(IP) || IP <- IPs],
                 [[~"ipv4hint=\"", join_with_separator(~",", IPStrs), ~"\""] | Acc0];
             ({?DNS_SVCB_PARAM_IPV6HINT, IPs}, Acc0) ->
-                IPStrs = [inet:ntoa(IP) || IP <- IPs],
+                IPStrs = [dns_zone_encode:ntoa(IP) || IP <- IPs],
                 [[~"ipv6hint=\"", join_with_separator(~",", IPStrs), ~"\""] | Acc0];
             ({?DNS_SVCB_PARAM_ECH, ECHConfig}, Acc0) ->
                 [[~"ech=\"", base64:encode(ECHConfig), ~"\""] | Acc0];
@@ -367,36 +351,6 @@ to_zone_list(SvcParams, Acc, EscapeFun) ->
         Acc,
         SortedParams
     ).
-
-%% Parse mandatory parameter keys for zone format (e.g., "alpn,port" -> [1, 3])
--spec parse_mandatory_keys_for_zone([string()], error_callback()) ->
-    {ok, [dns:uint16()]} | {error, term()}.
-parse_mandatory_keys_for_zone(Keys, MakeError) ->
-    parse_mandatory_keys_for_zone(Keys, MakeError, []).
-
--spec parse_mandatory_keys_for_zone([string()], error_callback(), [dns:uint16()]) ->
-    {ok, [dns:uint16()]} | {error, term()}.
-parse_mandatory_keys_for_zone([], _MakeError, Acc) ->
-    {ok, lists:reverse(Acc)};
-parse_mandatory_keys_for_zone(["alpn" | Rest], MakeError, Acc) ->
-    parse_mandatory_keys_for_zone(Rest, MakeError, [?DNS_SVCB_PARAM_ALPN | Acc]);
-parse_mandatory_keys_for_zone(["no-default-alpn" | Rest], MakeError, Acc) ->
-    parse_mandatory_keys_for_zone(Rest, MakeError, [?DNS_SVCB_PARAM_NO_DEFAULT_ALPN | Acc]);
-parse_mandatory_keys_for_zone(["port" | Rest], MakeError, Acc) ->
-    parse_mandatory_keys_for_zone(Rest, MakeError, [?DNS_SVCB_PARAM_PORT | Acc]);
-parse_mandatory_keys_for_zone(["ipv4hint" | Rest], MakeError, Acc) ->
-    parse_mandatory_keys_for_zone(Rest, MakeError, [?DNS_SVCB_PARAM_IPV4HINT | Acc]);
-parse_mandatory_keys_for_zone(["ipv6hint" | Rest], MakeError, Acc) ->
-    parse_mandatory_keys_for_zone(Rest, MakeError, [?DNS_SVCB_PARAM_IPV6HINT | Acc]);
-parse_mandatory_keys_for_zone(["key" ++ IntStr | Rest], MakeError, Acc) ->
-    case string:to_integer(IntStr) of
-        {KeyNum, ""} when 0 =< KeyNum, KeyNum =< 65535 ->
-            parse_mandatory_keys_for_zone(Rest, MakeError, [KeyNum | Acc]);
-        _ ->
-            {error, MakeError({invalid_mandatory_key, IntStr})}
-    end;
-parse_mandatory_keys_for_zone([Key | _], MakeError, _) ->
-    {error, MakeError({invalid_mandatory_key, Key})}.
 
 %% Validate mandatory params for wire format (throws on error)
 -spec validate_mandatory_params
@@ -460,7 +414,7 @@ encode_value_to_json(?DNS_SVCB_PARAM_IPV4HINT, Value) when is_list(Value) ->
 encode_value_to_json(?DNS_SVCB_PARAM_ECH, Value) when is_binary(Value) ->
     base64:encode(Value);
 encode_value_to_json(?DNS_SVCB_PARAM_IPV6HINT, Value) when is_list(Value) ->
-    [list_to_binary(inet:ntoa(V)) || V <- Value];
+    [list_to_binary(dns_zone_encode:ntoa(V)) || V <- Value];
 encode_value_to_json(Key, none) when is_integer(Key) ->
     null;
 encode_value_to_json(Key, Value) when is_integer(Key), is_binary(Value) ->
@@ -527,71 +481,26 @@ encode_unknown_key(zone, KeyNum, Value, EscapeFun) when is_binary(Value) ->
 encode_unknown_key(_, _KeyNum, Value, _) ->
     error({invalid_svcparam_format, Value}).
 
--spec parse_ipv4(zone, string()) -> {ok, inet:ip4_address()} | {error, term()}.
-parse_ipv4(zone, IPStr) when is_list(IPStr) ->
-    case inet:parse_ipv4strict_address(IPStr) of
-        {ok, IP} -> {ok, IP};
-        Error -> Error
-    end.
-
--spec parse_ipv6(zone, string()) -> {ok, inet:ip6_address()} | {error, term()}.
-parse_ipv6(zone, IPStr) when is_list(IPStr) ->
-    case inet:parse_ipv6strict_address(IPStr) of
-        {ok, IP} -> {ok, IP};
-        Error -> Error
-    end.
-
-%% Parse a list of IPv4 addresses for zone format
--spec parse_ipv4_list_for_zone([string()], error_callback()) ->
-    {ok, [inet:ip4_address()]} | {error, term()}.
-parse_ipv4_list_for_zone(IPs, MakeError) ->
-    parse_ipv4_list_for_zone(IPs, MakeError, []).
-
--spec parse_ipv4_list_for_zone([string()], error_callback(), [inet:ip4_address()]) ->
-    {ok, [inet:ip4_address()]} | {error, term()}.
-parse_ipv4_list_for_zone([], _MakeError, Acc) ->
-    {ok, lists:reverse(Acc)};
-parse_ipv4_list_for_zone([IP | Rest], MakeError, Acc) ->
-    case parse_ipv4(zone, IP) of
-        {ok, IPAddr} ->
-            parse_ipv4_list_for_zone(Rest, MakeError, [IPAddr | Acc]);
-        {error, Reason} ->
-            {error, MakeError({invalid_ipv4_in_hint, IP, Reason})}
-    end.
-
-%% Parse a list of IPv6 addresses for zone format
--spec parse_ipv6_list_for_zone([string()], error_callback()) ->
-    {ok, [inet:ip6_address()]} | {error, term()}.
-parse_ipv6_list_for_zone(IPs, MakeError) ->
-    parse_ipv6_list_for_zone(IPs, MakeError, []).
-
--spec parse_ipv6_list_for_zone([string()], error_callback(), [inet:ip6_address()]) ->
-    {ok, [inet:ip6_address()]} | {error, term()}.
-parse_ipv6_list_for_zone([], _MakeError, Acc) ->
-    {ok, lists:reverse(Acc)};
-parse_ipv6_list_for_zone([IP | Rest], MakeError, Acc) ->
-    case parse_ipv6(zone, IP) of
-        {ok, IPAddr} ->
-            parse_ipv6_list_for_zone(Rest, MakeError, [IPAddr | Acc]);
-        {error, Reason} ->
-            {error, MakeError({invalid_ipv6_in_hint, IP, Reason})}
-    end.
-
 -spec encode_alpn_list
     (wire, [binary()]) -> binary();
     (zone, [binary()]) -> iodata().
 encode_alpn_list(wire, Protocols) ->
     <<<<(alpn_id_size(P)):8, P/binary>> || P <- Protocols>>;
 encode_alpn_list(zone, Protocols) ->
-    join_with_separator(~",", Protocols).
+    %% RFC9460 Appendix A.1: a comma or a backslash within an alpn-id is escaped
+    join_with_separator(~",", [escape_alpn_id(P, <<>>) || P <- Protocols]).
 
--spec decode_alpn_list
-    (wire, binary()) -> [binary()];
-    (zone, string()) -> [binary()].
+-spec escape_alpn_id(binary(), binary()) -> binary().
+escape_alpn_id(<<C, Rest/binary>>, Acc) when C =:= $,; C =:= $\\ ->
+    escape_alpn_id(Rest, <<Acc/binary, $\\, C>>);
+escape_alpn_id(<<C, Rest/binary>>, Acc) ->
+    escape_alpn_id(Rest, <<Acc/binary, C>>);
+escape_alpn_id(<<>>, Acc) ->
+    Acc.
+
+-spec decode_alpn_list(wire, binary()) -> [binary()].
 decode_alpn_list(wire, Bin) when is_binary(Bin) ->
-    decode_alpn_wire(Bin);
-decode_alpn_list(zone, AlpnStr) when is_list(AlpnStr) ->
-    [list_to_binary(string:trim(P)) || P <- string:split(AlpnStr, ",", all), P =/= ""].
+    decode_alpn_wire(Bin).
 
 %% RFC9460§7.1: an alpn-id is a length-prefixed byte string, so it cannot be longer than 255 bytes.
 -spec alpn_id_size(binary()) -> byte().

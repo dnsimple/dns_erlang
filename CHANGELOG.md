@@ -14,9 +14,28 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Updated
 
 - Optimized `encode_message/2`: a reply that fits whole is no longer copied behind its header, 1.1–1.3x faster on replies of up to three records.
+- Zone files: `dns_zone` parses binaries directly, without leex and yecc, 2.37–8.93x faster with 4.51–10.16x less memory on large zones, and every error in a zone's text gives its line.
+- Zone files: `dns_zone:encode_string/1,2` writes large zones 1.72–2.31x faster with 2.38–2.50x less memory.
 
 ### Fixed
 
+- Zone files: hex and base64 that read as a number or a TTL, such as the salt `1234` or the CDS `0 0 0 00`, are read as hex and base64, where they were lost or refused.
+- Zone files: SVCB and HTTPS values may be quoted and escaped, as RFC 9460 has them and `dns_zone` writes `alpn`, `mandatory`, `ipv4hint` and `ipv6hint`, and a key may not repeat, in the record or in `mandatory`.
+- Zone files: SVCB `tls-supported-groups` is key 9, as IANA has it, with its groups 2 octets each, where it was read as key 13 holding the text.
+- Zone files: a field that does not read as its type is refused, where an unknown type name or `TYPE65536` was read as A, a bad salt or hash as empty, and unquoted strings were dropped.
+- Zone files: a KEY may have no key, CERT data is only base64, LOC takes RFC 1876's optional fields, names take escapes, and a relative `$ORIGIN` follows the one before.
+- Zone files: `dns_zone` writes the names in SVCB, HTTPS, NSEC, HIP, IPSECKEY, AMTRELAY, LP and DSYNC RDATA in the case DNSSEC signs them in, where it lowercased them.
+- Zone files: IPSECKEY is written and read in RFC 4025's form, with the gateway type and the key in base64, where the writer left out the type and wrote the key in hex.
+- Zone files and JSON: IPv6 addresses that start with fe80 or ff02 and a non-zero word are written whole, where `fe80:1::` came out as `fe80::%01`, `fe80::` with a zone index.
+- Zone files: a line that starts with a blank has the owner of the record before it, with its TTL, class and type in any case, as BIND reads it, where a first `in`, `1D` or `class1` was taken for the owner.
+- Zone files: a line whose first field reads as a TTL, but whose rest reads only with it as the owner, takes it for the owner, as in the reverse zones `dns_zone` writes (`1 3600 IN PTR ...`), which were refused.
+- Zone files: everything `dns_zone` writes reads back: it escapes names and ALPN values, splits strings over 255 octets, ends names with a dot when `relative_names` is false, and writes in RFC 3597's generic form what its presentation format cannot, such as an empty DS digest or a LOC latitude past 90 degrees.
+- Zone files: `dns_zone` writes URI targets quoted, NSEC3 hashes without padding, SIG times as dates, LOC, EUI-48 and EUI-64 as their RFCs do, and CAA tags unquoted, which BIND did not read.
+- Zone files: an error within a file that `$INCLUDE` reads gives its line and the kind of error, but none of the file's text.
+- Zone files: `$INCLUDE` stops at files included 16 deep, where a file that included itself ran the process out of memory.
+- Zone files: a CERT type may be one of RFC 4398's mnemonics, such as `PKIX` or `PGP`, as BIND writes it, where only numbers were read.
+- Zone files: without a `$TTL` or `default_ttl`, a record without a TTL has that of the record before it, as RFC 1035 and BIND have it, where it had 0.
+- `#dns_rrdata_loc{}` types `lat`, `lon` and `alt` as `integer()`, the signed offsets they hold, where it said `dns:uint32()`.
 - Wire: a name is held to 255 octets counted on the wire (RFC 1035): decoding took 256 and refused 255 with escapes or a pointer, and compressing took 256 and over.
 - Wire: encoding RDATA over 65535 octets raises `{rdata_too_long, Size}`, where it wrapped RDLENGTH.
 - Wire: NSEC, NSEC3 and CSYNC RDATA with a type bitmap window over 32 octets is malformed, where it decoded as types of the next windows.

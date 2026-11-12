@@ -41,7 +41,8 @@ specifications.
   * Warning: Not portable to all DNS software
   * See: https://bind9.readthedocs.io/en/latest/chapter3.html
 
-The parser uses Erlang's parsetools (leex and yecc) for lexical analysis and parsing.
+The parser reads the zone file as a binary, entry by entry, and each field of
+the RDATA as its record type has it. An error tells the line it was found on.
 
 ## Examples
 
@@ -101,10 +102,14 @@ ok = dns_zone:encode_file(Records, ~"example.com.", "output.zone").
 Options for parsing zone files.
 
 - `origin` - Initial $ORIGIN for relative domain names (default: `<<>>`)
-- `default_ttl` - Default TTL for records without explicit TTL (default: `0`)
+- `default_ttl` - TTL of the records without one, as a `$TTL` before the zone's
+  would give it. Without it or a `$TTL`, a record without a TTL has that of the
+  record before it (RFC 1035 §5.1), and 0 before any.
 - `default_class` - Default DNS class (default: `?DNS_CLASS_IN`)
 - `base_dir` - Base directory for $INCLUDE directives (default: `""`)
 - `filename` - Source filename for error reporting (internal, set by parse_file)
+- `chunk_size` - Ignored: a file is read whole. It was the size of the chunks a
+  file was read in.
 """.
 -type parse_options() :: #{
     origin => dns:dname(),
@@ -132,9 +137,9 @@ Error location information.
 Error type classification.
 
 - `file` - File I/O error (e.g., file not found)
-- `lexer` - Lexical analysis error (invalid tokens)
-- `parser` - Syntax parsing error (grammar violation)
-- `semantic` - Semantic validation error (invalid data)
+- `lexer` - A quoted string left open
+- `parser` - An entry a zone file cannot hold, such as an unknown type or directive
+- `semantic` - RDATA that does not read as its type, or a value too wide for its field
 """.
 -type error_type() :: file | lexer | parser | semantic.
 

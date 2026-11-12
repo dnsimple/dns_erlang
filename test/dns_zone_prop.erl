@@ -63,6 +63,185 @@ prop_decode_encode_roundtrip() ->
         end
     ).
 
+%% Property: whatever the writer writes reads back as the record it wrote, as
+%% DNSSEC signs it: the same owner, type, class and TTL, and RDATA whose canonical
+%% form (RFC 4034 §6.2) is the written record's, octet for octet. Records of every
+%% type the codec knows, but the meta-type TSIG, with names of any octets.
+prop_writer_output_reads_back() ->
+    ?FORALL(
+        {RR, Opts},
+        {
+            written_rr(),
+            oneof([
+                #{},
+                #{relative_names => false},
+                #{origin => ~"Example."},
+                #{origin => ~"Example.", relative_names => false}
+            ])
+        },
+        begin
+            Text = iolist_to_binary([dns_zone:encode_rr(RR, Opts), "\n"]),
+            %% As written by encode_string/2, after the lowercased origin it writes
+            ReadOpts =
+                case Opts of
+                    #{origin := Origin} -> #{origin => dns_domain:to_lower(Origin)};
+                    _ -> #{}
+                end,
+            Read = dns_zone:parse_string(Text, ReadOpts),
+            ?WHENFAIL(
+                io:format("~ts~n~p~n~p~n", [Text, RR, Read]),
+                case Read of
+                    {ok, [ReadRR]} -> same_rr(RR, ReadRR);
+                    _ -> false
+                end
+            )
+        end
+    ).
+
+same_rr(
+    #dns_rr{name = Name, type = Type, class = Class, ttl = TTL, data = Data},
+    #dns_rr{name = ReadName, type = Type, class = Class, ttl = TTL, data = ReadData}
+) ->
+    canonical_name(Name) =:= canonical_name(ReadName) andalso
+        canonical_rrdata(Class, Type, Data) =:= canonical_rrdata(Class, Type, ReadData);
+same_rr(_, _) ->
+    false.
+
+canonical_name(Name) ->
+    dns_domain:to_lower(dns_domain:to_wire(Name)).
+
+%% RFC3597's generic form reads to the RDATA's octets
+canonical_rrdata(Class, Type, Bin) when is_binary(Bin) ->
+    case dns_decode:decode_rrdata(Bin, Class, Type) of
+        Bin -> Bin;
+        Data -> canonical_rrdata(Class, Type, Data)
+    end;
+canonical_rrdata(Class, _Type, Data) ->
+    dns_encode:encode_rrdata(Class, dnssec:canonical_rrdata_form(Data)).
+
+written_rr() ->
+    ?LET(
+        {Data, Name, TTL},
+        {written_rrdata(), any_dname(), range(0, 16#7FFFFFFF)},
+        #dns_rr{
+            name = Name,
+            type = dns_wire_prop:type_of(Data),
+            class = ?DNS_CLASS_IN,
+            ttl = TTL,
+            data = Data
+        }
+    ).
+
+written_rrdata() ->
+    ?SUCHTHAT(
+        Data,
+        frequency([
+            {20, dns_wire_prop:rrdata()},
+            {2, ?LET(N, any_dname(), #dns_rrdata_ns{dname = N})},
+            {2,
+                ?LET({P, N}, {range(0, 65535), any_dname()}, #dns_rrdata_mx{
+                    preference = P, exchange = N
+                })},
+            {2,
+                ?LET({N, T}, {any_dname(), list(range(0, 65535))}, #dns_rrdata_nsec{
+                    next_dname = N, types = lists:usort(T)
+                })},
+            {4, svcb_rrdata()},
+            {1,
+                ?LET(Strings, non_empty(list(?LET(L, range(0, 600), binary(L)))), #dns_rrdata_txt{
+                    txt = Strings
+                })}
+        ]),
+        not is_record(Data, dns_rrdata_tsig) andalso dns_check:rrdata(Data)
+    ).
+
+%% Names of any octets, dots and backslashes within a label escaped as dns_erlang
+%% keeps them, with a final dot or without, some under the origin above, and the
+%% root, as dns_decode gives it and as written
+any_dname() ->
+    frequency([
+        {3, dns_prop_generator:valid_dname()},
+        {
+            3,
+            ?LET(
+                {Labels, Dot},
+                {?LET(N, range(1, 4), vector(N, any_label())), boolean()},
+                iolist_to_binary([
+                    lists:join(~".", Labels),
+                    case Dot of
+                        true -> ~".";
+                        false -> <<>>
+                    end
+                ])
+            )
+        },
+        {1, ?LET(Label, dns_prop_generator:valid_label(), <<Label/binary, ".Example.">>)},
+        {1, ?LET(Label, any_label(), <<Label/binary, ".Example.">>)},
+        {1, oneof([~"Example.", ~"example.", <<>>, ~"."])}
+    ]).
+
+%% A label of any octets, ending in a dot or a backslash at times
+any_label() ->
+    ?LET(
+        {Label, End},
+        {?LET(L, range(1, 8), binary(L)), oneof([<<>>, ~".", <<"\\">>])},
+        escape_label(<<Label/binary, End/binary>>)
+    ).
+
+escape_label(Label) ->
+    <<<<(escape_octet(C))/binary>> || <<C>> <= Label>>.
+
+escape_octet($.) -> ~"\\.";
+escape_octet($\\) -> <<"\\\\">>;
+escape_octet(C) -> <<C>>.
+
+svcb_rrdata() ->
+    ?LET(
+        {Https, Priority, Target, Params},
+        {boolean(), range(0, 65535), any_dname(), svcb_params()},
+        case Https of
+            true ->
+                #dns_rrdata_https{
+                    svc_priority = Priority, target_name = Target, svc_params = Params
+                };
+            false ->
+                #dns_rrdata_svcb{svc_priority = Priority, target_name = Target, svc_params = Params}
+        end
+    ).
+
+%% Parameters of every kind, alpn-ids and unknown keys' values of any octets
+svcb_params() ->
+    ?LET(
+        Params,
+        list(
+            oneof([
+                ?LET(
+                    Ids,
+                    non_empty(list(?LET(L, range(1, 6), binary(L)))),
+                    {?DNS_SVCB_PARAM_ALPN, Ids}
+                ),
+                {?DNS_SVCB_PARAM_NO_DEFAULT_ALPN, none},
+                ?LET(Port, range(0, 65535), {?DNS_SVCB_PARAM_PORT, Port}),
+                ?LET(IPs, non_empty(list(dns_wire_prop:ip4())), {?DNS_SVCB_PARAM_IPV4HINT, IPs}),
+                ?LET(ECH, ?LET(L, range(1, 12), binary(L)), {?DNS_SVCB_PARAM_ECH, ECH}),
+                ?LET(IPs, non_empty(list(ip6())), {?DNS_SVCB_PARAM_IPV6HINT, IPs}),
+                ?LET(
+                    {Key, Value},
+                    {range(7, 65535), oneof([none, ?LET(L, range(1, 8), binary(L))])},
+                    {Key, Value}
+                )
+            ])
+        ),
+        begin
+            Map = maps:from_list(Params),
+            Keys = lists:sort(maps:keys(Map)),
+            case Keys of
+                [] -> Map;
+                _ -> Map#{?DNS_SVCB_PARAM_MANDATORY => Keys}
+            end
+        end
+    ).
+
 %% Property: encode_rr should be idempotent (encode same record multiple times)
 prop_encode_rr_idempotent() ->
     ?FORALL(
@@ -532,13 +711,16 @@ rdata(Type) ->
             #dns_rrdata_a{ip = {192, 0, 2, 1}}
     end.
 
-%% No address that starts with fe80 or ff02 and a non-zero word: inet:ntoa/1, and
-%% so the zone writer, writes fe80:1:: as "fe80::%01", which the zone parser rejects
+%% Any address, and fe80::/16 and ff02::/16 ones often enough to be drawn:
+%% inet:ntoa/1 wrote one whose second word is not zero with a zone index
 ip6() ->
-    ?SUCHTHAT(
-        {A, B, _, _, _, _, _, _},
-        ?LET(Words, vector(8, range(0, 65535)), list_to_tuple(Words)),
-        not ((A =:= 16#fe80 orelse A =:= 16#ff02) andalso B =/= 0)
+    ?LET(
+        {First, Rest},
+        {
+            frequency([{3, range(0, 65535)}, {1, oneof([16#fe80, 16#ff02])}]),
+            vector(7, range(0, 65535))
+        },
+        list_to_tuple([First | Rest])
     ).
 
 encode_options() ->
