@@ -142,7 +142,10 @@
 
 -record(ctx, {
     origin = <<>> :: dns:dname(),
-    default_ttl = 0 :: dns:ttl(),
+    %% The TTL of the last $TTL, or else the default_ttl option, which a record
+    %% without one takes; while there is neither, it takes the TTL of the record
+    %% before it (RFC1035§5.1), and 0 before any
+    default_ttl = undefined :: dns:ttl() | undefined,
     default_class = ?DNS_CLASS_IN :: dns:class(),
     base_dir = "" :: file:filename_all(),
     filename = undefined :: file:filename_all() | undefined,
@@ -171,6 +174,7 @@
 -type entry() ::
     {rrs, [dns:rr()], ctx()}
     | {origin, ctx()}
+    | {ttl, dns:ttl(), ctx()}
     | {ctx, ctx()}
     | {error, dns_zone:error_detail()}.
 
@@ -255,23 +259,22 @@ chars_to_binary(Data) ->
 -spec parse(binary(), dns_zone:parse_options()) ->
     {ok, [dns:rr()]} | {error, dns_zone:error_detail()}.
 parse(Bin, Options) ->
-    parse(Bin, Options, 0).
-
--spec parse(binary(), dns_zone:parse_options(), non_neg_integer()) ->
-    {ok, [dns:rr()]} | {error, dns_zone:error_detail()}.
-parse(Bin, Options, IncludeDepth) ->
     Origin = maps:get(origin, Options, <<>>),
+    DefaultTTL = maps:get(default_ttl, Options, undefined),
     Ctx = #ctx{
         origin = Origin,
-        default_ttl = maps:get(default_ttl, Options, 0),
+        default_ttl = DefaultTTL,
         default_class = maps:get(default_class, Options, ?DNS_CLASS_IN),
         base_dir = filename:flatten(maps:get(base_dir, Options, "")),
         filename = filename(maps:get(filename, Options, undefined)),
-        include_depth = IncludeDepth,
         source = Bin
     },
+    read(Ctx, dns_domain:to_lower(Origin), default(DefaultTTL, 0)).
+
+-spec read(ctx(), dns:dname(), dns:ttl()) -> {ok, [dns:rr()]} | {error, dns_zone:error_detail()}.
+read(#ctx{source = Bin} = Ctx, Owner, ImplicitTTL) ->
     with_binary_heap(byte_size(Bin), fun() ->
-        entries(Bin, 0, 1, Ctx, dns_domain:to_lower(Origin), undefined, [])
+        entries(Bin, 0, 1, Ctx, Owner, ImplicitTTL, undefined, [])
     end).
 
 %% A file name of the options as an error location gives it: parse_options() takes
@@ -304,40 +307,50 @@ with_binary_heap(Size, Fun) ->
 
 %% Each entry is read as its fields are cut out of the source, a directive or a
 %% record. A record goes on the list without a tuple around it. The owner of the
-%% last record, which a record without one takes, and the owner memo change from
-%% record to record, and go from one to the next as arguments rather than in the
-%% state, which would be copied for each.
+%% last record and the TTL, which a record without them takes, and the owner memo
+%% change from record to record, and go from one to the next as arguments rather
+%% than in the state, which would be copied for each. That TTL is the one $TTL or
+%% the default_ttl option gives, or else that of the record before.
 -spec entries(
-    binary(), non_neg_integer(), pos_integer(), ctx(), dns:dname(), owner_memo(), [dns:rr()]
+    binary(),
+    non_neg_integer(),
+    pos_integer(),
+    ctx(),
+    dns:dname(),
+    dns:ttl(),
+    owner_memo(),
+    [dns:rr()]
 ) ->
     {ok, [dns:rr()]} | {error, dns_zone:error_detail()}.
-entries(Bin, Pos, _Line, _Ctx, _Owner, _Memo, Acc) when Pos >= byte_size(Bin) ->
+entries(Bin, Pos, _Line, _Ctx, _Owner, _TTL, _Memo, Acc) when Pos >= byte_size(Bin) ->
     {ok, lists:reverse(Acc)};
-entries(Bin, Pos, Line, Ctx, Owner, Memo, Acc) ->
+entries(Bin, Pos, Line, Ctx, Owner, TTL, Memo, Acc) ->
     case entry_fields(Bin, Pos, Line) of
         {ok, [], _Start, Next, NextLine} ->
-            entries(Bin, Next, NextLine, Ctx, Owner, Memo, Acc);
+            entries(Bin, Next, NextLine, Ctx, Owner, TTL, Memo, Acc);
         {ok, [First | Args] = Fields, Start, Next, NextLine} ->
             case directive_name(First) of
                 Name when is_binary(Name) ->
-                    case directive_entry(Name, Args, Start, Ctx) of
+                    case directive_entry(Name, Args, Start, Ctx, TTL) of
                         {rrs, RRs, Ctx1} ->
-                            entries(
-                                Bin, Next, NextLine, Ctx1, Owner, Memo, lists:reverse(RRs, Acc)
-                            );
+                            Acc1 = lists:reverse(RRs, Acc),
+                            entries(Bin, Next, NextLine, Ctx1, Owner, TTL, Memo, Acc1);
                         {ctx, Ctx1} ->
-                            entries(Bin, Next, NextLine, Ctx1, Owner, Memo, Acc);
+                            entries(Bin, Next, NextLine, Ctx1, Owner, TTL, Memo, Acc);
+                        {ttl, TTL1, Ctx1} ->
+                            entries(Bin, Next, NextLine, Ctx1, Owner, TTL1, Memo, Acc);
                         {origin, #ctx{origin = Origin} = Ctx1} ->
                             Owner1 = dns_domain:to_lower(Origin),
-                            entries(Bin, Next, NextLine, Ctx1, Owner1, Memo, Acc);
+                            entries(Bin, Next, NextLine, Ctx1, Owner1, TTL, Memo, Acc);
                         {error, _} = Error ->
                             Error
                     end;
                 false ->
                     Blank = binary:at(Bin, Pos) =:= $\s orelse binary:at(Bin, Pos) =:= $\t,
-                    try record(Blank, Fields, Ctx, Owner, Memo) of
-                        {#dns_rr{name = Owner1} = RR, Memo1} ->
-                            entries(Bin, Next, NextLine, Ctx, Owner1, Memo1, [RR | Acc])
+                    try record(Blank, Fields, Ctx, Owner, TTL, Memo) of
+                        {#dns_rr{name = Owner1, ttl = RRTTL} = RR, Memo1} ->
+                            TTL1 = default(Ctx#ctx.default_ttl, RRTTL),
+                            entries(Bin, Next, NextLine, Ctx, Owner1, TTL1, Memo1, [RR | Acc])
                     catch
                         error:{?MODULE, Reason} -> {error, record_error(Reason, Start, Ctx)}
                     end
@@ -365,10 +378,10 @@ directive_name(Word) when is_binary(Word) ->
 directive_name({quoted, _}) ->
     false.
 
--spec directive_entry(binary(), [field()], pos_integer(), ctx()) -> entry().
-directive_entry(Name, Args, Line, Ctx) ->
+-spec directive_entry(binary(), [field()], pos_integer(), ctx(), dns:ttl()) -> entry().
+directive_entry(Name, Args, Line, Ctx, TTL) ->
     try
-        directive(dns_domain:to_upper(Name), Args, Line, Ctx)
+        directive(dns_domain:to_upper(Name), Args, Line, Ctx, TTL)
     catch
         error:{?MODULE, Reason} ->
             Message = <<"Parse error: ", (reason_text(Reason))/binary>>,
@@ -384,32 +397,35 @@ record_error(Reason, Line, Ctx) ->
 
 %% RFC1035§5.1 directives, and RFC2308§4's $TTL. BIND's $GENERATE is accepted and
 %% generates nothing. After $ORIGIN, the origin is the owner of a record that gives
-%% none, lowercased as owners are.
--spec directive(binary(), [field()], pos_integer(), ctx()) -> entry().
-directive(~"$ORIGIN", [Name], _Line, Ctx) ->
+%% none, lowercased as owners are, and after $TTL its TTL is that of a record that
+%% gives none.
+-spec directive(binary(), [field()], pos_integer(), ctx(), dns:ttl()) -> entry().
+directive(~"$ORIGIN", [Name], _Line, Ctx, _TTL) ->
     {origin, Ctx#ctx{origin = fqdn(name(Name, Ctx))}};
-directive(~"$TTL", [Field], _Line, Ctx) ->
+directive(~"$TTL", [Field], _Line, Ctx, _TTL) ->
     %% RFC2181§8
     TTL = ttl(Field),
     TTL =< 16#7FFFFFFF orelse ?FAIL({out_of_range, ~"TTL", TTL}),
-    {ctx, Ctx#ctx{default_ttl = TTL}};
-directive(~"$INCLUDE", [File], Line, Ctx) ->
-    include(text(File), Ctx#ctx.origin, Line, Ctx);
-directive(~"$INCLUDE", [File, Origin], Line, Ctx) ->
-    include(text(File), fqdn(name(Origin, Ctx)), Line, Ctx);
-directive(~"$GENERATE", _Args, _Line, Ctx) ->
+    {ttl, TTL, Ctx#ctx{default_ttl = TTL}};
+directive(~"$INCLUDE", [File], Line, Ctx, TTL) ->
+    include(text(File), Ctx#ctx.origin, Line, Ctx, TTL);
+directive(~"$INCLUDE", [File, Origin], Line, Ctx, TTL) ->
+    include(text(File), fqdn(name(Origin, Ctx)), Line, Ctx, TTL);
+directive(~"$GENERATE", _Args, _Line, Ctx, _TTL) ->
     {ctx, Ctx};
-directive(Name, Args, _Line, _Ctx) ->
+directive(Name, Args, _Line, _Ctx, _TTL) ->
     ?FAIL({bad_directive, Name, length(Args)}).
 
 %% RFC1035§5.1: the origin of the parent file is not changed by the included file.
-%% A file that cannot be read is an error on the line of the $INCLUDE. An error
-%% within the file gives its line there and the kind of error, but nothing the
-%% file holds, neither the text of the line nor the field or number the error is
-%% about: a zone can include any file, which need not be one to show. An $INCLUDE
-%% in a file included ?MAX_INCLUDE_DEPTH deep is an error.
--spec include(binary(), dns:dname(), pos_integer(), ctx()) -> entry().
-include(File, Origin, Line, #ctx{base_dir = BaseDir, include_depth = Depth} = Ctx) ->
+%% Its records without a TTL start from the TTL the parent's would take, and its
+%% $TTL and TTLs leave the parent's as they were, as dnspython reads it; BIND
+%% carries them back to the parent. A file that cannot be read is an error on the
+%% line of the $INCLUDE. An error within the file gives its line there and the kind
+%% of error, but nothing the file holds, neither the text of the line nor the field
+%% or number the error is about: a zone can include any file, which need not be one
+%% to show. An $INCLUDE in a file included ?MAX_INCLUDE_DEPTH deep is an error.
+-spec include(binary(), dns:dname(), pos_integer(), ctx(), dns:ttl()) -> entry().
+include(File, Origin, Line, #ctx{base_dir = BaseDir, include_depth = Depth} = Ctx, TTL) ->
     Depth < ?MAX_INCLUDE_DEPTH orelse ?FAIL(include_too_deep),
     Path =
         case BaseDir of
@@ -419,14 +435,14 @@ include(File, Origin, Line, #ctx{base_dir = BaseDir, include_depth = Depth} = Ct
         end,
     case read_file(Path) of
         {ok, Bin} ->
-            Options = #{
-                origin => Origin,
-                default_ttl => Ctx#ctx.default_ttl,
-                default_class => Ctx#ctx.default_class,
-                base_dir => filename:dirname(Path),
-                filename => Path
+            Included = Ctx#ctx{
+                origin = Origin,
+                base_dir = filename:dirname(Path),
+                filename = Path,
+                include_depth = Depth + 1,
+                source = Bin
             },
-            case parse(Bin, Options, Depth + 1) of
+            case read(Included, dns_domain:to_lower(Origin), TTL) of
                 {ok, RRs} -> {rrs, RRs, Ctx};
                 {error, Error} -> {error, included_error(Error)}
             end;
@@ -480,41 +496,43 @@ type_text(semantic) -> ~"Invalid record".
 %% lowercased; the names in RDATA keep their case. A line that starts with a blank
 %% has no owner, unless it only reads as a record with its first field taken for
 %% one, as the grammar this parser replaced took it.
--spec record(boolean(), [field(), ...], ctx(), dns:dname(), owner_memo()) ->
+-spec record(boolean(), [field(), ...], ctx(), dns:dname(), dns:ttl(), owner_memo()) ->
     {dns:rr(), owner_memo()}.
-record(true, Fields, Ctx, LastOwner, Memo) ->
+record(true, Fields, Ctx, LastOwner, ImplicitTTL, Memo) ->
     try
-        {rr(LastOwner, header(Fields, undefined, undefined), Ctx, Memo), Memo}
+        {rr(LastOwner, header(Fields, undefined, undefined), Ctx, ImplicitTTL, Memo), Memo}
     catch
         error:{?MODULE, _} = Error:Stack ->
-            case owner_record(Fields, Ctx, LastOwner, Memo) of
+            case owner_record(Fields, Ctx, LastOwner, ImplicitTTL, Memo) of
                 {ok, RR} -> {RR, Memo};
                 error -> erlang:raise(error, Error, Stack)
             end
     end;
-record(false, Fields, Ctx, LastOwner, Memo) ->
+record(false, Fields, Ctx, LastOwner, ImplicitTTL, Memo) ->
     {Owner, Header, Memo1} = owner_and_header(Fields, Ctx, LastOwner, Memo),
-    {rr(Owner, Header, Ctx, Memo), Memo1}.
+    {rr(Owner, Header, Ctx, ImplicitTTL, Memo), Memo1}.
 
--spec owner_record([field(), ...], ctx(), dns:dname(), owner_memo()) -> {ok, dns:rr()} | error.
-owner_record(Fields, Ctx, LastOwner, Memo) ->
+-spec owner_record([field(), ...], ctx(), dns:dname(), dns:ttl(), owner_memo()) ->
+    {ok, dns:rr()} | error.
+owner_record(Fields, Ctx, LastOwner, ImplicitTTL, Memo) ->
     try
         {Owner, Rest, _Memo} = owner(Fields, Ctx, LastOwner, Memo),
         Rest =/= Fields orelse ?FAIL(no_owner),
-        {ok, rr(Owner, header(Rest, undefined, undefined), Ctx, Memo)}
+        {ok, rr(Owner, header(Rest, undefined, undefined), Ctx, ImplicitTTL, Memo)}
     catch
         error:{?MODULE, _} -> error
     end.
 
-%% The memo is that of the records before this one, whose owner was accepted
--spec rr(dns:dname(), header(), ctx(), owner_memo()) -> dns:rr().
-rr(Owner, {TTL, Class, Type, Mnemonic, RDataFields}, Ctx, Memo) ->
+%% A record without a TTL takes ImplicitTTL. The memo is that of the records
+%% before this one, whose owner was accepted.
+-spec rr(dns:dname(), header(), ctx(), dns:ttl(), owner_memo()) -> dns:rr().
+rr(Owner, {TTL, Class, Type, Mnemonic, RDataFields}, Ctx, ImplicitTTL, Memo) ->
     RDataFields =:= [] andalso ?FAIL({no_rdata, Mnemonic}),
     RR = #dns_rr{
         name = Owner,
         type = Type,
         class = default(Class, Ctx#ctx.default_class),
-        ttl = default(TTL, Ctx#ctx.default_ttl),
+        ttl = default(TTL, ImplicitTTL),
         data = rdata(Type, Mnemonic, RDataFields, Ctx)
     },
     fits(RR, Memo) orelse rdata_fail(Mnemonic, RDataFields, does_not_fit),

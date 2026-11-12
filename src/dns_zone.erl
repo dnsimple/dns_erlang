@@ -102,7 +102,9 @@ ok = dns_zone:encode_file(Records, ~"example.com.", "output.zone").
 Options for parsing zone files.
 
 - `origin` - Initial $ORIGIN for relative domain names (default: `<<>>`)
-- `default_ttl` - Default TTL for records without explicit TTL (default: `0`)
+- `default_ttl` - TTL of the records without one, as a `$TTL` before the zone's
+  would give it. Without it or a `$TTL`, a record without a TTL has that of the
+  record before it (RFC 1035 §5.1), and 0 before any.
 - `default_class` - Default DNS class (default: `?DNS_CLASS_IN`)
 - `base_dir` - Base directory for $INCLUDE directives (default: `""`)
 - `filename` - Source filename for error reporting (internal, set by parse_file)

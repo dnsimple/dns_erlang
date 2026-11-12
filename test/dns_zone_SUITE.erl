@@ -564,6 +564,8 @@ groups() ->
             parse_long_numbers_in_linear_time,
             parse_include_errors,
             parse_include_depth,
+            parse_ttl_of_the_record_before,
+            parse_ttl_into_an_included_file,
             parse_file_reads_in_the_calling_process,
             parse_checks_names_as_the_encoder_does,
             parse_ipv6_as_inet_does,
@@ -8718,6 +8720,68 @@ bounded(Fun) ->
         exit(Pid, kill),
         timeout
     end.
+
+%% RFC1035§5.1: a record without a TTL has that of the record before it, as BIND
+%% reads it, until a $TTL (RFC2308§4) gives the TTL of those that follow, whatever
+%% TTL the records between give. The default_ttl option is taken as such a $TTL,
+%% and 0 is the TTL before any.
+parse_ttl_of_the_record_before(_Config) ->
+    Zone = <<
+        "$ORIGIN example.com.\n"
+        "@ 7200 IN SOA ns1 hostmaster 1 3600 600 86400 300\n"
+        "@ IN NS ns1\n"
+        "  IN NS ns2\n"
+        "www 60 IN A 192.0.2.1\n"
+        "mail IN A 192.0.2.2\n"
+        "  1H IN A 192.0.2.3\n"
+        "    ftp IN A 192.0.2.4\n"
+        "$TTL 100\n"
+        "a IN A 192.0.2.5\n"
+        "b 30 IN A 192.0.2.6\n"
+        "c IN A 192.0.2.7\n"
+    >>,
+    {ok, RRs} = dns_zone:parse_string(Zone),
+    ?assertEqual(
+        [
+            {~"example.com.", 7200},
+            {~"example.com.", 7200},
+            {~"example.com.", 7200},
+            {~"www.example.com.", 60},
+            {~"mail.example.com.", 60},
+            {~"mail.example.com.", 3600},
+            {~"ftp.example.com.", 3600},
+            {~"a.example.com.", 100},
+            {~"b.example.com.", 30},
+            {~"c.example.com.", 100}
+        ],
+        [{Name, TTL} || #dns_rr{name = Name, ttl = TTL} <- RRs]
+    ),
+    Records = ~"a IN A 192.0.2.1\nb 60 IN A 192.0.2.2\nc IN A 192.0.2.3\n",
+    Origin = #{origin => ~"example.com."},
+    {ok, Without} = dns_zone:parse_string(Records, Origin),
+    ?assertEqual([0, 60, 60], [TTL || #dns_rr{ttl = TTL} <- Without]),
+    {ok, With} = dns_zone:parse_string(Records, Origin#{default_ttl => 7200}),
+    ?assertEqual([7200, 60, 7200], [TTL || #dns_rr{ttl = TTL} <- With]).
+
+%% The records without a TTL of an included file start from the TTL the parent's
+%% would take, and its TTLs and $TTL leave the parent's as they were, as dnspython
+%% reads them; BIND carries them back to the parent.
+parse_ttl_into_an_included_file(Config) ->
+    Dir = proplists:get_value(priv_dir, Config),
+    ok = file:write_file(
+        filename:join(Dir, "ttl-included.txt"),
+        ~"i1 IN A 192.0.2.11\ni2 40 IN A 192.0.2.12\ni3 IN A 192.0.2.13\n$TTL 50\ni4 IN A 192.0.2.14\n"
+    ),
+    Parent = filename:join(Dir, "ttl-parent.zone"),
+    Include = ~"$INCLUDE ttl-included.txt\nc1 IN A 192.0.2.21\n",
+    ok = file:write_file(Parent, [~"$ORIGIN example.com.\nns 7200 IN A 192.0.2.1\n", Include]),
+    {ok, RRs} = dns_zone:parse_file(Parent),
+    ?assertEqual([7200, 7200, 40, 40, 50, 7200], [TTL || #dns_rr{ttl = TTL} <- RRs]),
+    ok = file:write_file(Parent, [
+        ~"$ORIGIN example.com.\n$TTL 300\nns 7200 IN A 192.0.2.1\n", Include
+    ]),
+    {ok, WithTTL} = dns_zone:parse_file(Parent),
+    ?assertEqual([7200, 300, 40, 300, 50, 300], [TTL || #dns_rr{ttl = TTL} <- WithTTL]).
 
 %% A zone file, and a file it includes, are read in the process that parses them.
 %% The file server, asked to read them, would keep their text referenced until it
