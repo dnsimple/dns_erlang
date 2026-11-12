@@ -316,6 +316,7 @@ groups() ->
             parse_smimea_record,
             parse_cert_record,
             parse_cert_record_base64_only,
+            parse_cert_type_mnemonics,
             parse_dhcid_record,
             parse_openpgpkey_record,
             parse_uri_record,
@@ -1498,6 +1499,41 @@ parse_cert_record_base64_only(_Config) ->
         },
         RR#dns_rr.data
     ).
+
+%% RFC4398§2.2: the certificate type is a number or one of RFC4398§2.1's
+%% mnemonics, which BIND writes and reads in any case, and refuses quoted
+parse_cert_type_mnemonics(_Config) ->
+    Types = [
+        {~"PKIX", 1},
+        {~"spki", 2},
+        {~"Pgp", 3},
+        {~"IPKIX", 4},
+        {~"ISPKI", 5},
+        {~"IPGP", 6},
+        {~"ACPKIX", 7},
+        {~"IACPKIX", 8},
+        {~"URI", 253},
+        {~"oid", 254},
+        {~"9", 9},
+        {~"65535", 65535}
+    ],
+    [
+        ?assertMatch(
+            {ok, [#dns_rr{data = #dns_rrdata_cert{type = Number, alg = 8}}]},
+            dns_zone:parse_string(<<"c.example. 0 IN CERT ", Text/binary, " 0 RSASHA256 AAAA\n">>),
+            Text
+        )
+     || {Text, Number} <- Types
+    ],
+    [
+        ?assertMatch(
+            {error, #{type := semantic, details := {semantic_error, {unknown_certificate_type, _}}}},
+            dns_zone:parse_string(<<"c.example. 0 IN CERT ", Text/binary, " 0 8 AAAA\n">>),
+            Text
+        )
+     || Text <- [~"FOO", ~"\"PKIX\"", ~"PKIX1", ~"TYPE1", ~"CERT"]
+    ],
+    ok.
 
 parse_dhcid_record(_Config) ->
     %% DHCID for DHCP client identification (RFC 4701)

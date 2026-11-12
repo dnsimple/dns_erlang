@@ -1262,7 +1262,9 @@ rdata(?DNS_TYPE_CDNSKEY, [Flags, Protocol, Alg | [_ | _] = Key], _Ctx) ->
         keytag = keytag(F, P, A, PublicKey)
     };
 rdata(?DNS_TYPE_CERT, [Type, KeyTag, Alg | [_ | _] = Cert], _Ctx) ->
-    #dns_rrdata_cert{type = uint(Type), keytag = uint(KeyTag), alg = alg(Alg), cert = base64(Cert)};
+    #dns_rrdata_cert{
+        type = cert_type(Type), keytag = uint(KeyTag), alg = alg(Alg), cert = base64(Cert)
+    };
 rdata(?DNS_TYPE_DHCID, Data, _Ctx) ->
     #dns_rrdata_dhcid{data = base64(Data)};
 rdata(?DNS_TYPE_OPENPGPKEY, Data, _Ctx) ->
@@ -1802,6 +1804,28 @@ alg(Text) when is_binary(Text) ->
 alg({quoted, Text}) ->
     ?FAIL({unknown_algorithm, Text}).
 
+%% RFC4398§2.2: a certificate type number, or its mnemonic, in any case, as
+%% RFC4398§2.1 lists them and BIND writes them
+-spec cert_type(field()) -> non_neg_integer().
+cert_type(<<C, _/binary>> = Field) when ?IS_DIGIT(C) ->
+    uint(Field);
+cert_type(Text) when is_binary(Text) ->
+    case dns_domain:to_upper(Text) of
+        ~"PKIX" -> 1;
+        ~"SPKI" -> 2;
+        ~"PGP" -> 3;
+        ~"IPKIX" -> 4;
+        ~"ISPKI" -> 5;
+        ~"IPGP" -> 6;
+        ~"ACPKIX" -> 7;
+        ~"IACPKIX" -> 8;
+        ~"URI" -> 253;
+        ~"OID" -> 254;
+        _ -> ?FAIL({unknown_certificate_type, Text})
+    end;
+cert_type({quoted, Text}) ->
+    ?FAIL({unknown_certificate_type, Text}).
+
 -spec ttl(field()) -> non_neg_integer().
 ttl(Text) when is_binary(Text) ->
     case ttl_value(Text) of
@@ -2277,6 +2301,8 @@ reason_text({unknown_type, Text}) when is_binary(Text) ->
     <<"unknown type: ", Text/binary>>;
 reason_text({unknown_algorithm, Text}) when is_binary(Text) ->
     <<"unknown algorithm: ", Text/binary>>;
+reason_text({unknown_certificate_type, Text}) when is_binary(Text) ->
+    <<"unknown certificate type: ", Text/binary>>;
 reason_text({quoted_name, Text}) when is_binary(Text) ->
     <<"a name cannot be quoted: ", Text/binary>>;
 reason_text({quoted_owner, Text}) when is_binary(Text) ->
