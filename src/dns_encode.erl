@@ -157,9 +157,12 @@ encode_message_default(
     PreservedOptRRBinSize = preserve_optrr_size(Additional),
     SpaceLeft0 = MaxSize - ?HEADER_SIZE - PreservedOptRRBinSize,
     %% RFC6891 §7, the question section MUST always be present
-    %% The 12-byte placeholder keeps positions message-relative so compression
-    %% pointers are correct; the real header replaces it in one final assembly.
-    {AccQ, CompMap1} = encode_append_section(<<0:96>>, dns_domain:new_compmap(), Questions),
+    %% The accumulator starts with the header of a reply that fits whole, the common
+    %% case, so that reply is returned as it is built. Its 12 bytes keep positions
+    %% message-relative so compression pointers are correct; a reply that leaves
+    %% records out never reads them, and gets its own header in their place.
+    WholeHead = build_header(Msg0, false, QC, ANC, AUC, ADC),
+    {AccQ, CompMap1} = encode_append_section(WholeHead, dns_domain:new_compmap(), Questions),
     QSize = byte_size(AccQ) - ?HEADER_SIZE,
     SpaceLeft1 = SpaceLeft0 - QSize,
     case encode_message_d_req(Answers, Authority, CompMap1, byte_size(AccQ), SpaceLeft1, AccQ) of
@@ -188,8 +191,8 @@ encode_message_default(
                             Head = build_header(Msg0, false, QC, ANC, AUC, OptC),
                             finish_message(Head, Acc2);
                         AccAd ->
-                            Head = build_header(Msg0, false, QC, ANC, AUC, ADC),
-                            finish_message(Head, AccAd)
+                            %% Everything fit, so the accumulator already starts with WholeHead
+                            AccAd
                     end
             end
     end.
@@ -221,8 +224,8 @@ encode_message_d_truncated(Msg0, QC, AccQ, Additional, MaxSize) ->
             <<Head/binary, Acc1/binary, OptRRBinMin/binary>>
     end.
 
-%% Splice the real header over the 12-byte placeholder: the single body copy
-%% of the bounded encode paths.
+%% Splice the real header over the accumulator's first 12 bytes, copying the body
+%% once: the price of a bounded reply whose header is not written up front.
 -spec finish_message(<<_:96>>, binary()) -> binary().
 finish_message(Head, Acc) ->
     <<Head/binary, (binary_part(Acc, ?HEADER_SIZE, byte_size(Acc) - ?HEADER_SIZE))/binary>>.
