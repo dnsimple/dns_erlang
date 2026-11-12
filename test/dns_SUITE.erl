@@ -45,6 +45,7 @@ groups() ->
             encode_message_clamps_small_udp_payload_size,
             encode_optrr_kept_near_max_size,
             encode_optrr_kept_when_answers_fit_without_it,
+            encode_additional_left_out_when_it_does_not_fit,
             truncated_query_enforces_opt_record,
             encode_default_message_question_offset_correct,
             encode_default_message_additional_offset_correct,
@@ -262,6 +263,59 @@ encode_optrr_kept_near_max_size(_) ->
     ?assert(byte_size(Bin) =< 512),
     Decoded = dns:decode_message(Bin),
     ?assertMatch(#dns_message{tc = false, anc = 29, adc = 1, additional = [#dns_optrr{}]}, Decoded).
+
+%% Answers that fit go out without the additional records that don't, and without TC
+%% (RFC2181§9), the ARCOUNT counting only the OPT RR kept: 12 B header + 17 B question
+%% + 29 x 16 B answers = 493 B, which a 31 B AAAA record takes past 512 B, beside the
+%% 11 B OPT RR or not, and wherever the OPT RR is in the additional section.
+encode_additional_left_out_when_it_does_not_fit(_) ->
+    Answers = [
+        #dns_rr{
+            name = <<"example.com">>,
+            type = ?DNS_TYPE_A,
+            class = ?DNS_CLASS_IN,
+            ttl = 60,
+            data = #dns_rrdata_a{ip = {192, 0, 2, I}}
+        }
+     || I <- lists:seq(1, 29)
+    ],
+    Glue = #dns_rr{
+        name = <<"ns.example.com">>,
+        type = ?DNS_TYPE_AAAA,
+        class = ?DNS_CLASS_IN,
+        ttl = 60,
+        data = #dns_rrdata_aaaa{ip = {16#2001, 16#db8, 0, 0, 0, 0, 0, 1}}
+    },
+    OptRR = #dns_optrr{udp_payload_size = 512},
+    Encode = fun(Additional) ->
+        Msg = #dns_message{
+            id = 1,
+            qr = true,
+            qc = 1,
+            anc = 29,
+            adc = length(Additional),
+            questions = [
+                #dns_query{name = <<"example.com">>, type = ?DNS_TYPE_A, class = ?DNS_CLASS_IN}
+            ],
+            answers = Answers,
+            additional = Additional
+        },
+        Bin = dns:encode_message(Msg, #{max_size => 512}),
+        ?assert(byte_size(Bin) =< 512),
+        dns:decode_message(Bin)
+    end,
+    ?assertMatch(
+        #dns_message{tc = false, anc = 29, adc = 0, additional = []},
+        Encode([Glue])
+    ),
+    ?assertMatch(
+        #dns_message{tc = false, anc = 29, adc = 1, additional = [#dns_optrr{}]},
+        Encode([OptRR, Glue])
+    ),
+    ?assertMatch(
+        #dns_message{tc = false, anc = 29, adc = 1, additional = [#dns_optrr{}]},
+        Encode([Glue, OptRR])
+    ).
 
 %% RFC6891§7: a reply to a request with an OPT RR carries one. An answer that fits beside the
 %% minimal OPT RR but not beside the full one used to go out without the OPT RR and without TC.
