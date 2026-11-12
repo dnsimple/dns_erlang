@@ -416,6 +416,25 @@ ntoa({Word, B, C, D, E, F, G, H}) when Word =:= 16#fe80; Word =:= 16#ff02 ->
 ntoa(IP) ->
     "" ++ _ = inet:ntoa(IP).
 
+%% An IPv4 address as inet:ntoa/1 writes it, as iodata rather than through the
+%% lists it builds. Not as one binary: a binary built from the first octet's
+%% would be appended to, which allocates a writable binary off the heap. Its four
+%% octets, integers of 0 to 255, have no bit past the eighth; anything else goes
+%% to inet:ntoa/1, which refuses it.
+-spec ipv4(inet:ip4_address()) -> iodata().
+ipv4({A, B, C, D}) when (A bor B bor C bor D) bsr 8 =:= 0 ->
+    [
+        integer_to_binary(A),
+        $.,
+        integer_to_binary(B),
+        $.,
+        integer_to_binary(C),
+        $.,
+        integer_to_binary(D)
+    ];
+ipv4(IP) ->
+    "" ++ _ = inet:ntoa(IP).
+
 %% Helper: a LOC latitude or longitude, thousandths of a second of arc, positive
 %% to the north or the east
 -spec loc_angle(integer(), binary(), binary()) -> binary().
@@ -562,7 +581,7 @@ encode_key_record(Flags, Protocol, Alg, Data, Encoding, Separator) when is_binar
 %% RDATA are signed and written in the case they have.
 -spec encode_rdata(dns:type(), dns:rrdata(), dns:dname(), boolean(), binary()) -> iodata().
 encode_rdata(?DNS_TYPE_A, #dns_rrdata_a{ip = IP}, _Origin, _RelativeNames, _Separator) ->
-    "" ++ _ = inet:ntoa(IP);
+    ipv4(IP);
 encode_rdata(?DNS_TYPE_AAAA, #dns_rrdata_aaaa{ip = IP}, _Origin, _RelativeNames, _Separator) ->
     ntoa(IP);
 encode_rdata(?DNS_TYPE_NS, #dns_rrdata_ns{dname = DName}, Origin, RelativeNames, _Separator) ->
