@@ -14,6 +14,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - Zone files: `dns_zone` parses binaries directly, without leex and yecc, 2.37–8.93x faster with 4.51–10.16x less memory on large zones, and every error in a zone's text gives its line.
+- Zone files: `dns_zone:encode_string/1,2` writes large zones 1.72–2.31x faster with 2.38–2.50x less memory.
 
 ### Fixed
 

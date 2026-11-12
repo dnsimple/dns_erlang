@@ -29,8 +29,12 @@ encode_string(Records, Opts) ->
     build_zone_lines(SortedRecords, LwrOrigin, Opts).
 
 -spec encode_rr(dns:rr(), dns_zone:encode_options()) -> iolist().
-encode_rr(#dns_rr{name = Name, type = Type, class = Class, ttl = TTL, data = Data}, Opts) ->
-    LwrName = dns_domain:to_lower(Name),
+encode_rr(#dns_rr{name = Name} = RR, Opts) ->
+    encode_rr(dns_domain:to_lower(Name), RR, Opts).
+
+%% A record, whose owner is LwrName, lowercased
+-spec encode_rr(dns:dname(), dns:rr(), dns_zone:encode_options()) -> iolist().
+encode_rr(LwrName, #dns_rr{type = Type, class = Class, ttl = TTL, data = Data}, Opts) ->
     LwrOrigin = dns_domain:to_lower(maps:get(origin, Opts, ?DEFAULT_ORIGIN)),
     OmitClass = maps:get(omit_class, Opts, ?DEFAULT_OMIT_CLASS),
     TTLFormat = maps:get(ttl_format, Opts, ?DEFAULT_TTL_FORMAT),
@@ -326,42 +330,43 @@ do_escape_string(<<C, Rest/binary>>, Acc) ->
 %% Zone-Level Encoding
 %% ============================================================================
 
-%% Sort zone records: SOA first, then NS, then others by name
--spec sort_zone_records([dns:rr()]) -> [dns:rr()].
+%% Sort zone records: SOA first, then NS, then others by name. Each owner is
+%% lowercased once, for the sort to compare and the record to be written with,
+%% rather than at each comparison.
+-spec sort_zone_records([dns:rr()]) -> [{dns:dname(), dns:rr()}].
 sort_zone_records(Records) ->
     %% Separate SOA, NS, and others
     {SOA, NS, Others} = lists:foldl(
-        fun
-            (#dns_rr{type = ?DNS_TYPE_SOA} = RR, {SOAAcc, NSAcc, OthersAcc}) ->
-                {[RR | SOAAcc], NSAcc, OthersAcc};
-            (#dns_rr{type = ?DNS_TYPE_NS} = RR, {SOAAcc, NSAcc, OthersAcc}) ->
-                {SOAAcc, [RR | NSAcc], OthersAcc};
-            (RR, {SOAAcc, NSAcc, OthersAcc}) ->
-                {SOAAcc, NSAcc, [RR | OthersAcc]}
+        fun(#dns_rr{name = Name, type = Type} = RR, {SOAAcc, NSAcc, OthersAcc}) ->
+            Entry = {dns_domain:to_lower(Name), RR},
+            case Type of
+                ?DNS_TYPE_SOA -> {[Entry | SOAAcc], NSAcc, OthersAcc};
+                ?DNS_TYPE_NS -> {SOAAcc, [Entry | NSAcc], OthersAcc};
+                _ -> {SOAAcc, NSAcc, [Entry | OthersAcc]}
+            end
         end,
         {[], [], []},
         Records
     ),
     %% Sort NS and Others by name
-    SortedNS = lists:sort(fun compare_rr_by_name/2, NS),
-    SortedOthers = lists:sort(fun compare_rr_by_name/2, Others),
+    SortedNS = lists:sort(fun compare_by_name/2, NS),
+    SortedOthers = lists:sort(fun compare_by_name/2, Others),
     %% Combine: SOA first, then NS, then others
     lists:reverse(SOA, SortedNS ++ SortedOthers).
 
-%% Compare two RRs by name for sorting
--spec compare_rr_by_name(dns:rr(), dns:rr()) -> boolean().
-compare_rr_by_name(#dns_rr{name = Name1}, #dns_rr{name = Name2}) ->
-    Name1Lower = dns_domain:to_lower(Name1),
-    Name2Lower = dns_domain:to_lower(Name2),
-    Name1Lower < Name2Lower.
+%% Compare two records by their lowercased owners for sorting
+-spec compare_by_name({dns:dname(), dns:rr()}, {dns:dname(), dns:rr()}) -> boolean().
+compare_by_name({Name1, _}, {Name2, _}) ->
+    Name1 < Name2.
 
 %% Build zone file lines from sorted records
--spec build_zone_lines([dns:rr()], dns:dname(), dns_zone:encode_options()) -> iodata().
+-spec build_zone_lines([{dns:dname(), dns:rr()}], dns:dname(), dns_zone:encode_options()) ->
+    iodata().
 build_zone_lines(Records, Origin, Opts) ->
     OriginLine = origin_line(Origin),
     TTLLine = ttl_line(Opts),
     %% Encode all records and append newlines
-    RecordLines = [[encode_rr(RR, Opts) | ~"\n"] || RR <- Records],
+    RecordLines = [[encode_rr(LwrName, RR, Opts) | ~"\n"] || {LwrName, RR} <- Records],
     [OriginLine, TTLLine | RecordLines].
 
 %% Add $ORIGIN directive if origin is set
