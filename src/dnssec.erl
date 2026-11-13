@@ -115,6 +115,14 @@ Unlike `t:dns:alg/0`, this type is restricted to algorithms valid for zone signi
 -doc "Options for `verify_rrsig/4`.".
 -type verify_rrsig_opts() :: #{now => dns:unix_time()}.
 
+%% The DNSSEC algorithms whose DNSKEY key field RFC 2536 lays out for DSA and
+%% RFC 3110 for RSA
+-define(IS_DSA_ALG(Alg), (Alg =:= ?DNS_ALG_DSA orelse Alg =:= ?DNS_ALG_NSEC3DSA)).
+-define(IS_RSA_ALG(Alg),
+    (Alg =:= ?DNS_ALG_RSASHA1 orelse Alg =:= ?DNS_ALG_NSEC3RSASHA1 orelse
+        Alg =:= ?DNS_ALG_RSASHA256 orelse Alg =:= ?DNS_ALG_RSASHA512)
+).
+
 -define(RSASHA1_PREFIX,
     <<16#30, 16#21, 16#30, 16#09, 16#06, 16#05, 16#2B, 16#0E, 16#03, 16#02, 16#1A, 16#05, 16#00,
         16#04, 16#14>>
@@ -482,7 +490,7 @@ canonical_owner(Name) ->
 is_rrsig(#dns_rr{type = Type}) -> Type =:= ?DNS_TYPE_RRSIG.
 
 -spec sign(dns:uint8(), binary(), key()) -> binary().
-sign(Alg, BaseSigInput, Key) when Alg =:= ?DNS_ALG_DSA orelse Alg =:= ?DNS_ALG_NSEC3DSA ->
+sign(Alg, BaseSigInput, Key) when ?IS_DSA_ALG(Alg) ->
     %% RFC2536: Key must be [P, Q, G, X] as integers (crypto key format).
     DerSig = crypto:sign(dss, sha, BaseSigInput, Key),
     #'Dss-Sig-Value'{r = R, s = S} = public_key:der_decode('Dss-Sig-Value', DerSig),
@@ -490,12 +498,7 @@ sign(Alg, BaseSigInput, Key) when Alg =:= ?DNS_ALG_DSA orelse Alg =:= ?DNS_ALG_N
     M = byte_size(binary:encode_unsigned(P)),
     T = (M - 64) div 8,
     <<T, R:20/unit:8, S:20/unit:8>>;
-sign(Alg, BaseSigInput, Key) when
-    Alg =:= ?DNS_ALG_NSEC3RSASHA1 orelse
-        Alg =:= ?DNS_ALG_RSASHA1 orelse
-        Alg =:= ?DNS_ALG_RSASHA256 orelse
-        Alg =:= ?DNS_ALG_RSASHA512
-->
+sign(Alg, BaseSigInput, Key) when ?IS_RSA_ALG(Alg) ->
     crypto:sign(
         rsa,
         none,
@@ -575,18 +578,13 @@ verify_rrsig(#dns_rr{type = ?DNS_TYPE_RRSIG, data = Data}, RRs, RRDNSKey, Opts) 
     end.
 
 -spec verify(dns:uint8(), key(), binary(), binary()) -> boolean().
-verify(Alg, Key, Signature, SigInput) when Alg =:= ?DNS_ALG_DSA orelse Alg =:= ?DNS_ALG_NSEC3DSA ->
+verify(Alg, Key, Signature, SigInput) when ?IS_DSA_ALG(Alg) ->
     <<_T, R:20/unit:8, S:20/unit:8>> = Signature,
     AsnSig = public_key:der_encode('Dss-Sig-Value', #'Dss-Sig-Value'{r = R, s = S}),
     %% DNSKEY public_key from decode is [P, Q, G, Y] as binaries; normalize to integers for crypto.
     KeyInts = dsa_pubkey_to_integers(Key),
     crypto:verify(dss, sha, SigInput, AsnSig, KeyInts);
-verify(Alg, Key, Signature, SigInput) when
-    Alg =:= ?DNS_ALG_NSEC3RSASHA1 orelse
-        Alg =:= ?DNS_ALG_RSASHA1 orelse
-        Alg =:= ?DNS_ALG_RSASHA256 orelse
-        Alg =:= ?DNS_ALG_RSASHA512
-->
+verify(Alg, Key, Signature, SigInput) when ?IS_RSA_ALG(Alg) ->
     try
         crypto:verify(
             rsa,
@@ -695,14 +693,9 @@ build_sig_input(
 
 -spec preprocess_sig_input(dns:uint8(), [binary()]) -> binary().
 %% RFC2536§3: crypto:sign/4 and crypto:verify/5 hash the data for DSA themselves
-preprocess_sig_input(Alg, SigInput) when Alg =:= ?DNS_ALG_DSA orelse Alg =:= ?DNS_ALG_NSEC3DSA ->
+preprocess_sig_input(Alg, SigInput) when ?IS_DSA_ALG(Alg) ->
     iolist_to_binary(SigInput);
-preprocess_sig_input(Alg, SigInput) when
-    Alg =:= ?DNS_ALG_NSEC3RSASHA1 orelse
-        Alg =:= ?DNS_ALG_RSASHA1 orelse
-        Alg =:= ?DNS_ALG_RSASHA256 orelse
-        Alg =:= ?DNS_ALG_RSASHA512
-->
+preprocess_sig_input(Alg, SigInput) when ?IS_RSA_ALG(Alg) ->
     {Prefix, HashType} = choose_sha_prefix_and_type(Alg),
     Hash = crypto:hash(HashType, SigInput),
     <<Prefix/binary, Hash/binary>>;
