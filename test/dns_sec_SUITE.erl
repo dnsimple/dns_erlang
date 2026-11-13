@@ -51,6 +51,10 @@ groups() ->
             verify_with_list_key_raises,
             sign_with_integer_key_raises,
             verify_rrsig_expiry,
+            verify_needs_zone_key,
+            verify_needs_dnskey_of_rrsig_class,
+            verify_needs_rrsig_key_tag,
+            verify_signer_names_key_as_name,
             sign_rr_and_rrset_5arg,
             sign_leaves_rrsigs_unsigned,
             sign_rrset_rejects_records_of_other_rrsets,
@@ -832,6 +836,15 @@ verify_unimplemented_algorithm(_Config) ->
     },
     [
         begin
+            DNSKey = #dns_rr{
+                name = ~"example.test",
+                type = ?DNS_TYPE_DNSKEY,
+                ttl = 3600,
+                data = #dns_rrdata_dnskey{
+                    flags = 256, protocol = 3, alg = Alg, public_key = <<4, 5, 6>>, keytag = 1
+                }
+            },
+            %% Naming the DNSKEY's key tag, so that the DNSKEY is tried
             RRSig = #dns_rr{
                 name = ~"a.example.test",
                 type = ?DNS_TYPE_RRSIG,
@@ -843,17 +856,9 @@ verify_unimplemented_algorithm(_Config) ->
                     original_ttl = 3600,
                     inception = 1790812800,
                     expiration = 1793491200,
-                    keytag = 1,
+                    keytag = key_tag_of(DNSKey),
                     signers_name = ~"example.test",
                     signature = <<1, 2, 3>>
-                }
-            },
-            DNSKey = #dns_rr{
-                name = ~"example.test",
-                type = ?DNS_TYPE_DNSKEY,
-                ttl = 3600,
-                data = #dns_rrdata_dnskey{
-                    flags = 256, protocol = 3, alg = Alg, public_key = <<4, 5, 6>>, keytag = 1
                 }
             },
             Opts = #{now => 1790812801},
@@ -969,18 +974,6 @@ ecdsa_p256_wire_format_test(_Config) ->
         ttl = 3600,
         data = #dns_rrdata_a{ip = {1, 2, 3, 4}}
     },
-    RRSig = dns_sec:sign_rrset(
-        [RR],
-        ~"example",
-        12345,
-        ?DNS_ALG_ECDSAP256SHA256,
-        Priv,
-        #{inception => 1000000, expiration => 2000000}
-    ),
-    #dns_rr{data = #dns_rrdata_rrsig{signature = Sig}} = RRSig,
-    %% The signature MUST be exactly 64 bytes per RFC 6605
-    ?assertEqual(64, byte_size(Sig)),
-    %% Verify round-trip: the wire-format signature must verify correctly
     DNSKey = dns_sec:add_keytag_to_dnskey(#dns_rr{
         name = ~"example",
         type = ?DNS_TYPE_DNSKEY,
@@ -993,6 +986,18 @@ ecdsa_p256_wire_format_test(_Config) ->
             public_key = PubRaw
         }
     }),
+    RRSig = dns_sec:sign_rrset(
+        [RR],
+        ~"example",
+        key_tag_of(DNSKey),
+        ?DNS_ALG_ECDSAP256SHA256,
+        Priv,
+        #{inception => 1000000, expiration => 2000000}
+    ),
+    #dns_rr{data = #dns_rrdata_rrsig{signature = Sig}} = RRSig,
+    %% The signature MUST be exactly 64 bytes per RFC 6605
+    ?assertEqual(64, byte_size(Sig)),
+    %% Verify round-trip: the wire-format signature must verify correctly
     ?assert(dns_sec:verify_rrsig(RRSig, [RR], [DNSKey], #{now => 1500000})).
 
 %% RFC 6605 §4: ECDSA P-384 signatures must be exactly 96 bytes (r || s, 48+48).
@@ -1006,18 +1011,6 @@ ecdsa_p384_wire_format_test(_Config) ->
         ttl = 3600,
         data = #dns_rrdata_a{ip = {1, 2, 3, 4}}
     },
-    RRSig = dns_sec:sign_rrset(
-        [RR],
-        ~"example",
-        12345,
-        ?DNS_ALG_ECDSAP384SHA384,
-        Priv,
-        #{inception => 1000000, expiration => 2000000}
-    ),
-    #dns_rr{data = #dns_rrdata_rrsig{signature = Sig}} = RRSig,
-    %% The signature MUST be exactly 96 bytes per RFC 6605
-    ?assertEqual(96, byte_size(Sig)),
-    %% Verify round-trip
     DNSKey = dns_sec:add_keytag_to_dnskey(#dns_rr{
         name = ~"example",
         type = ?DNS_TYPE_DNSKEY,
@@ -1030,39 +1023,24 @@ ecdsa_p384_wire_format_test(_Config) ->
             public_key = PubRaw
         }
     }),
+    RRSig = dns_sec:sign_rrset(
+        [RR],
+        ~"example",
+        key_tag_of(DNSKey),
+        ?DNS_ALG_ECDSAP384SHA384,
+        Priv,
+        #{inception => 1000000, expiration => 2000000}
+    ),
+    #dns_rr{data = #dns_rrdata_rrsig{signature = Sig}} = RRSig,
+    %% The signature MUST be exactly 96 bytes per RFC 6605
+    ?assertEqual(96, byte_size(Sig)),
+    %% Verify round-trip
     ?assert(dns_sec:verify_rrsig(RRSig, [RR], [DNSKey], #{now => 1500000})).
 
 %% RFC6605§6: the RFC's RRSIGs verify, and what its private keys sign verifies
 %% with its DNSKEYs. Signing and verifying hashed the signed data twice, so they
 %% agreed with each other and with no other implementation.
 ecdsa_rfc6605_examples(_Config) ->
-    Examples = [
-        {?DNS_ALG_ECDSAP256SHA256, ~"GU6SnQ/Ou+xC5RumuIUIuJZteXT2z0O/ok1s38Et6mQ=",
-            ~"""
-        example.net. 3600 IN DNSKEY 257 3 13 (
-            GojIhhXUN/u4v54ZQqGSnyhWJwaubCvTmeexv7bR6edb
-            krSqQpF64cYbcB7wNcP+e+MAnLr+Wi9xMWyQLc8NAA== )
-        www.example.net. 3600 IN A 192.0.2.1
-        www.example.net. 3600 IN RRSIG A 13 3 3600 (
-            20100909100439 20100812100439 55648 example.net.
-            qx6wLYqmh+l9oCKTN6qIc+bw6ya+KJ8oMz0YP107epXA
-            yGmt+3SNruPFKG7tZoLBLlUzGGus7ZwmwWep666VCw== )
-        """},
-        {?DNS_ALG_ECDSAP384SHA384,
-            ~"WURgWHCcYIYUPWgeLmiPY2DJJk02vgrmTfitxgqcL4vwW7BOrbawVmVe0d9V94SR",
-            ~"""
-        example.net. 3600 IN DNSKEY 257 3 14 (
-            xKYaNhWdGOfJ+nPrL8/arkwf2EY3MDJ+SErKivBVSum1
-            w/egsXvSADtNJhyem5RCOpgQ6K8X1DRSEkrbYQ+OB+v8
-            /uX45NBwY8rp65F6Glur8I/mlVNgF6W/qTI37m40 )
-        www.example.net. 3600 IN A 192.0.2.1
-        www.example.net. 3600 IN RRSIG A 14 3 3600 (
-            20100909102025 20100812102025 10771 example.net.
-            /L5hDKIvGDyI1fcARX3z65qrmPsVz73QD1Mr5CEqOiLP
-            95hxQouuroGCeZOvzFaxsT8Glr74hbavRKayJNuydCuz
-            WTSSPdz7wnqXL5bdcJzusdnI0RSMROxxwGipWcJm )
-        """}
-    ],
     [
         begin
             {ok, RRs} = dns_zone:parse_string(Zone),
@@ -1089,8 +1067,173 @@ ecdsa_rfc6605_examples(_Config) ->
             ),
             ?assert(dns_sec:verify_rrsig(Signed, [A], [DNSKey], Opts))
         end
-     || {Alg, PrivateKey, Zone} <- Examples
+     || {Alg, PrivateKey, Zone} <- rfc6605_examples()
     ].
+
+rfc6605_examples() ->
+    [
+        {?DNS_ALG_ECDSAP256SHA256, ~"GU6SnQ/Ou+xC5RumuIUIuJZteXT2z0O/ok1s38Et6mQ=",
+            ~"""
+        example.net. 3600 IN DNSKEY 257 3 13 (
+            GojIhhXUN/u4v54ZQqGSnyhWJwaubCvTmeexv7bR6edb
+            krSqQpF64cYbcB7wNcP+e+MAnLr+Wi9xMWyQLc8NAA== )
+        www.example.net. 3600 IN A 192.0.2.1
+        www.example.net. 3600 IN RRSIG A 13 3 3600 (
+            20100909100439 20100812100439 55648 example.net.
+            qx6wLYqmh+l9oCKTN6qIc+bw6ya+KJ8oMz0YP107epXA
+            yGmt+3SNruPFKG7tZoLBLlUzGGus7ZwmwWep666VCw== )
+        """},
+        {?DNS_ALG_ECDSAP384SHA384,
+            ~"WURgWHCcYIYUPWgeLmiPY2DJJk02vgrmTfitxgqcL4vwW7BOrbawVmVe0d9V94SR",
+            ~"""
+        example.net. 3600 IN DNSKEY 257 3 14 (
+            xKYaNhWdGOfJ+nPrL8/arkwf2EY3MDJ+SErKivBVSum1
+            w/egsXvSADtNJhyem5RCOpgQ6K8X1DRSEkrbYQ+OB+v8
+            /uX45NBwY8rp65F6Glur8I/mlVNgF6W/qTI37m40 )
+        www.example.net. 3600 IN A 192.0.2.1
+        www.example.net. 3600 IN RRSIG A 14 3 3600 (
+            20100909102025 20100812102025 10771 example.net.
+            /L5hDKIvGDyI1fcARX3z65qrmPsVz73QD1Mr5CEqOiLP
+            95hxQouuroGCeZOvzFaxsT8Glr74hbavRKayJNuydCuz
+            WTSSPdz7wnqXL5bdcJzusdnI0RSMROxxwGipWcJm )
+        """}
+    ].
+
+%% RFC6605§6.1's DNSKEY, a KSK, its A RRset, and its RRSIG over the A RRset, which verifies at
+%% the time returned
+rfc6605_p256_example() ->
+    [{?DNS_ALG_ECDSAP256SHA256, _, Zone} | _] = rfc6605_examples(),
+    {ok, RRs} = dns_zone:parse_string(Zone),
+    [DNSKey] = [RR || #dns_rr{type = ?DNS_TYPE_DNSKEY} = RR <- RRs],
+    [#dns_rr{data = #dns_rrdata_rrsig{inception = Now}} = RRSig] =
+        [RR || #dns_rr{type = ?DNS_TYPE_RRSIG} = RR <- RRs],
+    RRSet = [RR || #dns_rr{type = ?DNS_TYPE_A} = RR <- RRs],
+    ?assert(dns_sec:verify_rrsig(RRSig, RRSet, [DNSKey], #{now => Now})),
+    {DNSKey, RRSig, RRSet, #{now => Now}}.
+
+%% RFC8080§6's first example, with erratum 4935's RRSIG: an Ed25519 KSK, its private key, its MX
+%% RRset, and its RRSIG over the MX RRset. Ed25519 signatures are deterministic, so what this
+%% key signs is byte for byte what the RFC has.
+rfc8080_example() ->
+    {ok, RRs} = dns_zone:parse_string(
+        ~"""
+        example.com. 3600 IN DNSKEY 257 3 15 (
+            l02Woi0iS8Aa25FQkUd9RMzZHJpBoRQwAQEX1SxZJA4= )
+        example.com. 3600 IN MX 10 mail.example.com.
+        example.com. 3600 IN RRSIG MX 15 2 3600 (
+            1440021600 1438207200 3613 example.com.
+            oL9krJun7xfBOIWcGHi7mag5/hdZrKWw15jPGrHpjQeRAvTdszaPD+QLs3f
+            x8A4M3e23mRZ9VrbpMngwcrqNAg== )
+        """
+    ),
+    [DNSKey] = [RR || #dns_rr{type = ?DNS_TYPE_DNSKEY} = RR <- RRs],
+    [RRSig] = [RR || #dns_rr{type = ?DNS_TYPE_RRSIG} = RR <- RRs],
+    RRSet = [RR || #dns_rr{type = ?DNS_TYPE_MX} = RR <- RRs],
+    PrivateKey = base64:decode(~"ODIyNjAzODQ2MjgwODAxMjI2NDUxOTAyMDQxNDIyNjI="),
+    {PrivateKey, DNSKey, RRSig, RRSet}.
+
+%% RFC4034§2.1.1: a DNSKEY without the Zone Key flag, bit 7, "MUST NOT be used to verify RRSIGs",
+%% and the SEP flag, bit 15, makes no difference. The flags are in the RDATA the key tag is
+%% computed from, so each RRSIG is signed naming the DNSKEY it is checked with, with RFC8080§6's
+%% key, and only the flags differ. Naming the RFC's own DNSKEY, the signature is the RFC's.
+verify_needs_zone_key(_Config) ->
+    {PrivateKey, #dns_rr{data = KeyData} = DNSKey, RRSig, RRSet} = rfc8080_example(),
+    #dns_rr{
+        data = #dns_rrdata_rrsig{
+            signers_name = Signer,
+            inception = Inception,
+            expiration = Expiration,
+            signature = Signature
+        }
+    } = RRSig,
+    Sign = fun(Key) ->
+        Opts = #{inception => Inception, expiration => Expiration},
+        dns_sec:sign_rrset(RRSet, Signer, key_tag_of(Key), ?DNS_ALG_ED25519, PrivateKey, Opts)
+    end,
+    ?assertMatch(#dns_rr{data = #dns_rrdata_rrsig{signature = Signature}}, Sign(DNSKey)),
+    Verify = fun(Flags) ->
+        Key = DNSKey#dns_rr{data = KeyData#dns_rrdata_dnskey{flags = Flags}},
+        dns_sec:verify_rrsig(Sign(Key), RRSet, [Key], #{now => Inception})
+    end,
+    ?assert(Verify(257)),
+    ?assert(Verify(256)),
+    ?assertNot(Verify(1)),
+    ?assertNot(Verify(0)).
+
+%% RFC4035§5.3.1: the DNSKEY is in the zone's apex DNSKEY RRset, so it is of the RRSIG's class.
+%% RFC6605§6.1's IN RRSIG verifies with its DNSKEY only in IN. RFC8080§6's key, signing the MX
+%% RRset in CH, makes a CH RRSIG, which verifies with its DNSKEY only in CH.
+verify_needs_dnskey_of_rrsig_class(_Config) ->
+    {DNSKey, RRSig, RRSet, Opts} = rfc6605_p256_example(),
+    [
+        ?assertNot(
+            dns_sec:verify_rrsig(RRSig, RRSet, [DNSKey#dns_rr{class = Class}], Opts), Class
+        )
+     || Class <- [?DNS_CLASS_CH, ?DNS_CLASS_HS, ?DNS_CLASS_NONE, ?DNS_CLASS_ANY]
+    ],
+    {PrivateKey, Ed25519Key, #dns_rr{data = SigData}, MX} = rfc8080_example(),
+    #dns_rrdata_rrsig{signers_name = Signer, inception = Inception, expiration = Expiration} =
+        SigData,
+    ChMX = [RR#dns_rr{class = ?DNS_CLASS_CH} || RR <- MX],
+    ChSig = dns_sec:sign_rrset(
+        ChMX,
+        Signer,
+        key_tag_of(Ed25519Key),
+        ?DNS_ALG_ED25519,
+        PrivateKey,
+        #{inception => Inception, expiration => Expiration}
+    ),
+    ?assertMatch(#dns_rr{class = ?DNS_CLASS_CH}, ChSig),
+    Verify = fun(Class) ->
+        Key = Ed25519Key#dns_rr{class = Class},
+        dns_sec:verify_rrsig(ChSig, ChMX, [Key], #{now => Inception})
+    end,
+    ?assert(Verify(?DNS_CLASS_CH)),
+    ?assertNot(Verify(?DNS_CLASS_IN)).
+
+%% RFC4035§5.3.1: an RRSIG verifies only with the DNSKEYs its signer, algorithm and key tag name.
+%% RFC6605§6.1's KSK published as a ZSK as well has another key tag, so it does not verify the
+%% KSK's RRSIG. The key tag comes from the RDATA (RFC4034 Appendix B), whatever the keytag field
+%% holds.
+verify_needs_rrsig_key_tag(_Config) ->
+    {#dns_rr{data = KeyData} = KSK, RRSig, RRSet, Opts} = rfc6605_p256_example(),
+    #dns_rr{data = #dns_rrdata_rrsig{keytag = KSKTag}} = RRSig,
+    ZSK = dns_sec:add_keytag_to_dnskey(KSK#dns_rr{data = KeyData#dns_rrdata_dnskey{flags = 256}}),
+    ZSKTag = key_tag_of(ZSK),
+    ?assertEqual(55648, KSKTag),
+    ?assertNotEqual(KSKTag, ZSKTag),
+    ?assert(dns_sec:verify_rrsig(RRSig, RRSet, [ZSK, KSK], Opts)),
+    ?assertNot(dns_sec:verify_rrsig(RRSig, RRSet, [ZSK], Opts)),
+    Retag = fun(#dns_rr{data = Data} = DNSKey, Tag) ->
+        DNSKey#dns_rr{data = Data#dns_rrdata_dnskey{keytag = Tag}}
+    end,
+    ?assert(dns_sec:verify_rrsig(RRSig, RRSet, [Retag(KSK, ZSKTag)], Opts)),
+    ?assertNot(dns_sec:verify_rrsig(RRSig, RRSet, [Retag(ZSK, KSKTag)], Opts)).
+
+%% RFC4034§6.2: the signer's name names the DNSKEY's owner whatever its case, and with or without
+%% a final dot, as a zone file's names have it and the wire's do not. The signer's name is signed
+%% in canonical form, so RFC6605§6.1's signature verifies however it is written. A DNSKEY whose
+%% owner is no name is not the signer's and raises nothing.
+verify_signer_names_key_as_name(_Config) ->
+    {DNSKey, #dns_rr{data = SigData} = RRSig, RRSet, Opts} = rfc6605_p256_example(),
+    Signer = fun(Name) -> RRSig#dns_rr{data = SigData#dns_rrdata_rrsig{signers_name = Name}} end,
+    Owner = fun(Name) -> DNSKey#dns_rr{name = Name} end,
+    [
+        ?assert(dns_sec:verify_rrsig(Signer(Name), RRSet, [DNSKey], Opts), Name)
+     || Name <- [~"example.net", ~"Example.NET", ~"EXAMPLE.NET."]
+    ],
+    [
+        ?assert(dns_sec:verify_rrsig(RRSig, RRSet, [Owner(Name)], Opts), Name)
+     || Name <- [~"example.net", ~"Example.NET", ~"EXAMPLE.NET."]
+    ],
+    LongLabel = binary:copy(~"a", 64),
+    LongName = binary:copy(<<(binary:copy(~"a", 63))/binary, ".">>, 4),
+    NoNames = [~"example..net", ~"example.net..", <<LongLabel/binary, ".example.net">>, LongName],
+    [
+        ?assertNot(dns_sec:verify_rrsig(RRSig, RRSet, [Owner(Name)], Opts), Name)
+     || Name <- [~"example.org.", ~"www.example.net.", ~"net." | NoNames]
+    ],
+    ?assert(dns_sec:verify_rrsig(RRSig, RRSet, [Owner(Name) || Name <- NoNames] ++ [DNSKey], Opts)).
 
 zone(Config) ->
     Samples = proplists:get_value(dnssec_samples, Config),
@@ -1506,7 +1649,8 @@ zone_text_dnskey(DNSKey) ->
 %% RFC3110§2: an exponent length of 1 to 255 takes one octet, and "leading zero
 %% octets are prohibited in the exponent and modulus". A key that breaks either
 %% rule holds the numbers of a key that verifies BIND's signatures, but
-%% verify_rrsig/4 verifies nothing with it. Nor with a key shorter than its
+%% verify_rrsig/4 verifies nothing with it, even signed again naming its key tag.
+%% Nor with a key shorter than its
 %% algorithm allows: RFC5702§2 has RSA/SHA-512 keys of 1024 bits or more.
 rsa_key_rfc3110_rules_out_verifies_nothing(Config) ->
     RsaAlgs = [
@@ -1518,8 +1662,9 @@ rsa_key_rfc3110_rules_out_verifies_nothing(Config) ->
             #dns_rr{data = #dns_rrdata_dnskey{public_key = <<Len, E:Len/binary, N/binary>> = Key}} =
                 DNSKey,
             ?assert(verify_with_key(Case, Key)),
+            ?assert(verify_resigned_with_key(Config, Case, Key)),
             [
-                ?assertNot(verify_with_key(Case, Bytes), Rule)
+                ?assertNot(verify_resigned_with_key(Config, Case, Bytes), Rule)
              || {Rule, Bytes} <- [
                     {zero_before_modulus, <<Len, E/binary, 0, N/binary>>},
                     {zero_before_exponent, <<(Len + 1), 0, E/binary, N/binary>>},
@@ -1537,13 +1682,18 @@ rsa_key_rfc3110_rules_out_verifies_nothing(Config) ->
         data = #dns_rrdata_a{ip = {192, 0, 2, 1}}
     },
     SignAndVerify = fun(Alg) ->
-        RRSig = dns_sec:sign_rrset(
-            [RR], ~"example", 0, Alg, [E, N, D], #{inception => 1000000, expiration => 2000000}
-        ),
         Data = #dns_rrdata_dnskey{
             flags = 256, protocol = 3, alg = Alg, public_key = <<3, E/binary, N/binary>>
         },
         DNSKey = #dns_rr{name = ~"example", type = ?DNS_TYPE_DNSKEY, ttl = 3600, data = Data},
+        RRSig = dns_sec:sign_rrset(
+            [RR],
+            ~"example",
+            key_tag_of(DNSKey),
+            Alg,
+            [E, N, D],
+            #{inception => 1000000, expiration => 2000000}
+        ),
         dns_sec:verify_rrsig(RRSig, [RR], [DNSKey], #{now => 1500000})
     end,
     ?assert(SignAndVerify(?DNS_ALG_RSASHA256)),
@@ -1552,7 +1702,8 @@ rsa_key_rfc3110_rules_out_verifies_nothing(Config) ->
 %% RFC2536§2: P is "in the range 2**(511+64T) < P < 2**(512+64T) and so is
 %% 64 + 8*T octets long", so a DSA DNSKEY whose T is wider than its P needs is no
 %% RFC 2536 key. Written with the next T, eight more zero octets in front of each
-%% of P, G and Y, a key that verifies BIND's signatures verifies nothing.
+%% of P, G and Y, a key that verifies BIND's signatures verifies nothing, even
+%% signed again naming its key tag.
 dsa_key_with_wide_t_verifies_nothing(Config) ->
     DsaAlgs = [?DNS_ALG_DSA, ?DNS_ALG_NSEC3DSA],
     Cases = signed_by_sample_key(Config, DsaAlgs, fun(<<T, _/binary>>) -> T < 8 end),
@@ -1564,14 +1715,16 @@ dsa_key_with_wide_t_verifies_nothing(Config) ->
             <<P:S/binary, G:S/binary, Y:S/binary>> = PGY,
             Wide = <<(T + 1), Q/binary, 0:64, P/binary, 0:64, G/binary, 0:64, Y/binary>>,
             ?assert(verify_with_key(Case, Key)),
-            ?assertNot(verify_with_key(Case, Wide))
+            ?assert(verify_resigned_with_key(Config, Case, Key)),
+            ?assertNot(verify_resigned_with_key(Config, Case, Wide))
         end
      || {_, _, DNSKey, _} = Case <- Cases
     ].
 
-%% A DNSKEY whose key is not a binary, as an RSA key's [E, M] was before 6.0.0,
-%% raises {badarg, public_key_not_binary}, where it would quietly verify nothing,
-%% whether another DNSKEY verifies the RRSIG or not
+%% A DNSKEY of the RRSIG's algorithm and signer whose key is not a binary, as an
+%% RSA key's [E, M] was before 6.0.0, raises {badarg, public_key_not_binary},
+%% where it would quietly verify nothing: whether another DNSKEY verifies the
+%% RRSIG or not, and whatever its class and flags, which would leave it out
 verify_with_list_key_raises(Config) ->
     [{_, _, DNSKey, _} = Case] =
         signed_by_sample_key(Config, [?DNS_ALG_RSASHA256], fun(_) -> true end),
@@ -1579,14 +1732,20 @@ verify_with_list_key_raises(Config) ->
     ?assertError({badarg, public_key_not_binary}, verify_with_key(Case, [E, N])),
     Int = fun binary:decode_unsigned/1,
     ?assertError({badarg, public_key_not_binary}, verify_with_key(Case, [Int(E), Int(N)])),
-    %% The DNSKEY that verifies is tried first, as its key tag is the RRSIG's
     {RRSig, RRSet, #dns_rr{data = Data}, Opts} = Case,
     ListKey = DNSKey#dns_rr{data = Data#dns_rrdata_dnskey{public_key = [E, N]}},
     ?assert(dns_sec:verify_rrsig(RRSig, RRSet, [DNSKey], Opts)),
-    ?assertError(
-        {badarg, public_key_not_binary},
-        dns_sec:verify_rrsig(RRSig, RRSet, [DNSKey, ListKey], Opts)
-    ).
+    [
+        ?assertError(
+            {badarg, public_key_not_binary},
+            dns_sec:verify_rrsig(RRSig, RRSet, [DNSKey, Key], Opts)
+        )
+     || Key <- [
+            ListKey,
+            ListKey#dns_rr{class = ?DNS_CLASS_CH},
+            ListKey#dns_rr{data = Data#dns_rrdata_dnskey{flags = 0, public_key = [E, N]}}
+        ]
+    ].
 
 %% A private key's numbers are their big-endian bytes. Given as integers, which
 %% crypto would take, converting them on every signature, an RSA or DSA key
@@ -1647,10 +1806,45 @@ signed_by_sample_key(Config, Algs, Filter) ->
      || Alg <- Algs
     ].
 
-%% Whether a case of signed_by_sample_key/3 verifies with Key as its DNSKEY's key
+%% Whether a case of signed_by_sample_key/3 verifies with Key as its DNSKEY's key. BIND's RRSIG
+%% names the key tag of its DNSKEY, so a key of other bytes, whose key tag differs, would verify
+%% nothing whatever its bytes: that takes verify_resigned_with_key/3
 verify_with_key({RRSig, RRSet, #dns_rr{data = Data} = DNSKey, Opts}, Key) ->
     WithKey = DNSKey#dns_rr{data = Data#dns_rrdata_dnskey{public_key = Key}},
+    #dns_rr{data = #dns_rrdata_rrsig{keytag = KeyTag}} = RRSig,
+    is_binary(Key) andalso ?assertEqual(KeyTag, key_tag_of(WithKey)),
     dns_sec:verify_rrsig(RRSig, RRSet, [WithKey], Opts).
+
+%% Whether a case of signed_by_sample_key/3 verifies with Key as its DNSKEY's key, its RRset
+%% signed again with the sample's private key, naming the key tag of the DNSKEY with Key, so
+%% that only Key decides
+verify_resigned_with_key(Config, {RRSig, RRSet, #dns_rr{data = Data} = DNSKey, Opts}, Key) ->
+    WithKey = DNSKey#dns_rr{data = Data#dns_rrdata_dnskey{public_key = Key}},
+    #dns_rr{
+        data = #dns_rrdata_rrsig{
+            alg = Alg, signers_name = Signer, inception = Inception, expiration = Expiration
+        }
+    } = RRSig,
+    Resigned = dns_sec:sign_rrset(
+        RRSet,
+        Signer,
+        key_tag_of(WithKey),
+        Alg,
+        sample_private_key(Config, DNSKey),
+        #{inception => Inception, expiration => Expiration}
+    ),
+    dns_sec:verify_rrsig(Resigned, RRSet, [WithKey], Opts).
+
+%% The private key of a sample zone's DNSKEY
+sample_private_key(Config, #dns_rr{data = #dns_rrdata_dnskey{public_key = Key}}) ->
+    Samples = proplists:get_value(dnssec_samples, Config),
+    [PrivateKey | _] = [
+        helper_samplekeypl_to_privkey(Props)
+     || #dnssec_test_sample{zsk_pl = ZSK, ksk_pl = KSK} <- Samples,
+        Props <- [ZSK, KSK],
+        sample_dnskey_public_key(Props) =:= Key
+    ],
+    PrivateKey.
 
 sample_keys(Config) ->
     Keys = lists:foldl(
@@ -1798,14 +1992,6 @@ ed25519_basic_test(_Config) ->
         ttl = 3600,
         data = #dns_rrdata_a{ip = {1, 2, 3, 4}}
     },
-    Ed25519Sig = dns_sec:sign_rrset(
-        [Ed25519RR],
-        ~"example",
-        12345,
-        ?DNS_ALG_ED25519,
-        Ed25519Priv,
-        #{inception => 1000000, expiration => 2000000}
-    ),
     Ed25519DNSKey = #dns_rr{
         name = ~"example",
         type = ?DNS_TYPE_DNSKEY,
@@ -1819,6 +2005,14 @@ ed25519_basic_test(_Config) ->
         }
     },
     Ed25519DNSKeyWithTag = dns_sec:add_keytag_to_dnskey(Ed25519DNSKey),
+    Ed25519Sig = dns_sec:sign_rrset(
+        [Ed25519RR],
+        ~"example",
+        key_tag_of(Ed25519DNSKey),
+        ?DNS_ALG_ED25519,
+        Ed25519Priv,
+        #{inception => 1000000, expiration => 2000000}
+    ),
     ?assert(
         dns_sec:verify_rrsig(
             Ed25519Sig,
@@ -1837,14 +2031,6 @@ ed448_basic_test(_Config) ->
         ttl = 3600,
         data = #dns_rrdata_a{ip = {1, 2, 3, 4}}
     },
-    Ed448Sig = dns_sec:sign_rrset(
-        [Ed448RR],
-        ~"example",
-        12346,
-        ?DNS_ALG_ED448,
-        Ed448Priv,
-        #{inception => 1000000, expiration => 2000000}
-    ),
     Ed448DNSKey = #dns_rr{
         name = ~"example",
         type = ?DNS_TYPE_DNSKEY,
@@ -1858,6 +2044,14 @@ ed448_basic_test(_Config) ->
         }
     },
     Ed448DNSKeyWithTag = dns_sec:add_keytag_to_dnskey(Ed448DNSKey),
+    Ed448Sig = dns_sec:sign_rrset(
+        [Ed448RR],
+        ~"example",
+        key_tag_of(Ed448DNSKey),
+        ?DNS_ALG_ED448,
+        Ed448Priv,
+        #{inception => 1000000, expiration => 2000000}
+    ),
     ?assert(
         dns_sec:verify_rrsig(
             Ed448Sig,
@@ -1949,7 +2143,8 @@ mldsa44_expanded_key(_Config) ->
             no_mldsa44()
     end.
 
-%% Wrong-size or random keys and signatures never verify
+%% Wrong-size or random keys and signatures never verify, and raise nothing. Each key's RRSIG
+%% names its key tag, so that the key is tried
 mldsa44_malformed_does_not_verify(_Config) ->
     {#dns_rr{data = KeyData} = DNSKey, #dns_rr{data = SigData} = RRSig, MX} =
         mldsa44_draft_records(),
@@ -1963,15 +2158,11 @@ mldsa44_malformed_does_not_verify(_Config) ->
     Signatures = [Resize(Signature, Size) || Size <- [0, 2419, 2421]],
     Opts = #{now => Inception},
     [
-        ?assertNot(
-            dns_sec:verify_rrsig(
-                RRSig,
-                [MX],
-                [DNSKey#dns_rr{data = KeyData#dns_rrdata_dnskey{public_key = K}}],
-                Opts
-            ),
-            byte_size(K)
-        )
+        begin
+            WithKey = DNSKey#dns_rr{data = KeyData#dns_rrdata_dnskey{public_key = K}},
+            Named = RRSig#dns_rr{data = SigData#dns_rrdata_rrsig{keytag = key_tag_of(WithKey)}},
+            ?assertNot(dns_sec:verify_rrsig(Named, [MX], [WithKey], Opts), byte_size(K))
+        end
      || K <- [crypto:strong_rand_bytes(1312) | Keys]
     ],
     [
@@ -2242,6 +2433,11 @@ sample_dnskey_public_key(Props) ->
 helper_add_keytag_to_dnskey(#dns_rrdata_dnskey{} = DNSKey) ->
     RR = #dns_rr{type = ?DNS_TYPE_DNSKEY, data = DNSKey},
     (dns_sec:add_keytag_to_dnskey(RR))#dns_rr.data.
+
+%% The key tag of a DNSKEY, which an RRSIG must name for the DNSKEY to verify it
+key_tag_of(#dns_rr{} = DNSKey) ->
+    #dns_rr{data = #dns_rrdata_dnskey{keytag = KeyTag}} = dns_sec:add_keytag_to_dnskey(DNSKey),
+    KeyTag.
 
 helper_fmt(Fmt, Args) ->
     iolist_to_binary(io_lib:format(Fmt, Args)).

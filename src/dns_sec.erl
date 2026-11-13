@@ -125,6 +125,9 @@ DNSKEY carries is its RDATA's key field, which `dnskey_public_key/2` makes.
 -doc "Options for `verify_rrsig/4`.".
 -type verify_rrsig_opts() :: #{now => dns:unix_time()}.
 
+%% RFC4034§2.1.1: bit 7 of a DNSKEY's flags, set on a zone key
+-define(DNSKEY_FLAG_ZONE, 16#0100).
+
 -define(RSASHA1_PREFIX,
     <<16#30, 16#21, 16#30, 16#09, 16#06, 16#05, 16#2B, 16#0E, 16#03, 16#02, 16#1A, 16#05, 16#00,
         16#04, 16#14>>
@@ -532,14 +535,18 @@ sign(Alg, _BaseSigInput, _Key) ->
 -doc """
 Provides primitive verification of an RR set.
 
-Returns `false` when no DNSKEY of the RRSIG's algorithm and signer verifies it, when the time is
-outside the RRSIG's validity period, and when its algorithm is one this module does not implement.
-Raises `{badarg, public_key_not_binary}` when a DNSKEY of the RRSIG's algorithm and signer has a
-key that is not a binary, as RSA and DSA keys were before 6.0.0, whether another one verifies it
-or not.
+Only the DNSKEYs the RRSIG names verify it (RFC 4035 §5.3.1): zone keys, with the Zone Key flag
+set (RFC 4034 §2.1.1), of protocol 3 and of the RRSIG's class and algorithm, owned by its signer,
+whose key tag is the RRSIG's. Names compare in any case and with or without a final dot, and a
+key tag is computed from the DNSKEY's RDATA, whatever its `keytag` field holds.
+
+Returns `false` when none of those verifies it, when the time is outside the RRSIG's validity
+period, and when its algorithm is one this module does not implement. Raises
+`{badarg, public_key_not_binary}` when a DNSKEY of the RRSIG's algorithm and signer has a key that
+is not a binary, as RSA and DSA keys were before 6.0.0, whether another one verifies it or not.
 """.
 -spec verify_rrsig(dns:rr(), [dns:rr()], [dns:rr()], verify_rrsig_opts()) -> boolean().
-verify_rrsig(#dns_rr{type = ?DNS_TYPE_RRSIG, data = Data}, RRs, RRDNSKey, Opts) ->
+verify_rrsig(#dns_rr{type = ?DNS_TYPE_RRSIG, class = Class, data = Data}, RRs, RRDNSKey, Opts) ->
     Now = maps:get(now, Opts, erlang:system_time(second)),
     #dns_rrdata_rrsig{
         original_ttl = OTTL,
@@ -550,26 +557,30 @@ verify_rrsig(#dns_rr{type = ?DNS_TYPE_RRSIG, data = Data}, RRs, RRDNSKey, Opts) 
         signers_name = SignersName,
         signature = Signature
     } = Data,
-    Keys0 = [
-        {KeyTag, Alg, dns_dnskey:public_key(PubKey)}
+    %% RFC4035§5.3.1: the RRSIG's signer, algorithm and key tag name the DNSKEY, which is a zone
+    %% key (RFC4034§2.1.1) in the zone's apex DNSKEY RRset, so of the RRSIG's class. The key tag
+    %% is the key's own, computed from its RDATA. A key of the RRSIG's algorithm and signer that
+    %% is not a binary raises before its class, flags or key tag are looked at, as documented
+    Keys = [
+        Key
      || #dns_rr{
             name = Name,
+            class = KeyClass,
             type = ?DNS_TYPE_DNSKEY,
             data = #dns_rrdata_dnskey{
+                flags = Flags,
                 protocol = 3,
                 alg = Alg,
-                keytag = KeyTag,
                 public_key = PubKey
             }
         } <- RRDNSKey,
         Alg =:= SigAlg,
-        dns_domain:are_equal(Name, SignersName)
+        is_same_name(Name, SignersName),
+        Key <- [dns_dnskey:public_key(PubKey)],
+        KeyClass =:= Class,
+        Flags band ?DNSKEY_FLAG_ZONE =/= 0,
+        dns_dnskey:key_tag(<<Flags:16, 3, Alg, Key/binary>>) =:= SigKeyTag
     ],
-    Keys =
-        case lists:keytake(SigKeyTag, 1, Keys0) of
-            false -> Keys0;
-            {value, Match, RemKeys} -> [Match | RemKeys]
-        end,
     case Now of
         Now when Now < Incept; Expire < Now -> false;
         Now ->
@@ -582,8 +593,22 @@ verify_rrsig(#dns_rr{type = ?DNS_TYPE_RRSIG, data = Data}, RRs, RRDNSKey, Opts) 
                 Expire,
                 OTTL
             ),
-            lists:any(fun({_KeyTag, Alg, Key}) -> verify(Alg, Key, Signature, SigInput) end, Keys)
+            lists:any(fun(Key) -> verify(SigAlg, Key, Signature, SigInput) end, Keys)
     end.
+
+%% Whether two names are one, in any case and with or without a final dot, as a zone file's names
+%% have it and the wire's do not. A name that is none, such as one with an empty label, is only
+%% the name written alike
+-spec is_same_name(dns:dname(), dns:dname()) -> boolean().
+is_same_name(NameA, NameB) ->
+    dns_domain:are_equal(NameA, NameB) orelse
+        try
+            canonical_owner(NameA) =:= canonical_owner(NameB)
+        catch
+            error:{invalid_dname, empty_label} -> false;
+            error:{label_too_long, _} -> false;
+            error:name_too_long -> false
+        end.
 
 %% The key is the DNSKEY's RDATA key field. RSA and DSA keys are split into the
 %% numbers crypto takes, as their big-endian bytes, and one laid out as no DNSKEY
