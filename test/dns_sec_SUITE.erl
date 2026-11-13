@@ -48,6 +48,7 @@ groups() ->
             verify_with_zone_text_dnskeys,
             rsa_key_rfc3110_rules_out_verifies_nothing,
             dsa_key_with_wide_t_verifies_nothing,
+            sign_with_integer_key_raises,
             verify_rrsig_expiry,
             sign_rr_and_rrset_5arg,
             sign_leaves_rrsigs_unsigned,
@@ -909,17 +910,21 @@ dsa_sign_verify_test(Config) ->
         ttl = 3600,
         data = #dns_rrdata_a{ip = {1, 2, 3, 4}}
     },
-    RRSig = dns_sec:sign_rrset(
-        [RR],
-        ZoneName,
-        PubKeyRR#key_info.tag,
-        PubKeyRR#key_info.alg,
-        PrivKey,
-        #{inception => 1000000, expiration => 2000000}
-    ),
+    #dns_rr{data = #dns_rrdata_rrsig{signature = Signature}} =
+        RRSig = dns_sec:sign_rrset(
+            [RR],
+            ZoneName,
+            PubKeyRR#key_info.tag,
+            PubKeyRR#key_info.alg,
+            PrivKey,
+            #{inception => 1000000, expiration => 2000000}
+        ),
     ?assert(
         dns_sec:verify_rrsig(RRSig, [RR], [DNSKeyWithTag], #{now => 1500000})
-    ).
+    ),
+    %% RFC2536§3: the signature starts with the T of the key's DNSKEY
+    #dns_rr{data = #dns_rrdata_dnskey{public_key = <<T, _/binary>>}} = DNSKeyWithTag,
+    ?assertMatch(<<T, _:40/binary>>, Signature).
 
 ecdsa_sign_verify_test(Config) ->
     Samples = proplists:get_value(dnssec_samples, Config),
@@ -1563,6 +1568,40 @@ dsa_key_with_wide_t_verifies_nothing(Config) ->
      || {_, _, DNSKey, _} = Case <- Cases
     ].
 
+%% A private key's numbers are their big-endian bytes. Given as integers, which
+%% crypto would take, converting them on every signature, an RSA or DSA key
+%% raises {badarg, number_not_bytes}
+sign_with_integer_key_raises(Config) ->
+    RR = #dns_rr{
+        name = ~"www.example",
+        type = ?DNS_TYPE_A,
+        ttl = 3600,
+        data = #dns_rrdata_a{ip = {192, 0, 2, 1}}
+    },
+    Sign = fun(Alg, Key) ->
+        dns_sec:sign_rrset(
+            [RR], ~"example", 0, Alg, Key, #{inception => 1000000, expiration => 2000000}
+        )
+    end,
+    Int = fun binary:decode_unsigned/1,
+    {_, [E, N, D | _] = Rsa} = crypto:generate_key(rsa, {1024, 65537}),
+    ?assertMatch(#dns_rr{}, Sign(?DNS_ALG_RSASHA256, Rsa)),
+    ?assertMatch(#dns_rr{}, Sign(?DNS_ALG_RSASHA256, [E, N, D])),
+    ?assertError({badarg, number_not_bytes}, Sign(?DNS_ALG_RSASHA256, [Int(E), Int(N), Int(D)])),
+    ?assertError({badarg, number_not_bytes}, Sign(?DNS_ALG_RSASHA256, [E, N, Int(D)])),
+    ?assertError(
+        {badarg, number_not_bytes},
+        dns_sec:sign_rr([RR], ~"example", 0, ?DNS_ALG_RSASHA256, [Int(E), Int(N), Int(D)], #{})
+    ),
+    Samples = proplists:get_value(dnssec_samples, Config),
+    [#dnssec_test_sample{zsk_pl = DsaProps} | _] = [
+        S
+     || #dnssec_test_sample{alg = dsa} = S <- Samples
+    ],
+    Dsa = helper_samplekeypl_to_privkey(DsaProps),
+    ?assertMatch(#dns_rr{}, Sign(?DNS_ALG_DSA, Dsa)),
+    ?assertError({badarg, number_not_bytes}, Sign(?DNS_ALG_DSA, [Int(Number) || Number <- Dsa])).
+
 %% For each of the algorithms, in order, the first RRSIG BIND made in the sample
 %% zones with it by a DNSKEY whose key passes Filter, the RRset it covers, that
 %% DNSKEY, and the time to verify at. Raises if an algorithm has none
@@ -2125,7 +2164,7 @@ helper_samplekeypl_to_privkey(DSA, Proplist) when
     Q = proplists:get_value(q, Proplist),
     G = proplists:get_value(g, Proplist),
     X = proplists:get_value(x, Proplist),
-    [I || <<L:32, I:L/unit:8>> <- [P, Q, G, X]];
+    [I || <<L:32, I:L/binary>> <- [P, Q, G, X]];
 helper_samplekeypl_to_privkey(?DNS_ALG_ECDSAP256SHA256, Proplist) ->
     proplists:get_value(private_key, Proplist);
 helper_samplekeypl_to_privkey(?DNS_ALG_ECDSAP384SHA384, Proplist) ->
@@ -2138,7 +2177,7 @@ helper_samplekeypl_to_privkey(_RSA, Proplist) ->
     E = proplists:get_value(public_exp, Proplist),
     N = proplists:get_value(modulus, Proplist),
     D = proplists:get_value(private_exp, Proplist),
-    [I || <<L:32, I:L/unit:8>> <- [E, N, D]].
+    [I || <<L:32, I:L/binary>> <- [E, N, D]].
 
 helper_samplekeypl_to_pubkey(Proplist) ->
     Alg = proplists:get_value(alg, Proplist),

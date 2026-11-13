@@ -110,7 +110,17 @@ Unlike `t:dns:alg/0`, this type is restricted to algorithms valid for zone signi
 -type gen_nsec3_opts() :: gen_nsec_opts().
 -doc "DNSKEY key tag (RFC 4034 Appendix B).".
 -type keytag() :: integer().
--doc "Cryptographic key material for signing or verification.".
+-doc """
+A private key to sign with.
+
+An RSA key is `[E, N, D]`, or the whole list `crypto:generate_key/2` gives, which
+lets crypto sign by the CRT, and a DSA key `[P, Q, G, X]`, each number as its
+big-endian bytes; a number given as an integer raises
+`{badarg, number_not_bytes}`. An ECDSA key is its private scalar, an EdDSA key its
+private key, and an ML-DSA-44 key its 32-byte seed or 2560-byte expanded key. The
+public key a DNSKEY carries is its RDATA's key field, which `dnskey_public_key/2`
+makes.
+""".
 -type key() :: [binary()] | binary().
 -doc "Options for `sign_rr/6` and `sign_rrset/6`.".
 -type sign_rr_opts() :: #{inception => dns:unix_time(), expiration => dns:unix_time()}.
@@ -485,14 +495,18 @@ is_rrsig(#dns_rr{type = Type}) -> Type =:= ?DNS_TYPE_RRSIG.
 
 -spec sign(dns:uint8(), binary(), key()) -> binary().
 sign(Alg, BaseSigInput, Key) when ?IS_DSA_ALG(Alg) ->
-    %% RFC2536: Key must be [P, Q, G, X] as integers (crypto key format).
+    %% RFC2536§3: the signature starts with the key's T, the first octet of the
+    %% key field that [P, Q, G, X] lays out as [P, Q, G, Y] does, as X < Q; laying
+    %% it out raises {badarg, Why} for a key no DNSKEY can carry, or one given as
+    %% integers
+    <<T, _/binary>> = dns_dnskey:field(Alg, Key),
     DerSig = crypto:sign(dss, sha, BaseSigInput, Key),
     #'Dss-Sig-Value'{r = R, s = S} = public_key:der_decode('Dss-Sig-Value', DerSig),
-    [P, _Q, _G, _Y] = Key,
-    M = byte_size(binary:encode_unsigned(P)),
-    T = (M - 64) div 8,
     <<T, R:20/unit:8, S:20/unit:8>>;
 sign(Alg, BaseSigInput, Key) when ?IS_RSA_ALG(Alg) ->
+    %% crypto takes integers too, converting them on every call
+    is_list(Key) andalso lists:all(fun erlang:is_binary/1, Key) orelse
+        error({badarg, number_not_bytes}),
     crypto:sign(
         rsa,
         none,
