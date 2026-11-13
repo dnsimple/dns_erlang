@@ -41,11 +41,13 @@ deterministic example but verify the same.
 -export([sign_rrset/5, sign_rrset/6]).
 -export([verify_rrsig/4]).
 -export([add_keytag_to_dnskey/1, add_keytag_to_cdnskey/1]).
+-export([dnskey_public_key/2]).
 -export([canonical_rrdata_form/1]).
 -export([ih/4]).
 
 -include_lib("dns_erlang/include/dns.hrl").
 -include_lib("public_key/include/public_key.hrl").
+-include("dns_sec_algs.hrl").
 
 -export_type([
     sigalg/0,
@@ -114,14 +116,6 @@ Unlike `t:dns:alg/0`, this type is restricted to algorithms valid for zone signi
 -type sign_rr_opts() :: #{inception => dns:unix_time(), expiration => dns:unix_time()}.
 -doc "Options for `verify_rrsig/4`.".
 -type verify_rrsig_opts() :: #{now => dns:unix_time()}.
-
-%% The DNSSEC algorithms whose DNSKEY key field RFC 2536 lays out for DSA and
-%% RFC 3110 for RSA
--define(IS_DSA_ALG(Alg), (Alg =:= ?DNS_ALG_DSA orelse Alg =:= ?DNS_ALG_NSEC3DSA)).
--define(IS_RSA_ALG(Alg),
-    (Alg =:= ?DNS_ALG_RSASHA1 orelse Alg =:= ?DNS_ALG_NSEC3RSASHA1 orelse
-        Alg =:= ?DNS_ALG_RSASHA256 orelse Alg =:= ?DNS_ALG_RSASHA512)
-).
 
 -define(RSASHA1_PREFIX,
     <<16#30, 16#21, 16#30, 16#09, 16#06, 16#05, 16#2B, 16#0E, 16#03, 16#02, 16#1A, 16#05, 16#00,
@@ -736,6 +730,38 @@ add_keytag_to_cdnskey(
     #dns_rr{type = ?DNS_TYPE_CDNSKEY, data = #dns_rrdata_cdnskey{} = Data} = RR
 ) ->
     add_keytag_to_key_rr(RR, Data, ?DNS_TYPE_CDNSKEY).
+
+-doc """
+Returns the public key field of a DNSKEY's RDATA for a public key.
+
+An RSA key `[E, N]` is laid out as RFC 3110 §2 has it, and a DSA key
+`[P, Q, G, Y]` as RFC 2536 §2 has it, each number as its big-endian bytes, as
+`crypto:generate_key/2` gives an RSA key's. An ECDSA key, the point that
+`crypto:generate_key(ecdh, Curve)` gives, loses the octet 4 in front that marks it
+uncompressed (RFC 6605 §4), and an EdDSA or ML-DSA-44 key, as
+`crypto:generate_key/2` gives it, is as it is.
+
+Raises `{unsupported_algorithm, Alg}` for an algorithm without a key layout here,
+and `{badarg, Why}` for a key the algorithm's DNSKEY cannot carry. `Why` names
+the rule the key breaks and, for RSA and DSA keys, the size in bits of the
+number that breaks it, but never one of the key's numbers:
+
+- `number_not_bytes`: an RSA or DSA key's number given as anything but its
+  bytes, such as an integer.
+- `{rsa_exponent_bits, Bits}`: an RSA exponent that is empty or over 4096 bits
+  long (RFC 3110 §2).
+- `{rsa_modulus_bits, Bits}`: an RSA modulus that is not 512 to 4096 bits long,
+  or 1024 to 4096 for RSA/SHA-512 (RFC 3110 §3, RFC 5702 §2).
+- `{dsa_q_bits, Bits}`: a DSA Q that is not 160 bits long (RFC 2536 §2).
+- `{dsa_p_bits, Bits}`: a DSA P that is not 512 + 64T bits long for a T of 0 to 8.
+- `dsa_number_longer_than_p`: a DSA G or Y longer than P.
+- `key_shape`: a key of another shape than the algorithm's: another count of
+  numbers, an ECDSA point without the octet 4 in front, or an EdDSA or ML-DSA-44
+  key of another length.
+""".
+-spec dnskey_public_key(sigalg(), [binary()] | binary()) -> binary().
+dnskey_public_key(Alg, Key) ->
+    dns_dnskey:field(Alg, Key).
 
 -spec add_keytag_to_key_rr(dns:rr(), dns:rrdata(), dns:type()) -> dns:rr().
 add_keytag_to_key_rr(RR, Data, Type) ->

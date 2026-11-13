@@ -58,6 +58,8 @@
     ~"4431" => ~"The DNSSEC Lookaside Validation (DLV) DNS Resource Record",
     ~"4648" => ~"The Base16, Base32, and Base64 Data Encodings",
     ~"5155" => ~"DNS Security (DNSSEC) Hashed Authenticated Denial of Existence",
+    ~"5702" =>
+        ~"Use of SHA-2 Algorithms with RSA in DNSKEY and RRSIG Resource Records for DNSSEC",
     ~"5933" => ~"Use of GOST Signature Algorithms in DNSKEY and RRSIG Resource Records for DNSSEC",
     ~"6605" => ~"Elliptic Curve Digital Signature Algorithm (DSA) for DNSSEC",
     ~"7344" => ~"Automating DNSSEC Delegation Trust Maintenance",

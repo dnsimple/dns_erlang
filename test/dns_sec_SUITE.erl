@@ -41,6 +41,7 @@ groups() ->
             gen_nsec_name_order,
             gen_nsec_name_order_fqdn_and_relative,
             pubkey_gen,
+            dnskey_public_key_layout,
             verify_rrset,
             verify_rrsig_expiry,
             sign_rr_and_rrset_5arg,
@@ -1222,6 +1223,119 @@ props_to_dnskey_data(_Config, Props) ->
         public_key = helper_samplekeypl_to_pubkey(Props)
     },
     helper_add_keytag_to_dnskey(Key0).
+
+%% dnskey_public_key/2 lays a key out as its DNSKEY carries it: an RSA key as
+%% RFC3110§2 has it, with no leading zeros and the exponent's length in one
+%% octet, or in three past 255 octets; a DSA key as RFC2536§2 has it, with the T
+%% its P's size gives; an ECDSA point without the octet 4 that marks it
+%% uncompressed (RFC6605§4); and an EdDSA key as it is (RFC8080§3). An RSA or DSA
+%% key's numbers are their big-endian bytes, leading zeros allowed, and one given
+%% as an integer raises {badarg, number_not_bytes}. A key the DNSKEY cannot carry
+%% raises {badarg, Why}, Why naming the rule it breaks and the size in bits of the
+%% number that breaks it: an empty RSA exponent, which would be written as the
+%% zero octet that says a two-octet length follows, an RSA modulus out of range,
+%% and a DSA key whose Q is not 160 bits long, whose P is not 512 + 64T bits long
+%% for a T of 0 to 8, or whose G or Y is longer than P. An algorithm without a
+%% key layout raises {unsupported_algorithm, Alg}
+dnskey_public_key_layout(_Config) ->
+    Rsa = fun(Key) -> dns_sec:dnskey_public_key(?DNS_ALG_RSASHA256, Key) end,
+    {[E, N], _} = crypto:generate_key(rsa, {1024, 65537}),
+    ?assertEqual(<<3, 1, 0, 1, N/binary>>, Rsa([E, N])),
+    ?assertEqual(Rsa([E, N]), Rsa([<<0, E/binary>>, <<0, 0, N/binary>>])),
+    Int = fun binary:decode_unsigned/1,
+    ?assertError({badarg, number_not_bytes}, Rsa([Int(E), Int(N)])),
+    ?assertError({badarg, number_not_bytes}, Rsa([E, Int(N)])),
+    LongE = <<1, 0:(255 * 8)>>,
+    ?assertEqual(<<0, 256:16, LongE/binary, N/binary>>, Rsa([LongE, N])),
+    %% RFC3110§2: an exponent of 255 octets still takes one length octet
+    E255 = <<1, 0:(254 * 8)>>,
+    ?assertEqual(<<255, E255/binary, N/binary>>, Rsa([E255, N])),
+    %% RFC3110§2, §3, RFC5702§2: an exponent of up to 4096 bits, and a modulus of
+    %% 512 to 4096 bits, or 1024 to 4096 for RSA/SHA-512
+    %% A number Size bits long, in whole octets
+    Bits = fun(Size) -> <<0:((8 - Size rem 8) rem 8), 1:1, 0:(Size - 1)>> end,
+    E4096 = Bits(4096),
+    ?assertEqual(<<0, 512:16, E4096/binary, N/binary>>, Rsa([E4096, N])),
+    ?assertEqual(<<3, 1, 0, 1, (Bits(512))/binary>>, Rsa([E, Bits(512)])),
+    ?assertEqual(<<3, 1, 0, 1, (Bits(4096))/binary>>, Rsa([E, Bits(4096)])),
+    ?assertEqual(
+        <<3, 1, 0, 1, (Bits(1024))/binary>>,
+        dns_sec:dnskey_public_key(?DNS_ALG_RSASHA512, [E, Bits(1024)])
+    ),
+    ?assertError(
+        {badarg, {rsa_modulus_bits, 1023}},
+        dns_sec:dnskey_public_key(?DNS_ALG_RSASHA512, [E, Bits(1023)])
+    ),
+    BadRsa = [
+        {[<<>>, N], {rsa_exponent_bits, 0}},
+        {[<<0>>, N], {rsa_exponent_bits, 0}},
+        {[0, N], number_not_bytes},
+        {[E, <<>>], {rsa_modulus_bits, 0}},
+        {[E, <<0, 0>>], {rsa_modulus_bits, 0}},
+        {[-1, N], number_not_bytes},
+        {[E, N, N], key_shape},
+        {[<<1, 0:(512 * 8)>>, N], {rsa_exponent_bits, 4097}},
+        {[E, <<1, 0:(512 * 8)>>], {rsa_modulus_bits, 4097}},
+        {[E, <<16#7F, 0:(63 * 8)>>], {rsa_modulus_bits, 511}}
+    ],
+    [?assertError({badarg, Why}, Rsa(Key), Key) || {Key, Why} <- BadRsa],
+    Dsa = fun(Key) -> dns_sec:dnskey_public_key(?DNS_ALG_DSA, Key) end,
+    Q = <<16#E2B4F7B1A4D6E39F7C5A0C0D7B4E3A9C1B2D3E4F:160>>,
+    P = <<16#80, 0:(63 * 8)>>,
+    ?assertEqual(
+        <<0, Q/binary, P/binary, 0:(63 * 8), 2, 0:(63 * 8), 3>>, Dsa([P, Q, <<2>>, <<3>>])
+    ),
+    ?assertEqual(
+        Dsa([P, Q, <<2>>, <<3>>]), Dsa([<<0, P/binary>>, <<0, Q/binary>>, <<0, 2>>, <<0, 3>>])
+    ),
+    ?assertError({badarg, number_not_bytes}, Dsa([Int(P), Int(Q), 2, 3])),
+    ?assertError({badarg, number_not_bytes}, Dsa([P, Q, <<2>>, 3])),
+    P1024 = <<16#80, 0:(127 * 8)>>,
+    ?assertEqual(
+        <<8, Q/binary, P1024/binary, 0:(127 * 8), 2, 0:(127 * 8), 3>>,
+        Dsa([P1024, Q, <<2>>, <<3>>])
+    ),
+    %% P of 520 bits, which no T gives, of 1025 bits, past T = 8, and of 511 and
+    %% 504 bits, short of T = 0; Q of 159 and 161 bits; G and Y longer than P
+    BadDsa = [
+        {[<<16#80, 0:(64 * 8)>>, Q, <<2>>, <<3>>], {dsa_p_bits, 520}},
+        {[<<1, 0:(128 * 8)>>, Q, <<2>>, <<3>>], {dsa_p_bits, 1025}},
+        {[<<16#7F, 0:(63 * 8)>>, Q, <<2>>, <<3>>], {dsa_p_bits, 511}},
+        {[<<16#80, 0:(62 * 8)>>, Q, <<2>>, <<3>>], {dsa_p_bits, 504}},
+        {[P, <<16#7F, 0:(19 * 8)>>, <<2>>, <<3>>], {dsa_q_bits, 159}},
+        {[P, <<1, Q/binary>>, <<2>>, <<3>>], {dsa_q_bits, 161}},
+        {[P, Q, <<1, 0:(64 * 8)>>, <<3>>], dsa_number_longer_than_p},
+        {[P, Q, <<2>>, <<1, 0:(64 * 8)>>], dsa_number_longer_than_p},
+        {[P, Q, <<2>>], key_shape}
+    ],
+    [?assertError({badarg, Why}, Dsa(Key), Key) || {Key, Why} <- BadDsa],
+    {<<4, Point256:64/binary>> = Pub256, _} = crypto:generate_key(ecdh, secp256r1),
+    ?assertEqual(Point256, dns_sec:dnskey_public_key(?DNS_ALG_ECDSAP256SHA256, Pub256)),
+    {<<4, Point384:96/binary>> = Pub384, _} = crypto:generate_key(ecdh, secp384r1),
+    ?assertEqual(Point384, dns_sec:dnskey_public_key(?DNS_ALG_ECDSAP384SHA384, Pub384)),
+    {Ed25519, _} = crypto:generate_key(eddsa, ed25519),
+    ?assertEqual(Ed25519, dns_sec:dnskey_public_key(?DNS_ALG_ED25519, Ed25519)),
+    {Ed448, _} = crypto:generate_key(eddsa, ed448),
+    ?assertEqual(Ed448, dns_sec:dnskey_public_key(?DNS_ALG_ED448, Ed448)),
+    %% FIPS 204 §4: an ML-DSA-44 public key is 1312 octets
+    MlDsa44 = binary:copy(<<16#5A>>, 1312),
+    ?assertEqual(MlDsa44, dns_sec:dnskey_public_key(?DNS_ALG_MLDSA44, MlDsa44)),
+    [
+        ?assertError({badarg, key_shape}, dns_sec:dnskey_public_key(Alg, Key), Alg)
+     || {Alg, Key} <- [
+            {?DNS_ALG_ECDSAP256SHA256, Point256},
+            {?DNS_ALG_ED25519, <<Ed25519/binary, 0>>},
+            {?DNS_ALG_ED448, Ed25519},
+            {?DNS_ALG_MLDSA44, <<MlDsa44/binary, 0>>},
+            {?DNS_ALG_RSASHA256, <<3, 1, 0, 1, N/binary>>},
+            {?DNS_ALG_DSA, [P, Q, <<2>>, <<3>>, <<4>>]}
+        ]
+    ],
+    ?assertError({unsupported_algorithm, 200}, dns_sec:dnskey_public_key(200, Ed25519)),
+    ?assertError(
+        {unsupported_algorithm, ?DNS_ALG_ECCGOST},
+        dns_sec:dnskey_public_key(?DNS_ALG_ECCGOST, Ed25519)
+    ).
 
 sample_keys(Config) ->
     Keys = lists:foldl(

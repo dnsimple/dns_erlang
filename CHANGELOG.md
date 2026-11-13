@@ -10,6 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - DNSSEC algorithms 1 (RSAMD5), 12 (ECC-GOST), 17 (SM2SM3) and 23 (ECC-GOST12) have names and constants in `dns_terms.hrl`.
+- DNSSEC: `dns_sec:dnskey_public_key/2` makes a DNSKEY's public key field from an RSA or DSA key's numbers as bytes, or from an ECDSA, EdDSA or ML-DSA-44 public key as crypto gives it.
 
 ### Changed
 
