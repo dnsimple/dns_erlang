@@ -936,7 +936,22 @@ test_dnskey_formats(_Config) ->
         data = (CdnskeyBinary#dns_rr.data)#dns_rrdata_cdnskey{public_key = LengthPrefixed}
     },
     #{~"data" := #{~"public_key" := CdnskeyB64}} = assert_transcode(CdnskeyPrefixed),
-    ?assertEqual(base64:encode(LengthPrefixed), CdnskeyB64).
+    ?assertEqual(base64:encode(LengthPrefixed), CdnskeyB64),
+
+    %% A key as RSA's [E, M] of 5.2.0 and earlier is no key: to_map/1 raises,
+    %% rather than write it as a JSON array, or a list of octets as their bytes
+    [
+        ?assertError({badarg, public_key_not_binary}, dns_json:to_map(RR))
+     || List <- [[65537, 67890], [1, 0, 1]],
+        RR <- [
+            DnskeyBinary#dns_rr{
+                data = (DnskeyBinary#dns_rr.data)#dns_rrdata_dnskey{public_key = List}
+            },
+            CdnskeyBinary#dns_rr{
+                data = (CdnskeyBinary#dns_rr.data)#dns_rrdata_cdnskey{public_key = List}
+            }
+        ]
+    ].
 
 test_nsec3_salt(_Config) ->
     %% RRDATA records must be wrapped in dns_rr

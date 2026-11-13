@@ -48,6 +48,7 @@ groups() ->
             verify_with_zone_text_dnskeys,
             rsa_key_rfc3110_rules_out_verifies_nothing,
             dsa_key_with_wide_t_verifies_nothing,
+            verify_with_list_key_raises,
             sign_with_integer_key_raises,
             verify_rrsig_expiry,
             sign_rr_and_rrset_5arg,
@@ -1567,6 +1568,16 @@ dsa_key_with_wide_t_verifies_nothing(Config) ->
         end
      || {_, _, DNSKey, _} = Case <- Cases
     ].
+
+%% A DNSKEY whose key is not a binary, as an RSA key's [E, M] was before 6.0.0,
+%% raises {badarg, public_key_not_binary}, where it would quietly verify nothing
+verify_with_list_key_raises(Config) ->
+    [{_, _, DNSKey, _} = Case] =
+        signed_by_sample_key(Config, [?DNS_ALG_RSASHA256], fun(_) -> true end),
+    #dns_rr{data = #dns_rrdata_dnskey{public_key = <<Len, E:Len/binary, N/binary>>}} = DNSKey,
+    ?assertError({badarg, public_key_not_binary}, verify_with_key(Case, [E, N])),
+    Int = fun binary:decode_unsigned/1,
+    ?assertError({badarg, public_key_not_binary}, verify_with_key(Case, [Int(E), Int(N)])).
 
 %% A private key's numbers are their big-endian bytes. Given as integers, which
 %% crypto would take, converting them on every signature, an RSA or DSA key

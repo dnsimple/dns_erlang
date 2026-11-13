@@ -18,6 +18,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - DNSKEY and CDNSKEY: `public_key` is always the RDATA's key field, a `binary()`; RSA and DSA keys no longer decode to `[E, M]` and `[P, Q, G, Y]`, nor encode from them.
 - JSON: an RSA or DSA DNSKEY's or CDNSKEY's `public_key` is base64 of its key field, where it was base64 of each number behind a 32-bit length; convert stored ones, which start `AAAA`.
 - DNSSEC: `verify_rrsig/4` verifies with no RSA or DSA key that RFC 3110, RFC 5702 or RFC 2536 rules out, where it verified with RSA moduli under 512 or over 4096 bits, or under 1024 for RSA/SHA-512, and with DSA keys off the wire whose T is wider than their P needs.
+- DNSKEY and CDNSKEY: `dns_sec:verify_rrsig/4` and `dns_json:to_map/1` raise `{badarg, public_key_not_binary}` for a key that is not a binary, `[E, M]` and `[P, Q, G, Y]` included.
 - DNSSEC: RSA and DSA private keys are big-endian bytes, where RSA keys could be integers and DSA keys had to be; integers raise `{badarg, number_not_bytes}`.
 
 ### Updated

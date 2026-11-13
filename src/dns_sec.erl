@@ -587,8 +587,11 @@ verify_rrsig(#dns_rr{type = ?DNS_TYPE_RRSIG, data = Data}, RRs, RRDNSKey, Opts) 
 
 %% The key is the DNSKEY's RDATA key field. RSA and DSA keys are split into the
 %% numbers crypto takes, as their big-endian bytes, and one laid out as no DNSKEY
-%% may carry it verifies nothing
+%% may carry it verifies nothing. A key that is not a binary, as [E, M] was before
+%% 6.0.0, raises, as it does encoding the DNSKEY
 -spec verify(dns:uint8(), binary(), binary(), binary()) -> boolean().
+verify(_Alg, Key, _Signature, _SigInput) when not is_binary(Key) ->
+    error({badarg, public_key_not_binary});
 verify(Alg, Key, Signature, SigInput) when ?IS_DSA_ALG(Alg) orelse ?IS_RSA_ALG(Alg) ->
     case dns_dnskey:numbers(Alg, Key) of
         invalid -> false;
