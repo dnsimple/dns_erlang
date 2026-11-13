@@ -908,20 +908,14 @@ test_dnskey_formats(_Config) ->
     },
     assert_transcode(DnskeyBinary),
 
-    %% Test DNSKEY with list public_key (RSA components)
-    DnskeyList = #dns_rr{
-        name = ~"example.com",
-        type = ?DNS_TYPE_DNSKEY,
-        ttl = 3600,
-        data = #dns_rrdata_dnskey{
-            flags = 256,
-            protocol = 3,
-            alg = ?DNS_ALG_RSASHA256,
-            public_key = [65537, 67890],
-            keytag = 12345
-        }
+    %% A key is its bytes, even bytes that read as numbers each behind a 32-bit
+    %% length, which JSON took for an RSA key's [E, M], whatever the algorithm
+    LengthPrefixed = <<<<(byte_size(B)):32, B/binary>> || B <- [<<1, 0, 1>>, <<1, 9, 50>>]>>,
+    DnskeyPrefixed = DnskeyBinary#dns_rr{
+        data = (DnskeyBinary#dns_rr.data)#dns_rrdata_dnskey{public_key = LengthPrefixed}
     },
-    assert_transcode(DnskeyList),
+    #{~"data" := #{~"public_key" := DnskeyB64}} = assert_transcode(DnskeyPrefixed),
+    ?assertEqual(base64:encode(LengthPrefixed), DnskeyB64),
 
     %% Test CDNSKEY with binary public_key
     CdnskeyBinary = #dns_rr{
@@ -938,20 +932,11 @@ test_dnskey_formats(_Config) ->
     },
     assert_transcode(CdnskeyBinary),
 
-    %% Test CDNSKEY with list public_key
-    CdnskeyList = #dns_rr{
-        name = ~"example.com",
-        type = ?DNS_TYPE_CDNSKEY,
-        ttl = 3600,
-        data = #dns_rrdata_cdnskey{
-            flags = 256,
-            protocol = 3,
-            alg = ?DNS_ALG_RSASHA256,
-            public_key = [65537, 67890],
-            keytag = 12345
-        }
+    CdnskeyPrefixed = CdnskeyBinary#dns_rr{
+        data = (CdnskeyBinary#dns_rr.data)#dns_rrdata_cdnskey{public_key = LengthPrefixed}
     },
-    assert_transcode(CdnskeyList).
+    #{~"data" := #{~"public_key" := CdnskeyB64}} = assert_transcode(CdnskeyPrefixed),
+    ?assertEqual(base64:encode(LengthPrefixed), CdnskeyB64).
 
 test_nsec3_salt(_Config) ->
     %% RRDATA records must be wrapped in dns_rr
@@ -1787,8 +1772,7 @@ test_edge_cases(_Config) ->
     },
     assert_transcode(SvcbUnknown),
 
-    %% Test from_map_dnskey_publickey with binary that doesn't match format
-    %% This should return the binary as-is
+    %% A DNSKEY's key is the bytes its base64 holds
     DnskeyMap = #{
         ~"name" => ~"example.com",
         ~"type" => ~"DNSKEY",
@@ -1808,9 +1792,8 @@ test_edge_cases(_Config) ->
     ?assertEqual(dns_rrdata_dnskey, element(1, DnskeyData)),
     ?assertEqual(~"simple-binary-data", element(5, DnskeyData)),
 
-    %% Test from_map_dnskey_publickey with properly formatted binary (list of integers)
-    %% Create a binary that matches the format: <<L:32, I:L/unit:8, ...>>, holding the
-    %% exponent and modulus of an RSA key
+    %% Even bytes that read as numbers each behind a 32-bit length, as 5.2.0 and
+    %% earlier wrote an RSA key's exponent and modulus, are the key's bytes
     FormattedBin = <<<<(byte_size(B)):32, B/binary>> || B <- [<<1, 0, 1>>, <<48, 57>>]>>,
     DnskeyMap2 = #{
         ~"name" => ~"example.com",
@@ -1829,7 +1812,7 @@ test_edge_cases(_Config) ->
     ?assertEqual(dns_rr, element(1, DnskeyRecord2)),
     DnskeyData2 = element(6, DnskeyRecord2),
     ?assertEqual(dns_rrdata_dnskey, element(1, DnskeyData2)),
-    ?assertEqual([65537, 12345], element(5, DnskeyData2)),
+    ?assertEqual(FormattedBin, element(5, DnskeyData2)),
 
     %% Simulate API/JSON that omits svc_params for alias-form SVCB/HTTPS
     SVCBJson = #{

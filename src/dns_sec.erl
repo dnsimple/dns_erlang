@@ -571,25 +571,14 @@ verify_rrsig(#dns_rr{type = ?DNS_TYPE_RRSIG, data = Data}, RRs, RRDNSKey, Opts) 
             lists:any(fun({_KeyTag, Alg, Key}) -> verify(Alg, Key, Signature, SigInput) end, Keys)
     end.
 
--spec verify(dns:uint8(), key(), binary(), binary()) -> boolean().
-verify(Alg, Key, Signature, SigInput) when ?IS_DSA_ALG(Alg) ->
-    <<_T, R:20/unit:8, S:20/unit:8>> = Signature,
-    AsnSig = public_key:der_encode('Dss-Sig-Value', #'Dss-Sig-Value'{r = R, s = S}),
-    %% DNSKEY public_key from decode is [P, Q, G, Y] as binaries; normalize to integers for crypto.
-    KeyInts = dsa_pubkey_to_integers(Key),
-    crypto:verify(dss, sha, SigInput, AsnSig, KeyInts);
-verify(Alg, Key, Signature, SigInput) when ?IS_RSA_ALG(Alg) ->
-    try
-        crypto:verify(
-            rsa,
-            none,
-            SigInput,
-            Signature,
-            Key,
-            [{rsa_padding, rsa_pkcs1_padding}]
-        )
-    catch
-        error:decrypt_failed -> false
+%% The key is the DNSKEY's RDATA key field. RSA and DSA keys are split into the
+%% numbers crypto takes, as their big-endian bytes, and one laid out as no DNSKEY
+%% may carry it verifies nothing
+-spec verify(dns:uint8(), binary(), binary(), binary()) -> boolean().
+verify(Alg, Key, Signature, SigInput) when ?IS_DSA_ALG(Alg) orelse ?IS_RSA_ALG(Alg) ->
+    case dns_dnskey:numbers(Alg, Key) of
+        invalid -> false;
+        Numbers -> verify_numbers(Alg, Numbers, Signature, SigInput)
     end;
 verify(?DNS_ALG_ECDSAP256SHA256, Key, Signature, SigInput) ->
     DerSig = ecdsa_wire_to_der(Signature, 32),
@@ -608,6 +597,19 @@ verify(?DNS_ALG_MLDSA44, <<_:1312/binary>> = Key, <<_:2420/binary>> = Signature,
 %% function_clause would put the key in the stacktrace, return `false` specifically
 verify(_Alg, _Key, _Signature, _SigInput) ->
     false.
+
+%% An RSA or DSA key's numbers, as dns_dnskey:numbers/2 splits them from its field
+-spec verify_numbers(dns:uint8(), [binary()], binary(), binary()) -> boolean().
+verify_numbers(Alg, PublicKey, Signature, SigInput) when ?IS_DSA_ALG(Alg) ->
+    <<_T, R:20/unit:8, S:20/unit:8>> = Signature,
+    AsnSig = public_key:der_encode('Dss-Sig-Value', #'Dss-Sig-Value'{r = R, s = S}),
+    crypto:verify(dss, sha, SigInput, AsnSig, PublicKey);
+verify_numbers(_RsaAlg, PublicKey, Signature, SigInput) ->
+    try
+        crypto:verify(rsa, none, SigInput, Signature, PublicKey, [{rsa_padding, rsa_pkcs1_padding}])
+    catch
+        error:decrypt_failed -> false
+    end.
 
 %% Pure ML-DSA with an empty context; OTP 27's crypto specs lack mldsa44
 -dialyzer({nowarn_function, [mldsa44_sign/2, mldsa44_verify/3]}).
@@ -758,6 +760,9 @@ number that breaks it, but never one of the key's numbers:
 - `key_shape`: a key of another shape than the algorithm's: another count of
   numbers, an ECDSA point without the octet 4 in front, or an EdDSA or ML-DSA-44
   key of another length.
+
+`verify_rrsig/4` verifies with no RSA or DSA key that this function would not
+make.
 """.
 -spec dnskey_public_key(sigalg(), [binary()] | binary()) -> binary().
 dnskey_public_key(Alg, Key) ->
@@ -885,17 +890,6 @@ count_labels([~"*" | Labels]) ->
     length(Labels);
 count_labels(List) when is_list(List) ->
     length(List).
-
-%% Convert DNSKEY public_key [P, Q, G, Y] (binaries from decode) to integers for crypto:verify.
--spec dsa_pubkey_to_integers([binary() | integer()]) -> [integer()].
-dsa_pubkey_to_integers([P, Q, G, Y]) ->
-    [dsa_elem_to_int(X) || X <- [P, Q, G, Y]].
-
--spec dsa_elem_to_int(binary() | integer()) -> integer().
-dsa_elem_to_int(B) when is_binary(B) ->
-    binary:decode_unsigned(B);
-dsa_elem_to_int(I) when is_integer(I) ->
-    I.
 
 %% RFC 6605 §4: ECDSA signatures on the wire are r || s, each padded to FieldSize bytes.
 %% crypto:sign returns DER-encoded ASN.1; crypto:verify expects DER-encoded ASN.1.

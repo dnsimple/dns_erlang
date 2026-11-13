@@ -15,7 +15,6 @@
 
 -export([encode/1, encode/2]).
 -export([encode_rrdata/2]).
--export([encode_rsa_key/2, encode_dsa_key/1]).
 -export([sig_to_rrsig/1, rrsig_to_sig/1]).
 
 -ifdef(TEST).
@@ -776,65 +775,7 @@ encode_rrdata_append(
     Acc,
     _Pos,
     _Class,
-    #dns_rrdata_dnskey{
-        flags = Flags,
-        protocol = Protocol,
-        alg = Alg,
-        public_key = [E, M]
-    },
-    CompMap
-) when
-    Alg =:= ?DNS_ALG_RSASHA1 orelse
-        Alg =:= ?DNS_ALG_NSEC3RSASHA1 orelse
-        Alg =:= ?DNS_ALG_RSASHA256 orelse
-        Alg =:= ?DNS_ALG_RSASHA512
-->
-    PKBin = encode_rsa_key(E, M),
-    {<<Acc/binary, (4 + byte_size(PKBin)):16, Flags:16, Protocol:8, Alg:8, PKBin/binary>>, CompMap};
-encode_rrdata_append(
-    Acc,
-    _Pos,
-    _Class,
-    #dns_rrdata_dnskey{
-        flags = Flags,
-        protocol = Protocol,
-        alg = Alg,
-        public_key = PKM
-    },
-    CompMap
-) when
-    (Alg =:= ?DNS_ALG_DSA orelse Alg =:= ?DNS_ALG_NSEC3DSA) andalso is_list(PKM)
-->
-    PKBin = encode_dsa_key(PKM),
-    {<<Acc/binary, (4 + byte_size(PKBin)):16, Flags:16, Protocol:8, Alg:8, PKBin/binary>>, CompMap};
-encode_rrdata_append(
-    Acc,
-    _Pos,
-    _Class,
-    #dns_rrdata_dnskey{
-        flags = Flags,
-        protocol = Protocol,
-        alg = Alg,
-        public_key = PK
-    },
-    CompMap
-) when
-    (Alg =:= ?DNS_ALG_ECDSAP256SHA256 andalso is_binary(PK) andalso 64 =:= byte_size(PK)) orelse
-        (Alg =:= ?DNS_ALG_ECDSAP384SHA384 andalso is_binary(PK) andalso 96 =:= byte_size(PK)) orelse
-        (Alg =:= ?DNS_ALG_ED25519 andalso is_binary(PK) andalso 32 =:= byte_size(PK)) orelse
-        (Alg =:= ?DNS_ALG_ED448 andalso is_binary(PK) andalso 57 =:= byte_size(PK))
-->
-    {<<Acc/binary, (4 + byte_size(PK)):16, Flags:16, Protocol:8, Alg:8, PK/binary>>, CompMap};
-encode_rrdata_append(
-    Acc,
-    _Pos,
-    _Class,
-    #dns_rrdata_dnskey{
-        flags = Flags,
-        protocol = Protocol,
-        alg = Alg,
-        public_key = PK
-    },
+    #dns_rrdata_dnskey{flags = Flags, protocol = Protocol, alg = Alg, public_key = PK},
     CompMap
 ) ->
     {<<Acc/binary, (4 + byte_size(PK)):16, Flags:16, Protocol:8, Alg:8, PK/binary>>, CompMap};
@@ -842,65 +783,7 @@ encode_rrdata_append(
     Acc,
     _Pos,
     _Class,
-    #dns_rrdata_cdnskey{
-        flags = Flags,
-        protocol = Protocol,
-        alg = Alg,
-        public_key = [E, M]
-    },
-    CompMap
-) when
-    Alg =:= ?DNS_ALG_RSASHA1 orelse
-        Alg =:= ?DNS_ALG_NSEC3RSASHA1 orelse
-        Alg =:= ?DNS_ALG_RSASHA256 orelse
-        Alg =:= ?DNS_ALG_RSASHA512
-->
-    PKBin = encode_rsa_key(E, M),
-    {<<Acc/binary, (4 + byte_size(PKBin)):16, Flags:16, Protocol:8, Alg:8, PKBin/binary>>, CompMap};
-encode_rrdata_append(
-    Acc,
-    _Pos,
-    _Class,
-    #dns_rrdata_cdnskey{
-        flags = Flags,
-        protocol = Protocol,
-        alg = Alg,
-        public_key = PKM
-    },
-    CompMap
-) when
-    (Alg =:= ?DNS_ALG_DSA orelse Alg =:= ?DNS_ALG_NSEC3DSA) andalso is_list(PKM)
-->
-    PKBin = encode_dsa_key(PKM),
-    {<<Acc/binary, (4 + byte_size(PKBin)):16, Flags:16, Protocol:8, Alg:8, PKBin/binary>>, CompMap};
-encode_rrdata_append(
-    Acc,
-    _Pos,
-    _Class,
-    #dns_rrdata_cdnskey{
-        flags = Flags,
-        protocol = Protocol,
-        alg = Alg,
-        public_key = PK
-    },
-    CompMap
-) when
-    (Alg =:= ?DNS_ALG_ECDSAP256SHA256 andalso is_binary(PK) andalso 64 =:= byte_size(PK)) orelse
-        (Alg =:= ?DNS_ALG_ECDSAP384SHA384 andalso is_binary(PK) andalso 96 =:= byte_size(PK)) orelse
-        (Alg =:= ?DNS_ALG_ED25519 andalso is_binary(PK) andalso 32 =:= byte_size(PK)) orelse
-        (Alg =:= ?DNS_ALG_ED448 andalso is_binary(PK) andalso 57 =:= byte_size(PK))
-->
-    {<<Acc/binary, (4 + byte_size(PK)):16, Flags:16, Protocol:8, Alg:8, PK/binary>>, CompMap};
-encode_rrdata_append(
-    Acc,
-    _Pos,
-    _Class,
-    #dns_rrdata_cdnskey{
-        flags = Flags,
-        protocol = Protocol,
-        alg = Alg,
-        public_key = PK
-    },
+    #dns_rrdata_cdnskey{flags = Flags, protocol = Protocol, alg = Alg, public_key = PK},
     CompMap
 ) ->
     {<<Acc/binary, (4 + byte_size(PK)):16, Flags:16, Protocol:8, Alg:8, PK/binary>>, CompMap};
@@ -1686,13 +1569,6 @@ encode_amtrelay_relay(3, Relay) ->
 encode_bool(false) -> 0;
 encode_bool(true) -> 1.
 
--spec strip_leading_zeros(binary()) -> binary().
-strip_leading_zeros(<<0, Rest/binary>>) ->
-    strip_leading_zeros(Rest);
-strip_leading_zeros(Binary) ->
-    Binary.
-
-%% Helper function to encode RSA keys for DNSKEY and CDNSKEY records
 %% RFC2535§4.1: RRSIG took SIG's RDATA over field for field, so the codecs read
 %% and write a SIG as an RRSIG, converted field by field
 -spec sig_to_rrsig(dns:rrdata_sig()) -> dns:rrdata_rrsig().
@@ -1742,50 +1618,6 @@ rrsig_to_sig(#dns_rrdata_rrsig{
         signers_name = SignersName,
         signature = Signature
     }.
-
--spec encode_rsa_key(integer(), integer()) -> binary().
-encode_rsa_key(E, M) ->
-    MBin = strip_leading_zeros(binary:encode_unsigned(M)),
-    EBin = strip_leading_zeros(binary:encode_unsigned(E)),
-    ESize = byte_size(EBin),
-    case ESize of
-        _ when ESize =< 16#FF ->
-            <<ESize:8, EBin:ESize/binary, MBin/binary>>;
-        _ when ESize =< 16#FFFF ->
-            <<0, ESize:16, EBin:ESize/binary, MBin/binary>>;
-        _ ->
-            erlang:error(badarg)
-    end.
-
-%% Helper function to encode DSA keys for DNSKEY and CDNSKEY records.
-%% Only reachable with the [P, Q, G, Y] list (RFC2536§2); an opaque key is emitted verbatim.
--spec encode_dsa_key(list()) -> binary().
-encode_dsa_key(PKM) ->
-    [P, Q, G, Y] = [
-        case X of
-            <<L:32, I:L/unit:8>> -> I;
-            X when is_binary(X) -> binary:decode_unsigned(X);
-            X when is_integer(X) -> X
-        end
-     || X <- PKM
-    ],
-    %% RFC2536§2: P, G and Y share one width 64 + 8T; taking it from P alone
-    %% truncated a wider G or Y.
-    S = dsa_field_size(lists:max([unsigned_size(P), unsigned_size(G), unsigned_size(Y)])),
-    T = (S - 64) div 8,
-    QSize = unsigned_size(Q),
-    QSize =< 20 orelse erlang:error(badarg, [Q]),
-    <<T, Q:20/unit:8, P:S/unit:8, G:S/unit:8, Y:S/unit:8>>.
-
--spec unsigned_size(non_neg_integer()) -> pos_integer().
-unsigned_size(I) ->
-    byte_size(strip_leading_zeros(binary:encode_unsigned(I))).
-
-%% Round up to the next 64 + 8T with T in 0..8; anything wider is unencodable
--spec dsa_field_size(pos_integer()) -> 64..128.
-dsa_field_size(Bytes) when Bytes =< 64 -> 64;
-dsa_field_size(Bytes) when Bytes =< 128 -> 64 + 8 * ((Bytes - 64 + 7) div 8);
-dsa_field_size(Bytes) -> erlang:error(badarg, [Bytes]).
 
 %% Encodes a character-string as in RFC1035§3.3
 %%

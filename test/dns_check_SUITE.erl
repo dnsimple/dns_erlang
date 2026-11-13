@@ -41,9 +41,11 @@ rrdata_integers_must_fit(_) ->
     N = <<"example.com">>,
     P256 = <<0:512>>,
     Dnskey = #dns_rrdata_dnskey{flags = 257, protocol = 3, alg = 13, public_key = P256},
-    RsaDnskey = Dnskey#dns_rrdata_dnskey{alg = ?DNS_ALG_RSASHA256, public_key = [65537, 12345]},
+    %% RFC3110§2: exponent 65537, then a 512-bit modulus
+    Rsa = <<3, 1, 0, 1, 255, 0:504>>,
+    RsaDnskey = Dnskey#dns_rrdata_dnskey{alg = ?DNS_ALG_RSASHA256, public_key = Rsa},
     Cdnskey = #dns_rrdata_cdnskey{flags = 257, protocol = 3, alg = 13, public_key = P256},
-    RsaCdnskey = Cdnskey#dns_rrdata_cdnskey{alg = ?DNS_ALG_RSASHA256, public_key = [65537, 12345]},
+    RsaCdnskey = Cdnskey#dns_rrdata_cdnskey{alg = ?DNS_ALG_RSASHA256, public_key = Rsa},
     Ds = #dns_rrdata_ds{keytag = 1, alg = 1, digest_type = 1, digest = <<1>>},
     Cds = #dns_rrdata_cds{keytag = 1, alg = 1, digest_type = 1, digest = <<1>>},
     Dlv = #dns_rrdata_dlv{keytag = 1, alg = 1, digest_type = 1, digest = <<1>>},

@@ -104,7 +104,10 @@
     flags :: dns:uint16(),
     protocol :: dns:uint8(),
     alg :: dns:uint8(),
-    public_key :: iodata(),
+    %% The RDATA's public key field, as the algorithm lays it out: RFC 3110 for
+    %% RSA, RFC 2536 for DSA. dns_sec:dnskey_public_key/2 makes it from a key's
+    %% numbers, or from an ECDSA, EdDSA or ML-DSA-44 public key as crypto gives it
+    public_key :: binary(),
     keytag :: integer()
 }).
 
@@ -113,7 +116,8 @@
     flags :: dns:uint16(),
     protocol :: dns:uint8(),
     alg :: dns:uint8(),
-    public_key :: iodata(),
+    %% As a DNSKEY's
+    public_key :: binary(),
     keytag :: integer()
 }).
 

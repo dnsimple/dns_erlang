@@ -15,10 +15,14 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - `dnssec` is now `dns_sec`, as every other module of this library starts with `dns`.
+- DNSKEY and CDNSKEY: `public_key` is always the RDATA's key field, a `binary()`; RSA and DSA keys no longer decode to `[E, M]` and `[P, Q, G, Y]`, nor encode from them.
+- JSON: an RSA or DSA DNSKEY's or CDNSKEY's `public_key` is base64 of its key field, where it was base64 of each number behind a 32-bit length; convert stored ones, which start `AAAA`.
+- DNSSEC: `verify_rrsig/4` verifies with no RSA or DSA key that RFC 3110, RFC 5702 or RFC 2536 rules out, where it verified with RSA moduli under 512 or over 4096 bits, or under 1024 for RSA/SHA-512, and with DSA keys off the wire whose T is wider than their P needs.
 
 ### Updated
 
 - Optimized `encode_message/2`: a reply that fits whole is no longer copied behind its header, 1.1–1.3x faster on replies of up to three records.
+- Optimized RSA DNSKEYs and CDNSKEYs, now kept as bytes: a DNSKEY answer encodes 1.6x faster with 1.2x less memory and decodes 1.2x faster, and `dns_zone:encode_rdata/2` writes one 1.5x faster.
 - Zone files: `dns_zone` parses binaries directly, without leex and yecc, 2.37–8.93x faster with 4.51–10.16x less memory on large zones, and every error in a zone's text gives its line.
 - Zone files: `dns_zone:encode_string/1,2` writes large zones 1.72–2.31x faster with 2.38–2.50x less memory.
 
@@ -50,6 +54,8 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - DNSSEC: `sign_rr` leaves RRSIG records out and `sign_rrset` raises `{badarg, rrsig_rrset}` for an RRSIG RRset, where both signed it (RFC 4035 §2.2).
 - DNSSEC: `sign_rrset` raises `{badarg, mixed_rrset}` for records of more than one RRset, where it signed them as one.
 - DNSSEC: `sign_rr` signs records whose owner names differ only in a final dot as one RRset, where it signed two halves that never verified.
+- DNSSEC: `verify_rrsig/4` verifies with RSA and DSA DNSKEYs read from zone files or JSON, and returns `false` for RSA keys with leading zeros or a long exponent length they don't need, where it raised.
+- JSON: `from_map/1` reads every DNSKEY's and CDNSKEY's key as its bytes, where it read some ECDSA and EdDSA keys as lists of numbers.
 
 ## v5.2.0
 
