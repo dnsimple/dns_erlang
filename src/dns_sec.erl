@@ -549,8 +549,12 @@ is not a binary, as RSA and DSA keys were before 6.0.0, whether another one veri
 -spec verify_rrsig(
     RRSig :: dns:rr(), RRSet :: [dns:rr()], DNSKeys :: [dns:rr()], Opts :: verify_rrsig_opts()
 ) -> boolean().
-verify_rrsig(#dns_rr{type = ?DNS_TYPE_RRSIG, class = Class, data = Data}, RRs, RRDNSKey, Opts) ->
-    Now = maps:get(now, Opts, erlang:system_time(second)),
+verify_rrsig(#dns_rr{type = ?DNS_TYPE_RRSIG, class = Class, data = Data}, RRs, DNSKeys, Opts) ->
+    Now =
+        case Opts of
+            #{now := N} -> N;
+            _ -> erlang:system_time(second)
+        end,
     #dns_rrdata_rrsig{
         original_ttl = OTTL,
         keytag = SigKeyTag,
@@ -560,30 +564,7 @@ verify_rrsig(#dns_rr{type = ?DNS_TYPE_RRSIG, class = Class, data = Data}, RRs, R
         signers_name = SignersName,
         signature = Signature
     } = Data,
-    %% RFC4035§5.3.1: the RRSIG's signer, algorithm and key tag name the DNSKEY, which is a zone
-    %% key (RFC4034§2.1.1) in the zone's apex DNSKEY RRset, so of the RRSIG's class. The key tag
-    %% is the key's own, computed from its RDATA. A key of the RRSIG's algorithm and signer that
-    %% is not a binary raises before its class, flags or key tag are looked at, as documented
-    Keys = [
-        Key
-     || #dns_rr{
-            name = Name,
-            class = KeyClass,
-            type = ?DNS_TYPE_DNSKEY,
-            data = #dns_rrdata_dnskey{
-                flags = Flags,
-                protocol = 3,
-                alg = Alg,
-                public_key = PubKey
-            }
-        } <- RRDNSKey,
-        Alg =:= SigAlg,
-        is_same_name(Name, SignersName),
-        Key <- [dns_dnskey:public_key(PubKey)],
-        KeyClass =:= Class,
-        Flags band ?DNSKEY_FLAG_ZONE =/= 0,
-        dns_dnskey:key_tag(<<Flags:16, 3, Alg, Key/binary>>) =:= SigKeyTag
-    ],
+    Keys = named_keys(Class, Data, DNSKeys),
     case Now of
         Now when Now < Incept; Expire < Now -> false;
         Now ->
@@ -598,6 +579,37 @@ verify_rrsig(#dns_rr{type = ?DNS_TYPE_RRSIG, class = Class, data = Data}, RRs, R
             ),
             lists:any(fun(Key) -> verify(SigAlg, Key, Signature, SigInput) end, Keys)
     end.
+
+%% RFC4035§5.3.1: the keys of the DNSKEYs that an RRSIG of the class names. A DNSKEY of the
+%% RRSIG's algorithm and signer whose key is not a binary raises, as documented, whatever else
+%% it holds
+-spec named_keys(dns:class(), dns:rrdata_rrsig(), [dns:rr()]) -> [binary()].
+named_keys(Class, #dns_rrdata_rrsig{alg = Alg, signers_name = Signer, keytag = KeyTag}, DNSKeys) ->
+    Candidates = [
+        {DNSKey, dns_dnskey:public_key(PubKey)}
+     || #dns_rr{
+            name = Name,
+            type = ?DNS_TYPE_DNSKEY,
+            data = #dns_rrdata_dnskey{alg = KeyAlg, public_key = PubKey}
+        } = DNSKey <- DNSKeys,
+        KeyAlg =:= Alg,
+        is_same_name(Name, Signer)
+    ],
+    [Key || {DNSKey, Key} <- Candidates, is_named(DNSKey, Key, Class, KeyTag)].
+
+%% A zone key (RFC4034§2.1.1) of protocol 3 (§2.1.2), in the zone's apex DNSKEY RRset, so of the
+%% RRSIG's class, whose key tag, computed from its RDATA (Appendix B), is the RRSIG's. The flags
+%% are checked in a guard, so that a DNSKEY whose flags are no integer is not named
+-spec is_named(dns:rr(), binary(), dns:class(), keytag()) -> boolean().
+is_named(
+    #dns_rr{class = Class, data = #dns_rrdata_dnskey{flags = Flags, protocol = 3, alg = Alg}},
+    Key,
+    Class,
+    KeyTag
+) when Flags band ?DNSKEY_FLAG_ZONE =/= 0 ->
+    dns_dnskey:key_tag(<<Flags:16, 3, Alg, Key/binary>>) =:= KeyTag;
+is_named(_DNSKey, _Key, _Class, _KeyTag) ->
+    false.
 
 %% Whether two names are one, in any case and with or without a final dot, as a zone file's names
 %% have it and the wire's do not. A name that is none, such as one with an empty label, is only

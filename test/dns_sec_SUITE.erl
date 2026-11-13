@@ -52,6 +52,8 @@ groups() ->
             sign_with_integer_key_raises,
             verify_rrsig_expiry,
             verify_needs_zone_key,
+            verify_needs_protocol_3,
+            verify_needs_dnskey_of_rrsig_alg,
             verify_needs_dnskey_of_rrsig_class,
             verify_needs_rrsig_key_tag,
             verify_signer_names_key_as_name,
@@ -1160,6 +1162,36 @@ verify_needs_zone_key(_Config) ->
     ?assertNot(Verify(1)),
     ?assertNot(Verify(0)).
 
+%% RFC4034§2.1.2: a DNSKEY whose protocol is not 3 "MUST be treated as invalid during signature
+%% verification". RFC6605§6.1's RRSIG names the key tag of its DNSKEY with protocol 3, so only
+%% the protocol tells these DNSKEYs apart from it.
+verify_needs_protocol_3(_Config) ->
+    {#dns_rr{data = KeyData} = DNSKey, RRSig, RRSet, Opts} = rfc6605_p256_example(),
+    [
+        ?assertNot(
+            dns_sec:verify_rrsig(
+                RRSig,
+                RRSet,
+                [DNSKey#dns_rr{data = KeyData#dns_rrdata_dnskey{protocol = Protocol}}],
+                Opts
+            ),
+            Protocol
+        )
+     || Protocol <- [0, 1, 2, 4, 255]
+    ].
+
+%% RFC4035§5.3.1: the RRSIG's algorithm names the DNSKEY, as its key tag does. RFC6605§6.1's
+%% key as a ZSK of algorithm 14 has the KSK's key tag, as the flags and the algorithm are in the
+%% first two of the words summed into it, one lower by one and the other higher by one, so only
+%% the algorithm tells it apart.
+verify_needs_dnskey_of_rrsig_alg(_Config) ->
+    {#dns_rr{data = KeyData} = DNSKey, RRSig, RRSet, Opts} = rfc6605_p256_example(),
+    Other = DNSKey#dns_rr{
+        data = KeyData#dns_rrdata_dnskey{flags = 256, alg = ?DNS_ALG_ECDSAP384SHA384}
+    },
+    ?assertEqual(key_tag_of(DNSKey), key_tag_of(Other)),
+    ?assertNot(dns_sec:verify_rrsig(RRSig, RRSet, [Other], Opts)).
+
 %% RFC4035§5.3.1: the DNSKEY is in the zone's apex DNSKEY RRset, so it is of the RRSIG's class.
 %% RFC6605§6.1's IN RRSIG verifies with its DNSKEY only in IN. RFC8080§6's key, signing the MX
 %% RRset in CH, makes a CH RRSIG, which verifies with its DNSKEY only in CH.
@@ -1724,7 +1756,8 @@ dsa_key_with_wide_t_verifies_nothing(Config) ->
 %% A DNSKEY of the RRSIG's algorithm and signer whose key is not a binary, as an
 %% RSA key's [E, M] was before 6.0.0, raises {badarg, public_key_not_binary},
 %% where it would quietly verify nothing: whether another DNSKEY verifies the
-%% RRSIG or not, and whatever its class and flags, which would leave it out
+%% RRSIG or not, and whatever its class, flags and protocol, which would leave it
+%% out
 verify_with_list_key_raises(Config) ->
     [{_, _, DNSKey, _} = Case] =
         signed_by_sample_key(Config, [?DNS_ALG_RSASHA256], fun(_) -> true end),
@@ -1743,7 +1776,8 @@ verify_with_list_key_raises(Config) ->
      || Key <- [
             ListKey,
             ListKey#dns_rr{class = ?DNS_CLASS_CH},
-            ListKey#dns_rr{data = Data#dns_rrdata_dnskey{flags = 0, public_key = [E, N]}}
+            ListKey#dns_rr{data = Data#dns_rrdata_dnskey{flags = 0, public_key = [E, N]}},
+            ListKey#dns_rr{data = Data#dns_rrdata_dnskey{protocol = 4, public_key = [E, N]}}
         ]
     ].
 
