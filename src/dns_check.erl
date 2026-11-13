@@ -11,6 +11,7 @@
 -include_lib("dns_erlang/include/dns.hrl").
 
 -export([header/1, rr/1, rrdata/1, rrdata/2, query/1, optrr/1, opt/1]).
+-export([key_fits/3, digest_fits/3]).
 
 -define(IS_UINT(Bits, X), (is_integer(X) andalso 0 =< X andalso X < (1 bsl Bits))).
 -define(IS_NONEMPTY_BIN(X), (is_binary(X) andalso <<>> =/= X)).
@@ -250,10 +251,14 @@ fits(Data) when
 ->
     true.
 
+%% A DNSKEY's or CDNSKEY's fields. The zone file reader checks a DNSKEY with it
+%% too, without encoding it
 -spec key_fits(dynamic(), dynamic(), dynamic()) -> boolean().
 key_fits(Flags, Protocol, Alg) ->
     ?IS_UINT(16, Flags) andalso ?IS_UINT(8, Protocol) andalso ?IS_UINT(8, Alg).
 
+%% A DS's, CDS's or DLV's fields. The zone file reader checks a DS with it too,
+%% without encoding it
 -spec digest_fits(dynamic(), dynamic(), dynamic()) -> boolean().
 digest_fits(KeyTag, Alg, DigestType) ->
     ?IS_UINT(16, KeyTag) andalso ?IS_UINT(8, Alg) andalso ?IS_UINT(8, DigestType).
