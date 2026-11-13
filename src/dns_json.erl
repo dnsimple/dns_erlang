@@ -422,7 +422,7 @@ to_map_value(dns_rrdata_brid, data, Value) when is_binary(Value) -> base64:encod
 to_map_value(Tag, public_key, Value) when
     Tag =:= dns_rrdata_dnskey orelse Tag =:= dns_rrdata_cdnskey
 ->
-    base64:encode(key_field(Value));
+    base64:encode(dns_dnskey:public_key(Value));
 to_map_value(dns_rrdata_ipseckey, public_key, Value) when is_binary(Value) -> base64:encode(Value);
 to_map_value(dns_rrdata_hip, hit, Value) when is_binary(Value) -> binary:encode_hex(Value);
 to_map_value(dns_rrdata_hip, public_key, Value) when is_binary(Value) -> base64:encode(Value);
@@ -499,15 +499,6 @@ from_map_field(Tag, Field, Value) when is_binary(Value) ->
     decode_field(Tag, Field, Value);
 from_map_field(_Tag, _Field, Value) ->
     Value.
-
-%% A DNSKEY's or CDNSKEY's key field. One that is not a binary, as [E, M] was
-%% before 6.0.0, raises rather than being written as a JSON array, or a list of
-%% octets as their bytes
--spec key_field(dynamic()) -> binary().
-key_field(Key) when is_binary(Key) ->
-    Key;
-key_field(_Key) ->
-    error({badarg, public_key_not_binary}).
 
 %% Decode binary fields based on tag and field name
 -spec decode_field(atom(), atom(), binary()) -> binary().

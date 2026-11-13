@@ -869,7 +869,7 @@ encode_rdata(
     _RelativeNames,
     Separator
 ) ->
-    encode_key_record(Flags, Protocol, Alg, PublicKey, base64, Separator);
+    encode_key_record(Flags, Protocol, Alg, dns_dnskey:public_key(PublicKey), base64, Separator);
 encode_rdata(
     ?DNS_TYPE_CDNSKEY,
     #dns_rrdata_cdnskey{
@@ -882,7 +882,7 @@ encode_rdata(
     _RelativeNames,
     Separator
 ) ->
-    encode_key_record(Flags, Protocol, Alg, PublicKey, base64, Separator);
+    encode_key_record(Flags, Protocol, Alg, dns_dnskey:public_key(PublicKey), base64, Separator);
 encode_rdata(?DNS_TYPE_RRSIG, #dns_rrdata_rrsig{} = RRSig, Origin, RelativeNames, Separator) ->
     encode_rrsig(RRSig, fun integer_to_binary/1, Origin, RelativeNames, Separator);
 encode_rdata(?DNS_TYPE_SIG, #dns_rrdata_sig{} = Sig, Origin, RelativeNames, Separator) ->

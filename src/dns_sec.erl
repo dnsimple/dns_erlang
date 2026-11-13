@@ -113,13 +113,11 @@ Unlike `t:dns:alg/0`, this type is restricted to algorithms valid for zone signi
 -doc """
 A private key to sign with.
 
-An RSA key is `[E, N, D]`, or the whole list `crypto:generate_key/2` gives, which
-lets crypto sign by the CRT, and a DSA key `[P, Q, G, X]`, each number as its
-big-endian bytes; a number given as an integer raises
-`{badarg, number_not_bytes}`. An ECDSA key is its private scalar, an EdDSA key its
-private key, and an ML-DSA-44 key its 32-byte seed or 2560-byte expanded key. The
-public key a DNSKEY carries is its RDATA's key field, which `dnskey_public_key/2`
-makes.
+An RSA key is `[E, N, D]`, or the whole list `crypto:generate_key/2` gives, which lets crypto sign
+by the CRT, and a DSA key `[P, Q, G, X]`, each number as its big-endian bytes; a number given as an
+integer raises `{badarg, number_not_bytes}`. An ECDSA key is its private scalar, an EdDSA key its
+private key, and an ML-DSA-44 key its 32-byte seed or 2560-byte expanded key. The public key a
+DNSKEY carries is its RDATA's key field, which `dnskey_public_key/2` makes.
 """.
 -type key() :: [binary()] | binary().
 -doc "Options for `sign_rr/6` and `sign_rrset/6`.".
@@ -495,10 +493,9 @@ is_rrsig(#dns_rr{type = Type}) -> Type =:= ?DNS_TYPE_RRSIG.
 
 -spec sign(dns:uint8(), binary(), key()) -> binary().
 sign(Alg, BaseSigInput, Key) when ?IS_DSA_ALG(Alg) ->
-    %% RFC2536§3: the signature starts with the key's T, the first octet of the
-    %% key field that [P, Q, G, X] lays out as [P, Q, G, Y] does, as X < Q; laying
-    %% it out raises {badarg, Why} for a key no DNSKEY can carry, or one given as
-    %% integers
+    %% RFC2536§3: the signature starts with the key's T, the first octet of the key field that
+    %% [P, Q, G, X] lays out as [P, Q, G, Y] does, as X < Q; laying it out raises {badarg, Why}
+    %% for a key no DNSKEY can carry, or one given as integers
     <<T, _/binary>> = dns_dnskey:field(Alg, Key),
     DerSig = crypto:sign(dss, sha, BaseSigInput, Key),
     #'Dss-Sig-Value'{r = R, s = S} = public_key:der_decode('Dss-Sig-Value', DerSig),
@@ -537,6 +534,9 @@ Provides primitive verification of an RR set.
 
 Returns `false` when no DNSKEY of the RRSIG's algorithm and signer verifies it, when the time is
 outside the RRSIG's validity period, and when its algorithm is one this module does not implement.
+Raises `{badarg, public_key_not_binary}` when a DNSKEY of the RRSIG's algorithm and signer has a
+key that is not a binary, as RSA and DSA keys were before 6.0.0, whether another one verifies it
+or not.
 """.
 -spec verify_rrsig(dns:rr(), [dns:rr()], [dns:rr()], verify_rrsig_opts()) -> boolean().
 verify_rrsig(#dns_rr{type = ?DNS_TYPE_RRSIG, data = Data}, RRs, RRDNSKey, Opts) ->
@@ -551,7 +551,7 @@ verify_rrsig(#dns_rr{type = ?DNS_TYPE_RRSIG, data = Data}, RRs, RRDNSKey, Opts) 
         signature = Signature
     } = Data,
     Keys0 = [
-        {KeyTag, Alg, PubKey}
+        {KeyTag, Alg, dns_dnskey:public_key(PubKey)}
      || #dns_rr{
             name = Name,
             type = ?DNS_TYPE_DNSKEY,
@@ -587,11 +587,8 @@ verify_rrsig(#dns_rr{type = ?DNS_TYPE_RRSIG, data = Data}, RRs, RRDNSKey, Opts) 
 
 %% The key is the DNSKEY's RDATA key field. RSA and DSA keys are split into the
 %% numbers crypto takes, as their big-endian bytes, and one laid out as no DNSKEY
-%% may carry it verifies nothing. A key that is not a binary, as [E, M] was before
-%% 6.0.0, raises, as it does encoding the DNSKEY
+%% may carry it verifies nothing
 -spec verify(dns:uint8(), binary(), binary(), binary()) -> boolean().
-verify(_Alg, Key, _Signature, _SigInput) when not is_binary(Key) ->
-    error({badarg, public_key_not_binary});
 verify(Alg, Key, Signature, SigInput) when ?IS_DSA_ALG(Alg) orelse ?IS_RSA_ALG(Alg) ->
     case dns_dnskey:numbers(Alg, Key) of
         invalid -> false;

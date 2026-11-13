@@ -12,7 +12,7 @@
 -include_lib("dns_erlang/include/dns.hrl").
 -include("dns_sec_algs.hrl").
 
--export([field/2, numbers/2, fits/2]).
+-export([field/2, numbers/2, fits/2, public_key/1]).
 
 %% The rule a key breaks, with the size in bits of the number that breaks it. It
 %% never holds one of the key's numbers, as DSA signing lays out its private key
@@ -22,6 +22,15 @@
     | key_shape
     | dsa_number_longer_than_p
     | {rsa_exponent_bits | rsa_modulus_bits | dsa_q_bits | dsa_p_bits, non_neg_integer()}.
+
+%% A DNSKEY's or CDNSKEY's public_key, its RDATA's key field. One that is not a
+%% binary, as RSA and DSA keys were before 6.0.0, raises
+%% {badarg, public_key_not_binary}
+-spec public_key(dynamic()) -> binary().
+public_key(Key) when is_binary(Key) ->
+    Key;
+public_key(_Key) ->
+    error({badarg, public_key_not_binary}).
 
 %% The key field of a public key, as dns_sec:dnskey_public_key/2 documents it, and
 %% with its errors: an RSA key [E, N] or a DSA key [P, Q, G, Y], each number as its

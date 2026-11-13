@@ -176,6 +176,7 @@ groups() ->
             encode_ensure_fqdn_edge_cases,
             encode_ensure_fqdn_outputs_trailing_dot,
             encode_dnskey_key_bytes,
+            encode_dnskey_list_key_raises,
             encode_quoted_strings_single,
             encode_quoted_strings_multiple,
             encode_do_escape_string_edge_cases,
@@ -7233,6 +7234,25 @@ encode_dnskey_key_bytes(_Config) ->
             }}
         ]
     ].
+
+%% A DNSKEY's or CDNSKEY's key that is not a binary, as an RSA key's [E, M] was
+%% before 6.0.0, raises {badarg, public_key_not_binary}, where it raised
+%% function_clause
+encode_dnskey_list_key_raises(_Config) ->
+    Key = [<<1, 0, 1>>, binary:copy(<<16#AB>>, 64)],
+    Alg = ?DNS_ALG_RSASHA256,
+    ?assertError(
+        {badarg, public_key_not_binary},
+        dns_zone:encode_rdata(?DNS_TYPE_DNSKEY, #dns_rrdata_dnskey{
+            flags = 256, protocol = 3, alg = Alg, public_key = Key
+        })
+    ),
+    ?assertError(
+        {badarg, public_key_not_binary},
+        dns_zone:encode_rdata(?DNS_TYPE_CDNSKEY, #dns_rrdata_cdnskey{
+            flags = 256, protocol = 3, alg = Alg, public_key = Key
+        })
+    ).
 
 encode_quoted_strings_single(_Config) ->
     %% Test encode_quoted_strings with single string

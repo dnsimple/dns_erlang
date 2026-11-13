@@ -1570,14 +1570,23 @@ dsa_key_with_wide_t_verifies_nothing(Config) ->
     ].
 
 %% A DNSKEY whose key is not a binary, as an RSA key's [E, M] was before 6.0.0,
-%% raises {badarg, public_key_not_binary}, where it would quietly verify nothing
+%% raises {badarg, public_key_not_binary}, where it would quietly verify nothing,
+%% whether another DNSKEY verifies the RRSIG or not
 verify_with_list_key_raises(Config) ->
     [{_, _, DNSKey, _} = Case] =
         signed_by_sample_key(Config, [?DNS_ALG_RSASHA256], fun(_) -> true end),
     #dns_rr{data = #dns_rrdata_dnskey{public_key = <<Len, E:Len/binary, N/binary>>}} = DNSKey,
     ?assertError({badarg, public_key_not_binary}, verify_with_key(Case, [E, N])),
     Int = fun binary:decode_unsigned/1,
-    ?assertError({badarg, public_key_not_binary}, verify_with_key(Case, [Int(E), Int(N)])).
+    ?assertError({badarg, public_key_not_binary}, verify_with_key(Case, [Int(E), Int(N)])),
+    %% The DNSKEY that verifies is tried first, as its key tag is the RRSIG's
+    {RRSig, RRSet, #dns_rr{data = Data}, Opts} = Case,
+    ListKey = DNSKey#dns_rr{data = Data#dns_rrdata_dnskey{public_key = [E, N]}},
+    ?assert(dns_sec:verify_rrsig(RRSig, RRSet, [DNSKey], Opts)),
+    ?assertError(
+        {badarg, public_key_not_binary},
+        dns_sec:verify_rrsig(RRSig, RRSet, [DNSKey, ListKey], Opts)
+    ).
 
 %% A private key's numbers are their big-endian bytes. Given as integers, which
 %% crypto would take, converting them on every signature, an RSA or DSA key
