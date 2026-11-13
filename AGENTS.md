@@ -35,7 +35,7 @@ dns_erlang is an Erlang DNS message library supporting most common record types,
 - `dns_names.erl` - DNS numeric code ↔ name conversions (type, class, rcode, opcode)
 - `dns_record.erl` - Record serialization/deserialization
 - `dns_tsig.erl` - TSIG authentication (RFC 2845)
-- `dnssec.erl` - DNSSEC operations (signing, verification, keytag generation)
+- `dns_sec.erl` - DNSSEC operations (signing, verification, keytag generation)
 - `dns_zone.erl` - Zone file parsing (RFC 1035 format)
 
 **Headers (include/):**

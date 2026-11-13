@@ -2759,7 +2759,7 @@ decode_minfo_in_message(_) ->
 
 %% RFC7553§4.5: the target is a URI. It used to be replaced by
 %% uri_string:normalize/1 during decoding, which lost a default port, the case of
-%% the host, percent-escapes and dot segments -- and, since dnssec builds
+%% the host, percent-escapes and dot segments -- and, since dns_sec builds
 %% signature input by re-encoding decoded records, silently changed the canonical
 %% RDATA an RRSIG covers, so a signature made elsewhere over an unnormalized
 %% target could not verify here. Decoding now preserves the bytes exactly.
@@ -2784,13 +2784,13 @@ uri_decode_preserves_target(_) ->
         end
      || Target <- Targets
     ],
-    %% The canonical RDATA dnssec signs over must equal what arrived
+    %% The canonical RDATA dns_sec signs over must equal what arrived
     [
         begin
             Wire = <<10:16, 1:16, Target/binary>>,
             Decoded = dns_decode:decode_rrdata(<<>>, ?DNS_CLASS_IN, ?DNS_TYPE_URI, Wire),
             Canonical = dns_encode:encode_rrdata(
-                ?DNS_CLASS_IN, dnssec:canonical_rrdata_form(Decoded)
+                ?DNS_CLASS_IN, dns_sec:canonical_rrdata_form(Decoded)
             ),
             ?assertEqual(Wire, Canonical, Target)
         end

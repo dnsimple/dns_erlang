@@ -17,9 +17,9 @@
 %% under the License.
 %%
 %% -------------------------------------------------------------------
--module(dnssec).
+-module(dns_sec).
 -moduledoc """
-The `dnssec` module exports functions used for generating NSEC/NSEC3 records,
+The `dns_sec` module exports functions used for generating NSEC/NSEC3 records,
 signing and verifying RRSIGs, and adding keytags to DNSKEY records.
 
 For example, the `sign_rr/6` function can be given a collection of resource records,

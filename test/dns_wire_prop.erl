@@ -27,7 +27,7 @@
 %% ============================================================================
 
 %% encode(decode(B)) =:= B. The wire form is authoritative: whatever we hand back
-%% must be what arrived, since dnssec builds signature input by re-encoding
+%% must be what arrived, since dns_sec builds signature input by re-encoding
 %% decoded records, so any rewrite here changes the bytes an RRSIG covers.
 prop_rrdata_wire_fidelity() ->
     ?FORALL(
@@ -86,7 +86,7 @@ prop_rrdata_reencode_idempotent() ->
     ).
 
 %% dns_encode:encode_rrdata/2 is exported and passes no compression map, and
-%% dnssec builds canonical RDATA through it, so it has to handle every record the
+%% dns_sec builds canonical RDATA through it, so it has to handle every record the
 %% codec can produce. A KX record crashed it with badmap, because that clause
 %% reached for the compressing path directly instead of the wrapper that tolerates
 %% a missing map -- invisible when encoding a whole message, where a map exists.
