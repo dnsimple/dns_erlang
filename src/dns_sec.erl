@@ -533,7 +533,8 @@ sign(Alg, _BaseSigInput, _Key) ->
     error({unsupported_algorithm, Alg}).
 
 -doc """
-Provides primitive verification of an RR set.
+Verifies `RRSet` against the `RRSIG` record, with one of the DNSKEY records in `DNSKeys`,
+at the time `now` in `Opts`, by default the current time.
 
 Only the DNSKEYs the RRSIG names verify it (RFC 4035 §5.3.1): zone keys, with the Zone Key flag
 set (RFC 4034 §2.1.1), of protocol 3 and of the RRSIG's class and algorithm, owned by its signer,
@@ -545,7 +546,9 @@ period, and when its algorithm is one this module does not implement. Raises
 `{badarg, public_key_not_binary}` when a DNSKEY of the RRSIG's algorithm and signer has a key that
 is not a binary, as RSA and DSA keys were before 6.0.0, whether another one verifies it or not.
 """.
--spec verify_rrsig(dns:rr(), [dns:rr()], [dns:rr()], verify_rrsig_opts()) -> boolean().
+-spec verify_rrsig(
+    RRSig :: dns:rr(), RRSet :: [dns:rr()], DNSKeys :: [dns:rr()], Opts :: verify_rrsig_opts()
+) -> boolean().
 verify_rrsig(#dns_rr{type = ?DNS_TYPE_RRSIG, class = Class, data = Data}, RRs, RRDNSKey, Opts) ->
     Now = maps:get(now, Opts, erlang:system_time(second)),
     #dns_rrdata_rrsig{
