@@ -7,12 +7,12 @@
 %% numbers for dns_sec:verify_rrsig/4 by the same rules, so that it verifies with
 %% no key field that dnskey_public_key/2 would not make. And a record loaded from
 %% JSON or a zone file is refused when fits/2 is false, so that no such key loads
-%% either.
+%% either. key_tag/1 computes the key tag of a DNSKEY's or CDNSKEY's RDATA.
 
 -include_lib("dns_erlang/include/dns.hrl").
 -include("dns_sec_algs.hrl").
 
--export([field/2, numbers/2, fits/2, public_key/1]).
+-export([field/2, numbers/2, fits/2, public_key/1, key_tag/1]).
 
 %% The rule a key breaks, with the size in bits of the number that breaks it. It
 %% never holds one of the key's numbers, as DSA signing lays out its private key
@@ -31,6 +31,27 @@ public_key(Key) when is_binary(Key) ->
     Key;
 public_key(_Key) ->
     error({badarg, public_key_not_binary}).
+
+%% RFC4034 Appendix B, from a DNSKEY's or CDNSKEY's RDATA. Algorithm 1, RSA/MD5, takes it from the
+%% end of the modulus instead, which ends the RDATA: its third- and second-to-last octets, as
+%% erratum 193 corrects Appendix B.1.
+-spec key_tag(<<_:32, _:_*8>>) -> dns:uint16().
+key_tag(<<_:24, ?DNS_ALG_RSAMD5_NUMBER, _/binary>> = RData) ->
+    Skip = byte_size(RData) - 3,
+    <<_:Skip/binary, KeyTag:16, _:8>> = RData,
+    KeyTag;
+key_tag(RData) when is_binary(RData) ->
+    key_tag_sum(RData, 0).
+
+-spec key_tag_sum(binary(), non_neg_integer()) -> dns:uint16().
+key_tag_sum(<<>>, AC) ->
+    (AC + ((AC bsr 16) band 16#FFFF)) band 16#FFFF;
+key_tag_sum(<<A:16, B:16, C:16, D:16, Rest/binary>>, AC) ->
+    key_tag_sum(Rest, AC + A + B + C + D);
+key_tag_sum(<<X:16, Rest/binary>>, AC) ->
+    key_tag_sum(Rest, AC + X);
+key_tag_sum(<<X:8>>, AC) ->
+    key_tag_sum(<<>>, AC + (X bsl 8)).
 
 %% The key field of a public key, as dns_sec:dnskey_public_key/2 documents it, and
 %% with its errors: an RSA key [E, N] or a DSA key [P, Q, G, Y], each number as its

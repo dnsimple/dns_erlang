@@ -645,7 +645,7 @@ decode_rrdata(
         protocol = Protocol,
         alg = AlgNum,
         public_key = PublicKey,
-        keytag = bin_to_key_tag(Bin)
+        keytag = dns_dnskey:key_tag(Bin)
     };
 decode_rrdata(
     _MsgBin, _Class, ?DNS_TYPE_CDNSKEY, <<Flags:16, Protocol:8, AlgNum:8, PublicKey/binary>> = Bin
@@ -655,7 +655,7 @@ decode_rrdata(
         protocol = Protocol,
         alg = AlgNum,
         public_key = PublicKey,
-        keytag = bin_to_key_tag(Bin)
+        keytag = dns_dnskey:key_tag(Bin)
     };
 decode_rrdata(_MsgBin, _Class, ?DNS_TYPE_DS, <<KeyTag:16, Alg:8, DigestType:8, Digest/binary>>) ->
     #dns_rrdata_ds{
@@ -1100,27 +1100,6 @@ decode_text(<<Len, String:Len/binary, Rest/binary>>) ->
 -spec decode_string(nonempty_binary()) -> {binary(), binary()}.
 decode_string(<<Len, Bin:Len/binary, Rest/binary>>) ->
     {Rest, Bin}.
-
-%% RFC4034 Appendix B, from the DNSKEY RDATA. Algorithm 1, RSA/MD5, takes it from the end of the
-%% modulus instead, which ends the RDATA: its third- and second-to-last octets, as erratum 193
-%% corrects Appendix B.1.
--spec bin_to_key_tag(<<_:32, _:_*8>>) -> dns:uint16().
-bin_to_key_tag(<<_:24, ?DNS_ALG_RSAMD5_NUMBER, _/binary>> = Binary) ->
-    Skip = byte_size(Binary) - 3,
-    <<_:Skip/binary, KeyTag:16, _:8>> = Binary,
-    KeyTag;
-bin_to_key_tag(Binary) when is_binary(Binary) ->
-    do_bin_to_key_tag(Binary, 0).
-
--spec do_bin_to_key_tag(binary(), non_neg_integer()) -> dns:uint16().
-do_bin_to_key_tag(<<>>, AC) ->
-    (AC + ((AC bsr 16) band 16#FFFF)) band 16#FFFF;
-do_bin_to_key_tag(<<A:16, B:16, C:16, D:16, Rest/binary>>, AC) ->
-    do_bin_to_key_tag(Rest, AC + A + B + C + D);
-do_bin_to_key_tag(<<X:16, Rest/binary>>, AC) ->
-    do_bin_to_key_tag(Rest, AC + X);
-do_bin_to_key_tag(<<X:8>>, AC) ->
-    do_bin_to_key_tag(<<>>, AC + (X bsl 8)).
 
 %% Values below the reference point are south/west, and decode to negative offsets.
 -spec decode_loc_point(dns:uint32()) -> integer().

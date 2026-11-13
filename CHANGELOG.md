@@ -21,6 +21,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - DNSSEC: `verify_rrsig/4` verifies with no RSA or DSA key that RFC 3110, RFC 5702 or RFC 2536 rules out, where it verified with RSA moduli under 512 or over 4096 bits, or under 1024 for RSA/SHA-512, and with DSA keys off the wire whose T is wider than their P needs.
 - DNSKEY and CDNSKEY: `dns_sec:verify_rrsig/4`, `dns_json:to_map/1` and `dns_zone`'s writer raise `{badarg, public_key_not_binary}` for a key that is not a binary, `[E, M]` and `[P, Q, G, Y]` included.
 - DNSSEC: RSA and DSA private keys are big-endian bytes, where RSA keys could be integers and DSA keys had to be; integers raise `{badarg, number_not_bytes}`.
+- DNSSEC: `verify_rrsig/4` verifies only with zone keys of the RRSIG's class and key tag (RFC 4035 §5.3.1), where it tried every DNSKEY of its algorithm and signer.
 
 ### Updated
 
@@ -58,6 +59,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - DNSSEC: `sign_rrset` raises `{badarg, mixed_rrset}` for records of more than one RRset, where it signed them as one.
 - DNSSEC: `sign_rr` signs records whose owner names differ only in a final dot as one RRset, where it signed two halves that never verified.
 - DNSSEC: `verify_rrsig/4` verifies with RSA and DSA DNSKEYs read from zone files or JSON, and returns `false` for RSA keys with leading zeros or a long exponent length they don't need, where it raised.
+- DNSSEC: `verify_rrsig/4` takes a DNSKEY owned by `example.` for the signer `example`, and the other way round, where a final dot on one name and not the other kept it from verifying.
 - JSON: `from_map/1` reads every DNSKEY's and CDNSKEY's key as its bytes, where it read some ECDSA and EdDSA keys as lists of numbers.
 
 ## v5.2.0
