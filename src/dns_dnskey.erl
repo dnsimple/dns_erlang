@@ -5,12 +5,14 @@
 %% dns_sec:dnskey_public_key/2: an RSA key's by RFC 3110 and RFC 5702, and a DSA
 %% key's by RFC 2536. numbers/2 splits an RSA or DSA key field back into its
 %% numbers for dns_sec:verify_rrsig/4 by the same rules, so that it verifies with
-%% no key field that dnskey_public_key/2 would not make.
+%% no key field that dnskey_public_key/2 would not make. And a record loaded from
+%% JSON or a zone file is refused when fits/2 is false, so that no such key loads
+%% either.
 
 -include_lib("dns_erlang/include/dns.hrl").
 -include("dns_sec_algs.hrl").
 
--export([field/2, numbers/2]).
+-export([field/2, numbers/2, fits/2]).
 
 %% The rule a key breaks, with the size in bits of the number that breaks it. It
 %% never holds one of the key's numbers, as DSA signing lays out its private key
@@ -81,6 +83,15 @@ numbers(Alg, Field) when ?IS_RSA_ALG(Alg) ->
     rsa_numbers(Alg, Field);
 numbers(Alg, Field) when ?IS_DSA_ALG(Alg) ->
     dsa_numbers(Field).
+
+%% Whether a DNSKEY or CDNSKEY may carry the key: for an RSA or DSA algorithm only
+%% a field that field/2 would lay out. Keys of other algorithms are not looked at
+%% here, nor keys that are not binaries, which the encoder refuses.
+-spec fits(dynamic(), dynamic()) -> boolean().
+fits(Alg, Key) when (?IS_RSA_ALG(Alg) orelse ?IS_DSA_ALG(Alg)) andalso is_binary(Key) ->
+    numbers(Alg, Key) =/= invalid;
+fits(_Alg, _Key) ->
+    true.
 
 -spec rsa_numbers(dns:uint8(), binary()) -> [binary()] | invalid.
 rsa_numbers(Alg, <<0, Len:16, E:Len/binary, N/binary>>) when Len > 255 ->

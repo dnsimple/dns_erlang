@@ -486,7 +486,8 @@ test_special_encodings(_Config) ->
                 flags = 256,
                 protocol = 3,
                 alg = ?DNS_ALG_RSASHA256,
-                public_key = ~"test-public-key-data",
+                %% RFC3110§2: exponent 65537, then a 512-bit modulus
+                public_key = <<3, 1, 0, 1, 255, 0:504>>,
                 keytag = 12345
             }
         },
@@ -893,7 +894,8 @@ test_svcb_params_to_json_invalid_key_rejected(_Config) ->
 
 test_dnskey_formats(_Config) ->
     %% RRDATA records must be wrapped in dns_rr
-    %% Test DNSKEY with binary public_key
+    %% RFC3110§2: exponent 65537, then a 512-bit modulus
+    RsaKey = <<3, 1, 0, 1, 255, 0:504>>,
     DnskeyBinary = #dns_rr{
         name = ~"example.com",
         type = ?DNS_TYPE_DNSKEY,
@@ -902,22 +904,13 @@ test_dnskey_formats(_Config) ->
             flags = 256,
             protocol = 3,
             alg = ?DNS_ALG_RSASHA256,
-            public_key = ~"binary-public-key-data",
+            public_key = RsaKey,
             keytag = 12345
         }
     },
-    assert_transcode(DnskeyBinary),
+    #{~"data" := #{~"public_key" := RsaB64}} = assert_transcode(DnskeyBinary),
+    ?assertEqual(base64:encode(RsaKey), RsaB64),
 
-    %% A key is its bytes, even bytes that read as numbers each behind a 32-bit
-    %% length, which JSON took for an RSA key's [E, M], whatever the algorithm
-    LengthPrefixed = <<<<(byte_size(B)):32, B/binary>> || B <- [<<1, 0, 1>>, <<1, 9, 50>>]>>,
-    DnskeyPrefixed = DnskeyBinary#dns_rr{
-        data = (DnskeyBinary#dns_rr.data)#dns_rrdata_dnskey{public_key = LengthPrefixed}
-    },
-    #{~"data" := #{~"public_key" := DnskeyB64}} = assert_transcode(DnskeyPrefixed),
-    ?assertEqual(base64:encode(LengthPrefixed), DnskeyB64),
-
-    %% Test CDNSKEY with binary public_key
     CdnskeyBinary = #dns_rr{
         name = ~"example.com",
         type = ?DNS_TYPE_CDNSKEY,
@@ -926,17 +919,45 @@ test_dnskey_formats(_Config) ->
             flags = 256,
             protocol = 3,
             alg = ?DNS_ALG_RSASHA256,
-            public_key = ~"binary-public-key-data",
+            public_key = RsaKey,
             keytag = 12345
         }
     },
     assert_transcode(CdnskeyBinary),
 
+    %% A key is its bytes, even bytes that read as numbers each behind a 32-bit
+    %% length, which JSON took for an RSA key's [E, M], here of PRIVATEDNS, an
+    %% algorithm whose keys are not looked at
+    LengthPrefixed = <<<<(byte_size(B)):32, B/binary>> || B <- [<<1, 0, 1>>, <<1, 9, 50>>]>>,
+    DnskeyPrefixed = DnskeyBinary#dns_rr{
+        data = (DnskeyBinary#dns_rr.data)#dns_rrdata_dnskey{
+            alg = 253, public_key = LengthPrefixed
+        }
+    },
+    #{~"data" := #{~"public_key" := DnskeyB64}} = assert_transcode(DnskeyPrefixed),
+    ?assertEqual(base64:encode(LengthPrefixed), DnskeyB64),
     CdnskeyPrefixed = CdnskeyBinary#dns_rr{
-        data = (CdnskeyBinary#dns_rr.data)#dns_rrdata_cdnskey{public_key = LengthPrefixed}
+        data = (CdnskeyBinary#dns_rr.data)#dns_rrdata_cdnskey{
+            alg = 253, public_key = LengthPrefixed
+        }
     },
     #{~"data" := #{~"public_key" := CdnskeyB64}} = assert_transcode(CdnskeyPrefixed),
     ?assertEqual(base64:encode(LengthPrefixed), CdnskeyB64),
+
+    %% The JSON 5.2.0 and earlier wrote for an RSA or DSA key, each number behind a
+    %% 32-bit length, is no RFC 3110 or RFC 2536 key, and from_map/1 refuses it
+    %% rather than load bytes no RRSIG verifies with
+    [
+        ?assertError(
+            {invalid_record, _},
+            dns_json:from_map(
+                MapRR#{~"data" := (maps:get(~"data", MapRR))#{~"alg" := Alg}}
+            ),
+            Alg
+        )
+     || Alg <- [?DNS_ALG_RSASHA256, ?DNS_ALG_DSA],
+        MapRR <- [dns_json:to_map(DnskeyPrefixed), dns_json:to_map(CdnskeyPrefixed)]
+    ],
 
     %% A key as RSA's [E, M] of 5.2.0 and earlier is no key: to_map/1 raises,
     %% rather than write it as a JSON array, or a list of octets as their bytes
@@ -1787,7 +1808,8 @@ test_edge_cases(_Config) ->
     },
     assert_transcode(SvcbUnknown),
 
-    %% A DNSKEY's key is the bytes its base64 holds
+    %% A DNSKEY's key is the bytes its base64 holds, here of PRIVATEDNS, an
+    %% algorithm whose keys are not looked at
     DnskeyMap = #{
         ~"name" => ~"example.com",
         ~"type" => ~"DNSKEY",
@@ -1796,7 +1818,7 @@ test_edge_cases(_Config) ->
         ~"data" => #{
             ~"flags" => 256,
             ~"protocol" => 3,
-            ~"alg" => ?DNS_ALG_RSASHA256,
+            ~"alg" => 253,
             ~"public_key" => base64:encode(~"simple-binary-data"),
             ~"keytag" => 12345
         }
@@ -1808,7 +1830,8 @@ test_edge_cases(_Config) ->
     ?assertEqual(~"simple-binary-data", element(5, DnskeyData)),
 
     %% Even bytes that read as numbers each behind a 32-bit length, as 5.2.0 and
-    %% earlier wrote an RSA key's exponent and modulus, are the key's bytes
+    %% earlier wrote an RSA key's exponent and modulus, are the key's bytes. Under
+    %% an RSA algorithm they are refused, as test_dnskey_formats has it
     FormattedBin = <<<<(byte_size(B)):32, B/binary>> || B <- [<<1, 0, 1>>, <<48, 57>>]>>,
     DnskeyMap2 = #{
         ~"name" => ~"example.com",
@@ -1818,7 +1841,7 @@ test_edge_cases(_Config) ->
         ~"data" => #{
             ~"flags" => 256,
             ~"protocol" => 3,
-            ~"alg" => ?DNS_ALG_RSASHA256,
+            ~"alg" => 253,
             ~"public_key" => base64:encode(FormattedBin),
             ~"keytag" => 12345
         }

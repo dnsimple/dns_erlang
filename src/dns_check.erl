@@ -6,12 +6,14 @@
 %% path free of checks, and writes each field with bit syntax, which keeps only
 %% the low bits of an integer too wide for its segment: MX preference 70000 would
 %% go out as 4464, and -1 as 65535. A value that does not fit its field is refused
-%% here instead, when it is loaded.
+%% here instead, when it is loaded, as is a DNSKEY or CDNSKEY whose RSA or DSA key
+%% RFC 3110, RFC 5702 or RFC 2536 rules out, with which verify_rrsig/4 verifies
+%% nothing.
 
 -include_lib("dns_erlang/include/dns.hrl").
 
 -export([header/1, rr/1, rrdata/1, rrdata/2, query/1, optrr/1, opt/1]).
--export([key_fits/3, digest_fits/3]).
+-export([key_fits/4, digest_fits/3]).
 
 -define(IS_UINT(Bits, X), (is_integer(X) andalso 0 =< X andalso X < (1 bsl Bits))).
 -define(IS_NONEMPTY_BIN(X), (is_binary(X) andalso <<>> =/= X)).
@@ -113,8 +115,8 @@ fits(#dns_rrdata_brid{data = Data}) ->
     ?IS_NONEMPTY_BIN(Data);
 fits(#dns_rrdata_caa{flags = Flags, tag = Tag}) ->
     ?IS_UINT(8, Flags) andalso byte_size(Tag) =< ?MAX_STRING;
-fits(#dns_rrdata_cdnskey{flags = Flags, protocol = Protocol, alg = Alg}) ->
-    key_fits(Flags, Protocol, Alg);
+fits(#dns_rrdata_cdnskey{flags = Flags, protocol = Protocol, alg = Alg, public_key = Key}) ->
+    key_fits(Flags, Protocol, Alg, Key);
 fits(#dns_rrdata_cds{keytag = KeyTag, alg = Alg, digest_type = DigestType}) ->
     digest_fits(KeyTag, Alg, DigestType);
 fits(#dns_rrdata_cert{type = Type, keytag = KeyTag, alg = Alg}) ->
@@ -123,8 +125,8 @@ fits(#dns_rrdata_csync{soa_serial = SOASerial, flags = Flags, types = Types}) ->
     ?IS_UINT(32, SOASerial) andalso ?IS_UINT(16, Flags) andalso types_fit(Types);
 fits(#dns_rrdata_dlv{keytag = KeyTag, alg = Alg, digest_type = DigestType}) ->
     digest_fits(KeyTag, Alg, DigestType);
-fits(#dns_rrdata_dnskey{flags = Flags, protocol = Protocol, alg = Alg}) ->
-    key_fits(Flags, Protocol, Alg);
+fits(#dns_rrdata_dnskey{flags = Flags, protocol = Protocol, alg = Alg, public_key = Key}) ->
+    key_fits(Flags, Protocol, Alg, Key);
 fits(#dns_rrdata_ds{keytag = KeyTag, alg = Alg, digest_type = DigestType}) ->
     digest_fits(KeyTag, Alg, DigestType);
 fits(#dns_rrdata_dsync{rrtype = RRType, scheme = Scheme, port = Port}) ->
@@ -251,11 +253,12 @@ fits(Data) when
 ->
     true.
 
-%% A DNSKEY's or CDNSKEY's fields. The zone file reader checks a DNSKEY with it
-%% too, without encoding it
--spec key_fits(dynamic(), dynamic(), dynamic()) -> boolean().
-key_fits(Flags, Protocol, Alg) ->
-    ?IS_UINT(16, Flags) andalso ?IS_UINT(8, Protocol) andalso ?IS_UINT(8, Alg).
+%% A DNSKEY's or CDNSKEY's fields, its key as dns_dnskey:fits/2 has it. The zone
+%% file reader checks a DNSKEY with it too, without encoding it
+-spec key_fits(dynamic(), dynamic(), dynamic(), dynamic()) -> boolean().
+key_fits(Flags, Protocol, Alg, Key) ->
+    ?IS_UINT(16, Flags) andalso ?IS_UINT(8, Protocol) andalso ?IS_UINT(8, Alg) andalso
+        dns_dnskey:fits(Alg, Key).
 
 %% A DS's, CDS's or DLV's fields. The zone file reader checks a DS with it too,
 %% without encoding it

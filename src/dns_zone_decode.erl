@@ -575,7 +575,7 @@ fits(#dns_rr{name = Owner, type = Type, class = Class, ttl = TTL, data = Data} =
             is_binary(Key)
         ->
             header_fits(Type, Class, TTL) andalso owner_fits(Owner, Memo) andalso
-                dns_check:key_fits(Flags, Protocol, Alg) andalso
+                dns_check:key_fits(Flags, Protocol, Alg, Key) andalso
                 4 + byte_size(Key) =< ?MAX_RDLENGTH;
         #dns_rrdata_rrsig{signers_name = Signer, signature = Signature} = RRSIG when
             is_binary(Signer), is_binary(Signature)

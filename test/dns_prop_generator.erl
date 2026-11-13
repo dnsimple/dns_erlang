@@ -201,3 +201,62 @@ dname_from_labels(Labels) ->
         <<>>,
         Labels
     ).
+
+%% ============================================================================
+%% DNSKEY keys
+%% ============================================================================
+
+%% A key a DNSKEY or CDNSKEY of the algorithm can carry, as dns_check takes it:
+%% an RSA key laid out as RFC 3110 has it and a DSA key as RFC 2536 has it, made
+%% by dns_sec:dnskey_public_key/2 from random numbers of sizes they allow, and what
+%% Other generates for other algorithms, whose keys are not looked at
+dnskey_public_key(Alg, Other) ->
+    case Alg of
+        ?DNS_ALG_RSASHA512 ->
+            rsa_dnskey_public_key(Alg, 128);
+        _ when
+            Alg =:= ?DNS_ALG_RSASHA1;
+            Alg =:= ?DNS_ALG_NSEC3RSASHA1;
+            Alg =:= ?DNS_ALG_RSASHA256
+        ->
+            rsa_dnskey_public_key(Alg, 64);
+        _ when Alg =:= ?DNS_ALG_DSA; Alg =:= ?DNS_ALG_NSEC3DSA ->
+            dsa_dnskey_public_key(Alg);
+        _ ->
+            Other
+    end.
+
+%% RFC3110§2, RFC5702§2: an exponent of up to 3 octets, and a modulus of MinSize
+%% to MinSize + 8 octets with its top bit set
+rsa_dnskey_public_key(Alg, MinSize) ->
+    ?LET(
+        {E, NFirst, NRest},
+        {
+            integer(1, 16#FFFFFF),
+            integer(128, 255),
+            ?LET(N, integer(MinSize, MinSize + 8), binary(N - 1))
+        },
+        dns_sec:dnskey_public_key(Alg, [binary:encode_unsigned(E), <<NFirst, NRest/binary>>])
+    ).
+
+%% RFC2536§2: a T of 0 or 1, a Q of 160 bits and a P of 512 + 64T bits, both with
+%% their top bit set, and a G and a Y no longer than P
+dsa_dnskey_public_key(Alg) ->
+    ?LET(
+        T,
+        integer(0, 1),
+        ?LET(
+            {QFirst, QRest, PFirst, PRest, G, Y},
+            {
+                integer(128, 255),
+                binary(19),
+                integer(128, 255),
+                binary(63 + 8 * T),
+                binary(64 + 8 * T),
+                binary(64 + 8 * T)
+            },
+            dns_sec:dnskey_public_key(
+                Alg, [<<PFirst, PRest/binary>>, <<QFirst, QRest/binary>>, G, Y]
+            )
+        )
+    ).

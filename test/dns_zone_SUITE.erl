@@ -629,6 +629,7 @@ groups() ->
             parse_invalid_ds_hex,
             parse_invalid_rrsig_times,
             parse_values_that_do_not_fit_rejected,
+            parse_dnskey_key_must_fit,
             parse_invalid_dnskey_rdata,
             parse_invalid_dnskey_base64,
             parse_invalid_zonemd_rdata,
@@ -2492,9 +2493,9 @@ parse_ds_record(_Config) ->
 parse_dnskey_record(_Config) ->
     %% DNSKEY (DNS Public Key) for DNSSEC (RFC 4034)
     %% Format: flags protocol algorithm public-key
-    %% This is a real DNSKEY for example.com (ZSK, Zone Signing Key)
+    %% RFC5702§6.1's ZSK, whose key tag the RFC gives as 9033
     Zone =
-        ~"example.com. 3600 IN DNSKEY 256 3 8 \"AwEAAagAIKlVZrpC6Ia7gEzahOR+9W29euxhJhVVLOyQbSEW0O8gcCjF\"\n",
+        ~"example.com. 3600 IN DNSKEY 256 3 8 \"AwEAAcFcGsaxxdgiuuGmCkVImy4h99CqT7jwY3pexPGcnUFtR2Fh36BponcwtkZ4cAgtvd4Qs8PkxUdp6p/DlUmObdk=\"\n",
     {ok, [RR]} = dns_zone:parse_string(Zone, #{origin => ~"example.com."}),
     ?assertEqual(?DNS_TYPE_DNSKEY, RR#dns_rr.type),
     #dns_rrdata_dnskey{
@@ -2510,9 +2511,29 @@ parse_dnskey_record(_Config) ->
     ?assert(is_binary(PublicKey)),
     ?assert(byte_size(PublicKey) > 0),
     %% KeyTag should be calculated automatically
-    ?assert(is_integer(KeyTag)),
-    ?assert(KeyTag >= 0),
-    ?assert(KeyTag =< 65535).
+    ?assertEqual(9033, KeyTag).
+
+%% RFC3110§2, RFC5702§2: a DNSKEY's or CDNSKEY's RSA key is read only if laid out
+%% as dns_sec:dnskey_public_key/2 lays it out, as verify_rrsig/4 verifies nothing
+%% with any other: not as JSON had it in 5.2.0 and earlier, each number behind a
+%% 32-bit length, nor with a 304-bit modulus
+parse_dnskey_key_must_fit(_Config) ->
+    N = <<255, 0:504>>,
+    Fit = <<3, 1, 0, 1, N/binary>>,
+    LengthPrefixed = <<3:32, 1, 0, 1, 64:32, N/binary>>,
+    Short = <<3, 1, 0, 1, 255, 0:296>>,
+    RData = fun(Type, Key) -> <<Type/binary, " 256 3 8 ", (base64:encode(Key))/binary>> end,
+    [
+        begin
+            Parsed = parse_rdata(RData(Type, Fit)),
+            ?assertEqual(Fit, element(#dns_rrdata_dnskey.public_key, Parsed), Type),
+            [
+                ?assertMatch(#{type := semantic}, parse_rdata_error(RData(Type, Key)), {Type, Key})
+             || Key <- [LengthPrefixed, Short]
+            ]
+        end
+     || Type <- [~"DNSKEY", ~"CDNSKEY"]
+    ].
 
 parse_zonemd_record(_Config) ->
     %% ZONEMD (Zone Metadata) for DNSSEC (RFC 8976)
@@ -7720,12 +7741,13 @@ parse_hex_and_base64_of_digits(_Config) ->
     ?assertMatch(#dns_rrdata_sshfp{fp = <<16#12, 16#34>>}, parse_rdata(~"SSHFP 2 1 1234")),
     ?assertMatch(#dns_rrdata_tlsa{certificate = <<0>>}, parse_rdata(~"TLSA 3 1 1 00")),
     ?assertMatch(#dns_rrdata_zonemd{hash = <<16#12, 16#34>>}, parse_rdata(~"ZONEMD 1 1 1 1234")),
+    %% Of PRIVATEDNS, whose keys are not looked at, as no RSA key is this short
     ?assertMatch(
         #dns_rrdata_dnskey{public_key = <<215, 109, 248, 231, 174, 252>>},
-        parse_rdata(~"DNSKEY 256 3 8 12345678")
+        parse_rdata(~"DNSKEY 256 3 253 12345678")
     ),
     ?assertMatch(
-        #dns_rrdata_dnskey{public_key = <<214, 29, 166>>}, parse_rdata(~"DNSKEY 256 3 8 1h2m")
+        #dns_rrdata_dnskey{public_key = <<214, 29, 166>>}, parse_rdata(~"DNSKEY 256 3 253 1h2m")
     ),
     ?assertMatch(
         #dns_rrdata_rrsig{signature = <<215, 109, 248, 231, 174, 252>>},

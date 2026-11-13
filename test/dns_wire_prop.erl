@@ -367,14 +367,22 @@ rrdata() ->
             #dns_rrdata_dlv{keytag = K, alg = A, digest_type = D, digest = Dg}
         ),
         ?LET(
-            {F, P, A, K},
-            {u16(), u8(), u8(), bin(1, 24)},
-            #dns_rrdata_dnskey{flags = F, protocol = P, alg = A, public_key = K}
+            {F, P, A},
+            {u16(), u8(), u8()},
+            ?LET(
+                K,
+                dns_prop_generator:dnskey_public_key(A, bin(1, 24)),
+                #dns_rrdata_dnskey{flags = F, protocol = P, alg = A, public_key = K}
+            )
         ),
         ?LET(
-            {F, P, A, K},
-            {u16(), u8(), u8(), bin(1, 24)},
-            #dns_rrdata_cdnskey{flags = F, protocol = P, alg = A, public_key = K}
+            {F, P, A},
+            {u16(), u8(), u8()},
+            ?LET(
+                K,
+                dns_prop_generator:dnskey_public_key(A, bin(1, 24)),
+                #dns_rrdata_cdnskey{flags = F, protocol = P, alg = A, public_key = K}
+            )
         ),
         ?LET(
             {R, S, P, T},

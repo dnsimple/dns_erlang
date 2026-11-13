@@ -779,7 +779,8 @@ number that breaks it, but never one of the key's numbers:
   key of another length.
 
 `verify_rrsig/4` verifies with no RSA or DSA key that this function would not
-make.
+make, and `dns_json:from_map/1` and `dns_zone` refuse a DNSKEY or CDNSKEY with
+one.
 """.
 -spec dnskey_public_key(sigalg(), [binary()] | binary()) -> binary().
 dnskey_public_key(Alg, Key) ->
