@@ -1674,7 +1674,7 @@ parse_keeps_rdata_name_case(_Config) ->
     ?assertMatch(#dns_rr{name = ~"example.test."}, DNSKey),
     ?assertMatch(#dns_rrdata_mx{exchange = ~"MX.Example.Test."}, MX#dns_rr.data),
     ?assertMatch(#dns_rrdata_cname{dname = ~"Target.Example.Test."}, CNAME#dns_rr.data),
-    ?assert(dnssec:verify_rrsig(RRSig, [HTTPS], [DNSKey], #{now => 1790812801})).
+    ?assert(dns_sec:verify_rrsig(RRSig, [HTTPS], [DNSKey], #{now => 1790812801})).
 
 %% RFC3597§7, RFC6840§5.1: DNSSEC signs the names in SVCB, HTTPS, NSEC, HIP,
 %% IPSECKEY, AMTRELAY, LP and DSYNC RDATA in the case they have. The writer
@@ -1691,7 +1691,7 @@ encode_keeps_rdata_name_case(_Config) ->
     {ok, [DNSKey, HTTPS, RRSig]} = dns_zone:parse_string(Zone),
     {ok, [Written]} = dns_zone:parse_string(iolist_to_binary([dns_zone:encode_rr(HTTPS), "\n"])),
     ?assertMatch(#dns_rrdata_https{target_name = ~"Svc.Example.Test."}, Written#dns_rr.data),
-    ?assert(dnssec:verify_rrsig(RRSig, [Written], [DNSKey], #{now => 1790812801})),
+    ?assert(dns_sec:verify_rrsig(RRSig, [Written], [DNSKey], #{now => 1790812801})),
     Records = [
         #dns_rrdata_svcb{svc_priority = 1, target_name = ~"Svc.Example.", svc_params = #{}},
         #dns_rrdata_nsec{next_dname = ~"Next.Example.", types = [?DNS_TYPE_A]},

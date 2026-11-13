@@ -117,7 +117,7 @@ canonical_rrdata(Class, Type, Bin) when is_binary(Bin) ->
         Data -> canonical_rrdata(Class, Type, Data)
     end;
 canonical_rrdata(Class, _Type, Data) ->
-    dns_encode:encode_rrdata(Class, dnssec:canonical_rrdata_form(Data)).
+    dns_encode:encode_rrdata(Class, dns_sec:canonical_rrdata_form(Data)).
 
 written_rr() ->
     ?LET(

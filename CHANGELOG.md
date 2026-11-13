@@ -11,6 +11,10 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - DNSSEC algorithms 1 (RSAMD5), 12 (ECC-GOST), 17 (SM2SM3) and 23 (ECC-GOST12) have names and constants in `dns_terms.hrl`.
 
+### Changed
+
+- `dnssec` is now `dns_sec`, as every other module of this library starts with `dns`.
+
 ### Updated
 
 - Optimized `encode_message/2`: a reply that fits whole is no longer copied behind its header, 1.1–1.3x faster on replies of up to three records.
