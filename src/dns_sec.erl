@@ -580,9 +580,8 @@ verify_rrsig(#dns_rr{type = ?DNS_TYPE_RRSIG, class = Class, data = Data}, RRs, D
             lists:any(fun(Key) -> verify(SigAlg, Key, Signature, SigInput) end, Keys)
     end.
 
-%% RFC4035§5.3.1: the keys of the DNSKEYs that an RRSIG of the class names. A DNSKEY of the
-%% RRSIG's algorithm and signer whose key is not a binary raises, as documented, whatever else
-%% it holds
+%% RFC4035§5.3.1: the keys of the DNSKEYs that an RRSIG of the class names. A DNSKEY of the RRSIG's
+%% algorithm and signer whose key is not a binary raises, as documented, whatever else it holds
 -spec named_keys(dns:class(), dns:rrdata_rrsig(), [dns:rr()]) -> [binary()].
 named_keys(Class, #dns_rrdata_rrsig{alg = Alg, signers_name = Signer, keytag = KeyTag}, DNSKeys) ->
     Candidates = [
