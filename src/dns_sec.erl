@@ -541,15 +541,22 @@ set (RFC 4034 §2.1.1), of protocol 3 and of the RRSIG's class and algorithm, ow
 whose key tag is the RRSIG's. Names compare in any case and with or without a final dot, and a
 key tag is computed from the DNSKEY's RDATA, whatever its `keytag` field holds.
 
-Returns `false` when none of those verifies it, when the time is outside the RRSIG's validity
-period, and when its algorithm is one this module does not implement. Raises
+And only an RRSIG that fits `RRSet` verifies it (RFC 4035 §5.3.1): every record of `RRSet` has the
+RRSIG's owner and class and the type it covers, and the RRSIG's labels field counts no more
+labels than its owner has, not counting a leading `*` (RFC 4034 §3.1.3).
+
+Returns `false` when none of those verifies it, when the RRSIG does not fit `RRSet`, which an
+empty `RRSet` or an owner that is no name never does, when the time is outside the RRSIG's
+validity period, and when its algorithm is one this module does not implement. Raises
 `{badarg, public_key_not_binary}` when a DNSKEY of the RRSIG's algorithm and signer has a key that
 is not a binary, as RSA and DSA keys were before 6.0.0, whether another one verifies it or not.
 """.
 -spec verify_rrsig(
     RRSig :: dns:rr(), RRSet :: [dns:rr()], DNSKeys :: [dns:rr()], Opts :: verify_rrsig_opts()
 ) -> boolean().
-verify_rrsig(#dns_rr{type = ?DNS_TYPE_RRSIG, class = Class, data = Data}, RRs, DNSKeys, Opts) ->
+verify_rrsig(
+    #dns_rr{type = ?DNS_TYPE_RRSIG, class = Class, data = Data} = RRSig, RRs, DNSKeys, Opts
+) ->
     Now =
         case Opts of
             #{now := N} -> N;
@@ -565,9 +572,10 @@ verify_rrsig(#dns_rr{type = ?DNS_TYPE_RRSIG, class = Class, data = Data}, RRs, D
         signature = Signature
     } = Data,
     Keys = named_keys(Class, Data, DNSKeys),
-    case Now of
-        Now when Now < Incept; Expire < Now -> false;
-        Now ->
+    case Incept =< Now andalso Now =< Expire andalso fits_rrset(RRSig, RRs) of
+        false ->
+            false;
+        true ->
             {_SigTuple, SigInput} = build_sig_input(
                 RRs,
                 SignersName,
@@ -578,6 +586,54 @@ verify_rrsig(#dns_rr{type = ?DNS_TYPE_RRSIG, class = Class, data = Data}, RRs, D
                 OTTL
             ),
             lists:any(fun(Key) -> verify(SigAlg, Key, Signature, SigInput) end, Keys)
+    end.
+
+%% RFC4035§5.3.1: the RRSIG and the RRset have one owner and one class, and the RRSIG covers the
+%% RRset's type. Its labels field counts no more labels than its owner has (RFC4034§3.1.3), and
+%% fewer only where a wildcard was expanded into it (RFC4035§5.3.2)
+-spec fits_rrset(dns:rr(), [dns:rr()]) -> boolean().
+fits_rrset(_RRSig, []) ->
+    false;
+fits_rrset(
+    #dns_rr{
+        name = Owner,
+        class = Class,
+        data = #dns_rrdata_rrsig{type_covered = Type, labels = Labels}
+    },
+    RRs
+) ->
+    case name_labels(Owner) of
+        invalid ->
+            false;
+        OwnerLabels ->
+            Labels =< count_labels(OwnerLabels) andalso
+                lists:all(fun(RR) -> is_of_rrset(RR, Owner, Class, Type) end, RRs)
+    end.
+
+%% Whether a record is of the RRset of an owner, class and type, its owner compared as a name
+-spec is_of_rrset(dns:rr(), dns:dname(), dns:class(), dns:type()) -> boolean().
+is_of_rrset(#dns_rr{name = Name, class = Class, type = Type}, Owner, Class, Type) ->
+    is_same_name(Name, Owner);
+is_of_rrset(_RR, _Owner, _Class, _Type) ->
+    false.
+
+%% A name's labels, or invalid for a name that is none: one with an empty label or a label over
+%% 63 octets, or over 255 octets on the wire (RFC1035§2.3.4). dns_domain:split/1 raises for a
+%% label over 63 octets, and for an empty label but a first one, which a leading dot gives
+-spec name_labels(dns:dname()) -> dns:labels() | invalid.
+name_labels(Name) ->
+    try dns_domain:split(Name) of
+        [<<>> | _] ->
+            invalid;
+        Labels ->
+            %% Each label with its length octet, and the root's
+            case iolist_size(Labels) + length(Labels) + 1 =< 255 of
+                true -> Labels;
+                false -> invalid
+            end
+    catch
+        error:{invalid_dname, empty_label} -> invalid;
+        error:{label_too_long, _} -> invalid
     end.
 
 %% RFC4035§5.3.1: the keys of the DNSKEYs that an RRSIG of the class names. A DNSKEY of the RRSIG's
