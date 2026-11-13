@@ -540,13 +540,13 @@ rr(Owner, {TTL, Class, Type, Mnemonic, RDataFields}, Ctx, ImplicitTTL, Memo) ->
 
 %% dns_check:rr/1, which encodes the RDATA to see that it fits. For the types most
 %% zones are made of, and those of DNSSEC, the same is told without writing them:
-%% the fields dns_check:fits/1 checks, and what the encoder refuses on top, in any
-%% class but where it says. That is an address of the wrong shape or in a class
-%% other than IN or NONE, a name dns_domain:to_wire/1 refuses, told without writing
-%% it, a DNSKEY whose key is not a binary, an NSEC3 opt-out that is not a boolean,
-%% and RDATA past 65535 octets, which an NSEC's or an NSEC3's cannot reach. Other
-%% types are left to dns_check:rr/1. The owner of the memo was accepted with a
-%% record already.
+%% the fields dns_check:fits/1 checks, a DS's and a DNSKEY's by dns_check's own
+%% functions, and what the encoder refuses on top, in any class but where it says.
+%% That is an address of the wrong shape or in a class other than IN or NONE, a
+%% name dns_domain:to_wire/1 refuses, told without writing it, a DNSKEY whose key
+%% is not a binary, an NSEC3 opt-out that is not a boolean, and RDATA past 65535
+%% octets, which an NSEC's or an NSEC3's cannot reach. Other types are left to
+%% dns_check:rr/1. The owner of the memo was accepted with a record already.
 -spec fits(dns:rr(), owner_memo()) -> boolean().
 fits(#dns_rr{name = Owner, type = Type, class = Class, ttl = TTL, data = Data} = RR, Memo) ->
     case Data of
@@ -569,13 +569,13 @@ fits(#dns_rr{name = Owner, type = Type, class = Class, ttl = TTL, data = Data} =
             is_binary(Digest)
         ->
             header_fits(Type, Class, TTL) andalso owner_fits(Owner, Memo) andalso
-                ?IS_UINT(16, KeyTag) andalso ?IS_UINT(8, Alg) andalso
-                ?IS_UINT(8, DigestType) andalso 4 + byte_size(Digest) =< ?MAX_RDLENGTH;
+                dns_check:digest_fits(KeyTag, Alg, DigestType) andalso
+                4 + byte_size(Digest) =< ?MAX_RDLENGTH;
         #dns_rrdata_dnskey{flags = Flags, protocol = Protocol, alg = Alg, public_key = Key} when
             is_binary(Key)
         ->
             header_fits(Type, Class, TTL) andalso owner_fits(Owner, Memo) andalso
-                ?IS_UINT(16, Flags) andalso ?IS_UINT(8, Protocol) andalso ?IS_UINT(8, Alg) andalso
+                dns_check:key_fits(Flags, Protocol, Alg) andalso
                 4 + byte_size(Key) =< ?MAX_RDLENGTH;
         #dns_rrdata_rrsig{signers_name = Signer, signature = Signature} = RRSIG when
             is_binary(Signer), is_binary(Signature)
