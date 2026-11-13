@@ -23,6 +23,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - DNSSEC: RSA and DSA private keys are big-endian bytes, where RSA keys could be integers and DSA keys had to be; integers raise `{badarg, number_not_bytes}`.
 - DNSSEC: `verify_rrsig/4` verifies only with zone keys of the RRSIG's class and key tag (RFC 4035 §5.3.1), where it tried every DNSKEY of its algorithm and signer.
 - DNSSEC: `verify_rrsig/4` verifies only RRsets whose every record has the RRSIG's owner, class and covered type, and whose owner has at least the labels the RRSIG's labels field counts (RFC 4035 §5.3.1), where it never read the RRSIG's owner, type covered or labels field, and took only the RDATA of the records after the first.
+- DNSSEC: `verify_rrsig/4` verifies only RRsets whose zone the signer can be (RFC 4035 §5.3.1), NS, SOA and DNSKEY at the signer, NSEC3 one label under it, DS under it and any other at or under it, with a labels field counting at least the signer's labels, where any signer's key verified any RRset.
 
 ### Updated
 
@@ -61,7 +62,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - DNSSEC: `sign_rr` signs records whose owner names differ only in a final dot as one RRset, where it signed two halves that never verified.
 - DNSSEC: `verify_rrsig/4` verifies with RSA and DSA DNSKEYs read from zone files or JSON, and returns `false` for RSA keys with leading zeros or a long exponent length they don't need, where it raised.
 - DNSSEC: `verify_rrsig/4` takes a DNSKEY owned by `example.` for the signer `example`, and the other way round, where a final dot on one name and not the other kept it from verifying.
-- DNSSEC: `verify_rrsig/4` returns `false` for an empty RRset, and for an owner with an empty label, a label over 63 octets or over 255 octets in all, where it raised for most of them, and verified some.
+- DNSSEC: `verify_rrsig/4` returns `false` for an empty RRset, and for an owner or signer with an empty label, a label over 63 octets or over 255 octets in all, where it raised for most of them, and verified some.
 - JSON: `from_map/1` reads every DNSKEY's and CDNSKEY's key as its bytes, where it read some ECDSA and EdDSA keys as lists of numbers.
 
 ## v5.2.0

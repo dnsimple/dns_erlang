@@ -1,6 +1,6 @@
 -module(data_samples).
 
--export([dnssec/0, tsig/0, rrdata_wire/0, mldsa44_example/0]).
+-export([dnssec/0, tsig/0, rrdata_wire/0, mldsa44_example/0, bind_root_zone/0]).
 
 dnssec() ->
     [
@@ -3037,4 +3037,69 @@ mldsa44_example() ->
                  10bJW8TH+yzqE4syjdUPEalQnwP/fh9us92eSdv50vr0/KPhzfWzcRwWFxof
                  S15zlJe3xNj+BAURHCApKjBkh5emuLy+w9zn6vn6/QsbXWp6hZWcoLO6ytLf
                  6/H+DhguNzs/VFVbg5SXo62wztPoAAAAAAAAAAAAAA0jNEY= )
+    """.
+
+%% A root zone with delegations to com and net, the first with a DS RRset, signed by
+%% dnssec-signzone of BIND 9.20.30 on 2026-11-13 with a throwaway ECDSA P-256 KSK, its RRSIGs
+%% valid from 2026-01-01 to 2027-01-01. Tabs are written as spaces.
+bind_root_zone() ->
+    ~"""
+    ; File written on Fri Nov 13 18:58:45 2026
+    ; dnssec-signzone version 9.20.30
+    .                       3600    IN SOA  a.root-servers.net. nstld.verisign-grs.com. (
+                                            1          ; serial
+                                            1800       ; refresh (30 minutes)
+                                            900        ; retry (15 minutes)
+                                            604800     ; expire (1 week)
+                                            86400      ; minimum (1 day)
+                                            )
+                            3600    RRSIG   SOA 13 0 3600 (
+                                            20270101000000 20260101000000 10281 .
+                                            XQ0FtKVr2gQIwY1TjQ6MB3f8or8simK3/LJg
+                                            eU11S3t8f5VWtlzj88SBh39CpSoZZe2XGDwd
+                                            PovlTDOpxwOtjQ== )
+                            3600    NS      a.root-servers.net.
+                            3600    RRSIG   NS 13 0 3600 (
+                                            20270101000000 20260101000000 10281 .
+                                            yrPm5asiH0AvpYEVSkWJVlBYvttDEKaYuzju
+                                            8L8+uL8qaKTBaVQIKLO8dRT2J6njxvHNm5oc
+                                            Ulkwd80tWWfrpg== )
+                            3600    NSEC    com. NS SOA RRSIG NSEC DNSKEY
+                            3600    RRSIG   NSEC 13 0 3600 (
+                                            20270101000000 20260101000000 10281 .
+                                            cW37p6YS5DdYhddkTB4aEetC2Fsftn/ZPH31
+                                            CFBm/GOJwQunkwzmJem5KdMny3F/Cu56KWDO
+                                            36tynPISesjDcw== )
+                            3600    DNSKEY  257 3 13 (
+                                            otObHgbK3bzoQxETCw6EJh/oLAd/jlPj6TFR
+                                            sxbB1ZqeVh0O2fguuF7y9UEZYwi/QmscWwzL
+                                            rgG8GB4qu0lI6A==
+                                            ) ; KSK; alg = ECDSAP256SHA256 ; key id = 10281
+                            3600    RRSIG   DNSKEY 13 0 3600 (
+                                            20270101000000 20260101000000 10281 .
+                                            uBN2+lbzbhEKMMEsQQMv4RF8N/82HqraT5dg
+                                            i0u5GNmxfndA2KWTWck09ttm+CqYw/W5f2ef
+                                            sA38U9P53GGRrA== )
+    com.                    3600    IN NS   a.gtld-servers.net.
+                            3600    DS      43951 13 2 (
+                                            5F436C2821786BA6313D2865E6AC693F398C
+                                            6214BF73D44475FCB5F21544903E )
+                            3600    RRSIG   DS 13 1 3600 (
+                                            20270101000000 20260101000000 10281 .
+                                            UDIFhMoRUnXjNqwxpI/ExaBHvS85u7wJp3w+
+                                            Ct1KC9GJjIGwgheDntKHtY9NuIb2OytNN2EG
+                                            uGcomHOYHgnjPQ== )
+                            3600    NSEC    net. NS DS RRSIG NSEC
+                            3600    RRSIG   NSEC 13 1 3600 (
+                                            20270101000000 20260101000000 10281 .
+                                            dHNbM1XoZNz5KYr93BBeuqVnNNLgtD8kVvnv
+                                            XCsE0xjjVDxS6clCulpsEOlp0NqSTD/DEGqZ
+                                            KBmjPLJgVjtMBA== )
+    net.                    3600    IN NS   a.gtld-servers.net.
+                            3600    NSEC    . NS RRSIG NSEC
+                            3600    RRSIG   NSEC 13 1 3600 (
+                                            20270101000000 20260101000000 10281 .
+                                            3Yr5+JzOjACGsO+TNObC0XDQ0AaeVHZ1JhWW
+                                            JC/o2872YBzC9RWhtqx19fCHAUZMv4uw0fsc
+                                            qPf/WxI7M8l/zw== )
     """.
