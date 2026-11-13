@@ -3,12 +3,16 @@
 
 %% The key field of a DNSKEY's or CDNSKEY's RDATA, which field/2 lays out for
 %% dns_sec:dnskey_public_key/2: an RSA key's by RFC 3110 and RFC 5702, and a DSA
-%% key's by RFC 2536.
+%% key's by RFC 2536. numbers/2 splits an RSA or DSA key field back into its
+%% numbers for dns_sec:verify_rrsig/4 by the same rules, so that it verifies with
+%% no key field that dnskey_public_key/2 would not make. And a record loaded from
+%% JSON or a zone file is refused when fits/2 is false, so that no such key loads
+%% either.
 
 -include_lib("dns_erlang/include/dns.hrl").
 -include("dns_sec_algs.hrl").
 
--export([field/2]).
+-export([field/2, numbers/2, fits/2, public_key/1]).
 
 %% The rule a key breaks, with the size in bits of the number that breaks it. It
 %% never holds one of the key's numbers, as DSA signing lays out its private key
@@ -18,6 +22,15 @@
     | key_shape
     | dsa_number_longer_than_p
     | {rsa_exponent_bits | rsa_modulus_bits | dsa_q_bits | dsa_p_bits, non_neg_integer()}.
+
+%% A DNSKEY's or CDNSKEY's public_key, its RDATA's key field. One that is not a
+%% binary, as RSA and DSA keys were before 6.0.0, raises
+%% {badarg, public_key_not_binary}
+-spec public_key(dynamic()) -> binary().
+public_key(Key) when is_binary(Key) ->
+    Key;
+public_key(_Key) ->
+    error({badarg, public_key_not_binary}).
 
 %% The key field of a public key, as dns_sec:dnskey_public_key/2 documents it, and
 %% with its errors: an RSA key [E, N] or a DSA key [P, Q, G, Y], each number as its
@@ -72,6 +85,42 @@ field(Alg, _Key) when
 field(Alg, _Key) ->
     error({unsupported_algorithm, Alg}).
 
+%% The numbers of an RSA key [E, N] or a DSA key [P, Q, G, Y] in a key field, as
+%% their big-endian bytes, or invalid for a field that field/2 would not lay out
+-spec numbers(dns:uint8(), binary()) -> [binary()] | invalid.
+numbers(Alg, Field) when ?IS_RSA_ALG(Alg) ->
+    rsa_numbers(Alg, Field);
+numbers(Alg, Field) when ?IS_DSA_ALG(Alg) ->
+    dsa_numbers(Field).
+
+%% Whether a DNSKEY or CDNSKEY may carry the key: for an RSA or DSA algorithm only
+%% a field that field/2 would lay out. Keys of other algorithms are not looked at
+%% here, nor keys that are not binaries, which the encoder refuses.
+-spec fits(dynamic(), dynamic()) -> boolean().
+fits(Alg, Key) when (?IS_RSA_ALG(Alg) orelse ?IS_DSA_ALG(Alg)) andalso is_binary(Key) ->
+    numbers(Alg, Key) =/= invalid;
+fits(_Alg, _Key) ->
+    true.
+
+-spec rsa_numbers(dns:uint8(), binary()) -> [binary()] | invalid.
+rsa_numbers(Alg, <<0, Len:16, E:Len/binary, N/binary>>) when Len > 255 ->
+    rsa_numbers(Alg, E, N);
+rsa_numbers(Alg, <<Len, E:Len/binary, N/binary>>) when Len > 0 ->
+    rsa_numbers(Alg, E, N);
+rsa_numbers(_Alg, _Field) ->
+    invalid.
+
+-spec rsa_numbers(dns:uint8(), binary(), binary()) -> [binary()] | invalid.
+rsa_numbers(Alg, <<EFirst, _/binary>> = E, <<NFirst, _/binary>> = N) when
+    EFirst > 0, NFirst > 0
+->
+    case rsa_key_fits(Alg, E, N) of
+        ok -> [E, N];
+        _ -> invalid
+    end;
+rsa_numbers(_Alg, _E, _N) ->
+    invalid.
+
 %% RFC3110§2, §3, RFC5702§2: an RSA key's exponent is 1 to 4096 bits long, and its
 %% modulus 512 to 4096 bits, or 1024 to 4096 for RSA/SHA-512
 -spec rsa_key_fits(dns:uint8(), binary(), binary()) -> ok | why().
@@ -87,8 +136,10 @@ rsa_key_fits(Alg, E, N) ->
         _ -> ok
     end.
 
-%% The bits of a number given as its big-endian bytes without leading zeros
+%% The bits of a number given as its big-endian bytes
 -spec bit_length(binary()) -> non_neg_integer().
+bit_length(<<0, Rest/binary>>) ->
+    bit_length(Rest);
 bit_length(<<First, Rest/binary>>) ->
     8 * byte_size(Rest) + byte_bits(First);
 bit_length(<<>>) ->
@@ -100,12 +151,22 @@ byte_bits(0) ->
 byte_bits(Byte) ->
     1 + byte_bits(Byte bsr 1).
 
+-spec dsa_numbers(binary()) -> [binary()] | invalid.
+dsa_numbers(
+    <<T, Q:20/binary, P:(64 + 8 * T)/binary, G:(64 + 8 * T)/binary, Y:(64 + 8 * T)/binary>>
+) when T =< 8 ->
+    case dsa_t(P, Q, G, Y) of
+        T -> [P, Q, G, Y];
+        _ -> invalid
+    end;
+dsa_numbers(_Field) ->
+    invalid.
+
 %% RFC2536§2: the T of a DSA key, or the rule it breaks. Its Q is 160 bits long,
 %% 2^159 < Q < 2^160, and its P is 512 + 64T bits long for a T of 0 to 8,
 %% 2^(511+64T) < P < 2^(512+64T), so that both have their top bit set in their
-%% fields. G and Y fit in the 64 + 8T octets of P. All four are given without
-%% leading zeros. Only the sizes of P and Q are told, as a DNSKEY shows them
-%% anyway; Y's is not, as X stands for it in signing
+%% fields. G and Y fit in the 64 + 8T octets of P. Only the sizes of P and Q are
+%% told, as a DNSKEY shows them anyway; Y's is not, as X stands for it in signing
 -spec dsa_t(binary(), binary(), binary(), binary()) -> 0..8 | why().
 dsa_t(P, Q, G, Y) ->
     PBits = bit_length(P),

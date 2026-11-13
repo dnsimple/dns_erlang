@@ -110,7 +110,15 @@ Unlike `t:dns:alg/0`, this type is restricted to algorithms valid for zone signi
 -type gen_nsec3_opts() :: gen_nsec_opts().
 -doc "DNSKEY key tag (RFC 4034 Appendix B).".
 -type keytag() :: integer().
--doc "Cryptographic key material for signing or verification.".
+-doc """
+A private key to sign with.
+
+An RSA key is `[E, N, D]`, or the whole list `crypto:generate_key/2` gives, which lets crypto sign
+by the CRT, and a DSA key `[P, Q, G, X]`, each number as its big-endian bytes; a number given as an
+integer raises `{badarg, number_not_bytes}`. An ECDSA key is its private scalar, an EdDSA key its
+private key, and an ML-DSA-44 key its 32-byte seed or 2560-byte expanded key. The public key a
+DNSKEY carries is its RDATA's key field, which `dnskey_public_key/2` makes.
+""".
 -type key() :: [binary()] | binary().
 -doc "Options for `sign_rr/6` and `sign_rrset/6`.".
 -type sign_rr_opts() :: #{inception => dns:unix_time(), expiration => dns:unix_time()}.
@@ -485,14 +493,17 @@ is_rrsig(#dns_rr{type = Type}) -> Type =:= ?DNS_TYPE_RRSIG.
 
 -spec sign(dns:uint8(), binary(), key()) -> binary().
 sign(Alg, BaseSigInput, Key) when ?IS_DSA_ALG(Alg) ->
-    %% RFC2536: Key must be [P, Q, G, X] as integers (crypto key format).
+    %% RFC2536§3: the signature starts with the key's T, the first octet of the key field that
+    %% [P, Q, G, X] lays out as [P, Q, G, Y] does, as X < Q; laying it out raises {badarg, Why}
+    %% for a key no DNSKEY can carry, or one given as integers
+    <<T, _/binary>> = dns_dnskey:field(Alg, Key),
     DerSig = crypto:sign(dss, sha, BaseSigInput, Key),
     #'Dss-Sig-Value'{r = R, s = S} = public_key:der_decode('Dss-Sig-Value', DerSig),
-    [P, _Q, _G, _Y] = Key,
-    M = byte_size(binary:encode_unsigned(P)),
-    T = (M - 64) div 8,
     <<T, R:20/unit:8, S:20/unit:8>>;
 sign(Alg, BaseSigInput, Key) when ?IS_RSA_ALG(Alg) ->
+    %% crypto takes integers too, converting them on every call
+    is_list(Key) andalso lists:all(fun erlang:is_binary/1, Key) orelse
+        error({badarg, number_not_bytes}),
     crypto:sign(
         rsa,
         none,
@@ -523,6 +534,9 @@ Provides primitive verification of an RR set.
 
 Returns `false` when no DNSKEY of the RRSIG's algorithm and signer verifies it, when the time is
 outside the RRSIG's validity period, and when its algorithm is one this module does not implement.
+Raises `{badarg, public_key_not_binary}` when a DNSKEY of the RRSIG's algorithm and signer has a
+key that is not a binary, as RSA and DSA keys were before 6.0.0, whether another one verifies it
+or not.
 """.
 -spec verify_rrsig(dns:rr(), [dns:rr()], [dns:rr()], verify_rrsig_opts()) -> boolean().
 verify_rrsig(#dns_rr{type = ?DNS_TYPE_RRSIG, data = Data}, RRs, RRDNSKey, Opts) ->
@@ -537,7 +551,7 @@ verify_rrsig(#dns_rr{type = ?DNS_TYPE_RRSIG, data = Data}, RRs, RRDNSKey, Opts) 
         signature = Signature
     } = Data,
     Keys0 = [
-        {KeyTag, Alg, PubKey}
+        {KeyTag, Alg, dns_dnskey:public_key(PubKey)}
      || #dns_rr{
             name = Name,
             type = ?DNS_TYPE_DNSKEY,
@@ -571,25 +585,14 @@ verify_rrsig(#dns_rr{type = ?DNS_TYPE_RRSIG, data = Data}, RRs, RRDNSKey, Opts) 
             lists:any(fun({_KeyTag, Alg, Key}) -> verify(Alg, Key, Signature, SigInput) end, Keys)
     end.
 
--spec verify(dns:uint8(), key(), binary(), binary()) -> boolean().
-verify(Alg, Key, Signature, SigInput) when ?IS_DSA_ALG(Alg) ->
-    <<_T, R:20/unit:8, S:20/unit:8>> = Signature,
-    AsnSig = public_key:der_encode('Dss-Sig-Value', #'Dss-Sig-Value'{r = R, s = S}),
-    %% DNSKEY public_key from decode is [P, Q, G, Y] as binaries; normalize to integers for crypto.
-    KeyInts = dsa_pubkey_to_integers(Key),
-    crypto:verify(dss, sha, SigInput, AsnSig, KeyInts);
-verify(Alg, Key, Signature, SigInput) when ?IS_RSA_ALG(Alg) ->
-    try
-        crypto:verify(
-            rsa,
-            none,
-            SigInput,
-            Signature,
-            Key,
-            [{rsa_padding, rsa_pkcs1_padding}]
-        )
-    catch
-        error:decrypt_failed -> false
+%% The key is the DNSKEY's RDATA key field. RSA and DSA keys are split into the
+%% numbers crypto takes, as their big-endian bytes, and one laid out as no DNSKEY
+%% may carry it verifies nothing
+-spec verify(dns:uint8(), binary(), binary(), binary()) -> boolean().
+verify(Alg, Key, Signature, SigInput) when ?IS_DSA_ALG(Alg) orelse ?IS_RSA_ALG(Alg) ->
+    case dns_dnskey:numbers(Alg, Key) of
+        invalid -> false;
+        Numbers -> verify_numbers(Alg, Numbers, Signature, SigInput)
     end;
 verify(?DNS_ALG_ECDSAP256SHA256, Key, Signature, SigInput) ->
     DerSig = ecdsa_wire_to_der(Signature, 32),
@@ -608,6 +611,19 @@ verify(?DNS_ALG_MLDSA44, <<_:1312/binary>> = Key, <<_:2420/binary>> = Signature,
 %% function_clause would put the key in the stacktrace, return `false` specifically
 verify(_Alg, _Key, _Signature, _SigInput) ->
     false.
+
+%% An RSA or DSA key's numbers, as dns_dnskey:numbers/2 splits them from its field
+-spec verify_numbers(dns:uint8(), [binary()], binary(), binary()) -> boolean().
+verify_numbers(Alg, PublicKey, Signature, SigInput) when ?IS_DSA_ALG(Alg) ->
+    <<_T, R:20/unit:8, S:20/unit:8>> = Signature,
+    AsnSig = public_key:der_encode('Dss-Sig-Value', #'Dss-Sig-Value'{r = R, s = S}),
+    crypto:verify(dss, sha, SigInput, AsnSig, PublicKey);
+verify_numbers(_RsaAlg, PublicKey, Signature, SigInput) ->
+    try
+        crypto:verify(rsa, none, SigInput, Signature, PublicKey, [{rsa_padding, rsa_pkcs1_padding}])
+    catch
+        error:decrypt_failed -> false
+    end.
 
 %% Pure ML-DSA with an empty context; OTP 27's crypto specs lack mldsa44
 -dialyzer({nowarn_function, [mldsa44_sign/2, mldsa44_verify/3]}).
@@ -758,6 +774,10 @@ number that breaks it, but never one of the key's numbers:
 - `key_shape`: a key of another shape than the algorithm's: another count of
   numbers, an ECDSA point without the octet 4 in front, or an EdDSA or ML-DSA-44
   key of another length.
+
+`verify_rrsig/4` verifies with no RSA or DSA key that this function would not
+make, and `dns_json:from_map/1` and `dns_zone` refuse a DNSKEY or CDNSKEY with
+one.
 """.
 -spec dnskey_public_key(sigalg(), [binary()] | binary()) -> binary().
 dnskey_public_key(Alg, Key) ->
@@ -885,17 +905,6 @@ count_labels([~"*" | Labels]) ->
     length(Labels);
 count_labels(List) when is_list(List) ->
     length(List).
-
-%% Convert DNSKEY public_key [P, Q, G, Y] (binaries from decode) to integers for crypto:verify.
--spec dsa_pubkey_to_integers([binary() | integer()]) -> [integer()].
-dsa_pubkey_to_integers([P, Q, G, Y]) ->
-    [dsa_elem_to_int(X) || X <- [P, Q, G, Y]].
-
--spec dsa_elem_to_int(binary() | integer()) -> integer().
-dsa_elem_to_int(B) when is_binary(B) ->
-    binary:decode_unsigned(B);
-dsa_elem_to_int(I) when is_integer(I) ->
-    I.
 
 %% RFC 6605 §4: ECDSA signatures on the wire are r || s, each padded to FieldSize bytes.
 %% crypto:sign returns DER-encoded ASN.1; crypto:verify expects DER-encoded ASN.1.

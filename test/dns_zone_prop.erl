@@ -550,15 +550,19 @@ rdata(Type) ->
             );
         ?DNS_TYPE_CDNSKEY ->
             ?LET(
-                {Flags, Protocol, Alg, PublicKey},
-                {range(0, 65535), range(0, 255), range(0, 255), binary()},
-                #dns_rrdata_cdnskey{
-                    flags = Flags,
-                    protocol = Protocol,
-                    alg = Alg,
-                    public_key = PublicKey,
-                    keytag = 0
-                }
+                {Flags, Protocol, Alg},
+                {range(0, 65535), range(0, 255), range(0, 255)},
+                ?LET(
+                    PublicKey,
+                    dns_prop_generator:dnskey_public_key(Alg, binary()),
+                    #dns_rrdata_cdnskey{
+                        flags = Flags,
+                        protocol = Protocol,
+                        alg = Alg,
+                        public_key = PublicKey,
+                        keytag = 0
+                    }
+                )
             );
         ?DNS_TYPE_NSEC3 ->
             ?LET(

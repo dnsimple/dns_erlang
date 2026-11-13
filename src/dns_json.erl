@@ -397,10 +397,6 @@ to_map_value(Tag, Field, Value) when
             {Tag, Field} =:= {dns_rrdata_ipseckey, gateway})
 ->
     list_to_binary(dns_zone_encode:ntoa(Value));
-to_map_value(Tag, public_key, Value) when
-    is_list(Value) andalso (dns_rrdata_dnskey =:= Tag orelse dns_rrdata_cdnskey =:= Tag)
-->
-    base64:encode(to_map_dnskey_publickey(Value));
 to_map_value(dns_rrdata_key, public_key, Value) when is_binary(Value) ->
     base64:encode(iolist_to_binary(Value));
 to_map_value(Tag, salt, Value) when
@@ -423,8 +419,10 @@ to_map_value(dns_rrdata_dhcid, data, Value) when is_binary(Value) -> base64:enco
 to_map_value(dns_rrdata_openpgpkey, data, Value) when is_binary(Value) -> base64:encode(Value);
 to_map_value(dns_rrdata_hhit, data, Value) when is_binary(Value) -> base64:encode(Value);
 to_map_value(dns_rrdata_brid, data, Value) when is_binary(Value) -> base64:encode(Value);
-to_map_value(dns_rrdata_dnskey, public_key, Value) when is_binary(Value) -> base64:encode(Value);
-to_map_value(dns_rrdata_cdnskey, public_key, Value) when is_binary(Value) -> base64:encode(Value);
+to_map_value(Tag, public_key, Value) when
+    Tag =:= dns_rrdata_dnskey orelse Tag =:= dns_rrdata_cdnskey
+->
+    base64:encode(dns_dnskey:public_key(Value));
 to_map_value(dns_rrdata_ipseckey, public_key, Value) when is_binary(Value) -> base64:encode(Value);
 to_map_value(dns_rrdata_hip, hit, Value) when is_binary(Value) -> binary:encode_hex(Value);
 to_map_value(dns_rrdata_hip, public_key, Value) when is_binary(Value) -> base64:encode(Value);
@@ -476,10 +474,6 @@ from_map_field(dns_rrdata_aaaa, ip, Value) when is_binary(Value) ->
         {ok, Tuple} -> Tuple;
         {error, _} -> erlang:error({invalid_ip, Value})
     end;
-from_map_field(dns_rrdata_dnskey, public_key, Value) when is_binary(Value) ->
-    from_map_dnskey_publickey(base64:decode(Value));
-from_map_field(dns_rrdata_cdnskey, public_key, Value) when is_binary(Value) ->
-    from_map_dnskey_publickey(base64:decode(Value));
 from_map_field(Tag, salt, ~"-") when
     Tag =:= dns_rrdata_nsec3 orelse Tag =:= dns_rrdata_nsec3param
 ->
@@ -507,7 +501,7 @@ from_map_field(_Tag, _Field, Value) ->
     Value.
 
 %% Decode binary fields based on tag and field name
--spec decode_field(atom(), atom(), binary()) -> binary() | [integer()].
+-spec decode_field(atom(), atom(), binary()) -> binary().
 decode_field(dns_rrdata_cert, cert, Value) ->
     base64:decode(Value);
 decode_field(dns_rrdata_dhcid, data, Value) ->
@@ -519,6 +513,10 @@ decode_field(dns_rrdata_hhit, data, Value) ->
 decode_field(dns_rrdata_brid, data, Value) ->
     base64:decode(Value);
 decode_field(dns_rrdata_key, public_key, Value) ->
+    base64:decode(Value);
+decode_field(dns_rrdata_dnskey, public_key, Value) ->
+    base64:decode(Value);
+decode_field(dns_rrdata_cdnskey, public_key, Value) ->
     base64:decode(Value);
 decode_field(dns_rrdata_ipseckey, public_key, Value) ->
     base64:decode(Value);
@@ -570,24 +568,3 @@ decode_field(dns_opt_unknown, bin, Value) ->
     binary:decode_hex(Value);
 decode_field(_Tag, _Field, Value) ->
     Value.
-
-%% Helper to decode DNSKEY public key (handles both binary and list formats)
--spec from_map_dnskey_publickey(binary()) -> binary() | [integer()].
-from_map_dnskey_publickey(<<>>) ->
-    [];
-from_map_dnskey_publickey(<<L:32, I:L/unit:8, Rest/binary>>) ->
-    [I | from_map_dnskey_publickey(Rest)];
-from_map_dnskey_publickey(PK) ->
-    PK.
-
-%% Handle list of integers (RSA key components)
--spec to_map_dnskey_publickey([integer()]) -> binary().
-to_map_dnskey_publickey(Ints) ->
-    lists:foldl(
-        fun(I, Acc) ->
-            BI = binary:encode_unsigned(I),
-            <<Acc/binary, (byte_size(BI)):32, BI/binary>>
-        end,
-        <<>>,
-        Ints
-    ).

@@ -24,6 +24,7 @@ groups() ->
             amtrelay_relay_must_match_its_type,
             drip_data_must_not_be_empty,
             hip_hit_and_key_must_fit,
+            dnskey_rsa_and_dsa_keys_must_fit,
             svcb_params_must_fit,
             rr_header_must_fit,
             rr_class_must_suit_rrdata,
@@ -41,9 +42,11 @@ rrdata_integers_must_fit(_) ->
     N = <<"example.com">>,
     P256 = <<0:512>>,
     Dnskey = #dns_rrdata_dnskey{flags = 257, protocol = 3, alg = 13, public_key = P256},
-    RsaDnskey = Dnskey#dns_rrdata_dnskey{alg = ?DNS_ALG_RSASHA256, public_key = [65537, 12345]},
+    %% RFC3110§2: exponent 65537, then a 512-bit modulus
+    Rsa = <<3, 1, 0, 1, 255, 0:504>>,
+    RsaDnskey = Dnskey#dns_rrdata_dnskey{alg = ?DNS_ALG_RSASHA256, public_key = Rsa},
     Cdnskey = #dns_rrdata_cdnskey{flags = 257, protocol = 3, alg = 13, public_key = P256},
-    RsaCdnskey = Cdnskey#dns_rrdata_cdnskey{alg = ?DNS_ALG_RSASHA256, public_key = [65537, 12345]},
+    RsaCdnskey = Cdnskey#dns_rrdata_cdnskey{alg = ?DNS_ALG_RSASHA256, public_key = Rsa},
     Ds = #dns_rrdata_ds{keytag = 1, alg = 1, digest_type = 1, digest = <<1>>},
     Cds = #dns_rrdata_cds{keytag = 1, alg = 1, digest_type = 1, digest = <<1>>},
     Dlv = #dns_rrdata_dlv{keytag = 1, alg = 1, digest_type = 1, digest = <<1>>},
@@ -612,6 +615,60 @@ drip_data_must_not_be_empty(_) ->
             #dns_rrdata_brid{data = undefined}
         ]
     ].
+
+%% RFC3110§2, RFC5702§2, RFC2536§2: a DNSKEY's or CDNSKEY's RSA or DSA key must
+%% be laid out as dns_sec:dnskey_public_key/2 lays it out, as verify_rrsig/4
+%% verifies nothing with any other. That refuses the JSON 5.2.0 and earlier wrote
+%% for those keys, each number behind a 32-bit length. Keys of other algorithms
+%% are not looked at.
+dnskey_rsa_and_dsa_keys_must_fit(_) ->
+    Check = fun(Alg, Key) ->
+        {
+            dns_check:rrdata(
+                #dns_rrdata_dnskey{flags = 257, protocol = 3, alg = Alg, public_key = Key}
+            ),
+            dns_check:rrdata(
+                #dns_rrdata_cdnskey{flags = 257, protocol = 3, alg = Alg, public_key = Key}
+            )
+        }
+    end,
+    LengthPrefixed = fun(Numbers) -> <<<<(byte_size(X)):32, X/binary>> || X <- Numbers>> end,
+    {[E, N], _} = crypto:generate_key(rsa, {1024, 65537}),
+    Rsa = dns_sec:dnskey_public_key(?DNS_ALG_RSASHA256, [E, N]),
+    Rsa512 = <<3, 1, 0, 1, 255, 0:504>>,
+    Q = <<16#E2B4F7B1A4D6E39F7C5A0C0D7B4E3A9C1B2D3E4F:160>>,
+    P = <<16#80, 0:(63 * 8)>>,
+    Dsa = dns_sec:dnskey_public_key(?DNS_ALG_DSA, [P, Q, <<2>>, <<3>>]),
+    <<0, Q:20/binary, P:64/binary, G:64/binary, Y:64/binary>> = Dsa,
+    WideT = <<1, Q/binary, 0:64, P/binary, 0:64, G/binary, 0:64, Y/binary>>,
+    Fit = [
+        {?DNS_ALG_RSASHA1, Rsa},
+        {?DNS_ALG_NSEC3RSASHA1, Rsa},
+        {?DNS_ALG_RSASHA256, Rsa},
+        {?DNS_ALG_RSASHA512, Rsa},
+        {?DNS_ALG_RSASHA256, Rsa512},
+        %% An exponent of 256 octets, whose length takes the long form
+        {?DNS_ALG_RSASHA256, <<0, 256:16, 1, 0:(255 * 8), N/binary>>},
+        {?DNS_ALG_DSA, Dsa},
+        {?DNS_ALG_NSEC3DSA, Dsa},
+        {?DNS_ALG_ECDSAP256SHA256, LengthPrefixed([E, N])},
+        {253, LengthPrefixed([E, N])}
+    ],
+    [?assertEqual({true, true}, Check(Alg, Key), Alg) || {Alg, Key} <- Fit],
+    DoNotFit = [
+        {?DNS_ALG_RSASHA256, LengthPrefixed([E, N])},
+        {?DNS_ALG_RSASHA512, LengthPrefixed([E, N])},
+        {?DNS_ALG_RSASHA256, <<4, 0, 1, 0, 1, N/binary>>},
+        {?DNS_ALG_RSASHA256, <<0, 3:16, 1, 0, 1, N/binary>>},
+        {?DNS_ALG_RSASHA256, <<3, 1, 0, 1, 16#80, 0:(37 * 8)>>},
+        {?DNS_ALG_RSASHA512, Rsa512},
+        {?DNS_ALG_RSASHA256, <<>>},
+        {?DNS_ALG_DSA, LengthPrefixed([P, Q, <<2>>, <<3>>])},
+        {?DNS_ALG_DSA, WideT},
+        {?DNS_ALG_RSASHA256, Dsa},
+        {?DNS_ALG_DSA, Rsa}
+    ],
+    [?assertEqual({false, false}, Check(Alg, Key), Alg) || {Alg, Key} <- DoNotFit].
 
 %% RFC8005§5: the HIT and the public key are REQUIRED, and the HIT's length is
 %% one octet, so a HIT of 256 bytes would go out with a length of 0

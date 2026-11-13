@@ -175,10 +175,8 @@ groups() ->
             encode_make_relative_edge_cases,
             encode_ensure_fqdn_edge_cases,
             encode_ensure_fqdn_outputs_trailing_dot,
-            encode_dnskey_rsa_public_key_list,
-            encode_cdnskey_rsa_public_key_list,
-            encode_dnskey_dsa_public_key_list,
-            encode_cdnskey_dsa_public_key_list,
+            encode_dnskey_key_bytes,
+            encode_dnskey_list_key_raises,
             encode_quoted_strings_single,
             encode_quoted_strings_multiple,
             encode_do_escape_string_edge_cases,
@@ -632,6 +630,7 @@ groups() ->
             parse_invalid_ds_hex,
             parse_invalid_rrsig_times,
             parse_values_that_do_not_fit_rejected,
+            parse_dnskey_key_must_fit,
             parse_invalid_dnskey_rdata,
             parse_invalid_dnskey_base64,
             parse_invalid_zonemd_rdata,
@@ -2495,9 +2494,9 @@ parse_ds_record(_Config) ->
 parse_dnskey_record(_Config) ->
     %% DNSKEY (DNS Public Key) for DNSSEC (RFC 4034)
     %% Format: flags protocol algorithm public-key
-    %% This is a real DNSKEY for example.com (ZSK, Zone Signing Key)
+    %% RFC5702§6.1's ZSK, whose key tag the RFC gives as 9033
     Zone =
-        ~"example.com. 3600 IN DNSKEY 256 3 8 \"AwEAAagAIKlVZrpC6Ia7gEzahOR+9W29euxhJhVVLOyQbSEW0O8gcCjF\"\n",
+        ~"example.com. 3600 IN DNSKEY 256 3 8 \"AwEAAcFcGsaxxdgiuuGmCkVImy4h99CqT7jwY3pexPGcnUFtR2Fh36BponcwtkZ4cAgtvd4Qs8PkxUdp6p/DlUmObdk=\"\n",
     {ok, [RR]} = dns_zone:parse_string(Zone, #{origin => ~"example.com."}),
     ?assertEqual(?DNS_TYPE_DNSKEY, RR#dns_rr.type),
     #dns_rrdata_dnskey{
@@ -2513,9 +2512,29 @@ parse_dnskey_record(_Config) ->
     ?assert(is_binary(PublicKey)),
     ?assert(byte_size(PublicKey) > 0),
     %% KeyTag should be calculated automatically
-    ?assert(is_integer(KeyTag)),
-    ?assert(KeyTag >= 0),
-    ?assert(KeyTag =< 65535).
+    ?assertEqual(9033, KeyTag).
+
+%% RFC3110§2, RFC5702§2: a DNSKEY's or CDNSKEY's RSA key is read only if laid out
+%% as dns_sec:dnskey_public_key/2 lays it out, as verify_rrsig/4 verifies nothing
+%% with any other: not as JSON had it in 5.2.0 and earlier, each number behind a
+%% 32-bit length, nor with a 304-bit modulus
+parse_dnskey_key_must_fit(_Config) ->
+    N = <<255, 0:504>>,
+    Fit = <<3, 1, 0, 1, N/binary>>,
+    LengthPrefixed = <<3:32, 1, 0, 1, 64:32, N/binary>>,
+    Short = <<3, 1, 0, 1, 255, 0:296>>,
+    RData = fun(Type, Key) -> <<Type/binary, " 256 3 8 ", (base64:encode(Key))/binary>> end,
+    [
+        begin
+            Parsed = parse_rdata(RData(Type, Fit)),
+            ?assertEqual(Fit, element(#dns_rrdata_dnskey.public_key, Parsed), Type),
+            [
+                ?assertMatch(#{type := semantic}, parse_rdata_error(RData(Type, Key)), {Type, Key})
+             || Key <- [LengthPrefixed, Short]
+            ]
+        end
+     || Type <- [~"DNSKEY", ~"CDNSKEY"]
+    ].
 
 parse_zonemd_record(_Config) ->
     %% ZONEMD (Zone Metadata) for DNSSEC (RFC 8976)
@@ -7192,81 +7211,48 @@ encode_ensure_fqdn_outputs_trailing_dot(_Config) ->
     EncodedWithDot = dns_zone:encode_rdata(?DNS_TYPE_CNAME, CNAMEDataWithDot),
     ?assertEqual(~"example.net.", iolist_to_binary(EncodedWithDot)).
 
-encode_dnskey_rsa_public_key_list(_Config) ->
-    %% DNSKEY with public_key as [E, M] (RSA list from wire decode after add_keytag_to_dnskey)
-    %% Must encode without crash and produce valid zone format (flags protocol alg base64)
-    E = 65537,
-    M = 12345678901234567890,
-    Data = #dns_rrdata_dnskey{
-        flags = 256,
-        protocol = 3,
-        alg = ?DNS_ALG_RSASHA256,
-        public_key = [E, M]
-    },
-    Encoded = dns_zone:encode_rdata(?DNS_TYPE_DNSKEY, Data),
-    LineStr = iolist_to_binary(Encoded),
-    ?assertNotEqual(nomatch, string:find(LineStr, "256")),
-    ?assertNotEqual(nomatch, string:find(LineStr, "3")),
-    ?assertNotEqual(nomatch, string:find(LineStr, "8")),
-    %% Should contain base64-looking segment (no spaces in the key part)
-    ?assert(byte_size(LineStr) > 10).
+%% A DNSKEY's or CDNSKEY's key is its RDATA's key bytes, RSA and DSA keys as any
+%% other, which a zone file writes in base64 and reads back
+encode_dnskey_key_bytes(_Config) ->
+    Rsa = <<3, 1, 0, 1, 255, (binary:copy(<<16#AB>>, 63))/binary>>,
+    Dsa = <<0, (binary:copy(<<16#DD>>, 20))/binary, (binary:copy(<<16#AA>>, 192))/binary>>,
+    [
+        begin
+            Line = iolist_to_binary(dns_zone:encode_rdata(Type, Data)),
+            Text = <<"256 3 ", (integer_to_binary(Alg))/binary, " ", (base64:encode(Key))/binary>>,
+            ?assertEqual(Text, Line),
+            Parsed = parse_rdata(<<TypeName/binary, " ", Line/binary>>),
+            ?assertEqual(Key, element(#dns_rrdata_dnskey.public_key, Parsed))
+        end
+     || {Alg, Key} <- [{?DNS_ALG_RSASHA256, Rsa}, {?DNS_ALG_NSEC3DSA, Dsa}],
+        {Type, TypeName, Data} <- [
+            {?DNS_TYPE_DNSKEY, ~"DNSKEY", #dns_rrdata_dnskey{
+                flags = 256, protocol = 3, alg = Alg, public_key = Key
+            }},
+            {?DNS_TYPE_CDNSKEY, ~"CDNSKEY", #dns_rrdata_cdnskey{
+                flags = 256, protocol = 3, alg = Alg, public_key = Key
+            }}
+        ]
+    ].
 
-encode_cdnskey_rsa_public_key_list(_Config) ->
-    %% CDNSKEY with public_key as [E, M] (RSA list from wire decode)
-    E = 65537,
-    M = 98765432109876543210,
-    Data = #dns_rrdata_cdnskey{
-        flags = 0,
-        protocol = 3,
-        alg = ?DNS_ALG_RSASHA256,
-        public_key = [E, M]
-    },
-    Encoded = dns_zone:encode_rdata(?DNS_TYPE_CDNSKEY, Data),
-    LineStr = iolist_to_binary(Encoded),
-    ?assertNotEqual(nomatch, string:find(LineStr, "0")),
-    ?assertNotEqual(nomatch, string:find(LineStr, "3")),
-    ?assertNotEqual(nomatch, string:find(LineStr, "8")),
-    ?assert(byte_size(LineStr) > 10).
-
-encode_dnskey_dsa_public_key_list(_Config) ->
-    %% DNSKEY with public_key as [P, Q, G, Y] (DSA list from wire decode)
-    %% DSA wire format: T, Q (20 bytes), P, G, Y (each M = 64+T*8 bytes). Use T=0 => M=64.
-    P = 1 bsl 511 + 1,
-    Q = 1 bsl 159 + 1,
-    G = 1 bsl 511 + 2,
-    Y = 1 bsl 511 + 3,
-    Data = #dns_rrdata_dnskey{
-        flags = 256,
-        protocol = 3,
-        alg = ?DNS_ALG_DSA,
-        public_key = [P, Q, G, Y]
-    },
-    Encoded = dns_zone:encode_rdata(?DNS_TYPE_DNSKEY, Data),
-    LineStr = iolist_to_binary(Encoded),
-    ?assertNotEqual(nomatch, string:find(LineStr, "256")),
-    %% protocol and alg DSA = 3
-    ?assertNotEqual(nomatch, string:find(LineStr, "3")),
-    ?assert(byte_size(LineStr) > 10).
-
-encode_cdnskey_dsa_public_key_list(_Config) ->
-    %% CDNSKEY with public_key as [P, Q, G, Y] (DSA list from wire decode)
-    P = 1 bsl 511 + 5,
-    Q = 1 bsl 159 + 7,
-    G = 1 bsl 511 + 11,
-    Y = 1 bsl 511 + 13,
-    Data = #dns_rrdata_cdnskey{
-        flags = 0,
-        protocol = 3,
-        alg = ?DNS_ALG_NSEC3DSA,
-        public_key = [P, Q, G, Y]
-    },
-    Encoded = dns_zone:encode_rdata(?DNS_TYPE_CDNSKEY, Data),
-    LineStr = iolist_to_binary(Encoded),
-    ?assertNotEqual(nomatch, string:find(LineStr, "0")),
-    ?assertNotEqual(nomatch, string:find(LineStr, "3")),
-    %% alg NSEC3DSA = 6
-    ?assertNotEqual(nomatch, string:find(LineStr, "6")),
-    ?assert(byte_size(LineStr) > 10).
+%% A DNSKEY's or CDNSKEY's key that is not a binary, as an RSA key's [E, M] was
+%% before 6.0.0, raises {badarg, public_key_not_binary}, where it raised
+%% function_clause
+encode_dnskey_list_key_raises(_Config) ->
+    Key = [<<1, 0, 1>>, binary:copy(<<16#AB>>, 64)],
+    Alg = ?DNS_ALG_RSASHA256,
+    ?assertError(
+        {badarg, public_key_not_binary},
+        dns_zone:encode_rdata(?DNS_TYPE_DNSKEY, #dns_rrdata_dnskey{
+            flags = 256, protocol = 3, alg = Alg, public_key = Key
+        })
+    ),
+    ?assertError(
+        {badarg, public_key_not_binary},
+        dns_zone:encode_rdata(?DNS_TYPE_CDNSKEY, #dns_rrdata_cdnskey{
+            flags = 256, protocol = 3, alg = Alg, public_key = Key
+        })
+    ).
 
 encode_quoted_strings_single(_Config) ->
     %% Test encode_quoted_strings with single string
@@ -7775,12 +7761,13 @@ parse_hex_and_base64_of_digits(_Config) ->
     ?assertMatch(#dns_rrdata_sshfp{fp = <<16#12, 16#34>>}, parse_rdata(~"SSHFP 2 1 1234")),
     ?assertMatch(#dns_rrdata_tlsa{certificate = <<0>>}, parse_rdata(~"TLSA 3 1 1 00")),
     ?assertMatch(#dns_rrdata_zonemd{hash = <<16#12, 16#34>>}, parse_rdata(~"ZONEMD 1 1 1 1234")),
+    %% Of PRIVATEDNS, whose keys are not looked at, as no RSA key is this short
     ?assertMatch(
         #dns_rrdata_dnskey{public_key = <<215, 109, 248, 231, 174, 252>>},
-        parse_rdata(~"DNSKEY 256 3 8 12345678")
+        parse_rdata(~"DNSKEY 256 3 253 12345678")
     ),
     ?assertMatch(
-        #dns_rrdata_dnskey{public_key = <<214, 29, 166>>}, parse_rdata(~"DNSKEY 256 3 8 1h2m")
+        #dns_rrdata_dnskey{public_key = <<214, 29, 166>>}, parse_rdata(~"DNSKEY 256 3 253 1h2m")
     ),
     ?assertMatch(
         #dns_rrdata_rrsig{signature = <<215, 109, 248, 231, 174, 252>>},
