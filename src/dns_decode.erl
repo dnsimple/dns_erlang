@@ -12,12 +12,12 @@
     decode_message_questions/3,
     decode_message_additional/3,
     decode_message_body/3,
-    decode_rrdata/3
+    decode_rrdata/3,
+    decode_rrdata/4
 ]).
 
 -ifdef(TEST).
 -export([
-    decode_rrdata/4,
     decode_optrrdata/1,
     decode_svcb_svc_params/1
 ]).
@@ -529,7 +529,9 @@ do_decode_optrrdata(EOpt, <<Bin/binary>>) ->
 decode_rrdata(MsgBin, Class, Type) ->
     decode_rrdata(MsgBin, Class, Type, MsgBin).
 
--spec decode_rrdata(dns:message_bin(), dns:uint16(), dns:uint16(), binary()) -> dns:rrdata().
+%% MsgBin is what the names in the RDATA may point into, or <<>> for RDATA outside a
+%% message, as RFC 3597's generic form in a zone file, whose names may then hold no pointer
+-spec decode_rrdata(binary(), dns:uint16(), dns:uint16(), binary()) -> dns:rrdata().
 %% rfc2136 §2.4, §2.5: in an UPDATE's prerequisite and update sections an RR with CLASS ANY or
 %% NONE carries no RDATA, so RDLENGTH=0 is the intended encoding rather than a truncated record.
 decode_rrdata(_MsgBin, Class, _Type, <<>>) when
