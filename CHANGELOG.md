@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - DNSSEC: `verify_rrsig/4` verifies only RRsets whose every record has the RRSIG's owner, class and covered type, and whose owner has at least the labels the RRSIG's labels field counts (RFC 4035 §5.3.1), where it never read the RRSIG's owner, type covered or labels field, and took only the RDATA of the records after the first.
 - DNSSEC: `verify_rrsig/4` verifies only RRsets whose zone the signer can be (RFC 4035 §5.3.1), NS, SOA and DNSKEY at the signer, NSEC3 one label under it, DS under it and any other at or under it, with a labels field counting at least the signer's labels, where any signer's key verified any RRset.
 - Zone files: `$INCLUDE` reads only files at or under the zone file's directory, not through an absolute path, `..` or a symbolic link that leads out, and `parse_string/1,2` and `include => false` refuse it; the `base_dir` option is gone. It read any file the process could.
+- Zone files: an SVCB or HTTPS key written as `keyNNNNN` takes its value as its wire format (RFC 9460 §2.1), as BIND reads it: `key3=\001\187` is port 443, and `key3=443` and `key1=h2`, which read as port 443 and alpn `h2`, are refused.
 
 ### Updated
 
@@ -56,6 +57,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Wire: encoding RDATA over 65535 octets raises `{rdata_too_long, Size}`, where it wrapped RDLENGTH.
 - Wire: NSEC, NSEC3 and CSYNC RDATA with a type bitmap window over 32 octets is malformed, where it decoded as types of the next windows.
 - Wire: `encode_message/2` sets TC and keeps the OPT RR when the answers fit only without it, where it dropped the OPT RR and left TC unset.
+- Wire: an SVCB or HTTPS port that is not 2 octets is malformed, where it decoded as its octets.
 - Names: `dns_domain:split/1` and `to_wire/1,3` raise `{invalid_dname, empty_label}` for a leading dot, as in `.a`, where they gave an empty first label that ended the name on the wire, and JSON and a zone's `origin` option refuse one.
 - Wire: encoding a CAA tag, NSEC3 salt or hash, or HINFO, NAPTR or HIP string over 255 octets raises `{string_too_long, Size}`, where it wrapped the length, split the string or raised `function_clause`.
 - DNSSEC: an algorithm 1 (RSA/MD5) key tag is the third- and second-to-last octets of the modulus (RFC 4034 Appendix B.1), where it was the checksum of the other algorithms.

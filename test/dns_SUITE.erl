@@ -119,6 +119,7 @@ groups() ->
             svcb_mandatory_self_reference,
             svcb_mandatory_missing_keys,
             svcb_no_default_alpn_length_validation,
+            svcb_port_length_validation,
             svcb_encode_wire_key_no_value,
             svcb_encode_wire_key_binary_value,
             svcb_encode_wire_key_invalid_value,
@@ -2844,6 +2845,20 @@ svcb_no_default_alpn_length_validation(_) ->
         error,
         {svcb_bad_no_default_alpn, 1},
         dns_decode:decode_svcb_svc_params(InvalidBin)
+    ).
+
+%% RFC9460§7.2: a port is 2 octets. One of another length decoded as its octets, or as none
+svcb_port_length_validation(_) ->
+    Port = fun(Value) ->
+        <<?DNS_SVCB_PARAM_PORT:16, (byte_size(Value)):16, Value/binary>>
+    end,
+    [
+        ?assertError({svcb_bad_port, Len}, dns_decode:decode_svcb_svc_params(Port(Value)), Value)
+     || Value <- [<<>>, <<1>>, <<0, 1, 187>>],
+        Len <- [byte_size(Value)]
+    ],
+    ?assertEqual(
+        #{?DNS_SVCB_PARAM_PORT => 443}, dns_decode:decode_svcb_svc_params(Port(<<1, 187>>))
     ).
 
 svcb_encode_wire_key_no_value(_) ->
