@@ -4487,7 +4487,7 @@ parse_owner_at_sign_fqdn(_Config) ->
 
 parse_owner_undefined_uses_last(_Config) ->
     %% Test owner resolution when undefined - should use last_owner
-    Zone = ~"first.example.com. 3600 IN A 192.0.2.1\n3600 IN A 192.0.2.2\n",
+    Zone = ~"first.example.com. 3600 IN A 192.0.2.1\n 3600 IN A 192.0.2.2\n",
     {ok, [RR1, RR2]} = dns_zone:parse_string(Zone, #{origin => ~"example.com."}),
     ?assertEqual(~"first.example.com.", RR1#dns_rr.name),
     ?assertEqual(~"first.example.com.", RR2#dns_rr.name).
@@ -8523,20 +8523,22 @@ parse_owner_spelled_as_any_type(_Config) ->
             {~" CLASS1 A 192.0.2.1\n", 300}
         ]
     ],
-    %% And a type alone leaves the previous owner, as a TTL or a class first does
-    {ok, [_, Blank, TTLFirst, ClassFirst, Generic]} = dns_zone:parse_string(
+    %% And a type alone leaves the previous owner, as a class first does; a TTL
+    %% first is an owner
+    {ok, [_, Blank, ClassFirst, Generic, Number]} = dns_zone:parse_string(
         ~"""
         $ORIGIN example.
         www 300 IN A 192.0.2.1
         TXT "a"
-        60 IN TXT "b"
         IN TXT "c"
         TYPE16 \# 2 0161
+        60 IN TXT "b"
         """
     ),
+    ?assertMatch(#dns_rr{name = ~"60.example.", type = ?DNS_TYPE_TXT, ttl = 300}, Number),
     [
         ?assertMatch(#dns_rr{name = ~"www.example.", type = ?DNS_TYPE_TXT}, RR)
-     || RR <- [Blank, TTLFirst, ClassFirst, Generic]
+     || RR <- [Blank, ClassFirst, Generic]
     ].
 
 %% A string of characters past 255 is read as UTF-8, one up to 255 as octets
@@ -8583,10 +8585,11 @@ parse_ipseckey_gateways(_Config) ->
         ]
     ].
 
-%% RFC1035§5.1: a line that does not start with a blank starts with its owner. The
-%% parser took a number first for a TTL, and so refused the reverse zone the writer
-%% writes, whose owners are 1, 2 and so on before their TTL. Where the line reads
-%% with that first number as a TTL, as "3600 IN A ..." does, it still is one.
+%% RFC1035§5.1: a line that does not start with a blank starts with its owner, a
+%% number too, as BIND reads it. The parser took a number first for a TTL: it
+%% refused the reverse zone the writer writes, whose owners are 1, 2 and so on
+%% before their TTL, and read "1 IN PTR host." as a PTR at the owner before it,
+%% with a TTL of 1.
 parse_owner_that_reads_as_a_ttl(_Config) ->
     PTR = fun(Owner, Host) ->
         #dns_rr{
@@ -8606,7 +8609,19 @@ parse_owner_that_reads_as_a_ttl(_Config) ->
         Zone
     ),
     ?assertEqual({ok, Records}, dns_zone:parse_string(Zone)),
-    {ok, [Zero, Hour, Previous]} = dns_zone:parse_string(
+    %% A reverse zone as written by hand, with the TTL left to $TTL
+    ?assertEqual(
+        {ok, Records},
+        dns_zone:parse_string(
+            ~"""
+            $ORIGIN 2.0.192.in-addr.arpa.
+            $TTL 3600
+            1 IN PTR one.example.
+            2 PTR two.example.
+            """
+        )
+    ),
+    {ok, [Zero, Hour, Number]} = dns_zone:parse_string(
         ~"""
         0 0 IN A 192.0.2.1
         1h 60 A 192.0.2.2
@@ -8615,13 +8630,29 @@ parse_owner_that_reads_as_a_ttl(_Config) ->
     ),
     ?assertMatch(#dns_rr{name = ~"0", ttl = 0}, Zero),
     ?assertMatch(#dns_rr{name = ~"1h", ttl = 60}, Hour),
-    ?assertMatch(#dns_rr{name = ~"1h", ttl = 3600}, Previous),
-    %% A line that starts with a blank keeps the owner before it
+    ?assertMatch(#dns_rr{name = ~"3600", ttl = 60}, Number),
+    %% A line that starts with a blank keeps the owner before it, and its number
+    %% is a TTL
     ?assertMatch(
-        {error, #{type := parser}},
-        dns_zone:parse_string(~"www.example. 0 IN A 192.0.2.1\n 1 3600 IN A 192.0.2.2\n")
+        {ok, [_, #dns_rr{name = ~"www.example", ttl = 1}]},
+        dns_zone:parse_string(~"www.example 0 IN A 192.0.2.1\n 1 IN A 192.0.2.2\n")
     ),
-    %% And an error is the one the first reading gives
+    %% even where the line would read with it as the owner, whatever the case of
+    %% its units: such a line is refused, as RFC 1035 gives it no owner
+    [
+        ?assertMatch(
+            {error, #{type := parser}},
+            dns_zone:parse_string(<<"www.example. 0 IN A 192.0.2.1\n", Line/binary>>),
+            Line
+        )
+     || Line <- [
+            ~" 1 3600 IN A 192.0.2.2\n",
+            ~" 1H 3600 IN A 192.0.2.2\n",
+            ~" 1D IN 60 A 192.0.2.2\n",
+            ~"\t1h30M 60 A 192.0.2.2\n"
+        ]
+    ],
+    %% A second TTL is refused
     ?assertMatch(
         {error, #{message := <<"Parse error: expected a TTL, a class or a type: 3600">>}},
         dns_zone:parse_string(~"1 3600 3600 A 192.0.2.1\n")
@@ -9173,8 +9204,8 @@ parse_repeated_owner(_Config) ->
     ?assert(erts_debug:same(First#dns_rr.name, Second#dns_rr.name)).
 
 %% Owner names are lowercased, the origin's too where a record has it for owner
-%% without writing it: on a line that starts with a blank, or with a TTL, a class
-%% or a type, after $ORIGIN or with the origin of the options, as with "@"
+%% without writing it: on a line that starts with a blank, or with a class or a
+%% type, after $ORIGIN or with the origin of the options, as with "@"
 parse_owner_from_an_origin_in_capitals(_Config) ->
     Owners = fun(Zone, Options) ->
         {ok, RRs} = dns_zone:parse_string(Zone, Options),
@@ -9185,7 +9216,7 @@ parse_owner_from_an_origin_in_capitals(_Config) ->
         ?assertEqual(
             [~"example.com."], Owners(<<"$ORIGIN Example.COM.\n", Line/binary>>, #{}), Line
         )
-     || Line <- [~"  300 IN A 192.0.2.1\n", ~"300 IN A 192.0.2.1\n", ~"IN A 192.0.2.1\n"]
+     || Line <- [~"  300 IN A 192.0.2.1\n", ~"IN A 192.0.2.1\n"]
     ],
     [
         ?assertEqual([~"example.com."], Owners(Zone, Origin), Zone)
