@@ -702,13 +702,11 @@ is_of_rrset(_RR, _Owner, _Class, _Type) ->
     false.
 
 %% A name's labels, or invalid for a name that is none: one with an empty label or a label over
-%% 63 octets, or over 255 octets on the wire (RFC1035§2.3.4). dns_domain:split/1 raises for a
-%% label over 63 octets, and for an empty label but a first one, which a leading dot gives
+%% 63 octets, or over 255 octets on the wire (RFC1035§2.3.4). dns_domain:split/1 raises for the
+%% first two
 -spec name_labels(dns:dname()) -> dns:labels() | invalid.
 name_labels(Name) ->
     try dns_domain:split(Name) of
-        [<<>> | _] ->
-            invalid;
         Labels ->
             %% Each label with its length octet, and the root's
             case iolist_size(Labels) + length(Labels) + 1 =< 255 of

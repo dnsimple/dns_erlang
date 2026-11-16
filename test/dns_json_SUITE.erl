@@ -1175,7 +1175,9 @@ test_records_that_do_not_fit_rejected(_Config) ->
             %% the encoder writes A only in IN, and failed every response carrying one
             A#{~"class" => ~"CH"},
             Rr(~"65536", #{~"data" => base64:encode(<<1>>)}),
-            A#{~"name" => <<"example.", (binary:copy(<<"a">>, 64))/binary>>}
+            A#{~"name" => <<"example.", (binary:copy(<<"a">>, 64))/binary>>},
+            %% an empty first label, whose zero length octet ended the name on the wire
+            A#{~"name" => ~".example"}
         ]
     ],
     %% The OPT pseudo-RR, its options, queries and message headers are checked the

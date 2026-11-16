@@ -55,6 +55,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Wire: encoding RDATA over 65535 octets raises `{rdata_too_long, Size}`, where it wrapped RDLENGTH.
 - Wire: NSEC, NSEC3 and CSYNC RDATA with a type bitmap window over 32 octets is malformed, where it decoded as types of the next windows.
 - Wire: `encode_message/2` sets TC and keeps the OPT RR when the answers fit only without it, where it dropped the OPT RR and left TC unset.
+- Names: `dns_domain:split/1` and `to_wire/1,3` raise `{invalid_dname, empty_label}` for a leading dot, as in `.a`, where they gave an empty first label that ended the name on the wire, and JSON and a zone's `origin` option refuse one.
 - Wire: encoding a CAA tag, NSEC3 salt or hash, or HINFO, NAPTR or HIP string over 255 octets raises `{string_too_long, Size}`, where it wrapped the length, split the string or raised `function_clause`.
 - DNSSEC: an algorithm 1 (RSA/MD5) key tag is the third- and second-to-last octets of the modulus (RFC 4034 Appendix B.1), where it was the checksum of the other algorithms.
 - DNSSEC: `sign_rr` leaves RRSIG records out and `sign_rrset` raises `{badarg, rrsig_rrset}` for an RRSIG RRset, where both signed it (RFC 4035 §2.2).
