@@ -52,44 +52,38 @@ from_wire(Bin) ->
 from_wire(<<>>, SvcParams, _PrevKey) ->
     validate_mandatory_params(wire, SvcParams);
 from_wire(<<Key:16, Len:16, ValueBin:Len/binary, Rest/binary>>, SvcParams, K0) when K0 < Key ->
-    NewSvcParams =
-        case Key of
-            ?DNS_SVCB_PARAM_NO_DEFAULT_ALPN when Len =:= 0 ->
-                SvcParams#{?DNS_SVCB_PARAM_NO_DEFAULT_ALPN => none};
-            ?DNS_SVCB_PARAM_NO_DEFAULT_ALPN ->
-                error({svcb_bad_no_default_alpn, Len});
-            ?DNS_SVCB_PARAM_MANDATORY ->
-                Value = [K || <<K:16>> <= exact_multiple(mandatory, 2, ValueBin)],
-                SvcParams#{?DNS_SVCB_PARAM_MANDATORY => Value};
-            ?DNS_SVCB_PARAM_ALPN ->
-                Value = decode_alpn_list(wire, ValueBin),
-                SvcParams#{?DNS_SVCB_PARAM_ALPN => Value};
-            ?DNS_SVCB_PARAM_PORT when Len =:= 2 ->
-                <<Port:16/integer>> = ValueBin,
-                SvcParams#{?DNS_SVCB_PARAM_PORT => Port};
-            ?DNS_SVCB_PARAM_ECH ->
-                SvcParams#{?DNS_SVCB_PARAM_ECH => ValueBin};
-            ?DNS_SVCB_PARAM_IPV4HINT ->
-                Value = [
-                    {A, B, C, D}
-                 || <<A, B, C, D>> <= exact_multiple(ipv4hint, 4, ValueBin)
-                ],
-                SvcParams#{?DNS_SVCB_PARAM_IPV4HINT => Value};
-            ?DNS_SVCB_PARAM_IPV6HINT ->
-                Value = [
-                    {A, B, C, D, E, F, G, H}
-                 || <<A:16, B:16, C:16, D:16, E:16, F:16, G:16, H:16>> <=
-                        exact_multiple(ipv6hint, 16, ValueBin)
-                ],
-                SvcParams#{?DNS_SVCB_PARAM_IPV6HINT => Value};
-            _ when Len =:= 0 ->
-                SvcParams#{Key => none};
-            _ ->
-                SvcParams#{Key => ValueBin}
-        end,
-    from_wire(Rest, NewSvcParams, Key);
+    from_wire(Rest, SvcParams#{Key => wire_value(Key, ValueBin)}, Key);
 from_wire(<<Key:16, Len:16, _:Len/binary, _/binary>>, _, K0) when Key =< K0 ->
     error({svcb_key_ordering_error, {prev_key, K0}, {current_key, Key}}).
+
+%% A SvcParamValue in wire format (RFC9460§2.2), as the value of its key is kept
+-spec wire_value(dns:uint16(), binary()) -> dynamic().
+wire_value(?DNS_SVCB_PARAM_MANDATORY, Bin) ->
+    [K || <<K:16>> <= exact_multiple(mandatory, 2, Bin)];
+wire_value(?DNS_SVCB_PARAM_ALPN, Bin) ->
+    decode_alpn_list(wire, Bin);
+wire_value(?DNS_SVCB_PARAM_NO_DEFAULT_ALPN, <<>>) ->
+    none;
+wire_value(?DNS_SVCB_PARAM_NO_DEFAULT_ALPN, Bin) ->
+    error({svcb_bad_no_default_alpn, byte_size(Bin)});
+%% RFC9460§7.2: a port is 2 octets
+wire_value(?DNS_SVCB_PARAM_PORT, <<Port:16>>) ->
+    Port;
+wire_value(?DNS_SVCB_PARAM_PORT, Bin) ->
+    error({svcb_bad_port, byte_size(Bin)});
+wire_value(?DNS_SVCB_PARAM_ECH, Bin) ->
+    Bin;
+wire_value(?DNS_SVCB_PARAM_IPV4HINT, Bin) ->
+    [{A, B, C, D} || <<A, B, C, D>> <= exact_multiple(ipv4hint, 4, Bin)];
+wire_value(?DNS_SVCB_PARAM_IPV6HINT, Bin) ->
+    [
+        {A, B, C, D, E, F, G, H}
+     || <<A:16, B:16, C:16, D:16, E:16, F:16, G:16, H:16>> <= exact_multiple(ipv6hint, 16, Bin)
+    ];
+wire_value(_Key, <<>>) ->
+    none;
+wire_value(_Key, Bin) ->
+    Bin.
 
 %% RFC9460 §7.4 and §8: ipv4hint and ipv6hint are each a sequence of fixed-width elements
 -spec exact_multiple(atom(), pos_integer(), binary()) -> binary().
@@ -168,9 +162,35 @@ from_zone_param({Name, Value}, Acc) ->
     Parsed =
         case Name of
             ~"tls-supported-groups" -> tls_supported_groups(Value);
+            <<"key", _/binary>> -> zone_wire_value(Key, Value);
             _ -> zone_value(Key, Value)
         end,
     Acc#{Key => Parsed}.
+
+%% RFC9460§2.1: the value of a key written as keyNNNNN is its wire format, whatever the key, so
+%% key3=\001\187 is port 443, and key3=443 is no port
+-spec zone_wire_value(dns:uint16(), binary() | none) -> dynamic().
+zone_wire_value(Key, none) ->
+    zone_wire_value(Key, <<>>);
+zone_wire_value(Key, Value) ->
+    try wire_value(Key, Value) of
+        Parsed ->
+            wire_value_fits(Key, Parsed) orelse
+                zone_error({svcb_param_invalid_value, Key, Value}),
+            Parsed
+    catch
+        error:_ -> zone_error({svcb_param_invalid_value, Key, Value})
+    end.
+
+%% RFC9460§7.1.1: one alpn-id or more, none empty, as no ALPN protocol id is; RFC9460§8: one
+%% key or more, in strictly increasing order
+-spec wire_value_fits(dns:uint16(), dynamic()) -> boolean().
+wire_value_fits(?DNS_SVCB_PARAM_ALPN, Ids) ->
+    Ids =/= [] andalso not lists:member(<<>>, Ids);
+wire_value_fits(?DNS_SVCB_PARAM_MANDATORY, Keys) ->
+    Keys =/= [] andalso Keys =:= lists:usort(Keys);
+wire_value_fits(_Key, _Parsed) ->
+    true.
 
 %% RFC9460§14.3.2's names, and those of keys 7, 8 and 9: dohpath (RFC9461),
 %% ohttp (RFC9540) and tls-supported-groups (draft-ietf-tls-key-share-prediction)

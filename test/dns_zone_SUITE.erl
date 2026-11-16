@@ -378,7 +378,7 @@ groups() ->
             parse_svcb_mandatory_self_reference,
             parse_svcb_mandatory_missing_keys,
             parse_svcb_unknown_key_format,
-            parse_svcb_key0_to_key6_equivalent_to_named,
+            parse_svcb_numbered_keys_take_wire_format,
             parse_svcb_key2_no_value_allowed,
             parse_svcb_key3_invalid_port_rejected,
             parse_svcb_key_custom_with_empty_value,
@@ -2823,61 +2823,54 @@ parse_svcb_unknown_key_format(_Config) ->
     ?assert(maps:is_key(65002, SvcParams2)),
     ?assertEqual(none, maps:get(65002, SvcParams2)).
 
-%% key0-key6 are equivalent to named params; zone parsing validates them the same
-parse_svcb_key0_to_key6_equivalent_to_named(_Config) ->
-    %% key0 (mandatory) = mandatory=alpn,port
-    Zone0 =
-        ~"example.com. 3600 IN SVCB 1 svc.example.com. key0=\"alpn,port\" key1=\"h2\" key3=\"443\"\n",
-    {ok, [RR0]} = dns_zone:parse_string(Zone0, #{origin => ~"example.com."}),
-    #dns_rrdata_svcb{svc_params = P0} = RR0#dns_rr.data,
-    ?assertEqual(
-        [?DNS_SVCB_PARAM_ALPN, ?DNS_SVCB_PARAM_PORT],
-        maps:get(?DNS_SVCB_PARAM_MANDATORY, P0)
-    ),
-    ?assertEqual([~"h2"], maps:get(?DNS_SVCB_PARAM_ALPN, P0)),
-    ?assertEqual(443, maps:get(?DNS_SVCB_PARAM_PORT, P0)),
-
-    %% key1 (alpn)
-    Zone1 = ~"example.com. 3600 IN SVCB 1 svc.example.com. key1=\"h2,h3\"\n",
-    {ok, [RR1]} = dns_zone:parse_string(Zone1, #{origin => ~"example.com."}),
-    #dns_rrdata_svcb{svc_params = SvcParams1} = RR1#dns_rr.data,
-    ?assertEqual([~"h2", ~"h3"], maps:get(?DNS_SVCB_PARAM_ALPN, SvcParams1)),
-
-    %% key2 (no-default-alpn) - no value
-    Zone2 = ~"example.com. 3600 IN SVCB 1 svc.example.com. key2\n",
-    {ok, [RR2]} = dns_zone:parse_string(Zone2, #{origin => ~"example.com."}),
-    #dns_rrdata_svcb{svc_params = SvcParams2} = RR2#dns_rr.data,
-    ?assertEqual(none, maps:get(?DNS_SVCB_PARAM_NO_DEFAULT_ALPN, SvcParams2)),
-
-    %% key3 (port)
-    Zone3 = ~"example.com. 3600 IN SVCB 1 svc.example.com. key3=\"443\"\n",
-    {ok, [RR3]} = dns_zone:parse_string(Zone3, #{origin => ~"example.com."}),
-    #dns_rrdata_svcb{svc_params = SvcParams3} = RR3#dns_rr.data,
-    ?assertEqual(443, maps:get(?DNS_SVCB_PARAM_PORT, SvcParams3)),
-
-    %% key4 (ipv4hint)
-    Zone4 = ~"example.com. 3600 IN SVCB 1 svc.example.com. key4=\"192.0.2.1,192.0.2.2\"\n",
-    {ok, [RR4]} = dns_zone:parse_string(Zone4, #{origin => ~"example.com."}),
-    #dns_rrdata_svcb{svc_params = SvcParams4} = RR4#dns_rr.data,
-    ?assertEqual(
-        [{192, 0, 2, 1}, {192, 0, 2, 2}],
-        maps:get(?DNS_SVCB_PARAM_IPV4HINT, SvcParams4)
-    ),
-
-    %% key5 (ech) - base64 value
-    Zone5 = ~"example.com. 3600 IN SVCB 1 svc.example.com. key5=\"YWJjZGVm\"\n",
-    {ok, [RR5]} = dns_zone:parse_string(Zone5, #{origin => ~"example.com."}),
-    #dns_rrdata_svcb{svc_params = SvcParams5} = RR5#dns_rr.data,
-    ?assertEqual(~"abcdef", maps:get(?DNS_SVCB_PARAM_ECH, SvcParams5)),
-
-    %% key6 (ipv6hint)
-    Zone6 = ~"example.com. 3600 IN SVCB 1 svc.example.com. key6=\"2001:db8::1\"\n",
-    {ok, [RR6]} = dns_zone:parse_string(Zone6, #{origin => ~"example.com."}),
-    #dns_rrdata_svcb{svc_params = SvcParams6} = RR6#dns_rr.data,
-    ?assertEqual(
-        [{16#2001, 16#0db8, 0, 0, 0, 0, 0, 1}],
-        maps:get(?DNS_SVCB_PARAM_IPV6HINT, SvcParams6)
-    ).
+%% RFC9460§2.1: a key written as keyNNNNN takes its value as its wire format, whatever the
+%% key. Each pair is one SvcParam numbered as BIND 9.20's named-checkzone reads it, and named
+%% as it writes it back; BIND refuses each of the others: a port not of 2 octets, alpn-ids
+%% that are empty or do not fill the value, mandatory's keys out of order, repeated or none,
+%% and hints not of whole addresses. The named forms read key3=443 as port 443 and key1=h2 as
+%% alpn h2, and key1=\002h2 as the alpn-id \002h2.
+parse_svcb_numbered_keys_take_wire_format(_Config) ->
+    Pairs = [
+        {~B"key0=\000\001 alpn=h2", ~"mandatory=alpn alpn=h2"},
+        {~B"key1=\002h2\005h3-19", ~"alpn=h2,h3-19"},
+        {~B"key2 alpn=h2", ~"no-default-alpn alpn=h2"},
+        {~B"key3=\001\187", ~"port=443"},
+        {~B"key4=\192\000\002\001\192\000\002\002", ~"ipv4hint=192.0.2.1,192.0.2.2"},
+        {~B"key5=\000\001\002", ~"ech=AAEC"},
+        {
+            ~B"key6=\032\001\013\184\000\000\000\000\000\000\000\000\000\000\000\001",
+            ~"ipv6hint=2001:db8::1"
+        },
+        {~B"key9=\000\029", ~"tls-supported-groups=29"}
+    ],
+    [
+        ?assertEqual(
+            parse_rdata(<<"SVCB 1 . ", Named/binary>>),
+            parse_rdata(<<"SVCB 1 . ", Numbered/binary>>),
+            Numbered
+        )
+     || {Numbered, Named} <- Pairs
+    ],
+    Refused = [
+        ~B"key0=\000\004\000\001 alpn=h2 ipv4hint=192.0.2.1",
+        ~B"key0=\000\001\000\001 alpn=h2",
+        ~B"key0=\000 alpn=h2",
+        ~B"key0 alpn=h2",
+        ~B"key1=\000",
+        ~B"key1=\002h2\005h3",
+        ~B"key1",
+        ~B"key1=h2",
+        ~B"key2=x",
+        ~B"key3=",
+        ~B"key3=\000\001\187",
+        ~B"key3=443",
+        ~B"key4=\192\000\002",
+        ~B"key6=\032\001"
+    ],
+    [
+        ?assertMatch(#{type := semantic}, parse_rdata_error(<<"SVCB 1 . ", P/binary>>), P)
+     || P <- Refused
+    ].
 
 %% key2 (no-default-alpn) does not allow a value
 parse_svcb_key2_no_value_allowed(_Config) ->
