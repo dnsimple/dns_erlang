@@ -550,6 +550,11 @@ for an NSEC3 RRset (RFC 5155 §3), a zone above the owner for a DS RRset (RFC 40
 zone at the owner or above it for any other. Whether that zone holds `RRSet`, and whether its
 DNSKEYs are to be trusted, is for the caller to know.
 
+An RRSIG whose labels field counts fewer labels than its owner has verifies an RRset a wildcard
+was expanded into (RFC 4035 §5.3.2), as the wildcard's RRset was signed: owned by `*` and the
+owner's last labels, as many as the field counts. That no name closer to the owner exists, which
+NSEC or NSEC3 records prove, is for the caller to check (RFC 4035 §5.3.4).
+
 Returns `false` when none of those verifies it, when the RRSIG does not fit `RRSet`, which an
 empty `RRSet` or an owner or signer that is no name never does, when the time is outside the RRSIG's
 validity period, and when its algorithm is one this module does not implement. Raises
@@ -581,8 +586,9 @@ verify_rrsig(
         false ->
             false;
         true ->
+            Owner = signed_owner(RRSig),
             {_SigTuple, SigInput} = build_sig_input(
-                RRs,
+                [RR#dns_rr{name = Owner} || RR <- RRs],
                 SignersName,
                 SigKeyTag,
                 SigAlg,
@@ -618,6 +624,19 @@ fits_rrset(
                 length(SignerLabels) =< Labels andalso
                 can_hold(SignerLabels, Type, OwnerLabels) andalso
                 lists:all(fun(RR) -> is_of_rrset(RR, Owner, Class, Type) end, RRs)
+    end.
+
+%% RFC4035§5.3.2: the owner the RRset was signed under. It is its own where the RRSIG's labels
+%% field counts all of its labels, and where it counts fewer, as where a wildcard was expanded
+%% into it, `*` and the owner's last labels, as many as the field counts. A wildcard owner, whose
+%% `*` the field does not count, comes out as it is. fits_rrset/2 has checked the owner is a name
+%% of no fewer labels than the field counts.
+-spec signed_owner(dns:rr()) -> dns:dname().
+signed_owner(#dns_rr{name = Owner, data = #dns_rrdata_rrsig{labels = Labels}}) ->
+    OwnerLabels = dns_domain:split(Owner),
+    case length(OwnerLabels) - Labels of
+        0 -> Owner;
+        Expanded -> dns_domain:join([~"*" | lists:nthtail(Expanded, OwnerLabels)])
     end.
 
 %% RFC4035§5.3.1: the signer is the zone that holds the RRset. Where the zone cuts are is not
