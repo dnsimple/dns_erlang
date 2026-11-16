@@ -2224,16 +2224,10 @@ svcb_params([{quoted, Text} | _]) ->
 svcb_params([]) ->
     [].
 
-%% RFC4034 Appendix B
+%% RFC4034 Appendix B, and B.1 for algorithm 1, as the wire decoder computes it
 -spec keytag(non_neg_integer(), non_neg_integer(), non_neg_integer(), binary()) -> dns:uint16().
 keytag(Flags, Protocol, Alg, PublicKey) ->
-    Sum = keytag_sum(<<Flags:16, Protocol:8, Alg:8, PublicKey/binary>>, 0),
-    ((Sum band 16#FFFF) + (Sum bsr 16)) band 16#FFFF.
-
--spec keytag_sum(binary(), non_neg_integer()) -> non_neg_integer().
-keytag_sum(<<Word:16, Rest/binary>>, Acc) -> keytag_sum(Rest, Acc + Word);
-keytag_sum(<<Octet:8>>, Acc) -> Acc + (Octet bsl 8);
-keytag_sum(<<>>, Acc) -> Acc.
+    dns_dnskey:key_tag(<<Flags:16, Protocol:8, Alg:8, PublicKey/binary>>).
 
 %% ============================================================================
 %% Errors
