@@ -274,6 +274,7 @@ groups() ->
             parse_rfc3597_generic_rdata_ipv4,
             parse_rfc3597_combined_all_generic,
             parse_rfc3597_known_type_generic_rdata,
+            parse_generic_rdata_of_known_types,
             parse_rfc3597_unknown_type,
             parse_rfc3597_invalid_format,
             parse_rfc3597_generic_type_in_rdata
@@ -1067,11 +1068,11 @@ parse_escape_hex_mixed(_Config) ->
 %% ============================================================================
 
 parse_rfc3597_generic_type_simple(_Config) ->
-    %% RFC 3597 - Generic type syntax: TYPE99 (unassigned type)
-    Zone = ~"example.com. 3600 IN TYPE99 \\# 4 C0000201\n",
+    %% RFC 3597 - Generic type syntax: TYPE65280, of the private use range
+    Zone = ~"example.com. 3600 IN TYPE65280 \\# 4 C0000201\n",
     {ok, [RR]} = dns_zone:parse_string(Zone, #{origin => ~"example.com."}),
     ?assertEqual(~"example.com.", RR#dns_rr.name),
-    ?assertEqual(99, RR#dns_rr.type),
+    ?assertEqual(65280, RR#dns_rr.type),
     ?assertEqual(?DNS_CLASS_IN, RR#dns_rr.class),
     ?assertEqual(3600, RR#dns_rr.ttl),
     %% RDATA should be binary: <<192, 0, 2, 1>>
@@ -1102,10 +1103,10 @@ parse_rfc3597_generic_class_in(_Config) ->
 
 parse_rfc3597_generic_class_custom(_Config) ->
     %% RFC 3597 - Custom class number: CLASS32
-    Zone = ~"example.com. 3600 CLASS32 TYPE99 \\# 4 12345678\n",
+    Zone = ~"example.com. 3600 CLASS32 TYPE65280 \\# 4 12345678\n",
     {ok, [RR]} = dns_zone:parse_string(Zone, #{origin => ~"example.com."}),
     ?assertEqual(32, RR#dns_rr.class),
-    ?assertEqual(99, RR#dns_rr.type),
+    ?assertEqual(65280, RR#dns_rr.type),
     ?assertEqual(<<18, 52, 86, 120>>, RR#dns_rr.data).
 
 parse_rfc3597_generic_rdata_empty(_Config) ->
@@ -1129,8 +1130,8 @@ parse_rfc3597_generic_rdata_ipv4(_Config) ->
     Zone = ~"example.com. 3600 IN TYPE1 \\# 4 C0000201\n",
     {ok, [RR]} = dns_zone:parse_string(Zone, #{origin => ~"example.com."}),
     ?assertEqual(?DNS_TYPE_A, RR#dns_rr.type),
-    %% When using generic RDATA, it's stored as binary not as dns_rrdata_a
-    ?assertEqual(<<192, 0, 2, 1>>, RR#dns_rr.data).
+    %% RFC 3597 §5: read as the A record it is
+    ?assertEqual(#dns_rrdata_a{ip = {192, 0, 2, 1}}, RR#dns_rr.data).
 
 parse_rfc3597_combined_all_generic(_Config) ->
     %% RFC 3597 - Combination: generic type + generic class + generic RDATA
@@ -1147,8 +1148,70 @@ parse_rfc3597_known_type_generic_rdata(_Config) ->
     {ok, [RR]} = dns_zone:parse_string(Zone, #{origin => ~"example.com."}),
     ?assertEqual(?DNS_TYPE_A, RR#dns_rr.type),
     ?assertEqual(?DNS_CLASS_IN, RR#dns_rr.class),
-    %% Generic RDATA format stores as binary
-    ?assertEqual(<<192, 0, 2, 1>>, RR#dns_rr.data).
+    %% RFC 3597 §5: read as the A record it is
+    ?assertEqual(#dns_rrdata_a{ip = {192, 0, 2, 1}}, RR#dns_rr.data).
+
+%% RFC 3597 §5: an RR of a known type in the generic form "MUST" be treated "as a known
+%% type", so its octets are read as its record, as BIND 9.20's named-checkzone reads the
+%% first ones below; it refuses the last ones, octets that are no RDATA of their type:
+%% an A of 3 or 5 octets, an MX whose name is a compression pointer, which RDATA outside
+%% a message has nothing to point into, or has no root label, and a TXT with no string.
+%% Types read only in the generic form keep their octets. Names come as the wire
+%% decoder gives them, without a final dot. dnspython's wire samples of every type read
+%% as the wire decoder reads them, as records where it reads one, and what the zone
+%% writer writes in the generic form, a DS without a digest, reads back as that DS.
+parse_generic_rdata_of_known_types(_Config) ->
+    [
+        ?assertEqual(Data, parse_rdata(RData), RData)
+     || {RData, Data} <- [
+            {~"A \\# 4 C0000201", #dns_rrdata_a{ip = {192, 0, 2, 1}}},
+            {~"TYPE1 \\# 4 C0000201", #dns_rrdata_a{ip = {192, 0, 2, 1}}},
+            {~"MX \\# 7 000A0378797A00", #dns_rrdata_mx{preference = 10, exchange = ~"xyz"}},
+            {~"NS \\# 5 036E733200", #dns_rrdata_ns{dname = ~"ns2"}},
+            {~"TXT \\# 3 026869", #dns_rrdata_txt{txt = [~"hi"]}},
+            {~"TXT \\# 4 03686900", #dns_rrdata_txt{txt = [<<"hi", 0>>]}},
+            {~"TYPE65280 \\# 2 ABCD", <<16#AB, 16#CD>>},
+            {~"NULL \\# 2 ABCD", <<16#AB, 16#CD>>}
+        ]
+    ],
+    [
+        ?assertMatch(
+            #{type := semantic, details := {semantic_error, rfc3597_not_rdata_of_type}},
+            parse_rdata_error(RData),
+            RData
+        )
+     || RData <- [
+            ~"A \\# 3 C00002",
+            ~"A \\# 5 C000020100",
+            ~"MX \\# 4 000AC000",
+            ~"MX \\# 4 000A0178",
+            ~"NS \\# 4 036E7332",
+            ~"TXT \\# 0"
+        ]
+    ],
+    [
+        begin
+            Text = iolist_to_binary([
+                "example. 0 CLASS",
+                integer_to_binary(Class),
+                " TYPE",
+                integer_to_binary(Type),
+                " \\# ",
+                integer_to_binary(byte_size(Wire)),
+                " ",
+                binary:encode_hex(Wire),
+                "\n"
+            ]),
+            Decoded = dns_decode:decode_rrdata(<<>>, Class, Type, Wire),
+            {ok, [#dns_rr{data = Data}]} = dns_zone:parse_string(Text),
+            ?assertEqual(Decoded, Data, {Class, Type, Wire})
+        end
+     || {Class, Type, Wire} <- data_samples:rrdata_wire()
+    ],
+    DS = #dns_rrdata_ds{keytag = 1, alg = 8, digest_type = 2, digest = <<>>},
+    Written = iolist_to_binary(dns_zone:encode_rdata(?DNS_TYPE_DS, DS)),
+    ?assertEqual(~"\\# 4 00010802", Written),
+    ?assertEqual(DS, parse_rdata(<<"DS ", Written/binary>>)).
 
 %% ============================================================================
 %% Directive Tests
@@ -3233,17 +3296,17 @@ parse_invalid_syntax(_Config) ->
 
 parse_rfc3597_invalid_length(_Config) ->
     %% RFC 3597 - Invalid length specification
-    Zone = ~"example.com. 3600 IN TYPE99 \\# INVALID C0000201\n",
+    Zone = ~"example.com. 3600 IN TYPE65280 \\# INVALID C0000201\n",
     {error, _} = dns_zone:parse_string(Zone, #{origin => ~"example.com."}).
 
 parse_rfc3597_invalid_hex(_Config) ->
     %% RFC 3597 - Invalid hex characters
-    Zone = ~"example.com. 3600 IN TYPE99 \\# 4 GGGGGGGG\n",
+    Zone = ~"example.com. 3600 IN TYPE65280 \\# 4 GGGGGGGG\n",
     {error, #{type := semantic}} = dns_zone:parse_string(Zone, #{origin => ~"example.com."}).
 
 parse_rfc3597_length_mismatch(_Config) ->
     %% RFC 3597 - Length doesn't match hex data
-    Zone = ~"example.com. 3600 IN TYPE99 \\# 10 C0000201\n",
+    Zone = ~"example.com. 3600 IN TYPE65280 \\# 10 C0000201\n",
     {error, #{type := semantic, details := {semantic_error, {rfc3597_length_mismatch, 10, 4}}}} =
         dns_zone:parse_string(Zone, #{origin => ~"example.com."}).
 
@@ -4145,7 +4208,7 @@ parse_rfc3597_empty_data(_Config) ->
 
 parse_rfc3597_odd_hex_length(_Config) ->
     %% RFC 3597 - Odd number of hex characters (invalid)
-    Zone = ~"example.com. 3600 IN TYPE99 \\# 2 ABC\n",
+    Zone = ~"example.com. 3600 IN TYPE65280 \\# 2 ABC\n",
     {error, #{type := semantic}} = dns_zone:parse_string(Zone, #{origin => ~"example.com."}).
 
 parse_rp_record_test(_Config) ->
@@ -4299,40 +4362,52 @@ parse_unknown_class_fallback(_Config) ->
 
 %% Test uncommon DNS type numbers
 parse_uncommon_type_numbers(_Config) ->
-    %% Test various type_to_number clauses (lines 798-860)
-    %% Use RFC 3597 format to test these types
+    %% Each mnemonic is read as its type, with RDATA of that type in RFC 3597's generic
+    %% form: one of dnspython's samples, or for SVCB and HTTPS, priority 1 and the root
+    Samples = data_samples:rrdata_wire(),
+    Wire = fun
+        (Type) when Type =:= ?DNS_TYPE_SVCB; Type =:= ?DNS_TYPE_HTTPS -> <<0, 1, 0>>;
+        (Type) -> hd([Bin || {?DNS_CLASS_IN, T, Bin} <- Samples, T =:= Type])
+    end,
     Tests = [
-        {~"NAPTR", ?DNS_TYPE_NAPTR, ~"\\# 4 C0000201"},
-        {~"SSHFP", ?DNS_TYPE_SSHFP, ~"\\# 4 C0000201"},
-        {~"TLSA", ?DNS_TYPE_TLSA, ~"\\# 4 C0000201"},
-        {~"DS", ?DNS_TYPE_DS, ~"\\# 4 C0000201"},
-        {~"DNSKEY", ?DNS_TYPE_DNSKEY, ~"\\# 4 C0000201"},
-        {~"RRSIG", ?DNS_TYPE_RRSIG, ~"\\# 4 C0000201"},
-        {~"NSEC", ?DNS_TYPE_NSEC, ~"\\# 4 C0000201"},
-        {~"NSEC3", ?DNS_TYPE_NSEC3, ~"\\# 4 C0000201"},
-        {~"NSEC3PARAM", ?DNS_TYPE_NSEC3PARAM, ~"\\# 4 C0000201"},
-        {~"CDNSKEY", ?DNS_TYPE_CDNSKEY, ~"\\# 4 C0000201"},
-        {~"CDS", ?DNS_TYPE_CDS, ~"\\# 4 C0000201"},
-        {~"KEY", ?DNS_TYPE_KEY, ~"\\# 4 C0000201"},
-        {~"LOC", ?DNS_TYPE_LOC, ~"\\# 4 C0000201"},
-        {~"NXT", ?DNS_TYPE_NXT, ~"\\# 4 C0000201"},
-        {~"CERT", ?DNS_TYPE_CERT, ~"\\# 4 C0000201"},
-        {~"DHCID", ?DNS_TYPE_DHCID, ~"\\# 4 C0000201"},
-        {~"SVCB", ?DNS_TYPE_SVCB, ~"\\# 4 C0000201"},
-        {~"HTTPS", ?DNS_TYPE_HTTPS, ~"\\# 4 C0000201"},
-        {~"DLV", ?DNS_TYPE_DLV, ~"\\# 4 C0000201"},
-        {~"IPSECKEY", ?DNS_TYPE_IPSECKEY, ~"\\# 4 C0000201"}
+        {~"NAPTR", ?DNS_TYPE_NAPTR},
+        {~"SSHFP", ?DNS_TYPE_SSHFP},
+        {~"TLSA", ?DNS_TYPE_TLSA},
+        {~"DS", ?DNS_TYPE_DS},
+        {~"DNSKEY", ?DNS_TYPE_DNSKEY},
+        {~"RRSIG", ?DNS_TYPE_RRSIG},
+        {~"NSEC", ?DNS_TYPE_NSEC},
+        {~"NSEC3", ?DNS_TYPE_NSEC3},
+        {~"NSEC3PARAM", ?DNS_TYPE_NSEC3PARAM},
+        {~"CDNSKEY", ?DNS_TYPE_CDNSKEY},
+        {~"CDS", ?DNS_TYPE_CDS},
+        {~"KEY", ?DNS_TYPE_KEY},
+        {~"LOC", ?DNS_TYPE_LOC},
+        {~"NXT", ?DNS_TYPE_NXT},
+        {~"CERT", ?DNS_TYPE_CERT},
+        {~"DHCID", ?DNS_TYPE_DHCID},
+        {~"SVCB", ?DNS_TYPE_SVCB},
+        {~"HTTPS", ?DNS_TYPE_HTTPS},
+        {~"DLV", ?DNS_TYPE_DLV},
+        {~"IPSECKEY", ?DNS_TYPE_IPSECKEY}
     ],
-    lists:foreach(
-        fun({TypeName, TypeNum, RData}) ->
+    [
+        begin
+            Bin = Wire(TypeNum),
             Zone = iolist_to_binary([
-                ~"example.com. 3600 IN ", TypeName, ~" ", RData, ~"\n"
+                ~"example.com. 3600 IN ",
+                TypeName,
+                " \\# ",
+                integer_to_binary(byte_size(Bin)),
+                " ",
+                binary:encode_hex(Bin),
+                "\n"
             ]),
             {ok, [RR]} = dns_zone:parse_string(Zone, #{origin => ~"example.com."}),
-            ?assertEqual(TypeNum, RR#dns_rr.type)
-        end,
-        Tests
-    ).
+            ?assertEqual(TypeNum, RR#dns_rr.type, TypeName)
+        end
+     || {TypeName, TypeNum} <- Tests
+    ].
 
 %% TYPEnnn past 65535 is refused, where the parser read it as A
 parse_generic_type_invalid(_Config) ->
@@ -4420,9 +4495,9 @@ parse_generic_class(_Config) ->
 
 parse_generic_type(_Config) ->
     %% Test generic type parsing (TYPE### format)
-    Zone = ~"example.com. 3600 IN TYPE99 \\# 4 C0000201\n",
+    Zone = ~"example.com. 3600 IN TYPE65280 \\# 4 C0000201\n",
     {ok, [RR]} = dns_zone:parse_string(Zone, #{}),
-    ?assertEqual(99, RR#dns_rr.type).
+    ?assertEqual(65280, RR#dns_rr.type).
 
 parse_ensure_ttl_non_integer(_Config) ->
     %% Test ensure_ttl with non-integer (should return undefined)
@@ -4446,9 +4521,9 @@ parse_ensure_entry_class_generic(_Config) ->
 
 parse_ensure_entry_type_generic(_Config) ->
     %% Test ensure_entry_type with generic_type tuple
-    Zone = ~"example.com. 3600 IN TYPE99 \\# 4 C0000201\n",
+    Zone = ~"example.com. 3600 IN TYPE65280 \\# 4 C0000201\n",
     {ok, [RR]} = dns_zone:parse_string(Zone, #{}),
-    ?assertEqual(99, RR#dns_rr.type).
+    ?assertEqual(65280, RR#dns_rr.type).
 
 parse_extract_domain_error(_Config) ->
     %% Test extract_domain error path (invalid RDATA)
@@ -8010,8 +8085,10 @@ parse_svcb_mandatory_keys_once(_Config) ->
     },
     Written = iolist_to_binary(dns_zone:encode_rdata(?DNS_TYPE_HTTPS, Data)),
     ?assertMatch(<<"\\# ", _/binary>>, Written),
+    %% Read back as the wire decoder reads it, which takes mandatory's key twice
     ?assertEqual(
-        dns_encode:encode_rrdata(?DNS_CLASS_IN, Data), parse_rdata(<<"HTTPS ", Written/binary>>)
+        dns_encode:encode_rrdata(?DNS_CLASS_IN, Data),
+        dns_encode:encode_rrdata(?DNS_CLASS_IN, parse_rdata(<<"HTTPS ", Written/binary>>))
     ).
 
 %% RFC1035§5.1: a <character-string> need not be quoted. The parser dropped the

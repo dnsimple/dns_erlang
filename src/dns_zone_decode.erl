@@ -543,14 +543,15 @@ owner_record(Fields, Ctx, LastOwner, ImplicitTTL, Memo) ->
 %% A record without a TTL takes ImplicitTTL. The memo is that of the records
 %% before this one, whose owner was accepted.
 -spec rr(dns:dname(), header(), ctx(), dns:ttl(), owner_memo()) -> dns:rr().
-rr(Owner, {TTL, Class, Type, Mnemonic, RDataFields}, Ctx, ImplicitTTL, Memo) ->
+rr(Owner, {TTL, GivenClass, Type, Mnemonic, RDataFields}, Ctx, ImplicitTTL, Memo) ->
     RDataFields =:= [] andalso ?FAIL({no_rdata, Mnemonic}),
+    Class = default(GivenClass, Ctx#ctx.default_class),
     RR = #dns_rr{
         name = Owner,
         type = Type,
-        class = default(Class, Ctx#ctx.default_class),
+        class = Class,
         ttl = default(TTL, ImplicitTTL),
-        data = rdata(Type, Mnemonic, RDataFields, Ctx)
+        data = rdata(Type, Class, Mnemonic, RDataFields, Ctx)
     },
     fits(RR, Memo) orelse rdata_fail(Mnemonic, RDataFields, does_not_fit),
     RR.
@@ -1132,16 +1133,36 @@ first_line(First, _Line) -> First.
 %% ============================================================================
 
 %% RFC3597§5: \# and the length and hex of the RDATA stand for the RDATA of any
-%% type, which is then kept as those octets
--spec rdata(dns:type(), binary(), [field(), ...], ctx()) -> dns:rrdata().
-rdata(Type, Mnemonic, Fields, Ctx) ->
+%% type. That of a type read here is read as that type's record, as "all further
+%% processing by the server MUST treat it as a known type"; that of another is kept
+%% as those octets
+-spec rdata(dns:type(), dns:class(), binary(), [field(), ...], ctx()) -> dns:rrdata().
+rdata(Type, Class, Mnemonic, Fields, Ctx) ->
     try
         case Fields of
-            [~"\\#" | Generic] -> generic(Generic);
+            [~"\\#" | Generic] -> generic_rdata(Type, Class, generic(Generic));
             _ -> rdata(Type, Fields, Ctx)
         end
     catch
         error:{?MODULE, Reason} -> rdata_fail(Mnemonic, Fields, Reason)
+    end.
+
+%% The octets of a type read here are its RDATA in wire format, read as the wire
+%% decoder reads a record's, but with no message for a compression pointer to point
+%% into. The decoder keeps RDATA it cannot read as its octets, or raises; for a type
+%% read here either is no RDATA of the type, as BIND refuses it
+-spec generic_rdata(dns:type(), dns:class(), binary()) -> dns:rrdata().
+generic_rdata(Type, Class, Data) ->
+    case lists:member(Type, ?READABLE_TYPES) of
+        false ->
+            Data;
+        true ->
+            try dns_decode:decode_rrdata(<<>>, Class, Type, Data) of
+                Record when is_tuple(Record) -> Record;
+                _ -> ?FAIL(rfc3597_not_rdata_of_type)
+            catch
+                error:_ -> ?FAIL(rfc3597_not_rdata_of_type)
+            end
     end.
 
 -spec rdata_fail(binary(), [field()], term()) -> no_return().
@@ -2368,6 +2389,8 @@ reason_text(unsupported_type) ->
     ~"no presentation format, use RFC 3597's \\# form";
 reason_text(rfc3597_no_length) ->
     ~"\\# without a length";
+reason_text(rfc3597_not_rdata_of_type) ->
+    ~"\\# octets that are not the type's RDATA";
 reason_text({rfc3597_length_mismatch, Length, Actual}) ->
     iolist_to_binary(io_lib:format("\\# of length ~b with ~b octets", [Length, Actual]));
 reason_text(include_refused) ->
