@@ -557,15 +557,22 @@ NSEC or NSEC3 records prove, is for the caller to check (RFC 4035 §5.3.4).
 
 Returns `false` when none of those verifies it, when the RRSIG does not fit `RRSet`, which an
 empty `RRSet` or an owner or signer that is no name never does, when the time is outside the RRSIG's
-validity period, and when its algorithm is one this module does not implement. Raises
-`{badarg, public_key_not_binary}` when a DNSKEY of the RRSIG's algorithm and signer has a key that
-is not a binary, as RSA and DSA keys were before 6.0.0, whether another one verifies it or not.
+validity period, and when its algorithm is one this module does not implement. Malformed input
+verifies nothing either: an RRSIG whose RDATA did not decode, or a record that is no RRSIG; a key
+crypto cannot use, such as an ECDSA key that is no point on its curve; a signature of another
+size than its algorithm's, or for RSA than the key's modulus (RFC 8017 §8.2.2); and a record of
+`RRSet` whose RDATA holds a name that is none. Raises `{badarg, public_key_not_binary}` when a
+DNSKEY of the RRSIG's algorithm and signer has a key that is not a binary, as RSA and DSA keys
+were before 6.0.0, whether another one verifies it or not.
 """.
 -spec verify_rrsig(
     RRSig :: dns:rr(), RRSet :: [dns:rr()], DNSKeys :: [dns:rr()], Opts :: verify_rrsig_opts()
 ) -> boolean().
 verify_rrsig(
-    #dns_rr{type = ?DNS_TYPE_RRSIG, class = Class, data = Data} = RRSig, RRs, DNSKeys, Opts
+    #dns_rr{type = ?DNS_TYPE_RRSIG, class = Class, data = #dns_rrdata_rrsig{} = Data} = RRSig,
+    RRs,
+    DNSKeys,
+    Opts
 ) ->
     Now =
         case Opts of
@@ -582,21 +589,44 @@ verify_rrsig(
         signature = Signature
     } = Data,
     Keys = named_keys(Class, Data, DNSKeys),
-    case Incept =< Now andalso Now =< Expire andalso fits_rrset(RRSig, RRs) of
-        false ->
-            false;
-        true ->
-            Owner = signed_owner(RRSig),
-            {_SigTuple, SigInput} = build_sig_input(
-                [RR#dns_rr{name = Owner} || RR <- RRs],
-                SignersName,
-                SigKeyTag,
-                SigAlg,
-                Incept,
-                Expire,
-                OTTL
-            ),
-            lists:any(fun(Key) -> verify(SigAlg, Key, Signature, SigInput) end, Keys)
+    maybe
+        true ?= Incept =< Now,
+        true ?= Now =< Expire,
+        true ?= fits_rrset(RRSig, RRs),
+        Owner = signed_owner(RRSig),
+        AsSigned = [RR#dns_rr{name = Owner} || RR <- RRs],
+        SigInput = signed_data(AsSigned, SignersName, SigKeyTag, SigAlg, Incept, Expire, OTTL),
+        true ?= is_binary(SigInput),
+        lists:any(fun(Key) -> verifies(SigAlg, Key, Signature, SigInput) end, Keys)
+    end;
+%% An RRSIG whose RDATA the decoder could not read, and kept as its bytes, or a record that is no
+%% RRSIG
+verify_rrsig(#dns_rr{}, _RRs, _DNSKeys, _Opts) ->
+    false.
+
+%% The data an RRSIG signs over its RRset, or invalid where a name in a record's RDATA is no name:
+%% one with an empty label, a label over 63 octets or over 255 octets in all, which encoding
+%% refuses. fits_rrset/2 has checked the owner and the signer.
+-spec signed_data(
+    [dns:rr(), ...], dns:dname(), keytag(), dns:alg(), integer(), integer(), non_neg_integer()
+) -> binary() | invalid.
+signed_data(RRs, SignersName, KeyTag, Alg, Incept, Expire, TTL) ->
+    try build_sig_input(RRs, SignersName, KeyTag, Alg, Incept, Expire, TTL) of
+        {_SigTuple, SigInput} -> SigInput
+    catch
+        error:{invalid_dname, empty_label} -> invalid;
+        error:{label_too_long, _} -> invalid;
+        error:name_too_long -> invalid
+    end.
+
+%% crypto refuses a key it cannot use, such as an ECDSA key that is no point on its curve or an
+%% EdDSA key of another size than its curve's, and such a key verifies nothing
+-spec verifies(dns:uint8(), binary(), binary(), binary()) -> boolean().
+verifies(Alg, Key, Signature, SigInput) ->
+    try
+        verify(Alg, Key, Signature, SigInput)
+    catch
+        error:{badarg, {_File, _Line}, _Description} -> false
     end.
 
 %% RFC4035§5.3.1: the RRSIG and the RRset have one owner and one class, the RRSIG covers the
@@ -743,10 +773,11 @@ verify(Alg, Key, Signature, SigInput) when ?IS_DSA_ALG(Alg) orelse ?IS_RSA_ALG(A
         invalid -> false;
         Numbers -> verify_numbers(Alg, Numbers, Signature, SigInput)
     end;
-verify(?DNS_ALG_ECDSAP256SHA256, Key, Signature, SigInput) ->
+%% RFC6605§4: a signature is r and s, 32 octets each for P-256 and 48 for P-384
+verify(?DNS_ALG_ECDSAP256SHA256, Key, <<_:64/binary>> = Signature, SigInput) ->
     DerSig = ecdsa_wire_to_der(Signature, 32),
     crypto:verify(ecdsa, sha256, SigInput, DerSig, [<<4, Key/binary>>, secp256r1]);
-verify(?DNS_ALG_ECDSAP384SHA384, Key, Signature, SigInput) ->
+verify(?DNS_ALG_ECDSAP384SHA384, Key, <<_:96/binary>> = Signature, SigInput) ->
     DerSig = ecdsa_wire_to_der(Signature, 48),
     crypto:verify(ecdsa, sha384, SigInput, DerSig, [<<4, Key/binary>>, secp384r1]);
 verify(?DNS_ALG_ED25519, Key, Signature, SigInput) ->
@@ -756,23 +787,33 @@ verify(?DNS_ALG_ED448, Key, Signature, SigInput) ->
 %% Other sizes go to the catch-all, as crypto raises for a wrong-size key
 verify(?DNS_ALG_MLDSA44, <<_:1312/binary>> = Key, <<_:2420/binary>> = Signature, SigInput) ->
     mldsa44_verify(Key, Signature, SigInput);
-%% An algorithm this module does not implement, which an RRSIG off the wire can carry
+%% A signature of another size than its algorithm's, or an algorithm this module does not
+%% implement, which an RRSIG off the wire can carry
 %% function_clause would put the key in the stacktrace, return `false` specifically
 verify(_Alg, _Key, _Signature, _SigInput) ->
     false.
 
 %% An RSA or DSA key's numbers, as dns_dnskey:numbers/2 splits them from its field
 -spec verify_numbers(dns:uint8(), [binary()], binary(), binary()) -> boolean().
-verify_numbers(Alg, PublicKey, Signature, SigInput) when ?IS_DSA_ALG(Alg) ->
-    <<_T, R:20/unit:8, S:20/unit:8>> = Signature,
+%% RFC2536§3: a DSA signature is T, R and S, of 1, 20 and 20 octets. T is the key's, which verifying
+%% does not need
+verify_numbers(Alg, PublicKey, <<_T, R:20/unit:8, S:20/unit:8>>, SigInput) when ?IS_DSA_ALG(Alg) ->
     AsnSig = public_key:der_encode('Dss-Sig-Value', #'Dss-Sig-Value'{r = R, s = S}),
     crypto:verify(dss, sha, SigInput, AsnSig, PublicKey);
-verify_numbers(_RsaAlg, PublicKey, Signature, SigInput) ->
+%% RFC8017§8.2.2: an RSA signature is as long as the modulus, as OpenSSL's RSA_verify has it.
+%% crypto does not check that when given the DigestInfo to verify, as here, and so took one whose
+%% leading zero octets were left out
+verify_numbers(Alg, [_E, N] = PublicKey, Signature, SigInput) when
+    ?IS_RSA_ALG(Alg), byte_size(Signature) =:= byte_size(N)
+->
     try
         crypto:verify(rsa, none, SigInput, Signature, PublicKey, [{rsa_padding, rsa_pkcs1_padding}])
     catch
         error:decrypt_failed -> false
-    end.
+    end;
+%% A DSA signature of another size, or an RSA signature of another size than the modulus
+verify_numbers(_Alg, _PublicKey, _Signature, _SigInput) ->
+    false.
 
 %% Pure ML-DSA with an empty context; OTP 27's crypto specs lack mldsa44
 -dialyzer({nowarn_function, [mldsa44_sign/2, mldsa44_verify/3]}).
