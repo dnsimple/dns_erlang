@@ -147,7 +147,10 @@
     %% before it (RFC1035§5.1), and 0 before any
     default_ttl = undefined :: dns:ttl() | undefined,
     default_class = ?DNS_CLASS_IN :: dns:class(),
-    base_dir = "" :: file:filename_all(),
+    %% The directory $INCLUDE reads under, the zone file's own, or none where it
+    %% reads nothing; and the directory of the file being read, under it
+    include_root = none :: file:filename_all() | none,
+    include_dir = "." :: file:filename_all(),
     filename = undefined :: file:filename_all() | undefined,
     %% How many files include this one
     include_depth = 0 :: non_neg_integer(),
@@ -187,7 +190,12 @@
 parse_file(Filename, Options) ->
     case read_file(Filename) of
         {ok, Bin} ->
-            parse(Bin, Options#{base_dir => filename:dirname(Filename), filename => Filename});
+            Root =
+                case maps:get(include, Options, true) of
+                    true -> filename:dirname(Filename);
+                    false -> none
+                end,
+            parse(Bin, Options#{filename => Filename}, Root);
         {error, Reason} ->
             {error, file_error(Filename, Reason)}
     end.
@@ -201,11 +209,11 @@ read_file(Filename) ->
 -spec parse_string(binary() | string(), dns_zone:parse_options()) ->
     {ok, [dns:rr()]} | {error, dns_zone:error_detail()}.
 parse_string(Data, Options) when is_binary(Data) ->
-    parse(Data, Options);
+    parse(Data, Options, none);
 parse_string(Data, Options) when is_list(Data) ->
     case chars_to_binary(Data) of
         {ok, Bin} ->
-            parse(Bin, Options);
+            parse(Bin, Options, none);
         {error, Read} ->
             Line = 1 + length(binary:matches(Read, ~"\n")),
             Location =
@@ -256,16 +264,16 @@ chars_to_binary(Data) ->
             end
     end.
 
--spec parse(binary(), dns_zone:parse_options()) ->
+-spec parse(binary(), dns_zone:parse_options(), file:filename_all() | none) ->
     {ok, [dns:rr()]} | {error, dns_zone:error_detail()}.
-parse(Bin, Options) ->
+parse(Bin, Options, IncludeRoot) ->
     Origin = maps:get(origin, Options, <<>>),
     DefaultTTL = maps:get(default_ttl, Options, undefined),
     Ctx = #ctx{
         origin = Origin,
         default_ttl = DefaultTTL,
         default_class = maps:get(default_class, Options, ?DNS_CLASS_IN),
-        base_dir = filename:flatten(maps:get(base_dir, Options, "")),
+        include_root = IncludeRoot,
         filename = filename(maps:get(filename, Options, undefined)),
         source = Bin
     },
@@ -422,22 +430,31 @@ directive(Name, Args, _Line, _Ctx, _TTL) ->
 %% carries them back to the parent. A file that cannot be read is an error on the
 %% line of the $INCLUDE. An error within the file gives its line there and the kind
 %% of error, but nothing the file holds, neither the text of the line nor the field
-%% or number the error is about: a zone can include any file, which need not be one
-%% to show. An $INCLUDE in a file included ?MAX_INCLUDE_DEPTH deep is an error.
+%% or number the error is about: a zone can include any file in its directory, which
+%% need not be one to show. An $INCLUDE in a file included ?MAX_INCLUDE_DEPTH deep
+%% is an error.
+%%
+%% A file is included only from the zone file's directory or under it, named
+%% relative to the file that includes it: neither an absolute path, nor .. that
+%% climbs out, nor a symbolic link that leads out, as filelib:safe_relative_path/2
+%% tells them. Nothing widens that. A zone parsed from a string has no directory,
+%% and includes nothing, as with the include option false.
 -spec include(binary(), dns:dname(), pos_integer(), ctx(), dns:ttl()) -> entry().
-include(File, Origin, Line, #ctx{base_dir = BaseDir, include_depth = Depth} = Ctx, TTL) ->
+include(_File, _Origin, _Line, #ctx{include_root = none}, _TTL) ->
+    ?FAIL(include_refused);
+include(File, Origin, Line, #ctx{include_root = Root, include_depth = Depth} = Ctx, TTL) ->
     Depth < ?MAX_INCLUDE_DEPTH orelse ?FAIL(include_too_deep),
-    Path =
-        case BaseDir of
-            "" -> File;
-            <<>> -> File;
-            _ -> filename:join(BaseDir, File)
+    Relative =
+        case filelib:safe_relative_path(filename:join(Ctx#ctx.include_dir, File), Root) of
+            unsafe -> ?FAIL(include_outside_zone_dir);
+            Safe -> Safe
         end,
+    Path = filename:join(Root, Relative),
     case read_file(Path) of
         {ok, Bin} ->
             Included = Ctx#ctx{
                 origin = Origin,
-                base_dir = filename:dirname(Path),
+                include_dir = filename:dirname(Relative),
                 filename = Path,
                 include_depth = Depth + 1,
                 source = Bin
@@ -2353,6 +2370,10 @@ reason_text(rfc3597_no_length) ->
     ~"\\# without a length";
 reason_text({rfc3597_length_mismatch, Length, Actual}) ->
     iolist_to_binary(io_lib:format("\\# of length ~b with ~b octets", [Length, Actual]));
+reason_text(include_refused) ->
+    ~"$INCLUDE in a zone parsed from a string, or with the include option false";
+reason_text(include_outside_zone_dir) ->
+    ~"$INCLUDE of a file outside the zone file's directory";
 reason_text({bad_directive, Name, Args}) ->
     iolist_to_binary(
         io_lib:format("unknown directive, or one with ~b arguments: ~s", [Args, Name])

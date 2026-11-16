@@ -561,6 +561,7 @@ groups() ->
             parse_returns_errors_for_any_input,
             parse_long_numbers_in_linear_time,
             parse_include_errors,
+            parse_include_only_under_the_zone_dir,
             parse_include_depth,
             parse_ttl_of_the_record_before,
             parse_ttl_into_an_included_file,
@@ -8596,7 +8597,8 @@ parse_long_numbers_in_linear_time(_Config) ->
 %% A file the zone includes and that cannot be read is an error on the line of the
 %% $INCLUDE. An error within the included file, or within a file that one
 %% includes, gives its line there and its kind, but nothing the file holds, in no
-%% field of the error: a zone can include any file, which need not be one to show.
+%% field of the error: a zone can include any file in its directory, which need not
+%% be one to show.
 parse_include_errors(Config) ->
     Dir = proplists:get_value(priv_dir, Config),
     Label = binary:copy(~"a", 60),
@@ -8619,11 +8621,13 @@ parse_include_errors(Config) ->
             ok = file:write_file(Secret, <<"\n", Text/binary, "\n">>),
             Nested = filename:join(Dir, "include-nested-" ++ integer_to_list(N) ++ ".zone"),
             ok = file:write_file(Nested, ["$INCLUDE ", Name, "\n"]),
+            Including = filename:join(Dir, "include-zone-" ++ integer_to_list(N) ++ ".zone"),
             [
                 begin
-                    {error, Error} = dns_zone:parse_string(
-                        iolist_to_binary(["www.example. 0 IN A 192.0.2.1\n$INCLUDE ", Path, "\n"])
-                    ),
+                    ok = file:write_file(Including, [
+                        "www.example. 0 IN A 192.0.2.1\n$INCLUDE ", filename:basename(Path), "\n"
+                    ]),
+                    {error, Error} = dns_zone:parse_file(Including),
                     ?assertMatch(
                         #{type := Type, details := Details, location := #{line := 2, file := _}},
                         Error,
@@ -8655,6 +8659,84 @@ parse_include_errors(Config) ->
         }},
         dns_zone:parse_file(Zone)
     ).
+
+%% $INCLUDE reads only files at or under the zone file's directory, named relative
+%% to the file that includes them: no absolute path, no .. that climbs out, and no
+%% symbolic link that leads out, to a file or a directory, though each names a zone
+%% file that reads. Nothing widens that: parse_string/2 has no directory and
+%% includes nothing, and include => false refuses $INCLUDE in parse_file/2 too.
+parse_include_only_under_the_zone_dir(Config) ->
+    Dir = proplists:get_value(priv_dir, Config),
+    Root = filename:join(Dir, "include-root"),
+    Outside = filename:join(Dir, "include-outside"),
+    ok = filelib:ensure_path(filename:join(Root, "sub")),
+    ok = filelib:ensure_path(Outside),
+    Write = fun(Path, Text) -> ok = file:write_file(Path, Text) end,
+    Write(filename:join(Outside, "outside.zone"), ~"outside.example. 0 IN A 192.0.2.9\n"),
+    Write(filename:join(Root, "top.zone"), ~"top.example. 0 IN A 192.0.2.1\n"),
+    Write(
+        filename:join([Root, "sub", "inner.zone"]),
+        ~"inner.example. 0 IN A 192.0.2.2\n$INCLUDE ../top.zone\n"
+    ),
+    Write(
+        filename:join([Root, "sub", "escape.zone"]),
+        ~"$INCLUDE ../../include-outside/outside.zone\n"
+    ),
+    ok = file:make_symlink("../include-outside/outside.zone", filename:join(Root, "out-link.zone")),
+    ok = file:make_symlink(Outside, filename:join(Root, "out-dir")),
+    ok = file:make_symlink("top.zone", filename:join(Root, "in-link.zone")),
+    Zone = filename:join(Root, "zone.db"),
+    Parse = fun(Include, Options) ->
+        Write(Zone, ["$ORIGIN example.\n$INCLUDE ", Include, "\n"]),
+        dns_zone:parse_file(Zone, Options)
+    end,
+    Names = fun({ok, RRs}) -> [Name || #dns_rr{name = Name} <- RRs] end,
+    ?assertEqual([~"inner.example.", ~"top.example."], Names(Parse("sub/inner.zone", #{}))),
+    ?assertEqual([~"top.example."], Names(Parse("sub/../top.zone", #{}))),
+    ?assertEqual([~"top.example."], Names(Parse("in-link.zone", #{}))),
+    ?assertEqual(
+        [~"outside.example."], Names(dns_zone:parse_file(filename:join(Outside, "outside.zone")))
+    ),
+    [
+        ?assertMatch(
+            {error, #{
+                type := parser,
+                details := {parser_error, include_outside_zone_dir},
+                location := #{line := 2}
+            }},
+            Parse(Include, #{}),
+            Include
+        )
+     || Include <- [
+            "../include-outside/outside.zone",
+            "sub/../../include-outside/outside.zone",
+            filename:join(Outside, "outside.zone"),
+            "out-link.zone",
+            "out-dir/outside.zone"
+        ]
+    ],
+    %% From an included file, on its own line
+    Escape = unicode:characters_to_binary(filename:join([Root, "sub", "escape.zone"])),
+    ?assertMatch(
+        {error, #{
+            type := parser,
+            details := {parser_error, include_outside_zone_dir},
+            location := #{line := 1, file := Escape}
+        }},
+        Parse("sub/escape.zone", #{})
+    ),
+    ?assertMatch(
+        {error, #{details := {parser_error, include_refused}}},
+        Parse("top.zone", #{include => false})
+    ),
+    [
+        ?assertMatch(
+            {error, #{details := {parser_error, include_refused}, location := #{line := 1}}},
+            dns_zone:parse_string(iolist_to_binary(["$INCLUDE ", Include, "\n"])),
+            Include
+        )
+     || Include <- [filename:join(Root, "top.zone"), "top.zone"]
+    ].
 
 %% Files include files up to 16 deep, and an $INCLUDE in a file included 16 deep
 %% is an error there. A file that includes itself, or one that includes it, stops
@@ -8779,7 +8861,7 @@ parse_file_reads_in_the_calling_process(Config) ->
     Included = filename:join(Dir, "raw-included.zone"),
     ok = file:write_file(Included, ~"included.example. 300 IN A 192.0.2.1\n"),
     Zone = filename:join(Dir, "raw.zone"),
-    ok = file:write_file(Zone, ["www.example. 300 IN A 192.0.2.1\n$INCLUDE ", Included, "\n"]),
+    ok = file:write_file(Zone, ["www.example. 300 IN A 192.0.2.1\n$INCLUDE raw-included.zone\n"]),
     FileServer =
         case whereis(file_server_2) of
             Pid when is_pid(Pid) -> Pid
