@@ -19,7 +19,10 @@ specifications.
 ### Supported RFC Features:
 - All DNS record types supported by this library
 - Zone file directives: $ORIGIN, $TTL, $INCLUDE
-  ([RFC 1035](https://datatracker.ietf.org/doc/html/rfc1035))
+  ([RFC 1035](https://datatracker.ietf.org/doc/html/rfc1035)). `$INCLUDE` reads
+  only files at or under the zone file's directory, never through an absolute
+  path, a `..` or a symbolic link that leads out of it; a zone parsed from a
+  string includes nothing.
 - Multi-line records using parentheses
   ([RFC 1035 §5.1](https://datatracker.ietf.org/doc/html/rfc1035#section-5.1))
 - Comments (semicolon to end-of-line,
@@ -106,7 +109,8 @@ Options for parsing zone files.
   would give it. Without it or a `$TTL`, a record without a TTL has that of the
   record before it (RFC 1035 §5.1), and 0 before any.
 - `default_class` - Default DNS class (default: `?DNS_CLASS_IN`)
-- `base_dir` - Base directory for $INCLUDE directives (default: `""`)
+- `include` - Whether `parse_file/2` follows `$INCLUDE`, to files at or under the
+  zone file's directory only (default: `true`). `parse_string/2` never does.
 - `filename` - Source filename for error reporting (internal, set by parse_file)
 - `chunk_size` - Ignored: a file is read whole. It was the size of the chunks a
   file was read in.
@@ -115,7 +119,7 @@ Options for parsing zone files.
     origin => dns:dname(),
     default_ttl => dns:ttl(),
     default_class => dns:class(),
-    base_dir => file:name_all(),
+    include => boolean(),
     filename => file:name_all(),
     chunk_size => non_neg_integer()
 }.
@@ -210,7 +214,8 @@ Options (all optional):
 - `origin => Domain` - Set the initial $ORIGIN
 - `default_ttl => TTL` - Set the default TTL
 - `default_class => Class` - Set the default class (defaults to IN)
-- `base_dir => Dir` - Set base directory for $INCLUDE directives
+- `include => false` - Refuse `$INCLUDE`, which otherwise reads files at or under
+  the zone file's directory only
 
 ## Examples
 
