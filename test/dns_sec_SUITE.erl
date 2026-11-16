@@ -57,6 +57,11 @@ groups() ->
             verify_needs_dnskey_of_rrsig_class,
             verify_needs_rrsig_key_tag,
             verify_signer_names_key_as_name,
+            verify_checks_every_rr_of_rrset,
+            verify_rejects_rrsig_not_fitting_rrset,
+            verify_owner_that_is_no_name,
+            verify_needs_signer_holding_rrset,
+            verify_bind_signed_root_zone,
             sign_rr_and_rrset_5arg,
             sign_leaves_rrsigs_unsigned,
             sign_rrset_rejects_records_of_other_rrsets,
@@ -1266,6 +1271,235 @@ verify_signer_names_key_as_name(_Config) ->
      || Name <- [~"example.org.", ~"www.example.net.", ~"net." | NoNames]
     ],
     ?assert(dns_sec:verify_rrsig(RRSig, RRSet, [Owner(Name) || Name <- NoNames] ++ [DNSKey], Opts)).
+
+%% RFC4035§5.3.1: every record of the RRset has the RRSIG's owner and class and the type it
+%% covers. With RFC8080§6's MX, a record of another owner, class or type whose RDATA is the MX's
+%% leaves the signed data as it is, as that holds each record once (RFC4034§6.3), so only this
+%% check refuses it. Owners compare as names, and an empty RRset fits no RRSIG.
+verify_checks_every_rr_of_rrset(_Config) ->
+    {_PrivateKey, DNSKey, RRSig, [MX] = RRSet} = rfc8080_example(),
+    #dns_rr{data = #dns_rrdata_rrsig{inception = Now}} = RRSig,
+    Verify = fun(RRs) -> dns_sec:verify_rrsig(RRSig, RRs, [DNSKey], #{now => Now}) end,
+    ?assert(Verify(RRSet)),
+    ?assert(Verify([MX#dns_rr{name = ~"EXAMPLE.COM"}])),
+    ?assert(Verify([MX, MX#dns_rr{name = ~"Example.Com."}])),
+    [
+        ?assertNot(Verify([MX, Other]), Other)
+     || Other <- [
+            MX#dns_rr{name = ~"www.example.com."},
+            MX#dns_rr{class = ?DNS_CLASS_CH},
+            MX#dns_rr{type = ?DNS_TYPE_KX}
+        ]
+    ],
+    ?assertNot(Verify([])).
+
+%% RFC4035§5.3.1: an RRSIG whose owner or class is not the RRset's, whose type covered is not
+%% the RRset's type, or whose labels field counts more labels than its owner has, not counting a
+%% wildcard's leading `*` (RFC4034§3.1.3), does not verify. RFC8080§6's RRSIG with one of these
+%% fields changed still holds a signature over its MX RRset, and only these checks refuse it, as
+%% they do the RRSIG RFC8080§6's key makes for the MX RRset at *.example.com. Its owner may be
+%% written in any case, with or without a final dot.
+verify_rejects_rrsig_not_fitting_rrset(_Config) ->
+    {PrivateKey, DNSKey, #dns_rr{data = SigData} = RRSig, RRSet} = rfc8080_example(),
+    #dns_rrdata_rrsig{inception = Now} = SigData,
+    Verify = fun(Sig, Key) -> dns_sec:verify_rrsig(Sig, RRSet, [Key], #{now => Now}) end,
+    WithData = fun(Data) -> RRSig#dns_rr{data = Data} end,
+    ?assert(Verify(RRSig, DNSKey)),
+    ?assert(Verify(RRSig#dns_rr{name = ~"EXAMPLE.COM"}, DNSKey)),
+    ?assertNot(Verify(RRSig#dns_rr{name = ~"www.example.com."}, DNSKey)),
+    %% Of class CH, with its DNSKEY in CH too, as only a DNSKEY of the RRSIG's class is tried
+    ?assertNot(Verify(RRSig#dns_rr{class = ?DNS_CLASS_CH}, DNSKey#dns_rr{class = ?DNS_CLASS_CH})),
+    ?assertNot(Verify(WithData(SigData#dns_rrdata_rrsig{type_covered = ?DNS_TYPE_A}), DNSKey)),
+    ?assertNot(Verify(WithData(SigData#dns_rrdata_rrsig{labels = 3}), DNSKey)),
+    #dns_rrdata_rrsig{signers_name = Signer, expiration = Expiration} = SigData,
+    Wild = [RR#dns_rr{name = ~"*.example.com"} || RR <- RRSet],
+    #dns_rr{data = WildData} =
+        WildSig = dns_sec:sign_rrset(
+            Wild,
+            Signer,
+            key_tag_of(DNSKey),
+            ?DNS_ALG_ED25519,
+            PrivateKey,
+            #{inception => Now, expiration => Expiration}
+        ),
+    VerifyWild = fun(Labels) ->
+        Sig = WildSig#dns_rr{data = WildData#dns_rrdata_rrsig{labels = Labels}},
+        dns_sec:verify_rrsig(Sig, Wild, [DNSKey], #{now => Now})
+    end,
+    ?assert(VerifyWild(2)),
+    ?assertNot(VerifyWild(3)).
+
+%% An owner with an empty label or a label over 63 octets, or over 255 octets on the wire, is no
+%% name (RFC1035§2.3.4), and no RRSIG fits an RRset of it, while one of 255 octets is a name.
+%% Signing takes an owner with a leading empty label, and its RRSIG does not verify; the others
+%% verify nothing, and raise nothing.
+verify_owner_that_is_no_name(_Config) ->
+    {PrivateKey, DNSKey, RRSig, [MX]} = rfc8080_example(),
+    #dns_rr{
+        data = #dns_rrdata_rrsig{
+            signers_name = Signer, inception = Inception, expiration = Expiration
+        }
+    } = RRSig,
+    Verify = fun(Sig, RRs) -> dns_sec:verify_rrsig(Sig, RRs, [DNSKey], #{now => Inception}) end,
+    Sign = fun(RRs) ->
+        dns_sec:sign_rrset(
+            RRs,
+            Signer,
+            key_tag_of(DNSKey),
+            ?DNS_ALG_ED25519,
+            PrivateKey,
+            #{inception => Inception, expiration => Expiration}
+        )
+    end,
+    Leading = [MX#dns_rr{name = ~".example.com"}],
+    ?assertNot(Verify(Sign(Leading), Leading)),
+    %% Three labels of 63 octets and one of 49, then example.com: 255 octets with their lengths.
+    %% One of 50 makes 256, one too many
+    Labels63 = binary:copy(<<(binary:copy(~"a", 63))/binary, ".">>, 3),
+    Longest = [
+        MX#dns_rr{name = <<Labels63/binary, (binary:copy(~"a", 49))/binary, ".example.com">>}
+    ],
+    ?assert(Verify(Sign(Longest), Longest)),
+    TooLong = <<Labels63/binary, (binary:copy(~"a", 50))/binary, ".example.com">>,
+    LongLabel = <<(binary:copy(~"a", 64))/binary, ".example.com">>,
+    LongName = <<(binary:copy(<<(binary:copy(~"a", 63))/binary, ".">>, 4))/binary, "example.com">>,
+    [
+        ?assertNot(Verify(RRSig#dns_rr{name = Name}, [MX#dns_rr{name = Name}]), Name)
+     || Name <- [~"a..example.com", TooLong, LongLabel, LongName]
+    ].
+
+%% RFC4035§5.3.1: the signer is the zone that holds the RRset, and not knowing the zone cuts, a
+%% zone that can hold it: the zone at the owner of an NS, SOA or DNSKEY RRset, the zone one label
+%% above the owner of an NSEC3 RRset (RFC5155§3), a zone above the owner of a DS RRset
+%% (RFC4034§5), and the zone at the owner or above it of any other. RFC8080§6's key, published
+%% at each signer, signs each RRset, as it signs its RFC's RRSIG byte for byte.
+verify_needs_signer_holding_rrset(_Config) ->
+    {PrivateKey, DNSKey, RRSig, [MX]} = rfc8080_example(),
+    #dns_rr{data = #dns_rrdata_rrsig{inception = Inception, expiration = Expiration}} = RRSig,
+    Sign = fun(Signer, RR) ->
+        Key = DNSKey#dns_rr{name = Signer},
+        Opts = #{inception => Inception, expiration => Expiration},
+        {Key, dns_sec:sign_rrset([RR], Signer, key_tag_of(Key), ?DNS_ALG_ED25519, PrivateKey, Opts)}
+    end,
+    SignedBy = fun(Signer, RR) ->
+        {Key, Sig} = Sign(Signer, RR),
+        dns_sec:verify_rrsig(Sig, [RR], [Key], #{now => Inception})
+    end,
+    Record = fun(Name, Type, Data) ->
+        #dns_rr{name = Name, type = Type, class = ?DNS_CLASS_IN, ttl = 3600, data = Data}
+    end,
+    NS = Record(~"child.example.com", ?DNS_TYPE_NS, #dns_rrdata_ns{dname = ~"ns.child.example.com"}),
+    SOA = Record(~"example.com", ?DNS_TYPE_SOA, #dns_rrdata_soa{
+        mname = ~"ns.example.com",
+        rname = ~"hostmaster.example.com",
+        serial = 1,
+        refresh = 3600,
+        retry = 600,
+        expire = 86400,
+        minimum = 300
+    }),
+    ChildKey = DNSKey#dns_rr{name = ~"child.example.com"},
+    DS = Record(~"child.example.com", ?DNS_TYPE_DS, #dns_rrdata_ds{
+        keytag = 3613, alg = ?DNS_ALG_ED25519, digest_type = 2, digest = <<0:256>>
+    }),
+    NSEC3 = Record(
+        ~"2t7b4g4vsa5smi47k61mv5bv1a22bojr.example.com", ?DNS_TYPE_NSEC3, #dns_rrdata_nsec3{
+            hash_alg = 1,
+            opt_out = false,
+            iterations = 0,
+            salt = <<>>,
+            hash = <<0:160>>,
+            types = [1]
+        }
+    ),
+    Holds = [
+        {~"example.com", MX},
+        {~"com", MX},
+        {~".", MX},
+        {~"child.example.com", NS},
+        {~"example.com", SOA},
+        {~"child.example.com", ChildKey},
+        {~"example.com", DS},
+        {~"com", DS},
+        {~"example.com", DS#dns_rr{name = ~"a.child.example.com"}},
+        {~"com", DS#dns_rr{name = ~"example.com"}},
+        {~"example.com", NSEC3}
+    ],
+    [?assert(SignedBy(Signer, RR), {Signer, RR}) || {Signer, RR} <- Holds],
+    HoldsNot = [
+        {~"example.net", MX},
+        {~"ample.com", MX},
+        {~"net", MX},
+        {~"example.com", NS},
+        {~"com", SOA},
+        {~"example.com", ChildKey},
+        {~"child.example.com", DS},
+        {~"example.com", NSEC3#dns_rr{name = ~"2t7b4g4vsa5smi47k61mv5bv1a22bojr.sub.example.com"}},
+        {~"com", NSEC3},
+        {~"example.com", NSEC3#dns_rr{name = ~"example.com"}},
+        {~".", NSEC3#dns_rr{name = ~"."}}
+    ],
+    [?assertNot(SignedBy(Signer, RR), {Signer, RR}) || {Signer, RR} <- HoldsNot],
+    %% A labels field counting fewer labels than the signer has names a wildcard outside its zone
+    %% (RFC4035§5.3.2): *.com, for www.example.com signed by example.com
+    WWW = MX#dns_rr{name = ~"www.example.com"},
+    {Key, #dns_rr{data = SigData} = Sig} = Sign(~"example.com", WWW),
+    Labels = fun(N) -> Sig#dns_rr{data = SigData#dns_rrdata_rrsig{labels = N}} end,
+    ?assert(dns_sec:verify_rrsig(Labels(3), [WWW], [Key], #{now => Inception})),
+    ?assertNot(dns_sec:verify_rrsig(Labels(1), [WWW], [Key], #{now => Inception})),
+    %% A signer that is no name holds nothing, and raises nothing
+    LongLabel = <<(binary:copy(~"a", 64))/binary, ".com">>,
+    LongName = <<(binary:copy(<<(binary:copy(~"a", 63))/binary, ".">>, 4))/binary, "com">>,
+    [
+        ?assertNot(
+            dns_sec:verify_rrsig(
+                RRSig#dns_rr{data = (RRSig#dns_rr.data)#dns_rrdata_rrsig{signers_name = Signer}},
+                [MX],
+                [DNSKey#dns_rr{name = Signer}],
+                #{now => Inception}
+            ),
+            Signer
+        )
+     || Signer <- [~"a..com", LongLabel, LongName]
+    ].
+
+%% What BIND signed verifies, signer and all: in its root zone, the SOA, NS and DNSKEY RRsets at
+%% the apex, whose signer is the root, the DS RRset for com, which the root signs above its
+%% owner, and the NSEC RRsets at the apex and the delegations. BIND leaves the delegations' NS
+%% RRsets unsigned (RFC4035§2.2).
+verify_bind_signed_root_zone(_Config) ->
+    {ok, RRs} = dns_zone:parse_string(data_samples:bind_root_zone()),
+    DNSKeys = [RR || #dns_rr{type = ?DNS_TYPE_DNSKEY} = RR <- RRs],
+    RRSigs = [RR || #dns_rr{type = ?DNS_TYPE_RRSIG} = RR <- RRs],
+    Covered = [
+        {Owner, Type}
+     || #dns_rr{name = Owner, data = #dns_rrdata_rrsig{type_covered = Type}} <- RRSigs
+    ],
+    ?assertEqual(
+        [
+            {~".", ?DNS_TYPE_SOA},
+            {~".", ?DNS_TYPE_NS},
+            {~".", ?DNS_TYPE_NSEC},
+            {~".", ?DNS_TYPE_DNSKEY},
+            {~"com.", ?DNS_TYPE_DS},
+            {~"com.", ?DNS_TYPE_NSEC},
+            {~"net.", ?DNS_TYPE_NSEC}
+        ],
+        Covered
+    ),
+    [
+        ?assert(
+            dns_sec:verify_rrsig(
+                RRSig,
+                [RR || #dns_rr{name = N, type = T} = RR <- RRs, N =:= Owner, T =:= Type],
+                DNSKeys,
+                #{now => Inception}
+            ),
+            {Owner, Type}
+        )
+     || {#dns_rr{data = #dns_rrdata_rrsig{inception = Inception}} = RRSig, {Owner, Type}} <-
+            lists:zip(RRSigs, Covered)
+    ].
 
 zone(Config) ->
     Samples = proplists:get_value(dnssec_samples, Config),
