@@ -958,7 +958,10 @@ number that breaks it, but never one of the key's numbers:
   or 1024 to 4096 for RSA/SHA-512 (RFC 3110 §3, RFC 5702 §2).
 - `{dsa_q_bits, Bits}`: a DSA Q that is not 160 bits long (RFC 2536 §2).
 - `{dsa_p_bits, Bits}`: a DSA P that is not 512 + 64T bits long for a T of 0 to 8.
-- `dsa_number_longer_than_p`: a DSA G or Y longer than P.
+- `dsa_g_out_of_range`: a DSA G that is not 1 < G < P (FIPS 186-4 §4.1).
+- `dsa_y_out_of_range`: a DSA Y that is not 2 ≤ Y ≤ P − 2, the range NIST SP
+  800-89 checks a public key against: a G and Y of 1 verify the signature
+  R = S = 1 over any data.
 - `key_shape`: a key of another shape than the algorithm's: another count of
   numbers, an ECDSA point without the octet 4 in front, or an EdDSA or ML-DSA-44
   key of another length.

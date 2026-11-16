@@ -25,6 +25,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - DNSSEC: `verify_rrsig/4` verifies only RRsets whose every record has the RRSIG's owner, class and covered type, and whose owner has at least the labels the RRSIG's labels field counts (RFC 4035 §5.3.1), where it never read the RRSIG's owner, type covered or labels field, and took only the RDATA of the records after the first.
 - DNSSEC: `verify_rrsig/4` verifies only RRsets whose zone the signer can be (RFC 4035 §5.3.1), NS, SOA and DNSKEY at the signer, NSEC3 one label under it, DS under it and any other at or under it, with a labels field counting at least the signer's labels, where any signer's key verified any RRset.
 - Zone files: `$INCLUDE` reads only files at or under the zone file's directory, not through an absolute path, `..` or a symbolic link that leads out, and `parse_string/1,2` and `include => false` refuse it; the `base_dir` option is gone. It read any file the process could.
+- DNSSEC: a DSA key whose G is not 1 < G < P, or whose Y is not 2 ≤ Y ≤ P − 2, is refused when loaded or laid out and verifies nothing, where a G and Y of 1 verified the signature R = S = 1 over any data.
 
 ### Updated
 

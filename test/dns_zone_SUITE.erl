@@ -7216,7 +7216,10 @@ encode_ensure_fqdn_outputs_trailing_dot(_Config) ->
 %% other, which a zone file writes in base64 and reads back
 encode_dnskey_key_bytes(_Config) ->
     Rsa = <<3, 1, 0, 1, 255, (binary:copy(<<16#AB>>, 63))/binary>>,
-    Dsa = <<0, (binary:copy(<<16#DD>>, 20))/binary, (binary:copy(<<16#AA>>, 192))/binary>>,
+    %% T = 0, then Q, P, and G and Y below P
+    Dsa =
+        <<0, (binary:copy(<<16#DD>>, 20))/binary, (binary:copy(<<16#AA>>, 64))/binary,
+            (binary:copy(<<16#55>>, 128))/binary>>,
     [
         begin
             Line = iolist_to_binary(dns_zone:encode_rdata(Type, Data)),
