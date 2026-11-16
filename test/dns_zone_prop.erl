@@ -233,7 +233,16 @@ svcb_params() ->
             ])
         ),
         begin
-            Map = maps:from_list(Params),
+            %% RFC9460§7.1.1: no-default-alpn comes with alpn
+            Map =
+                case maps:from_list(Params) of
+                    #{?DNS_SVCB_PARAM_NO_DEFAULT_ALPN := _, ?DNS_SVCB_PARAM_ALPN := _} = Map0 ->
+                        Map0;
+                    #{?DNS_SVCB_PARAM_NO_DEFAULT_ALPN := _} = Map0 ->
+                        Map0#{?DNS_SVCB_PARAM_ALPN => [~"h2"]};
+                    Map0 ->
+                        Map0
+                end,
             Keys = lists:sort(maps:keys(Map)),
             case Keys of
                 [] -> Map;

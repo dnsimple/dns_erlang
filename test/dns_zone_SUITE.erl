@@ -2701,12 +2701,38 @@ parse_svcb_with_port(_Config) ->
     #dns_rrdata_svcb{svc_params = SvcParams} = RR#dns_rr.data,
     ?assertEqual(443, maps:get(?DNS_SVCB_PARAM_PORT, SvcParams)).
 
+%% no-default-alpn takes no value, and comes with alpn (RFC9460§7.1.1): an RR with it alone
+%% is not self-consistent (§2.4.3), which zone files SHOULD refuse, as BIND does, by name or
+%% by number. JSON refuses it too, while the wire decoder takes it, as a client is to reject
+%% the RR rather than the message
 parse_svcb_with_no_default_alpn(_Config) ->
-    %% SVCB with no-default-alpn flag (no value)
-    Zone = ~"example.com. 3600 IN SVCB 1 svc.example.com. no-default-alpn\n",
-    {ok, [RR]} = dns_zone:parse_string(Zone, #{origin => ~"example.com."}),
-    #dns_rrdata_svcb{svc_params = SvcParams} = RR#dns_rr.data,
-    ?assertEqual(none, maps:get(?DNS_SVCB_PARAM_NO_DEFAULT_ALPN, SvcParams)).
+    ?assertMatch(
+        #dns_rrdata_svcb{
+            svc_params = #{?DNS_SVCB_PARAM_NO_DEFAULT_ALPN := none, ?DNS_SVCB_PARAM_ALPN := [~"h2"]}
+        },
+        parse_rdata(~"SVCB 1 svc.example.com. no-default-alpn alpn=h2")
+    ),
+    [
+        ?assertMatch(
+            #{type := semantic, details := {semantic_error, {no_default_alpn_without_alpn, [1]}}},
+            parse_rdata_error(RData),
+            RData
+        )
+     || RData <- [
+            ~"SVCB 1 svc.example.com. no-default-alpn",
+            ~"SVCB 1 svc.example.com. key2",
+            ~"HTTPS 1 . no-default-alpn port=443",
+            ~"SVCB 1 . mandatory=no-default-alpn no-default-alpn"
+        ]
+    ],
+    ?assertError(
+        {svcb_mandatory_validation_error, {no_default_alpn_without_alpn, [1]}},
+        dns_svcb_params:from_json(#{~"no-default-alpn" => null})
+    ),
+    ?assertEqual(
+        #{?DNS_SVCB_PARAM_NO_DEFAULT_ALPN => none},
+        dns_svcb_params:from_wire(<<?DNS_SVCB_PARAM_NO_DEFAULT_ALPN:16, 0:16>>)
+    ).
 
 parse_svcb_with_ipv4hint(_Config) ->
     %% SVCB with ipv4hint service parameter
