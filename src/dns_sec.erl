@@ -423,15 +423,23 @@ Signs each RRset in a list of `t:dns:rr/0`, as `sign_rrset/6` does.
 
 Records form one RRset when their owner names, classes and types are equal, owner names compared
 as `sign_rrset/6` does, so that case and a final dot don't matter. RRSIG records are left out, as
-RFC 4035 §2.2 never signs an RRSIG RRset.
+RFC 4035 §2.2 never signs an RRSIG RRset, and so are the RRsets `sign_rrset/6` raises
+`{badarg, outside_signer_zone}` for, which the signer's zone cannot hold, such as a delegation's
+NS RRset.
 """.
 -spec sign_rr([dns:rr()], dns:dname(), keytag(), sigalg(), key(), sign_rr_opts()) -> [dns:rr()].
 sign_rr(RR, SignerName, KeyTag, Alg, Key, Opts) when is_map(Opts) ->
-    RRSets = rrs_to_rrsets([Record || Record <- RR, not is_rrsig(Record)]),
-    [
-        sign_rrset(RRSet, SignerName, KeyTag, Alg, Key, Opts)
-     || RRSet <- RRSets
-    ].
+    case rrs_to_rrsets([Record || Record <- RR, not is_rrsig(Record)]) of
+        [] ->
+            [];
+        RRSets ->
+            Signer = dns_domain:split(SignerName),
+            [
+                sign_rrset(RRSet, SignerName, KeyTag, Alg, Key, Opts)
+             || [#dns_rr{name = Name, type = Type} | _] = RRSet <- RRSets,
+                signer_holds(Signer, Type, dns_domain:split(Name))
+            ]
+    end.
 
 -doc #{equiv => sign_rrset(RRSet, SignerName, KeyTag, Alg, Key, [])}.
 -spec sign_rrset([dns:rr(), ...], dns:dname(), keytag(), sigalg(), key()) ->
@@ -447,6 +455,11 @@ Raises:
 - `{badarg, rrsig_rrset}` for an RRSIG RRset, which RFC 4035 §2.2 never signs;
 - `{badarg, mixed_rrset}` for records of more than one RRset, of another owner name, class or type
   than the first's. Owner names compare as names, so case and a final dot don't matter;
+- `{badarg, outside_signer_zone}` for an RRset the signer's zone cannot hold, whose RRSIG
+  `verify_rrsig/4` refuses: an NS, SOA or DNSKEY RRset not at the signer, and so a delegation's NS
+  RRset, which RFC 4035 §2.2 leaves unsigned; an NSEC3 RRset not one label under it; a DS RRset not
+  under it; any other not at it or under it; and an owner with fewer labels than the signer, not
+  counting a leading `*`, as the apex of a zone whose name starts with `*`;
 - `{badarg, Why}` for an RSA or DSA private key whose public key no DNSKEY of the algorithm can
   carry, `Why` as `dnskey_public_key/2` names it, such as `{rsa_modulus_bits, Bits}` for an RSA
   modulus that is not 512 to 4096 bits long, or 1024 to 4096 for RSA/SHA-512;
@@ -472,6 +485,8 @@ sign_rrset(
     Owner = canonical_owner(Name),
     lists:all(fun(RR) -> in_rrset(RR, Owner, Class, Type) end, RRs) orelse
         erlang:error({badarg, mixed_rrset}),
+    signer_holds(dns_domain:split(SignersName), Type, dns_domain:split(Name)) orelse
+        erlang:error({badarg, outside_signer_zone}),
     Now = erlang:system_time(second),
     Incept = maps:get(inception, Opts, Now),
     %% 1 year
@@ -668,10 +683,22 @@ fits_rrset(
             false;
         {OwnerLabels, SignerLabels} ->
             Labels =< count_labels(OwnerLabels) andalso
-                length(SignerLabels) =< Labels andalso
-                can_hold(SignerLabels, Type, OwnerLabels) andalso
+                signer_holds(SignerLabels, Type, OwnerLabels, Labels) andalso
                 lists:all(fun(RR) -> is_of_rrset(RR, Owner, Class, Type) end, RRs)
     end.
+
+%% Whether the signer's zone can hold an RRset, signed with a labels field counting all of its
+%% owner's labels but a leading `*`, as sign_rrset/6 signs it
+-spec signer_holds(dns:labels(), dns:type(), dns:labels()) -> boolean().
+signer_holds(Signer, Type, Owner) ->
+    signer_holds(Signer, Type, Owner, count_labels(Owner)).
+
+%% Whether the signer's zone can hold an RRset, and an RRSIG's labels field, which counts its
+%% owner's labels or fewer, counts no fewer than the signer has, as fewer would name a wildcard
+%% outside the signer's zone, or the signer itself where its name starts with * (RFC4035§5.3.2)
+-spec signer_holds(dns:labels(), dns:type(), dns:labels(), non_neg_integer()) -> boolean().
+signer_holds(Signer, Type, Owner, Labels) ->
+    length(Signer) =< Labels andalso can_hold(Signer, Type, Owner).
 
 %% RFC4035§5.3.2: the owner the RRset was signed under. It is its own where the RRSIG's labels
 %% field counts all of its labels, and where it counts fewer, as where a wildcard was expanded
