@@ -444,7 +444,8 @@ keytag_known_answers(_Config) ->
 %% RFC4034 Appendix B.1, as erratum 193 corrects it: algorithm 1, RSA/MD5, takes its key tag
 %% from the third- and second-to-last octets of the modulus, which ends the RDATA. dnspython
 %% 2.9.1's dns.dnssec.key_id gives these key tags for the same keys, where the Appendix B
-%% checksum gives 63057, 50386 and 26146.
+%% checksum gives 63057, 50386 and 26146. Read from a zone file, they have the same, where
+%% they had the checksum.
 keytag_rsamd5(_Config) ->
     Modulus = fun(Size, K) ->
         <<First, Rest/binary>> = <<<<((I * K + 3) rem 256)>> || I <- lists:seq(1, Size)>>,
@@ -473,7 +474,19 @@ keytag_rsamd5(_Config) ->
                 }
             },
             #dns_rr{data = #dns_rrdata_dnskey{keytag = KeyTag}} = dns_sec:add_keytag_to_dnskey(RR),
-            ?assertEqual(Expected, KeyTag, Expected)
+            ?assertEqual(Expected, KeyTag, Expected),
+            Zone = fun(Type) ->
+                Text =
+                    <<"example. 3600 IN ", Type/binary, " 256 3 1 ",
+                        (base64:encode(PublicKey))/binary>>,
+                dns_zone:parse_string(<<Text/binary, "\n">>)
+            end,
+            ?assertMatch(
+                {ok, [#dns_rr{data = #dns_rrdata_dnskey{keytag = Expected}}]}, Zone(~"DNSKEY")
+            ),
+            ?assertMatch(
+                {ok, [#dns_rr{data = #dns_rrdata_cdnskey{keytag = Expected}}]}, Zone(~"CDNSKEY")
+            )
         end
      || {PublicKey, Expected} <- Cases
     ].
