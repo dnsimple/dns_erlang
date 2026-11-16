@@ -512,7 +512,7 @@ type_text(semantic) -> ~"Invalid record".
 %% [<TTL>] [<class>] <type> <RDATA>, TTL and class in either order. Owner names are
 %% lowercased; the names in RDATA keep their case. A line that starts with a blank
 %% has no owner, unless it only reads as a record with its first field taken for
-%% one, as the grammar this parser replaced took it.
+%% one, as the grammar this parser replaced took it; a TTL there is never one.
 -spec record(boolean(), [field(), ...], ctx(), dns:dname(), dns:ttl(), owner_memo()) ->
     {dns:rr(), owner_memo()}.
 record(true, Fields, Ctx, LastOwner, ImplicitTTL, Memo) ->
@@ -531,10 +531,11 @@ record(false, Fields, Ctx, LastOwner, ImplicitTTL, Memo) ->
 
 -spec owner_record([field(), ...], ctx(), dns:dname(), dns:ttl(), owner_memo()) ->
     {ok, dns:rr()} | error.
-owner_record(Fields, Ctx, LastOwner, ImplicitTTL, Memo) ->
+owner_record([First | _] = Fields, Ctx, LastOwner, ImplicitTTL, Memo) ->
     try
         {Owner, Rest, _Memo} = owner(Fields, Ctx, LastOwner, Memo),
         Rest =/= Fields orelse ?FAIL(no_owner),
+        word_kind(First) =/= ttl orelse ?FAIL(no_owner),
         {ok, rr(Owner, header(Rest, undefined, undefined), Ctx, ImplicitTTL, Memo)}
     catch
         error:{?MODULE, _} -> error
@@ -699,18 +700,19 @@ labels_size(_, _Label, _Size) ->
 default(undefined, Default) -> Default;
 default(Value, _Default) -> Value.
 
-%% The owner is the first field, as the grammar this parser replaced read it,
-%% unless that field is a TTL, a class or a type, which leave the owner of the
-%% previous record. A type is an owner when a class follows it, or a TTL and a
-%% class. The words are told apart as that grammar's lexer told them, which took
-%% only uppercase mnemonics.
+%% The owner is the first field, unless that field is a class or a type, which
+%% leave the owner of the previous record, as the grammar this parser replaced
+%% read them. A type is an owner when a class follows it, or a TTL and a class.
+%% The words are told apart as that grammar's lexer told them, which took only
+%% uppercase mnemonics. A first field that reads as a TTL is an owner, as RFC1035§5.1
+%% and BIND have it, such as the 1 of "1 IN PTR host." in a reverse zone.
 -spec owner([field(), ...], ctx(), dns:dname(), owner_memo()) ->
     {dns:dname(), [field()], owner_memo()}.
 owner([~"@" | Fields], #ctx{origin = Origin}, _LastOwner, Memo) ->
     {dns_domain:to_lower(Origin), Fields, Memo};
 owner([Word | Rest] = Fields, Ctx, LastOwner, Memo) when is_binary(Word) ->
     case word_kind(Word) of
-        name ->
+        Kind when Kind =:= name; Kind =:= ttl ->
             owner_name(Word, Rest, Ctx, Memo);
         type ->
             case [word_kind(Next) || Next <- lists:sublist(Rest, 2), is_binary(Next)] of
@@ -736,10 +738,8 @@ owner_name(Text, Rest, #ctx{origin = Origin} = Ctx, _Memo) ->
     {Owner, Rest, {Text, Origin, Owner}}.
 
 %% RFC1035§5.1: a line that does not start with a blank starts with its owner. Where
-%% the reading above takes its first field for a TTL, a class or a type and the
-%% rest does not read as a record's start, the first field is read as the owner,
-%% so that the 1 of a reverse zone, which the writer writes before its TTL, is
-%% an owner.
+%% the reading above takes its first field for a class or a type and the rest does
+%% not read as a record's start, the first field is read as the owner.
 -spec owner_and_header([field(), ...], ctx(), dns:dname(), owner_memo()) ->
     {dns:dname(), header(), owner_memo()}.
 owner_and_header([First | Rest] = Fields, Ctx, LastOwner, Memo0) ->
