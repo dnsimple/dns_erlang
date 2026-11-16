@@ -695,7 +695,7 @@ signer_holds(Signer, Type, Owner) ->
 
 %% Whether the signer's zone can hold an RRset, and an RRSIG's labels field, which counts its
 %% owner's labels or fewer, counts no fewer than the signer has, as fewer would name a wildcard
-%% above the signer's zone (RFC4035§5.3.2)
+%% outside the signer's zone, or the signer itself where its name starts with * (RFC4035§5.3.2)
 -spec signer_holds(dns:labels(), dns:type(), dns:labels(), non_neg_integer()) -> boolean().
 signer_holds(Signer, Type, Owner, Labels) ->
     length(Signer) =< Labels andalso can_hold(Signer, Type, Owner).

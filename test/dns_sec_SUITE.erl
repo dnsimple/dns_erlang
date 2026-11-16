@@ -1422,12 +1422,21 @@ verify_needs_signer_holding_rrset(_Config) ->
     [?assert(SignedBy(Signer, RR), {Signer, RR}) || {Signer, RR} <- Holds],
     [?assertNot(SignedBy(Signer, RR), {Signer, RR}) || {Signer, RR} <- HoldsNot],
     %% A labels field counting fewer labels than the signer has names a wildcard outside its zone
-    %% (RFC4035§5.3.2): *.com, for www.example.com signed by example.com
+    %% (RFC4035§5.3.2): *.com, for www.example.com signed by example.com. Signed over *.com, with
+    %% a labels field of 1, the RRSIG verifies for www.example.com as expanded from *.com where
+    %% the signer is com, and not where it is example.com
     WWW = MX#dns_rr{name = ~"www.example.com"},
-    {Key, #dns_rr{data = SigData} = Sig} = Sign(~"example.com", WWW),
-    Labels = fun(N) -> Sig#dns_rr{data = SigData#dns_rrdata_rrsig{labels = N}} end,
-    ?assert(dns_sec:verify_rrsig(Labels(3), [WWW], [Key], #{now => Inception})),
-    ?assertNot(dns_sec:verify_rrsig(Labels(1), [WWW], [Key], #{now => Inception})),
+    {Key, Sig} = Sign(~"example.com", WWW),
+    ?assert(dns_sec:verify_rrsig(Sig, [WWW], [Key], #{now => Inception})),
+    Expanded = fun(Signer) ->
+        {StarKey, StarSig} = Sign(Signer, MX#dns_rr{name = ~"*.com"}),
+        ?assertMatch(#dns_rr{data = #dns_rrdata_rrsig{labels = 1}}, StarSig),
+        dns_sec:verify_rrsig(
+            StarSig#dns_rr{name = ~"www.example.com"}, [WWW], [StarKey], #{now => Inception}
+        )
+    end,
+    ?assert(Expanded(~"com")),
+    ?assertNot(Expanded(~"example.com")),
     %% A signer that is no name holds nothing, and raises nothing
     LongLabel = <<(binary:copy(~"a", 64))/binary, ".com">>,
     LongName = <<(binary:copy(<<(binary:copy(~"a", 63))/binary, ".">>, 4))/binary, "com">>,
@@ -1520,10 +1529,10 @@ sign_only_rrsets_the_signer_holds(_Config) ->
 
 %% RFC4034§3.1.3: an RRSIG's labels field counts its owner's labels but a leading *, and
 %% verify_rrsig/4 refuses one that counts fewer than the signer has, as its wildcard would be
-%% above the signer's zone. sign_rrset/6 raises {badarg, outside_signer_zone} for such an owner
-%% rather than sign it, and sign_rr/6 leaves it out: one above the signer, or the apex of a zone
-%% whose name starts with *, which BIND does not load. Under that zone, an owner and its wildcard
-%% count as many labels as it, and more.
+%% outside the signer's zone, or the signer itself where its name starts with *. sign_rrset/6
+%% raises {badarg, outside_signer_zone} for such an owner rather than sign it, and sign_rr/6 leaves
+%% it out: one above the signer, or the apex of a zone whose name starts with *, which BIND does not
+%% load. Under that zone, an owner and its wildcard count as many labels as it, and more.
 sign_only_labels_the_signer_can_hold(_Config) ->
     {PrivateKey, DNSKey, RRSig, [MX]} = rfc8080_example(),
     #dns_rr{data = #dns_rrdata_rrsig{inception = Inception, expiration = Expiration}} = RRSig,
