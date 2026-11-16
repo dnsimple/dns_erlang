@@ -30,6 +30,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Zone files and JSON: an SVCB or HTTPS record with `no-default-alpn` and no `alpn` is refused (RFC 9460 §7.1.1), as BIND refuses it; decoding still takes one.
 - DNSSEC: signing with an RSA key whose modulus or exponent RFC 3110 or RFC 5702 rules out raises `{badarg, {rsa_modulus_bits, Bits}}` or `{badarg, {rsa_exponent_bits, Bits}}`, and with one of other than 3 or 8 numbers `{badarg, key_shape}`, where it signed, or raised crypto's errors.
 - Zone files: RDATA of a known type in RFC 3597's generic form, as `A \# 4 C0000201`, is read as that type's record, where it was kept as its octets; octets that are no RDATA of the type, or hold a compression pointer, are refused, as BIND refuses them.
+- DNSSEC: `sign_rrset` raises `{badarg, outside_signer_zone}` for an RRset its signer's zone cannot hold, such as a delegation's NS RRset or one above the signer, and `sign_rr` leaves it out, where both signed what `verify_rrsig/4` refuses.
 
 ### Updated
 
