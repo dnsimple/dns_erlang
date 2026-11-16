@@ -385,19 +385,32 @@ validate_mandatory_params(wire, SvcParams) ->
             SvcParams
     end;
 validate_mandatory_params(zone, SvcParams) ->
-    case validate_mandatory_params_core(SvcParams) of
+    case validate_loaded_params(SvcParams) of
         {error, Error} ->
             {error, Error};
         SvcParams ->
             {ok, SvcParams}
     end;
 validate_mandatory_params(json, SvcParams) ->
-    case validate_mandatory_params_core(SvcParams) of
+    case validate_loaded_params(SvcParams) of
         {error, Error} ->
             error({svcb_mandatory_validation_error, Error});
         SvcParams ->
             SvcParams
     end.
+
+%% RFC9460§2.4.3: zone files SHOULD refuse an RR whose SvcParams are not consistent with each
+%% other, as no-default-alpn without alpn is (§7.1.1), and BIND does, and so do zone files and
+%% JSON here. Decoding takes one, as a client is to reject the RR rather than the message, and
+%% PowerDNS's own test zone carries one
+-spec validate_loaded_params(dns:svcb_svc_params()) ->
+    dns:svcb_svc_params() | {error, {atom(), dynamic()}}.
+validate_loaded_params(#{?DNS_SVCB_PARAM_NO_DEFAULT_ALPN := _} = SvcParams) when
+    not is_map_key(?DNS_SVCB_PARAM_ALPN, SvcParams)
+->
+    {error, {no_default_alpn_without_alpn, [?DNS_SVCB_PARAM_ALPN]}};
+validate_loaded_params(SvcParams) ->
+    validate_mandatory_params_core(SvcParams).
 
 %% Core validation logic - returns validation result without throwing
 -spec validate_mandatory_params_core(dns:svcb_svc_params()) ->
