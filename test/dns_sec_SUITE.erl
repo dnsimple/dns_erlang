@@ -62,6 +62,8 @@ groups() ->
             verify_owner_that_is_no_name,
             verify_needs_signer_holding_rrset,
             verify_bind_signed_root_zone,
+            verify_bind_wildcard_answers,
+            verify_needs_labels_field_as_signed,
             sign_rr_and_rrset_5arg,
             sign_leaves_rrsigs_unsigned,
             sign_rrset_rejects_records_of_other_rrsets,
@@ -1500,6 +1502,73 @@ verify_bind_signed_root_zone(_Config) ->
      || {#dns_rr{data = #dns_rrdata_rrsig{inception = Inception}} = RRSig, {Owner, Type}} <-
             lists:zip(RRSigs, Covered)
     ].
+
+%% RFC4035§5.3.2: an RRset a wildcard was expanded into verifies as the wildcard's RRset was
+%% signed. named of BIND 9.20 expanded host.example.com A and a.b.example.com MX from
+%% *.example.com, and x.sub.example.com TXT from *.sub.example.com, each with the wildcard's
+%% RRSIG, whose labels field counts the wildcard's labels but its `*`. They verify, as do the
+%% wildcards' own RRsets and www.example.com A, which no wildcard was expanded into.
+verify_bind_wildcard_answers(_Config) ->
+    {RRs, DNSKeys, RRSigs} = bind_wildcard_answers(),
+    ?assertEqual(
+        [
+            {~"example.com.", ?DNS_TYPE_DNSKEY, 2},
+            {~"host.example.com.", ?DNS_TYPE_A, 2},
+            {~"*.example.com.", ?DNS_TYPE_NSEC, 2},
+            {~"a.b.example.com.", ?DNS_TYPE_MX, 2},
+            {~"x.sub.example.com.", ?DNS_TYPE_TXT, 3},
+            {~"*.sub.example.com.", ?DNS_TYPE_NSEC, 3},
+            {~"*.example.com.", ?DNS_TYPE_A, 2},
+            {~"www.example.com.", ?DNS_TYPE_A, 3}
+        ],
+        [
+            {Owner, Type, Labels}
+         || #dns_rr{
+                name = Owner, data = #dns_rrdata_rrsig{type_covered = Type, labels = Labels}
+            } <- RRSigs
+        ]
+    ),
+    [?assert(verify_answer(RRSig, RRs, DNSKeys), Owner) || #dns_rr{name = Owner} = RRSig <- RRSigs].
+
+%% The labels field is signed, and names the owner the RRset was signed under: changed to any
+%% other count the RRSIG still fits with, it names another, and verifies nothing. Lowered, it
+%% names a wildcard that was not signed, as www.example.com's at 2 names *.example.com; raised,
+%% a closer wildcard, or at the owner's count the owner itself, which was not signed either.
+verify_needs_labels_field_as_signed(_Config) ->
+    {RRs, DNSKeys, RRSigs} = bind_wildcard_answers(),
+    Relabeled = fun(Owner, Labels) ->
+        [#dns_rr{data = Data} = RRSig] = [
+            RRSig
+         || #dns_rr{name = N} = RRSig <- RRSigs, N =:= Owner
+        ],
+        RRSig#dns_rr{data = Data#dns_rrdata_rrsig{labels = Labels}}
+    end,
+    [
+        ?assertNot(verify_answer(Relabeled(Owner, Labels), RRs, DNSKeys), {Owner, Labels})
+     || {Owner, Labels} <- [
+            {~"www.example.com.", 2},
+            {~"x.sub.example.com.", 2},
+            {~"*.sub.example.com.", 2},
+            {~"host.example.com.", 3},
+            {~"a.b.example.com.", 3},
+            {~"a.b.example.com.", 4},
+            {~"x.sub.example.com.", 4}
+        ]
+    ].
+
+%% The records of data_samples:bind_wildcard_answers/0, with their DNSKEYs and RRSIGs
+bind_wildcard_answers() ->
+    {ok, RRs} = dns_zone:parse_string(data_samples:bind_wildcard_answers()),
+    DNSKeys = [RR || #dns_rr{type = ?DNS_TYPE_DNSKEY} = RR <- RRs],
+    RRSigs = [RR || #dns_rr{type = ?DNS_TYPE_RRSIG} = RR <- RRs],
+    {RRs, DNSKeys, RRSigs}.
+
+%% Whether an RRSIG verifies the RRset of its owner and covered type among RRs, at its inception
+verify_answer(RRSig, RRs, DNSKeys) ->
+    #dns_rr{name = Owner, data = #dns_rrdata_rrsig{type_covered = Type, inception = Inception}} =
+        RRSig,
+    RRSet = [RR || #dns_rr{name = N, type = T} = RR <- RRs, N =:= Owner, T =:= Type],
+    dns_sec:verify_rrsig(RRSig, RRSet, DNSKeys, #{now => Inception}).
 
 zone(Config) ->
     Samples = proplists:get_value(dnssec_samples, Config),

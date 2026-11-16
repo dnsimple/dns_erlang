@@ -63,6 +63,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - DNSSEC: `verify_rrsig/4` verifies with RSA and DSA DNSKEYs read from zone files or JSON, and returns `false` for RSA keys with leading zeros or a long exponent length they don't need, where it raised.
 - DNSSEC: `verify_rrsig/4` takes a DNSKEY owned by `example.` for the signer `example`, and the other way round, where a final dot on one name and not the other kept it from verifying.
 - DNSSEC: `verify_rrsig/4` returns `false` for an empty RRset, and for an owner or signer with an empty label, a label over 63 octets or over 255 octets in all, where it raised for most of them, and verified some.
+- DNSSEC: `verify_rrsig/4` verifies RRsets a wildcard was expanded into, as the wildcard was signed (RFC 4035 §5.3.2), where it verified none, and verified RRSIGs whose labels field was lowered after signing.
 - JSON: `from_map/1` reads every DNSKEY's and CDNSKEY's key as its bytes, where it read some ECDSA and EdDSA keys as lists of numbers.
 
 ## v5.2.0

@@ -1,6 +1,13 @@
 -module(data_samples).
 
--export([dnssec/0, tsig/0, rrdata_wire/0, mldsa44_example/0, bind_root_zone/0]).
+-export([
+    dnssec/0,
+    tsig/0,
+    rrdata_wire/0,
+    mldsa44_example/0,
+    bind_root_zone/0,
+    bind_wildcard_answers/0
+]).
 
 dnssec() ->
     [
@@ -3102,4 +3109,58 @@ bind_root_zone() ->
                                             3Yr5+JzOjACGsO+TNObC0XDQ0AaeVHZ1JhWW
                                             JC/o2872YBzC9RWhtqx19fCHAUZMv4uw0fsc
                                             qPf/WxI7M8l/zw== )
+    """.
+
+%% Answers named of BIND 9.20.30 gave from example.com, which its dnssec-signzone signed on
+%% 2026-11-16 with a throwaway ECDSA P-256 KSK, its RRSIGs valid from 2026-01-01 to 2027-01-01:
+%% the DNSKEY RRset; host.example.com A and a.b.example.com MX, which named expanded from
+%% *.example.com, with the NSEC RRset at *.example.com that proves no closer name exists;
+%% x.sub.example.com TXT, expanded from *.sub.example.com, with its NSEC RRset; and *.example.com A
+%% and www.example.com A as they are. dig +multiline wrote them, and tabs are written as spaces.
+%% The authority sections' NS RRsets are left out.
+bind_wildcard_answers() ->
+    ~"""
+    example.com.            3600 IN DNSKEY 257 3 13 (
+                                    0cHhxoVsFuTw8RBe2ZdlXiidDXIJt0H04CEYUoeNi/87
+                                    3eryVWBhXfhD+62ZQTrVj9y1JhhN1JqEx7pRw8TGFg==
+                                    ) ; KSK; alg = ECDSAP256SHA256 ; key id = 49759
+    example.com.            3600 IN RRSIG DNSKEY 13 2 3600 (
+                                    20270101000000 20260101000000 49759 example.com.
+                                    TQ7XTQZzd5Ctc8CvUi0UxIsjAdu8A7T9r1ucXR/aquSJ
+                                    2iJiKckvD24qwMP+wTThR6Cvv9CReWJAJBoTzorxjQ== )
+    host.example.com.       3600 IN A 192.0.2.1
+    host.example.com.       3600 IN RRSIG A 13 2 3600 (
+                                    20270101000000 20260101000000 49759 example.com.
+                                    f6TVDzKuPv9e2zOJd3n3tLpNvQVKiEaXqT88PEGC2ALS
+                                    eVXfubH5QQJSrFAfH3EqkXav5rMqkLzO5HTalW48qQ== )
+    *.example.com.          3600 IN NSEC ns1.example.com. A MX RRSIG NSEC
+    *.example.com.          3600 IN RRSIG NSEC 13 2 3600 (
+                                    20270101000000 20260101000000 49759 example.com.
+                                    8HnH2QE239Q5BJP9ZLgH1qjxCLqCXU86qOCLoNjQBPzP
+                                    ONOhiOU2UBkhpzytIVzcd0zh+EQNc8nX6FD2BcSpOA== )
+    a.b.example.com.        3600 IN MX 10 mail.example.com.
+    a.b.example.com.        3600 IN RRSIG MX 13 2 3600 (
+                                    20270101000000 20260101000000 49759 example.com.
+                                    hRmyJVN1YDEV0uXb1Lgx4UHuREoCT38wXQ9qFBFyuTBi
+                                    A3mAlxsFf0Xx4pxVdRHThlYQ9RWLkW9vJ9KruCQNJA== )
+    x.sub.example.com.      3600 IN TXT "wild"
+    x.sub.example.com.      3600 IN RRSIG TXT 13 3 3600 (
+                                    20270101000000 20260101000000 49759 example.com.
+                                    MrB0uTwHOBVMdw8Kw2QKIfmh8iqiBIJs84fSILxOwCtD
+                                    PS538A//Vs8o0ou1SHm2S15YSsCrTofnKZTQgUaVeA== )
+    *.sub.example.com.      3600 IN NSEC www.example.com. TXT RRSIG NSEC
+    *.sub.example.com.      3600 IN RRSIG NSEC 13 3 3600 (
+                                    20270101000000 20260101000000 49759 example.com.
+                                    3mZVyUl2/K/RtZS6GUq1a0fGzs/ZbS6PHfvgh//Xzwdq
+                                    4UOCMIgSXCRv8VP+7CvL0Whi5712MmIHiAoehWn8Ew== )
+    *.example.com.          3600 IN A 192.0.2.1
+    *.example.com.          3600 IN RRSIG A 13 2 3600 (
+                                    20270101000000 20260101000000 49759 example.com.
+                                    f6TVDzKuPv9e2zOJd3n3tLpNvQVKiEaXqT88PEGC2ALS
+                                    eVXfubH5QQJSrFAfH3EqkXav5rMqkLzO5HTalW48qQ== )
+    www.example.com.        3600 IN A 192.0.2.80
+    www.example.com.        3600 IN RRSIG A 13 3 3600 (
+                                    20270101000000 20260101000000 49759 example.com.
+                                    tAsCHQz95wOp+Yn95AqveLom9X4me8HBqcxefSEMOmmS
+                                    71j+6oVYt2PgTssdWt6DeRiU5URHp+iwCutiH3tjwQ== )
     """.
