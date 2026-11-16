@@ -1337,8 +1337,8 @@ verify_rejects_rrsig_not_fitting_rrset(_Config) ->
 
 %% An owner with an empty label or a label over 63 octets, or over 255 octets on the wire, is no
 %% name (RFC1035§2.3.4), and no RRSIG fits an RRset of it, while one of 255 octets is a name.
-%% Signing takes an owner with a leading empty label, and its RRSIG does not verify; the others
-%% verify nothing, and raise nothing.
+%% They verify nothing, and raise nothing. Signing raises for a leading empty label, owner's or
+%% signer's, where it signed a name that is none.
 verify_owner_that_is_no_name(_Config) ->
     {PrivateKey, DNSKey, RRSig, [MX]} = rfc8080_example(),
     #dns_rr{
@@ -1357,8 +1357,11 @@ verify_owner_that_is_no_name(_Config) ->
             #{inception => Inception, expiration => Expiration}
         )
     end,
-    Leading = [MX#dns_rr{name = ~".example.com"}],
-    ?assertNot(Verify(Sign(Leading), Leading)),
+    ?assertError({invalid_dname, empty_label}, Sign([MX#dns_rr{name = ~".example.com"}])),
+    ?assertError(
+        {invalid_dname, empty_label},
+        dns_sec:sign_rrset([MX], ~".com", key_tag_of(DNSKey), ?DNS_ALG_ED25519, PrivateKey, #{})
+    ),
     %% Three labels of 63 octets and one of 49, then example.com: 255 octets with their lengths.
     %% One of 50 makes 256, one too many
     Labels63 = binary:copy(<<(binary:copy(~"a", 63))/binary, ".">>, 3),
@@ -1371,7 +1374,7 @@ verify_owner_that_is_no_name(_Config) ->
     LongName = <<(binary:copy(<<(binary:copy(~"a", 63))/binary, ".">>, 4))/binary, "example.com">>,
     [
         ?assertNot(Verify(RRSig#dns_rr{name = Name}, [MX#dns_rr{name = Name}]), Name)
-     || Name <- [~"a..example.com", TooLong, LongLabel, LongName]
+     || Name <- [~".example.com", ~"a..example.com", TooLong, LongLabel, LongName]
     ].
 
 %% RFC4035§5.3.1: the signer is the zone that holds the RRset, and not knowing the zone cuts, a

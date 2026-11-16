@@ -213,7 +213,10 @@ split_result(Split, Name) ->
         error:Reason -> {error, Reason}
     end.
 
-%% Byte by byte reference: '\.' and '\\' unescape, any other byte is kept, '.' ends a label.
+%% Byte by byte reference: '\.' and '\\' unescape, any other byte is kept, '.' ends a label, and no
+%% label is empty: a leading '.' is the root alone.
+split_ref(<<$., _, _/binary>>) ->
+    error({invalid_dname, empty_label});
 split_ref(Name) ->
     split_ref(Name, <<>>).
 
@@ -701,7 +704,11 @@ to_wire_errors(_) ->
     ErrorCases = [
         <<"example..com">>,
         <<"example.com..">>,
-        <<"a..b">>
+        <<"a..b">>,
+        <<".a">>,
+        <<".example.com.">>,
+        <<".\\.">>,
+        <<".a\\.b">>
     ],
     [?assertError({invalid_dname, empty_label}, dns_domain:to_wire(Name)) || Name <- ErrorCases],
     %% Label too long (> 63 bytes)
@@ -1122,11 +1129,15 @@ compression_encoding_errors(_) ->
     %% Test edge cases for to_wire/3 (compression version)
     CompMap = #{},
     Pos = 0,
-    %% Empty labels (contiguous dots) - should error
+    %% Empty labels (contiguous dots, or a leading one) - should error
     ErrorCases = [
         <<"example..com">>,
         <<"example.com..">>,
-        <<"a..b">>
+        <<"a..b">>,
+        <<".a">>,
+        <<".Example.com.">>,
+        <<".\\.">>,
+        <<".a\\.b">>
     ],
     [
         ?assertError({invalid_dname, empty_label}, dns_domain:to_wire(CompMap, Pos, Name))
@@ -1463,7 +1474,11 @@ split_errors(_) ->
         <<"example...com">>,
         <<"..example.com">>,
         <<"example..com..">>,
-        <<"a..b..c">>
+        <<"a..b..c">>,
+        <<".a">>,
+        <<".example.com.">>,
+        <<".\\.">>,
+        <<".a\\.b">>
     ],
     [?assertError({invalid_dname, empty_label}, dns_domain:split(Name)) || Name <- ErrorCases],
     %% RFC1035§2.3.4: a label is 63 octets or less, the last one too

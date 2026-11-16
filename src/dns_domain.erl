@@ -91,7 +91,8 @@ and backslashes, removing escape sequences from the resulting labels.
 
 Returns an empty list for empty names or root (single dot).
 
-Raises `{invalid_dname, empty_label}` if the name contains contiguous dots.
+Raises `{invalid_dname, empty_label}` if the name contains contiguous dots, or starts with a dot
+and is not the root.
 Raises `{label_too_long, Label}` if any label exceeds 63 bytes.
 
 ## Examples:
@@ -138,8 +139,10 @@ split_last(Label) ->
 %% Label was ended by a dot.
 split_dot(<<>>, Label) ->
     split_last(Label);
-%% Check for empty label (contiguous dots) - illegal except for root
+%% Check for empty label (contiguous dots, or a leading dot before a label) - illegal but for root
 split_dot(<<$., _/binary>>, _) ->
+    error({invalid_dname, empty_label});
+split_dot(_, <<>>) ->
     error({invalid_dname, empty_label});
 split_dot(_, Label) when 63 < byte_size(Label) ->
     error({label_too_long, Label});
@@ -474,7 +477,7 @@ consists of length-prefixed labels followed by a null byte terminator.
 Raises `{label_too_long, Label}` if any label exceeds 63 bytes.
 Raises `name_too_long` if the total encoded name exceeds 255 bytes.
 Raises `{invalid_dname, empty_label}` if the name contains empty labels
-(contiguous dots).
+(contiguous dots, or a leading dot but in the root).
 
 Returns `<<0>>` for empty names or root.
 
@@ -533,6 +536,8 @@ to_wire(CompMap, Pos, Name) when is_binary(Name) ->
     Key = memo_key(Name),
     maybe
         miss ?= memo(CompMap, Pos, Key),
+        %% A leading dot is an empty first label, whose zero length octet would end the name
+        no_empty(Key),
         %% An escaped name keeps its untrimmed spelling: split_labels/1 resolves its escapes.
         %% RFC1035§3.1: "Since every domain name ends with the null label of the root [...]"
         %% a name is 255 octets or less on the wire: unescaped, its text plus 2. Checked before
@@ -632,7 +637,7 @@ to_wire_last_label(Acc, L) ->
     63 < Len andalso error({label_too_long, L}),
     <<Acc/binary, Len, L/binary, 0>>.
 
-%% An empty label is legal only at the very start of a name (the ".foo" quirk), never here.
+%% No label is empty but the root's, which ends the name: none before the first dot, nor after one
 no_empty(<<>>) ->
     error({invalid_dname, empty_label});
 no_empty(<<$., _/binary>>) ->

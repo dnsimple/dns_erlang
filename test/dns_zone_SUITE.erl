@@ -8801,7 +8801,7 @@ parse_file_reads_in_the_calling_process(Config) ->
 
 %% Records of the types whose names the parser checks without encoding them are
 %% refused exactly where dns_check:rr/1, which encodes them, refuses them: at labels
-%% of 64 octets, at 256 octets on the wire, and on an empty label but a first one.
+%% of 64 octets, at 256 octets on the wire, and on an empty label, a first one too.
 %% Each name is written as a zone spells it and as dns_erlang keeps it, \065 as A
 %% and \. as it is. Names with escapes are checked by encoding them.
 parse_checks_names_as_the_encoder_does(_Config) ->

@@ -636,7 +636,7 @@ dname_fits(Name) ->
     is_integer(dname_size(Name)).
 
 %% The octets dns_domain:to_wire/1 writes a name in, or false where it refuses the
-%% name, told the way it splits the name: no empty label but a first one, labels of
+%% name, told the way it splits the name: no empty label but the root's, labels of
 %% up to 63 octets, and up to 254 octets of labels and their lengths before the
 %% root's. A name with an escape is given to it.
 -spec dname_size(binary()) -> pos_integer() | false.
@@ -664,7 +664,7 @@ labels_size(<<$., $., _/binary>>, _Label, _Size) ->
     false;
 labels_size(<<$.>>, 0, Size) ->
     Size;
-labels_size(<<$., Rest/binary>>, Label, Size) when Label =< 63 ->
+labels_size(<<$., Rest/binary>>, Label, Size) when 0 < Label andalso Label =< 63 ->
     labels_size(Rest, 0, Size + 1 + Label);
 labels_size(<<$\\, _/binary>>, _Label, _Size) ->
     escaped;
