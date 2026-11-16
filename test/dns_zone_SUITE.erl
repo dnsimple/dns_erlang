@@ -1189,6 +1189,11 @@ parse_generic_rdata_of_known_types(_Config) ->
             ~"TXT \\# 0"
         ]
     ],
+    %% The octets are read in the record's class: an A only in IN
+    ?assertMatch(
+        {error, #{type := semantic, details := {semantic_error, rfc3597_not_rdata_of_type}}},
+        dns_zone:parse_string(~"example. 0 CH A \\# 4 C0000201\n")
+    ),
     [
         begin
             Text = iolist_to_binary([
