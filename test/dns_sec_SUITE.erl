@@ -64,6 +64,10 @@ groups() ->
             verify_bind_signed_root_zone,
             verify_bind_wildcard_answers,
             verify_needs_labels_field_as_signed,
+            verify_malformed_keys_and_signatures,
+            verify_needs_rsa_signature_as_long_as_modulus,
+            verify_rrsig_that_did_not_decode,
+            verify_rdata_name_that_is_no_name,
             sign_rr_and_rrset_5arg,
             sign_leaves_rrsigs_unsigned,
             sign_rrset_rejects_records_of_other_rrsets,
@@ -1569,6 +1573,160 @@ verify_answer(RRSig, RRs, DNSKeys) ->
         RRSig,
     RRSet = [RR || #dns_rr{name = N, type = T} = RR <- RRs, N =:= Owner, T =:= Type],
     dns_sec:verify_rrsig(RRSig, RRSet, DNSKeys, #{now => Inception}).
+
+%% A key or signature of another shape than its algorithm's verifies nothing, where crypto refused
+%% ECDSA and EdDSA keys of other sizes and ECDSA keys that are no point on their curve, and ECDSA
+%% and DSA signatures of other sizes did not split. A key of each algorithm signs an RRset, which
+%% verifies, and with the key, or the signature, one octet short or long, empty, or pseudo-random
+%% octets of its size, verifies nothing.
+verify_malformed_keys_and_signatures(Config) ->
+    [malformed(Alg, Field, PrivateKey) || {Alg, Field, PrivateKey} <- implemented_keys(Config)].
+
+%% Each RRSIG names the key it is verified with, which signature_of/3 signs with the private key
+malformed(Alg, Field, PrivateKey) ->
+    Verify = fun(Key, Reshape) ->
+        {#dns_rr{data = Data} = RRSig, RRSet} = signature_of(Alg, Key, PrivateKey),
+        Signature = Reshape(Data#dns_rrdata_rrsig.signature),
+        Reshaped = RRSig#dns_rr{data = Data#dns_rrdata_rrsig{signature = Signature}},
+        dns_sec:verify_rrsig(Reshaped, RRSet, [zone_key(~"example", Alg, Key)], #{now => 1500000})
+    end,
+    Same = fun(Signature) -> Signature end,
+    ?assert(Verify(Field, Same), Alg),
+    Reshapes = lists:enumerate(reshapes()),
+    [?assertNot(Verify(Reshape(Field), Same), {Alg, key, N}) || {N, Reshape} <- Reshapes],
+    [?assertNot(Verify(Field, Reshape), {Alg, signature, N}) || {N, Reshape} <- Reshapes].
+
+%% A key or signature one octet short or long, empty, or of pseudo-random octets of its size
+reshapes() ->
+    [
+        fun(Bin) -> binary:part(Bin, 0, byte_size(Bin) - 1) end,
+        fun(Bin) -> <<Bin/binary, 0>> end,
+        fun(_Bin) -> <<>> end,
+        fun(Bin) -> pseudo_random_octets(byte_size(Bin)) end
+    ].
+
+%% RFC8017§8.2.2: an RSA signature is as long as the key's modulus. One whose leading zero octet
+%% is left out is shorter, and verifies nothing, where it verified: crypto checks the length when
+%% it hashes, but not when given the DigestInfo to verify, as verify_rrsig/4 gives it. At an
+%% inception 66 seconds after its RRSIG's, RFC5702§6.2's key signs www.example.net A with a
+%% signature whose first octet is zero.
+verify_needs_rsa_signature_as_long_as_modulus(_Config) ->
+    [_, #{alg := Alg, private_key := PrivateKey, zone := Zone}] = rfc5702_vectors(),
+    {ok, RRs} = dns_zone:parse_string(Zone),
+    [DNSKey] = [RR || #dns_rr{type = ?DNS_TYPE_DNSKEY} = RR <- RRs],
+    RRSet = [RR || #dns_rr{type = ?DNS_TYPE_A} = RR <- RRs],
+    Inception = 946684866,
+    #dns_rr{data = #dns_rrdata_rrsig{signature = <<0, Shorter/binary>> = Signature} = Data} =
+        RRSig = dns_sec:sign_rrset(
+            RRSet,
+            ~"example.net",
+            key_tag_of(DNSKey),
+            Alg,
+            PrivateKey,
+            #{inception => Inception, expiration => 1893456000}
+        ),
+    #dns_rr{data = #dns_rrdata_dnskey{public_key = <<_ExponentSize, _Exponent:3/binary, N/binary>>}} =
+        DNSKey,
+    ?assertEqual(byte_size(N), byte_size(Signature)),
+    Opts = #{now => Inception},
+    ?assert(dns_sec:verify_rrsig(RRSig, RRSet, [DNSKey], Opts)),
+    Short = RRSig#dns_rr{data = Data#dns_rrdata_rrsig{signature = Shorter}},
+    ?assertNot(dns_sec:verify_rrsig(Short, RRSet, [DNSKey], Opts)).
+
+%% The decoder keeps RDATA it cannot read as its octets: an RRSIG's under 18 octets, or one of
+%% class NONE with none, as an UPDATE has. Such an RRSIG verifies nothing, nor a record that is
+%% no RRSIG, where both raised.
+verify_rrsig_that_did_not_decode(_Config) ->
+    {_PrivateKey, DNSKey, RRSig, [MX]} = rfc8080_example(),
+    #dns_rr{data = #dns_rrdata_rrsig{inception = Inception}} = RRSig,
+    Undecoded = [
+        #dns_rr{name = ~"example.com", type = ?DNS_TYPE_RRSIG, ttl = 3600, data = <<1, 2, 3>>},
+        #dns_rr{name = ~"example.com", type = ?DNS_TYPE_RRSIG, class = ?DNS_CLASS_NONE, data = <<>>}
+    ],
+    Message = #dns_message{qr = true, anc = 3, answers = [RRSig | Undecoded]},
+    #dns_message{answers = [_ | Decoded]} = dns:decode_message(dns:encode_message(Message)),
+    ?assertEqual(Undecoded, Decoded),
+    Verify = fun(Sig) -> dns_sec:verify_rrsig(Sig, [MX], [DNSKey], #{now => Inception}) end,
+    ?assert(Verify(RRSig)),
+    [?assertNot(Verify(Sig), Sig) || Sig <- [MX | Decoded]].
+
+%% A record whose RDATA holds a name that is none, with an empty label, a label over 63 octets
+%% or over 255 octets in all, verifies nothing, where encoding it for the signed data raised:
+%% RFC8080§6's MX with such an exchange
+verify_rdata_name_that_is_no_name(_Config) ->
+    {_PrivateKey, DNSKey, RRSig, [#dns_rr{data = Data} = MX]} = rfc8080_example(),
+    #dns_rr{data = #dns_rrdata_rrsig{inception = Inception}} = RRSig,
+    Verify = fun(RR) -> dns_sec:verify_rrsig(RRSig, [RR], [DNSKey], #{now => Inception}) end,
+    ?assert(Verify(MX)),
+    Label63 = binary:copy(~"a", 63),
+    LongName = <<(binary:copy(<<Label63/binary, ".">>, 4))/binary, "example.com">>,
+    [
+        ?assertNot(Verify(MX#dns_rr{data = Data#dns_rrdata_mx{exchange = Exchange}}), Exchange)
+     || Exchange <- [~"mail..example.com", <<Label63/binary, "a.example.com">>, LongName]
+    ].
+
+%% An RRSIG a key makes over www.example A, with the RRset
+signature_of(Alg, Field, PrivateKey) ->
+    RRSet = [
+        #dns_rr{
+            name = ~"www.example",
+            type = ?DNS_TYPE_A,
+            ttl = 3600,
+            data = #dns_rrdata_a{ip = {192, 0, 2, N}}
+        }
+     || N <- [1, 2]
+    ],
+    Opts = #{inception => 1000000, expiration => 2000000},
+    Tag = key_tag_of(zone_key(~"example", Alg, Field)),
+    {dns_sec:sign_rrset(RRSet, ~"example", Tag, Alg, PrivateKey, Opts), RRSet}.
+
+zone_key(Zone, Alg, Field) ->
+    #dns_rr{
+        name = Zone,
+        type = ?DNS_TYPE_DNSKEY,
+        ttl = 3600,
+        data = #dns_rrdata_dnskey{flags = 257, protocol = 3, alg = Alg, public_key = Field}
+    }.
+
+%% A key of each algorithm this module implements, as the algorithm, its DNSKEY's key field and
+%% its private key: RFC5702§6.2's for RSA, a sample zone's for DSA, new ones for the others, and
+%% for ML-DSA-44 only where crypto has it
+implemented_keys(Config) ->
+    [_, #{private_key := [E, N, _D] = RsaPrivate}] = rfc5702_vectors(),
+    [#dnssec_test_sample{zonename = Zone, zsk_pl = DsaProps} | _] = [
+        Sample
+     || #dnssec_test_sample{alg = dsa} = Sample <- proplists:get_value(dnssec_samples, Config)
+    ],
+    #key_info{rr = #dns_rr{data = #dns_rrdata_dnskey{public_key = DsaField}}} =
+        generate_key_struct(DsaProps, Zone),
+    DsaPrivate = helper_samplekeypl_to_privkey(DsaProps),
+    New = [
+        {?DNS_ALG_ECDSAP256SHA256, ecdh, secp256r1},
+        {?DNS_ALG_ECDSAP384SHA384, ecdh, secp384r1},
+        {?DNS_ALG_ED25519, eddsa, ed25519},
+        {?DNS_ALG_ED448, eddsa, ed448}
+    ],
+    MLDSA44 = [
+        {?DNS_ALG_MLDSA44, mldsa44, []}
+     || lists:member(mldsa44, crypto:supports(public_keys))
+    ],
+    [
+        {Alg, dns_sec:dnskey_public_key(Alg, [E, N]), RsaPrivate}
+     || Alg <- [?DNS_ALG_RSASHA1, ?DNS_ALG_NSEC3RSASHA1, ?DNS_ALG_RSASHA256, ?DNS_ALG_RSASHA512]
+    ] ++
+        [{Alg, DsaField, DsaPrivate} || Alg <- [?DNS_ALG_DSA, ?DNS_ALG_NSEC3DSA]] ++
+        [
+            begin
+                {Public, Private} = crypto:generate_key(Type, Params),
+                {Alg, dns_sec:dnskey_public_key(Alg, Public), Private}
+            end
+         || {Alg, Type, Params} <- New ++ MLDSA44
+        ].
+
+%% Octets that look random, the same every run
+pseudo_random_octets(Size) ->
+    Blocks = [crypto:hash(sha512, <<Size:32, I:32>>) || I <- lists:seq(0, Size div 64)],
+    binary:part(iolist_to_binary(Blocks), 0, Size).
 
 zone(Config) ->
     Samples = proplists:get_value(dnssec_samples, Config),
