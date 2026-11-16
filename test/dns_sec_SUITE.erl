@@ -48,6 +48,7 @@ groups() ->
             verify_with_zone_text_dnskeys,
             rsa_key_rfc3110_rules_out_verifies_nothing,
             dsa_key_with_wide_t_verifies_nothing,
+            dsa_key_out_of_range_verifies_nothing,
             verify_with_list_key_raises,
             sign_with_integer_key_raises,
             verify_rrsig_expiry,
@@ -1942,8 +1943,15 @@ dnskey_public_key_layout(_Config) ->
         <<8, Q/binary, P1024/binary, 0:(127 * 8), 2, 0:(127 * 8), 3>>,
         Dsa([P1024, Q, <<2>>, <<3>>])
     ),
+    %% G from 2 to P - 1, and Y from 2 to P - 2 (FIPS 186-4 §4.1, NIST SP 800-89)
+    PMinus = fun(Less) -> <<(binary:decode_unsigned(P) - Less):512>> end,
+    [
+        ?assertMatch(<<0, _/binary>>, Dsa(Key), Key)
+     || Key <- [[P, Q, <<2>>, <<2>>], [P, Q, PMinus(1), PMinus(2)]]
+    ],
     %% P of 520 bits, which no T gives, of 1025 bits, past T = 8, and of 511 and
-    %% 504 bits, short of T = 0; Q of 159 and 161 bits; G and Y longer than P
+    %% 504 bits, short of T = 0; Q of 159 and 161 bits; G of 0, 1, P or longer than
+    %% P; Y of 0, 1, P - 1 or longer than P
     BadDsa = [
         {[<<16#80, 0:(64 * 8)>>, Q, <<2>>, <<3>>], {dsa_p_bits, 520}},
         {[<<1, 0:(128 * 8)>>, Q, <<2>>, <<3>>], {dsa_p_bits, 1025}},
@@ -1951,8 +1959,14 @@ dnskey_public_key_layout(_Config) ->
         {[<<16#80, 0:(62 * 8)>>, Q, <<2>>, <<3>>], {dsa_p_bits, 504}},
         {[P, <<16#7F, 0:(19 * 8)>>, <<2>>, <<3>>], {dsa_q_bits, 159}},
         {[P, <<1, Q/binary>>, <<2>>, <<3>>], {dsa_q_bits, 161}},
-        {[P, Q, <<1, 0:(64 * 8)>>, <<3>>], dsa_number_longer_than_p},
-        {[P, Q, <<2>>, <<1, 0:(64 * 8)>>], dsa_number_longer_than_p},
+        {[P, Q, <<>>, <<3>>], dsa_g_out_of_range},
+        {[P, Q, <<1>>, <<3>>], dsa_g_out_of_range},
+        {[P, Q, P, <<3>>], dsa_g_out_of_range},
+        {[P, Q, <<1, 0:(64 * 8)>>, <<3>>], dsa_g_out_of_range},
+        {[P, Q, <<2>>, <<0>>], dsa_y_out_of_range},
+        {[P, Q, <<2>>, <<1>>], dsa_y_out_of_range},
+        {[P, Q, <<2>>, PMinus(1)], dsa_y_out_of_range},
+        {[P, Q, <<2>>, <<1, 0:(64 * 8)>>], dsa_y_out_of_range},
         {[P, Q, <<2>>], key_shape}
     ],
     [?assertError({badarg, Why}, Dsa(Key), Key) || {Key, Why} <- BadDsa],
@@ -2215,6 +2229,48 @@ dsa_key_with_wide_t_verifies_nothing(Config) ->
             ?assertNot(verify_resigned_with_key(Config, Case, Wide))
         end
      || {_, _, DNSKey, _} = Case <- Cases
+    ].
+
+%% A DSA key whose G and Y are 1 verifies the signature R = S = 1 over any data, as 1 to
+%% any power is 1, which is R, and crypto verifies it so. FIPS 186-4 §4.1 has 1 < G < P,
+%% and NIST SP 800-89 checks a public key for 2 =< Y =< P - 2, so a DNSKEY with a
+%% sample's P and Q and a G or Y out of those ranges verifies nothing, not even that
+%% signature, and does not load
+dsa_key_out_of_range_verifies_nothing(Config) ->
+    [{RRSig, RRSet, #dns_rr{data = Data} = DNSKey, Opts} = Case | _] =
+        signed_by_sample_key(Config, [?DNS_ALG_DSA], fun(_) -> true end),
+    #dns_rrdata_dnskey{public_key = <<T, Q:20/binary, PGY/binary>> = Key} = Data,
+    Size = 64 + 8 * T,
+    <<P:Size/binary, G:Size/binary, Y:Size/binary>> = PGY,
+    Number = fun(N) -> <<N:(Size * 8)>> end,
+    %% R = S = 1 in DER, as crypto takes a DSA signature
+    OnesDer = <<16#30, 6, 2, 1, 1, 2, 1, 1>>,
+    ?assert(crypto:verify(dss, sha, ~"any data", OnesDer, [P, Q, Number(1), Number(1)])),
+    ?assert(verify_with_key(Case, Key)),
+    ?assert(dns_check:rr(DNSKey)),
+    #dns_rr{data = SigData} = RRSig,
+    PInt = binary:decode_unsigned(P),
+    [
+        begin
+            OutKey = <<T, Q/binary, P/binary, GOut/binary, YOut/binary>>,
+            WithKey = DNSKey#dns_rr{data = Data#dns_rrdata_dnskey{public_key = OutKey}},
+            Ones = RRSig#dns_rr{
+                data = SigData#dns_rrdata_rrsig{
+                    keytag = key_tag_of(WithKey), signature = <<T, 1:160, 1:160>>
+                }
+            },
+            ?assertNot(dns_sec:verify_rrsig(Ones, RRSet, [WithKey], Opts), {GOut, YOut}),
+            ?assertNot(dns_check:rr(WithKey), {GOut, YOut})
+        end
+     || {GOut, YOut} <- [
+            {Number(1), Number(1)},
+            {Number(1), Y},
+            {G, Number(1)},
+            {Number(0), Y},
+            {P, Y},
+            {G, Number(0)},
+            {G, Number(PInt - 1)}
+        ]
     ].
 
 %% A DNSKEY of the RRSIG's algorithm and signer whose key is not a binary, as an

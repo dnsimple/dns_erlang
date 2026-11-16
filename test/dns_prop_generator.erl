@@ -240,23 +240,30 @@ rsa_dnskey_public_key(Alg, MinSize) ->
     ).
 
 %% RFC2536§2: a T of 0 or 1, a Q of 160 bits and a P of 512 + 64T bits, both with
-%% their top bit set, and a G and a Y no longer than P
+%% their top bit set, and a G and a Y from 2 to under P (FIPS 186-4 §4.1, NIST SP
+%% 800-89): as long as P, with their top bit clear and another bit of their first
+%% octet set
 dsa_dnskey_public_key(Alg) ->
     ?LET(
         T,
         integer(0, 1),
         ?LET(
-            {QFirst, QRest, PFirst, PRest, G, Y},
+            {QFirst, QRest, PFirst, PRest, GFirst, GRest, YFirst, YRest},
             {
                 integer(128, 255),
                 binary(19),
                 integer(128, 255),
                 binary(63 + 8 * T),
-                binary(64 + 8 * T),
-                binary(64 + 8 * T)
+                integer(1, 127),
+                binary(63 + 8 * T),
+                integer(1, 127),
+                binary(63 + 8 * T)
             },
-            dns_sec:dnskey_public_key(
-                Alg, [<<PFirst, PRest/binary>>, <<QFirst, QRest/binary>>, G, Y]
-            )
+            dns_sec:dnskey_public_key(Alg, [
+                <<PFirst, PRest/binary>>,
+                <<QFirst, QRest/binary>>,
+                <<GFirst, GRest/binary>>,
+                <<YFirst, YRest/binary>>
+            ])
         )
     ).

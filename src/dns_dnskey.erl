@@ -20,7 +20,8 @@
 -type why() ::
     number_not_bytes
     | key_shape
-    | dsa_number_longer_than_p
+    | dsa_g_out_of_range
+    | dsa_y_out_of_range
     | {rsa_exponent_bits | rsa_modulus_bits | dsa_q_bits | dsa_p_bits, non_neg_integer()}.
 
 %% A DNSKEY's or CDNSKEY's public_key, its RDATA's key field. One that is not a
@@ -186,15 +187,20 @@ dsa_numbers(_Field) ->
 %% RFC2536§2: the T of a DSA key, or the rule it breaks. Its Q is 160 bits long,
 %% 2^159 < Q < 2^160, and its P is 512 + 64T bits long for a T of 0 to 8,
 %% 2^(511+64T) < P < 2^(512+64T), so that both have their top bit set in their
-%% fields. G and Y fit in the 64 + 8T octets of P. Only the sizes of P and Q are
-%% told, as a DNSKEY shows them anyway; Y's is not, as X stands for it in signing
+%% fields. G is 1 < G < P (FIPS 186-4 §4.1), and Y is 2 =< Y =< P - 2, the range
+%% NIST SP 800-89 checks a DSA public key against, so both fit in the 64 + 8T octets
+%% of P: a G and Y of 1 verify the signature R = S = 1 over any data. Only the sizes
+%% of P and Q are told, as a DNSKEY shows them anyway. In signing X stands for Y,
+%% which 0 < X < Q keeps in range but for an X of 1, whose Y is G for all to see
 -spec dsa_t(binary(), binary(), binary(), binary()) -> 0..8 | why().
 dsa_t(P, Q, G, Y) ->
     PBits = bit_length(P),
-    case {bit_length(Q), max(bit_length(G), bit_length(Y))} of
-        {QBits, _} when QBits =/= 160 -> {dsa_q_bits, QBits};
+    PInt = binary:decode_unsigned(P),
+    case {bit_length(Q), binary:decode_unsigned(G), binary:decode_unsigned(Y)} of
+        {QBits, _, _} when QBits =/= 160 -> {dsa_q_bits, QBits};
         _ when PBits < 512; PBits > 1024; PBits rem 64 =/= 0 -> {dsa_p_bits, PBits};
-        {_, Longest} when Longest > PBits -> dsa_number_longer_than_p;
+        {_, GInt, _} when GInt < 2; GInt >= PInt -> dsa_g_out_of_range;
+        {_, _, YInt} when YInt < 2; YInt > PInt - 2 -> dsa_y_out_of_range;
         _ -> (PBits - 512) div 64
     end.
 
