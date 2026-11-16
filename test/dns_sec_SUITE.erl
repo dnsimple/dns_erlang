@@ -51,6 +51,7 @@ groups() ->
             dsa_key_out_of_range_verifies_nothing,
             verify_with_list_key_raises,
             sign_with_integer_key_raises,
+            sign_with_rsa_key_rfcs_rule_out_raises,
             verify_rrsig_expiry,
             verify_needs_zone_key,
             verify_needs_protocol_3,
@@ -2161,7 +2162,8 @@ zone_text_dnskey(DNSKey) ->
 %% rule holds the numbers of a key that verifies BIND's signatures, but
 %% verify_rrsig/4 verifies nothing with it, even signed again naming its key tag.
 %% Nor with a key shorter than its
-%% algorithm allows: RFC5702§2 has RSA/SHA-512 keys of 1024 bits or more.
+%% algorithm allows: RFC5702§2 has RSA/SHA-512 keys of 1024 bits or more. As signing
+%% refuses such a key, crypto signs the signed data, built by hand.
 rsa_key_rfc3110_rules_out_verifies_nothing(Config) ->
     RsaAlgs = [
         ?DNS_ALG_RSASHA1, ?DNS_ALG_NSEC3RSASHA1, ?DNS_ALG_RSASHA256, ?DNS_ALG_RSASHA512
@@ -2191,23 +2193,53 @@ rsa_key_rfc3110_rules_out_verifies_nothing(Config) ->
         ttl = 3600,
         data = #dns_rrdata_a{ip = {192, 0, 2, 1}}
     },
-    SignAndVerify = fun(Alg) ->
+    SignAndVerify = fun(Alg, Hash) ->
         Data = #dns_rrdata_dnskey{
             flags = 256, protocol = 3, alg = Alg, public_key = <<3, E/binary, N/binary>>
         },
         DNSKey = #dns_rr{name = ~"example", type = ?DNS_TYPE_DNSKEY, ttl = 3600, data = Data},
-        RRSig = dns_sec:sign_rrset(
-            [RR],
-            ~"example",
-            key_tag_of(DNSKey),
-            Alg,
-            [E, N, D],
-            #{inception => 1000000, expiration => 2000000}
-        ),
+        KeyTag = key_tag_of(DNSKey),
+        SignedData = signed_data_by_hand(Alg, KeyTag, ~"example", 1000000, 2000000),
+        Signature = crypto:sign(rsa, Hash, SignedData, [E, N, D]),
+        ?assert(crypto:verify(rsa, Hash, SignedData, Signature, [E, N])),
+        RRSig = rrsig_by_hand(Alg, KeyTag, 1000000, 2000000, Signature),
         dns_sec:verify_rrsig(RRSig, [RR], [DNSKey], #{now => 1500000})
     end,
-    ?assert(SignAndVerify(?DNS_ALG_RSASHA256)),
-    ?assertNot(SignAndVerify(?DNS_ALG_RSASHA512)).
+    ?assert(SignAndVerify(?DNS_ALG_RSASHA256, sha256)),
+    ?assertNot(SignAndVerify(?DNS_ALG_RSASHA512, sha512)).
+
+%% RFC4034§3.1.8.1: the data an RRSIG signs, its RDATA but the signature, then
+%% the RRset in canonical form, here www.<Zone>. 3600 IN A 192.0.2.1 signed by Zone
+signed_data_by_hand(Alg, KeyTag, Zone, Inception, Expiration) ->
+    Owner = <<"www.", Zone/binary>>,
+    Labels = length(binary:split(Owner, ~".", [global, trim_all])),
+    <<?DNS_TYPE_A:16, Alg, Labels, 3600:32, Expiration:32, Inception:32, KeyTag:16,
+        (wire_by_hand(Zone))/binary, (wire_by_hand(Owner))/binary, ?DNS_TYPE_A:16, ?DNS_CLASS_IN:16,
+        3600:32, 4:16, 192, 0, 2, 1>>.
+
+wire_by_hand(Name) ->
+    Labels = binary:split(string:lowercase(Name), ~".", [global, trim_all]),
+    <<<<<<(byte_size(Label)), Label/binary>> || Label <- Labels>>/binary, 0>>.
+
+%% An RRSIG over www.example. 3600 IN A 192.0.2.1, signed by example, whose signed
+%% data signed_data_by_hand/5 gives
+rrsig_by_hand(Alg, KeyTag, Inception, Expiration, Signature) ->
+    #dns_rr{
+        name = ~"www.example",
+        type = ?DNS_TYPE_RRSIG,
+        ttl = 3600,
+        data = #dns_rrdata_rrsig{
+            type_covered = ?DNS_TYPE_A,
+            alg = Alg,
+            labels = 2,
+            original_ttl = 3600,
+            expiration = Expiration,
+            inception = Inception,
+            keytag = KeyTag,
+            signers_name = ~"example",
+            signature = Signature
+        }
+    }.
 
 %% RFC2536§2: P is "in the range 2**(511+64T) < P < 2**(512+64T) and so is
 %% 64 + 8*T octets long", so a DSA DNSKEY whose T is wider than its P needs is no
@@ -2334,6 +2366,75 @@ sign_with_integer_key_raises(Config) ->
     Dsa = helper_samplekeypl_to_privkey(DsaProps),
     ?assertMatch(#dns_rr{}, Sign(?DNS_ALG_DSA, Dsa)),
     ?assertError({badarg, number_not_bytes}, Sign(?DNS_ALG_DSA, [Int(Number) || Number <- Dsa])).
+
+%% RFC3110§3 and RFC5702§2 have an RSA modulus 512 to 4096 bits long, or 1024 to 4096
+%% for RSA/SHA-512, as BIND has them, and dnskey_public_key/2 lays out no DNSKEY for
+%% another. Signing with such a key raised nothing, and made an RRSIG no DNSKEY
+%% verifying it could be published for; it raises {badarg, {rsa_modulus_bits, Bits}}
+%% now, and {badarg, key_shape} for a key of other than [E, N, D] or those and the
+%% CRT's. Neither error, nor its stacktrace, holds any part of the key, which callers
+%% such as erldns log
+sign_with_rsa_key_rfcs_rule_out_raises(_Config) ->
+    RR = #dns_rr{
+        name = ~"www.example",
+        type = ?DNS_TYPE_A,
+        ttl = 3600,
+        data = #dns_rrdata_a{ip = {192, 0, 2, 1}}
+    },
+    Sign = fun(Alg, Key) ->
+        dns_sec:sign_rrset(
+            [RR], ~"example", 0, Alg, Key, #{inception => 1000000, expiration => 2000000}
+        )
+    end,
+    Keys = #{Bits => crypto:generate_key(rsa, {Bits, 65537}) || Bits <- [512, 1016, 1024, 4104]},
+    Cases = [
+        {?DNS_ALG_RSASHA1, 512, ok},
+        {?DNS_ALG_RSASHA256, 512, ok},
+        {?DNS_ALG_RSASHA256, 1016, ok},
+        {?DNS_ALG_RSASHA512, 1024, ok},
+        {?DNS_ALG_RSASHA512, 1016, {rsa_modulus_bits, 1016}},
+        {?DNS_ALG_RSASHA1, 4104, {rsa_modulus_bits, 4104}},
+        {?DNS_ALG_RSASHA256, 4104, {rsa_modulus_bits, 4104}},
+        {?DNS_ALG_RSASHA512, 4104, {rsa_modulus_bits, 4104}}
+    ],
+    [
+        begin
+            #{Bits := {[E, N], [E, N, D | _] = Crt}} = Keys,
+            case Why of
+                ok ->
+                    ?assertMatch(<<_/binary>>, dns_sec:dnskey_public_key(Alg, [E, N])),
+                    ?assertMatch(#dns_rr{type = ?DNS_TYPE_RRSIG}, Sign(Alg, Crt), {Alg, Bits}),
+                    ?assertEqual(Sign(Alg, Crt), Sign(Alg, [E, N, D]), {Alg, Bits});
+                _ ->
+                    ?assertError({badarg, Why}, dns_sec:dnskey_public_key(Alg, [E, N])),
+                    ?assertError({badarg, Why}, Sign(Alg, Crt), {Alg, Bits}),
+                    ?assertError({badarg, Why}, Sign(Alg, [E, N, D]), {Alg, Bits})
+            end
+        end
+     || {Alg, Bits, Why} <- Cases
+    ],
+    Secret = crypto:strong_rand_bytes(32),
+    Holds = fun(Term) -> binary:match(term_to_binary(Term), Secret) =/= nomatch end,
+    #{1024 := {_, [E1024, N1024, D1024 | _] = Crt1024}} = Keys,
+    Shapes = [
+        [Secret],
+        [Secret, Secret],
+        [Secret, Secret, Secret, Secret],
+        lists:duplicate(5, Secret),
+        lists:duplicate(9, Secret),
+        [E1024, N1024, D1024, Secret],
+        Crt1024 ++ [Secret]
+    ],
+    [
+        try Sign(?DNS_ALG_RSASHA256, Key) of
+            Signed -> ?assertEqual({length(Key), error}, {length(Key), Signed})
+        catch
+            error:Reason:Stacktrace ->
+                ?assertEqual({badarg, key_shape}, Reason, length(Key)),
+                ?assertNot(Holds(Stacktrace), length(Key))
+        end
+     || Key <- Shapes
+    ].
 
 %% For each of the algorithms, in order, the first RRSIG BIND made in the sample
 %% zones with it by a DNSKEY whose key passes Filter, the RRset it covers, that

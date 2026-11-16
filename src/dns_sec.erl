@@ -446,7 +446,15 @@ Raises:
 
 - `{badarg, rrsig_rrset}` for an RRSIG RRset, which RFC 4035 §2.2 never signs;
 - `{badarg, mixed_rrset}` for records of more than one RRset, of another owner name, class or type
-  than the first's. Owner names compare as names, so case and a final dot don't matter.
+  than the first's. Owner names compare as names, so case and a final dot don't matter;
+- `{badarg, Why}` for an RSA or DSA private key whose public key no DNSKEY of the algorithm can
+  carry, `Why` as `dnskey_public_key/2` names it, such as `{rsa_modulus_bits, Bits}` for an RSA
+  modulus that is not 512 to 4096 bits long, or 1024 to 4096 for RSA/SHA-512;
+- `{badarg, key_shape}` for an RSA private key of other than 3 numbers, `[E, N, D]`, or 8, with
+  the CRT's after them; and `{badarg, number_not_bytes}` for one whose numbers are not their
+  big-endian bytes.
+
+None of these holds the key.
 """.
 -spec sign_rrset([dns:rr(), ...], dns:dname(), keytag(), sigalg(), key(), sign_rr_opts()) ->
     dns:rr().
@@ -507,6 +515,15 @@ sign(Alg, BaseSigInput, Key) when ?IS_RSA_ALG(Alg) ->
     %% crypto takes integers too, converting them on every call
     is_list(Key) andalso lists:all(fun erlang:is_binary/1, Key) orelse
         error({badarg, number_not_bytes}),
+    %% [E, N, D], or with the CRT's [P1, P2, E1, E2, C] after it, as crypto takes it. Laying out
+    %% [E, N] raises {badarg, Why} for a modulus or exponent of a size RFC3110§2 and §3 and
+    %% RFC5702§2 rule out, whose public key no DNSKEY can carry, as for DSA
+    _PublicKey =
+        case Key of
+            [E, N, _D] -> dns_dnskey:field(Alg, [E, N]);
+            [E, N, _D, _P1, _P2, _E1, _E2, _C] -> dns_dnskey:field(Alg, [E, N]);
+            _ -> error({badarg, key_shape})
+        end,
     crypto:sign(
         rsa,
         none,
