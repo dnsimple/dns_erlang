@@ -429,13 +429,17 @@ NS RRset.
 """.
 -spec sign_rr([dns:rr()], dns:dname(), keytag(), sigalg(), key(), sign_rr_opts()) -> [dns:rr()].
 sign_rr(RR, SignerName, KeyTag, Alg, Key, Opts) when is_map(Opts) ->
-    RRSets = rrs_to_rrsets([Record || Record <- RR, not is_rrsig(Record)]),
-    Signer = dns_domain:split(SignerName),
-    [
-        sign_rrset(RRSet, SignerName, KeyTag, Alg, Key, Opts)
-     || [#dns_rr{name = Name, type = Type} | _] = RRSet <- RRSets,
-        signer_holds(Signer, Type, dns_domain:split(Name))
-    ].
+    case rrs_to_rrsets([Record || Record <- RR, not is_rrsig(Record)]) of
+        [] ->
+            [];
+        RRSets ->
+            Signer = dns_domain:split(SignerName),
+            [
+                sign_rrset(RRSet, SignerName, KeyTag, Alg, Key, Opts)
+             || [#dns_rr{name = Name, type = Type} | _] = RRSet <- RRSets,
+                signer_holds(Signer, Type, dns_domain:split(Name))
+            ]
+    end.
 
 -doc #{equiv => sign_rrset(RRSet, SignerName, KeyTag, Alg, Key, [])}.
 -spec sign_rrset([dns:rr(), ...], dns:dname(), keytag(), sigalg(), key()) ->

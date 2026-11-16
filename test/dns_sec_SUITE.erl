@@ -1509,7 +1509,14 @@ sign_only_rrsets_the_signer_holds(_Config) ->
     ?assertError({badarg, outside_signer_zone}, SignRRset(~"EXAMPLE.com.", [NS])),
     %% The child signs its own NS RRset, at its apex
     ?assertEqual([Hand(~"child.example.com.", Lower(NS))], SignRR(~"child.example.com.", [NS])),
-    ?assertEqual(Hand(~"child.example.com.", NS), SignRRset(~"child.example.com.", [NS])).
+    ?assertEqual(Hand(~"child.example.com.", NS), SignRRset(~"child.example.com.", [NS])),
+    %% With nothing to sign, sign_rr/6 signs nothing, whatever the signer, as it did: it reads the
+    %% signer only for an RRset it has to sign
+    [
+        ?assertEqual([], SignRR(Signer, RRs), {Signer, RRs})
+     || Signer <- [~"a..com", <<(binary:copy(~"a", 64))/binary, ".com">>],
+        RRs <- [[], [RRSig]]
+    ].
 
 %% RFC4034§3.1.3: an RRSIG's labels field counts its owner's labels but a leading *, and
 %% verify_rrsig/4 refuses one that counts fewer than the signer has, as its wildcard would be
