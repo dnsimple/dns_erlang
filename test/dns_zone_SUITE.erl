@@ -8637,11 +8637,22 @@ parse_owner_that_reads_as_a_ttl(_Config) ->
         {ok, [_, #dns_rr{name = ~"www.example", ttl = 1}]},
         dns_zone:parse_string(~"www.example 0 IN A 192.0.2.1\n 1 IN A 192.0.2.2\n")
     ),
-    ?assertMatch(
-        {error, #{type := parser}},
-        dns_zone:parse_string(~"www.example. 0 IN A 192.0.2.1\n 1 3600 IN A 192.0.2.2\n")
-    ),
-    %% A TTL after the owner's is refused
+    %% even where the line would read with it as the owner, whatever the case of
+    %% its units: such a line is refused, as RFC 1035 gives it no owner
+    [
+        ?assertMatch(
+            {error, #{type := parser}},
+            dns_zone:parse_string(<<"www.example. 0 IN A 192.0.2.1\n", Line/binary>>),
+            Line
+        )
+     || Line <- [
+            ~" 1 3600 IN A 192.0.2.2\n",
+            ~" 1H 3600 IN A 192.0.2.2\n",
+            ~" 1D IN 60 A 192.0.2.2\n",
+            ~"\t1h30M 60 A 192.0.2.2\n"
+        ]
+    ],
+    %% A second TTL is refused
     ?assertMatch(
         {error, #{message := <<"Parse error: expected a TTL, a class or a type: 3600">>}},
         dns_zone:parse_string(~"1 3600 3600 A 192.0.2.1\n")

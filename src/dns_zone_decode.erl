@@ -512,7 +512,8 @@ type_text(semantic) -> ~"Invalid record".
 %% [<TTL>] [<class>] <type> <RDATA>, TTL and class in either order. Owner names are
 %% lowercased; the names in RDATA keep their case. A line that starts with a blank
 %% has no owner, unless it only reads as a record with its first field taken for
-%% one, as the grammar this parser replaced took it; a TTL there is never one.
+%% one, as the grammar this parser replaced took it; a word that reads as a TTL, in
+%% either case, is never one there.
 -spec record(boolean(), [field(), ...], ctx(), dns:dname(), dns:ttl(), owner_memo()) ->
     {dns:rr(), owner_memo()}.
 record(true, Fields, Ctx, LastOwner, ImplicitTTL, Memo) ->
@@ -535,7 +536,7 @@ owner_record([First | _] = Fields, Ctx, LastOwner, ImplicitTTL, Memo) ->
     try
         {Owner, Rest, _Memo} = owner(Fields, Ctx, LastOwner, Memo),
         Rest =/= Fields orelse ?FAIL(no_owner),
-        word_kind(First) =/= ttl orelse ?FAIL(no_owner),
+        ttl_value(First) =:= error orelse ?FAIL(no_owner),
         {ok, rr(Owner, header(Rest, undefined, undefined), Ctx, ImplicitTTL, Memo)}
     catch
         error:{?MODULE, _} -> error
