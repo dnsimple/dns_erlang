@@ -1206,23 +1206,24 @@ to_lower_chunk(<<>>, Acc) ->
 swap_small(Name, Lo, Hi) ->
     Size = byte_size(Name),
     Words = (Size * 37) bsr 8,
-    swap_small(Name, Words, (Size - Words * 7) * 8, Lo, Hi).
+    TB = (Size - Words * 7) * 8,
+    swap_small(Name, Lo, Hi, TB, Words).
 
--spec swap_small(binary(), 0..9, 0..48, pos_integer(), pos_integer()) -> binary().
-swap_small(Name, 0, TB, Lo, Hi) ->
+-spec swap_small(binary(), pos_integer(), pos_integer(), 0..48, 0..9) -> binary().
+swap_small(Name, Lo, Hi, TB, 0) ->
     <<T:TB/unsigned-little>> = Name,
     <<(?SWAP_WORD56(T, Lo, Hi)):TB/unsigned-little>>;
-swap_small(Name, 1, TB, Lo, Hi) ->
+swap_small(Name, Lo, Hi, TB, 1) ->
     <<W1:56/unsigned-little, T:TB/unsigned-little>> = Name,
     <<(?SWAP_WORD56(W1, Lo, Hi)):56/unsigned-little, (?SWAP_WORD56(T, Lo, Hi)):TB/unsigned-little>>;
-swap_small(Name, 2, TB, Lo, Hi) ->
+swap_small(Name, Lo, Hi, TB, 2) ->
     <<W1:56/unsigned-little, W2:56/unsigned-little, T:TB/unsigned-little>> = Name,
     <<
         (?SWAP_WORD56(W1, Lo, Hi)):56/unsigned-little,
         (?SWAP_WORD56(W2, Lo, Hi)):56/unsigned-little,
         (?SWAP_WORD56(T, Lo, Hi)):TB/unsigned-little
     >>;
-swap_small(Name, 3, TB, Lo, Hi) ->
+swap_small(Name, Lo, Hi, TB, 3) ->
     <<W1:56/unsigned-little, W2:56/unsigned-little, W3:56/unsigned-little, T:TB/unsigned-little>> =
         Name,
     <<
@@ -1231,7 +1232,7 @@ swap_small(Name, 3, TB, Lo, Hi) ->
         (?SWAP_WORD56(W3, Lo, Hi)):56/unsigned-little,
         (?SWAP_WORD56(T, Lo, Hi)):TB/unsigned-little
     >>;
-swap_small(Name, 4, TB, Lo, Hi) ->
+swap_small(Name, Lo, Hi, TB, 4) ->
     <<W1:56/unsigned-little, W2:56/unsigned-little, W3:56/unsigned-little, W4:56/unsigned-little,
         T:TB/unsigned-little>> = Name,
     <<
@@ -1241,7 +1242,7 @@ swap_small(Name, 4, TB, Lo, Hi) ->
         (?SWAP_WORD56(W4, Lo, Hi)):56/unsigned-little,
         (?SWAP_WORD56(T, Lo, Hi)):TB/unsigned-little
     >>;
-swap_small(Name, 5, TB, Lo, Hi) ->
+swap_small(Name, Lo, Hi, TB, 5) ->
     <<W1:56/unsigned-little, W2:56/unsigned-little, W3:56/unsigned-little, W4:56/unsigned-little,
         W5:56/unsigned-little, T:TB/unsigned-little>> = Name,
     <<
@@ -1252,7 +1253,7 @@ swap_small(Name, 5, TB, Lo, Hi) ->
         (?SWAP_WORD56(W5, Lo, Hi)):56/unsigned-little,
         (?SWAP_WORD56(T, Lo, Hi)):TB/unsigned-little
     >>;
-swap_small(Name, 6, TB, Lo, Hi) ->
+swap_small(Name, Lo, Hi, TB, 6) ->
     <<W1:56/unsigned-little, W2:56/unsigned-little, W3:56/unsigned-little, W4:56/unsigned-little,
         W5:56/unsigned-little, W6:56/unsigned-little, T:TB/unsigned-little>> = Name,
     <<
@@ -1264,7 +1265,7 @@ swap_small(Name, 6, TB, Lo, Hi) ->
         (?SWAP_WORD56(W6, Lo, Hi)):56/unsigned-little,
         (?SWAP_WORD56(T, Lo, Hi)):TB/unsigned-little
     >>;
-swap_small(Name, 7, TB, Lo, Hi) ->
+swap_small(Name, Lo, Hi, TB, 7) ->
     <<W1:56/unsigned-little, W2:56/unsigned-little, W3:56/unsigned-little, W4:56/unsigned-little,
         W5:56/unsigned-little, W6:56/unsigned-little, W7:56/unsigned-little,
         T:TB/unsigned-little>> = Name,
@@ -1278,7 +1279,7 @@ swap_small(Name, 7, TB, Lo, Hi) ->
         (?SWAP_WORD56(W7, Lo, Hi)):56/unsigned-little,
         (?SWAP_WORD56(T, Lo, Hi)):TB/unsigned-little
     >>;
-swap_small(Name, 8, TB, Lo, Hi) ->
+swap_small(Name, Lo, Hi, TB, 8) ->
     <<W1:56/unsigned-little, W2:56/unsigned-little, W3:56/unsigned-little, W4:56/unsigned-little,
         W5:56/unsigned-little, W6:56/unsigned-little, W7:56/unsigned-little, W8:56/unsigned-little,
         T:TB/unsigned-little>> = Name,
@@ -1293,7 +1294,7 @@ swap_small(Name, 8, TB, Lo, Hi) ->
         (?SWAP_WORD56(W8, Lo, Hi)):56/unsigned-little,
         (?SWAP_WORD56(T, Lo, Hi)):TB/unsigned-little
     >>;
-swap_small(Name, 9, TB, Lo, Hi) ->
+swap_small(Name, Lo, Hi, TB, 9) ->
     <<W1:56/unsigned-little, W2:56/unsigned-little, W3:56/unsigned-little, W4:56/unsigned-little,
         W5:56/unsigned-little, W6:56/unsigned-little, W7:56/unsigned-little, W8:56/unsigned-little,
         W9:56/unsigned-little, T:TB/unsigned-little>> = Name,
