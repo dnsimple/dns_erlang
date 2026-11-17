@@ -58,7 +58,8 @@ groups() ->
             to_upper_chunking,
             case_roundtrip,
             case_conversion_comprehensive,
-            case_conversion_sizes
+            case_conversion_sizes,
+            case_conversion_off_heap
         ]},
         {comparison_tests, [parallel], [
             are_equal_basic,
@@ -692,6 +693,54 @@ case_inputs(Size) ->
         cycle(~"@A[Z`a{z", Size),
         list_to_binary([(Size + I) rem 256 || I <- lists:seq(0, Last)])
     ].
+
+%% A name with nothing to convert comes back as it is, and one of up to 64 octets with something to
+%% convert as a heap binary, so neither adds a binary off the heap, where every result used to be
+%% written into a buffer of at least 256 octets there. A longer name with something to convert
+%% still gets one, which shows the count can see it.
+case_conversion_off_heap(_) ->
+    Long = binary:copy(~"abcdefghij", 30),
+    LongUpper = binary:copy(~"ABCDEFGHIJ", 30),
+    Cases = [
+        {to_lower, ~"www.example.com", same, 0},
+        {to_lower, binary:part(Long, 0, 64), same, 0},
+        {to_lower, Long, same, 0},
+        {to_lower, ~"WwW.eXaMpLe.CoM", ~"www.example.com", 0},
+        {to_lower, binary:part(LongUpper, 0, 64), binary:part(Long, 0, 64), 0},
+        {to_lower, binary:part(LongUpper, 0, 65), binary:part(Long, 0, 65), 1},
+        {to_lower, LongUpper, Long, 1},
+        {to_upper, ~"WWW.EXAMPLE.COM", same, 0},
+        {to_upper, binary:part(LongUpper, 0, 64), same, 0},
+        {to_upper, LongUpper, same, 0},
+        {to_upper, ~"WwW.eXaMpLe.CoM", ~"WWW.EXAMPLE.COM", 0},
+        {to_upper, binary:part(Long, 0, 64), binary:part(LongUpper, 0, 64), 0},
+        {to_upper, binary:part(Long, 0, 65), binary:part(LongUpper, 0, 65), 1},
+        {to_upper, Long, LongUpper, 1}
+    ],
+    [
+        ?assertEqual({Expect, Added}, convert_counting_off_heap(Fun, Input), {Fun, Input})
+     || {Fun, Input, Expect, Added} <- Cases
+    ].
+
+%% The result, or `same` when it is the input itself, and how many binaries off the heap the call
+%% added to a process of its own
+convert_counting_off_heap(Fun, Input) ->
+    {Pid, Ref} = spawn_monitor(fun() ->
+        Before = off_heap_binaries(),
+        Result = dns_domain:Fun(Input),
+        Added = length(off_heap_binaries() -- Before),
+        case erts_debug:same(Result, Input) of
+            true -> exit({same, Added});
+            false -> exit({Result, Added})
+        end
+    end),
+    receive
+        {'DOWN', Ref, process, Pid, Reason} -> Reason
+    end.
+
+off_heap_binaries() ->
+    {binary, Binaries} = process_info(self(), binary),
+    [Id || {Id, _Size, _RefCount} <- Binaries].
 
 cycle(Pattern, Size) ->
     binary:part(binary:copy(Pattern, Size div byte_size(Pattern) + 1), 0, Size).
