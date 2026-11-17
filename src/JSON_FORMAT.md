@@ -43,6 +43,7 @@ Non-RR records (message, query, OPT records) use a two-level nested map format:
 - **Base32**: NSEC3 hash
 - **Domain names**: Binary (dname format)
 - **Lists**: Arrays of converted values
+- **null**: The atom `null`, as `json:decode/1` gives it. Decoding also takes `nil`, which Elixir's `JSON.decode/1` gives for a JSON `null`; encoding gives `null`.
 
 ## Record Types
 
