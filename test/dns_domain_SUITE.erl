@@ -694,24 +694,26 @@ case_inputs(Size) ->
         list_to_binary([(Size + I) rem 256 || I <- lists:seq(0, Last)])
     ].
 
-%% A name with nothing to convert comes back as it is, and one of up to 64 octets with something to
-%% convert as a heap binary, so neither adds a binary off the heap, where every result used to be
-%% written into a buffer of at least 256 octets there. A longer name with something to convert
-%% still gets one, which shows the count can see it.
+%% A name of up to 64 octets comes back as it is when there is nothing to convert, and as a heap
+%% binary otherwise, so neither adds a binary off the heap, where every result used to be written
+%% into a buffer of at least 256 octets there. A longer name still gets one, as it did, which also
+%% shows the count can see it.
 case_conversion_off_heap(_) ->
     Long = binary:copy(~"abcdefghij", 30),
     LongUpper = binary:copy(~"ABCDEFGHIJ", 30),
     Cases = [
         {to_lower, ~"www.example.com", same, 0},
         {to_lower, binary:part(Long, 0, 64), same, 0},
-        {to_lower, Long, same, 0},
+        {to_lower, binary:part(Long, 0, 65), binary:part(Long, 0, 65), 1},
+        {to_lower, Long, Long, 1},
         {to_lower, ~"WwW.eXaMpLe.CoM", ~"www.example.com", 0},
         {to_lower, binary:part(LongUpper, 0, 64), binary:part(Long, 0, 64), 0},
         {to_lower, binary:part(LongUpper, 0, 65), binary:part(Long, 0, 65), 1},
         {to_lower, LongUpper, Long, 1},
         {to_upper, ~"WWW.EXAMPLE.COM", same, 0},
         {to_upper, binary:part(LongUpper, 0, 64), same, 0},
-        {to_upper, LongUpper, same, 0},
+        {to_upper, binary:part(LongUpper, 0, 65), binary:part(LongUpper, 0, 65), 1},
+        {to_upper, LongUpper, LongUpper, 1},
         {to_upper, ~"WwW.eXaMpLe.CoM", ~"WWW.EXAMPLE.COM", 0},
         {to_upper, binary:part(Long, 0, 64), binary:part(LongUpper, 0, 64), 0},
         {to_upper, binary:part(Long, 0, 65), binary:part(LongUpper, 0, 65), 1},

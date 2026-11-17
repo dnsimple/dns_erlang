@@ -966,15 +966,14 @@ keep_first(Saved, _Rest) -> Saved.
 Returns provided name with case-insensitive characters in uppercase.
 """.
 -spec to_upper(dname()) -> dname().
-to_upper(Data) when is_binary(Data) ->
+%% As to_lower/1 does it, with the cases swapped.
+to_upper(Data) when is_binary(Data), byte_size(Data) =< ?HEAP_BINARY_MAX ->
     case has_lower(Data) of
-        false ->
-            Data;
-        true when byte_size(Data) =< ?HEAP_BINARY_MAX ->
-            swap_small(Data, ?ONES56 * $a, ?ONES56 * ($z + 1));
-        true ->
-            to_upper_chunk(Data, <<>>)
-    end.
+        false -> Data;
+        true -> swap_small(Data, ?ONES56 * $a, ?ONES56 * ($z + 1))
+    end;
+to_upper(Data) when is_binary(Data) ->
+    to_upper_chunk(Data, <<>>).
 
 -compile(
     {inline, [
@@ -1179,15 +1178,16 @@ to_upper_chunk(<<>>, Acc) ->
 Returns provided name with case-insensitive characters in lowercase.
 """.
 -spec to_lower(dname()) -> dname().
-to_lower(Data) when is_binary(Data) ->
+%% A name of at most 64 octets comes back as it is when it has nothing to lower, and as a heap
+%% binary otherwise. A longer one goes to the loop as it did: its result lives off the heap anyway,
+%% and scanning it first would only add to the time of one with something to lower.
+to_lower(Data) when is_binary(Data), byte_size(Data) =< ?HEAP_BINARY_MAX ->
     case has_upper(Data) of
-        false ->
-            Data;
-        true when byte_size(Data) =< ?HEAP_BINARY_MAX ->
-            swap_small(Data, ?ONES56 * $A, ?ONES56 * ($Z + 1));
-        true ->
-            to_lower_chunk(Data, <<>>)
-    end.
+        false -> Data;
+        true -> swap_small(Data, ?ONES56 * $A, ?ONES56 * ($Z + 1))
+    end;
+to_lower(Data) when is_binary(Data) ->
+    to_lower_chunk(Data, <<>>).
 
 -spec to_lower_chunk(dname(), binary()) -> dname().
 to_lower_chunk(<<W:56/unsigned-little, Rest/binary>>, Acc) ->
