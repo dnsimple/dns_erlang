@@ -119,6 +119,7 @@ The rest of this release needs no change to code, but `verify_rrsig/4`, zone fil
 - DNSSEC: `verify_rrsig/4` returns `false` for keys crypto cannot use, ECDSA and DSA signatures of another size, RRSIGs whose RDATA did not decode, records that are no RRSIG and RDATA holding names that are none, where it raised.
 - DNSSEC: `verify_rrsig/4` verifies no RSA signature shorter than its key's modulus (RFC 8017 §8.2.2), where it verified one whose leading zero octets were left out.
 - JSON: `from_map/1` reads every DNSKEY's and CDNSKEY's key as its bytes, where it read some ECDSA and EdDSA keys as lists of numbers.
+- JSON: `from_map/1` takes `nil`, which Elixir's `JSON.decode/1` gives for a JSON `null`, wherever it takes `null`: an SVCB or HTTPS record's `svc_params`, its `no-default-alpn` and a `keyNNNN` with no value, where the record was refused.
 
 ## v5.2.0
 

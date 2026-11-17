@@ -2,6 +2,7 @@
 -moduledoc false.
 
 -include_lib("dns_erlang/include/dns.hrl").
+-include("dns_json.hrl").
 
 -type escape_callback() :: fun((binary()) -> binary()).
 
@@ -119,7 +120,7 @@ parse_svcb_params_from_json([{Key, Value} | Rest], Acc) ->
                 Acc#{ParamKey => KeyNums};
             ?DNS_SVCB_PARAM_ALPN when is_list(Value) ->
                 Acc#{ParamKey => Value};
-            ?DNS_SVCB_PARAM_NO_DEFAULT_ALPN when Value =:= null ->
+            ?DNS_SVCB_PARAM_NO_DEFAULT_ALPN when ?IS_JSON_NULL(Value) ->
                 Acc#{ParamKey => none};
             ?DNS_SVCB_PARAM_PORT when is_integer(Value) ->
                 Acc#{ParamKey => Value};
@@ -132,7 +133,7 @@ parse_svcb_params_from_json([{Key, Value} | Rest], Acc) ->
                 IPs = [parse_ipv6_for_json(IP) || IP <- Value],
                 Acc#{ParamKey => IPs};
             %% Unknown keys (key >= 7) stored as-is; key0-key6 with wrong value type are invalid
-            NNNN when is_integer(NNNN), 7 =< NNNN, null =:= Value ->
+            NNNN when is_integer(NNNN), 7 =< NNNN, ?IS_JSON_NULL(Value) ->
                 Acc#{NNNN => none};
             NNNN when is_integer(NNNN), 7 =< NNNN, is_binary(Value) ->
                 Acc#{NNNN => Value};

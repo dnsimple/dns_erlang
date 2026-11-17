@@ -5,6 +5,7 @@
 -export([to_map/1, from_map/1]).
 
 -include_lib("dns_erlang/include/dns.hrl").
+-include("dns_json.hrl").
 
 -doc "Converts a DNS record to a map representation suitable for JSON encoding.".
 -spec to_map(tuple()) -> map().
@@ -488,7 +489,7 @@ from_map_field(dns_rrdata_ipseckey, gateway, Value) when is_binary(Value) ->
 %% Missing or null svc_params: default to empty map (alias form, no service params).
 from_map_field(Tag, svc_params, Value) when
     (Tag =:= dns_rrdata_svcb orelse Tag =:= dns_rrdata_https) andalso
-        (Value =:= undefined orelse Value =:= null)
+        (Value =:= undefined orelse ?IS_JSON_NULL(Value))
 ->
     #{};
 from_map_field(Tag, svc_params, Value) when

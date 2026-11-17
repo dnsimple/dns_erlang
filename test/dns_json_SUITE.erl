@@ -22,6 +22,7 @@ groups() ->
             test_special_encodings,
             test_svcb_params,
             test_svcb_params_json_edge_cases,
+            test_svcb_params_json_nil_as_null,
             test_svcb_params_numeric_keys_0_to_6_equivalent_to_named,
             test_svcb_params_numeric_key_invalid_value_rejected,
             test_svcb_params_to_json_invalid_key_rejected,
@@ -801,6 +802,38 @@ test_svcb_params_json_edge_cases(_Config) ->
         }
     },
     ?assertError({invalid_ipv6_in_json, _, _}, dns_json:from_map(InvalidIpv6JsonMap)).
+
+%% Elixir's JSON.decode/1 gives nil for a JSON null, which reads as null wherever null is taken
+test_svcb_params_json_nil_as_null(_Config) ->
+    JsonRR = fun(SvcParams) ->
+        #{
+            ~"name" => ~"example.com",
+            ~"type" => ~"HTTPS",
+            ~"ttl" => 300,
+            ~"data" => #{
+                ~"svc_priority" => 1,
+                ~"target_name" => ~"quic-web.example.com",
+                ~"svc_params" => SvcParams
+            }
+        }
+    end,
+    Params = fun(Null) ->
+        #{~"alpn" => [~"h2"], ~"no-default-alpn" => Null, ~"port" => 853, ~"key65001" => Null}
+    end,
+    FromNull = dns_json:from_map(JsonRR(Params(null))),
+    ?assertEqual(FromNull, dns_json:from_map(JsonRR(Params(nil)))),
+    #dns_rr{data = #dns_rrdata_https{svc_params = SvcParams}} = FromNull,
+    ?assertEqual(none, maps:get(?DNS_SVCB_PARAM_NO_DEFAULT_ALPN, SvcParams)),
+    ?assertEqual(none, maps:get(65001, SvcParams)),
+    %% Encoding gives null, never nil
+    ?assertMatch(
+        #{~"data" := #{~"svc_params" := #{~"no-default-alpn" := null, ~"key65001" := null}}},
+        dns_json:to_map(FromNull)
+    ),
+    %% A nil svc_params is no params, as a null one is
+    #dns_rr{data = #dns_rrdata_https{svc_params = NoParams}} = dns_json:from_map(JsonRR(nil)),
+    ?assertEqual(#{}, NoParams),
+    ?assertEqual(dns_json:from_map(JsonRR(null)), dns_json:from_map(JsonRR(nil))).
 
 %% key0-key6 in JSON are equivalent to named params; validate the same
 test_svcb_params_numeric_keys_0_to_6_equivalent_to_named(_Config) ->
