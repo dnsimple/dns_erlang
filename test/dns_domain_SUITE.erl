@@ -57,7 +57,8 @@ groups() ->
             to_upper_basic,
             to_upper_chunking,
             case_roundtrip,
-            case_conversion_comprehensive
+            case_conversion_comprehensive,
+            case_conversion_sizes
         ]},
         {comparison_tests, [parallel], [
             are_equal_basic,
@@ -653,6 +654,58 @@ case_conversion_comprehensive(_) ->
         ?assertEqual(Expected, dns_domain:to_lower(Input))
      || {Input, Expected} <- ToLowerCases
     ].
+
+%% Every size from 0 to 300 octets, with nothing to convert, one letter to convert at either end,
+%% every letter to convert, mixed case, the octets on either side of each range, and every octet
+%% value, against a conversion one octet at a time.
+case_conversion_sizes(_) ->
+    [
+        begin
+            ?assertEqual(convert_octets(Input, $A, $Z), dns_domain:to_lower(Input), Input),
+            ?assertEqual(convert_octets(Input, $a, $z), dns_domain:to_upper(Input), Input)
+        end
+     || Size <- lists:seq(0, 300), Input <- case_inputs(Size)
+    ].
+
+case_inputs(0) ->
+    [<<>>];
+case_inputs(Size) ->
+    Lower = cycle(~"abcdefghijklmnopqrstuvwxyz0123456789-.", Size),
+    Upper = cycle(~"ABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789-.", Size),
+    Last = Size - 1,
+    <<_, LowerTail/binary>> = Lower,
+    <<_, UpperTail/binary>> = Upper,
+    <<LowerHead:Last/binary, _>> = Lower,
+    <<UpperHead:Last/binary, _>> = Upper,
+    [
+        Lower,
+        Upper,
+        <<$A, LowerTail/binary>>,
+        <<$Z, LowerTail/binary>>,
+        <<LowerHead/binary, $A>>,
+        <<LowerHead/binary, $Z>>,
+        <<$a, UpperTail/binary>>,
+        <<$z, UpperTail/binary>>,
+        <<UpperHead/binary, $a>>,
+        <<UpperHead/binary, $z>>,
+        cycle(~"aBcDeFgHiJkLmNoPqRsTuVwXyZ", Size),
+        cycle(~"@A[Z`a{z", Size),
+        list_to_binary([(Size + I) rem 256 || I <- lists:seq(0, Last)])
+    ].
+
+cycle(Pattern, Size) ->
+    binary:part(binary:copy(Pattern, Size div byte_size(Pattern) + 1), 0, Size).
+
+convert_octets(Bin, First, Last) ->
+    <<
+        <<
+            (case First =< C andalso C =< Last of
+                true -> C bxor 32;
+                false -> C
+            end)
+        >>
+     || <<C>> <= Bin
+    >>.
 
 %% ============================================================================
 %% To Wire Tests
