@@ -39,6 +39,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - Optimized RSA DNSKEYs and CDNSKEYs, now kept as bytes: a DNSKEY answer encodes 1.6x faster with 1.2x less memory and decodes 1.2x faster, and `dns_zone:encode_rdata/2` writes one 1.5x faster.
 - Zone files: `dns_zone` parses binaries directly, without leex and yecc, 2.37–8.93x faster with 4.51–10.16x less memory on large zones, and every error in a zone's text gives its line.
 - Zone files: `dns_zone:encode_string/1,2` writes large zones 1.72–2.31x faster with 2.38–2.50x less memory.
+- Optimized `dns_domain:to_lower/1` and `to_upper/1`: a name of up to 64 octets no longer takes a 256-octet buffer off the heap, and converts 2.1–3.6x faster.
 
 ### Fixed
 

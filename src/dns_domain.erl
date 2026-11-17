@@ -58,6 +58,21 @@ offsets in it are relative to the start of the message being built.
 -define(HIGHS56, 16#80808080808080).
 -define(ONES32, 16#01010101).
 -define(HIGHS32, 16#80808080).
+%% W, a word of 7 octets, with each ASCII letter of one case swapped to the other. Lo is the
+%% case's first letter times ?ONES56, and Hi the octet after its last times ?ONES56: $A and $Z + 1
+%% to lower, $a and $z + 1 to upper. A macro, not a function: lower_word56/1 and upper_word56/1
+%% are inlined, and an inlined function only gets smaller functions inlined into it, so a shared
+%% function would stay a call where they are used. Octets W lacks above its value are zeros,
+%% which stay zeros, so a word of fewer than 7 octets converts as well.
+-define(SWAP_WORD56(W, Lo, Hi),
+    ((W) bxor
+        (((((W) band ?HIGHS56) bxor ?HIGHS56) band
+            (((((W) bor ?HIGHS56) - (Lo)) band ?HIGHS56) bxor
+                ((((W) bor ?HIGHS56) - (Hi)) band ?HIGHS56))) bsr 2))
+).
+%% A binary built in one construction with at most this many octets is a heap binary; a longer
+%% one lives off the heap
+-define(HEAP_BINARY_MAX, 64).
 -define(DOTS56, (?ONES56 * $.)).
 -define(BSLS56, (?ONES56 * $\\)).
 -define(DOTS32, (?ONES32 * $.)).
@@ -951,6 +966,12 @@ keep_first(Saved, _Rest) -> Saved.
 Returns provided name with case-insensitive characters in uppercase.
 """.
 -spec to_upper(dname()) -> dname().
+%% As to_lower/1 does it, with the cases swapped.
+to_upper(Data) when is_binary(Data), byte_size(Data) =< ?HEAP_BINARY_MAX ->
+    case has_lower(Data) of
+        false -> Data;
+        true -> swap_small(Data, ?ONES56 * $a, ?ONES56 * ($z + 1))
+    end;
 to_upper(Data) when is_binary(Data) ->
     to_upper_chunk(Data, <<>>).
 
@@ -962,6 +983,8 @@ to_upper(Data) when is_binary(Data) ->
         upper_byte/1,
         are_equal_ci/2,
         has_upper_word/1,
+        has_lower_word/1,
+        swap_small/3,
         memo/3,
         memo_key/1,
         classify/1,
@@ -979,20 +1002,14 @@ to_upper(Data) when is_binary(Data) ->
 %% Carry-safe: even for bytes >= 128, (0x80 | b) - 91 >= 37, so no borrow
 %% propagates between byte lanes. An AsciiMask suppresses false-positive range
 %% hits on bytes 0xC1-0xDA (or 0xE1-0xFA for upper) that would otherwise
-%% corrupt non-ASCII input.
+%% corrupt non-ASCII input. The arithmetic is ?SWAP_WORD56.
 -spec lower_word56(non_neg_integer()) -> non_neg_integer().
 lower_word56(W) ->
-    AsciiMask = (W band ?HIGHS56) bxor ?HIGHS56,
-    GeA = ((W bor ?HIGHS56) - (?ONES56 * $A)) band ?HIGHS56,
-    GeZ1 = ((W bor ?HIGHS56) - (?ONES56 * ($Z + 1))) band ?HIGHS56,
-    W bxor (((GeA bxor GeZ1) band AsciiMask) bsr 2).
+    ?SWAP_WORD56(W, ?ONES56 * $A, ?ONES56 * ($Z + 1)).
 
 -spec upper_word56(non_neg_integer()) -> non_neg_integer().
 upper_word56(W) ->
-    AsciiMask = (W band ?HIGHS56) bxor ?HIGHS56,
-    GeA = ((W bor ?HIGHS56) - (?ONES56 * $a)) band ?HIGHS56,
-    GeZ1 = ((W bor ?HIGHS56) - (?ONES56 * ($z + 1))) band ?HIGHS56,
-    W bxor (((GeA bxor GeZ1) band AsciiMask) bsr 2).
+    ?SWAP_WORD56(W, ?ONES56 * $a, ?ONES56 * ($z + 1)).
 
 %% SWAR scan for any byte in [$A, $Z], 7 bytes at a time.
 %% Offset of the first "." in Bin, or nomatch. Returns an immediate, allocates nothing, and never
@@ -1096,6 +1113,21 @@ has_upper_word(W) ->
     GeZ1 = ((W bor ?HIGHS56) - (?ONES56 * ($Z + 1))) band ?HIGHS56,
     (GeA band (bnot GeZ1) band AsciiMask) =/= 0.
 
+-spec has_lower(binary()) -> boolean().
+has_lower(<<W:56/unsigned-little, Rest/binary>>) ->
+    has_lower_word(W) orelse has_lower(Rest);
+has_lower(<<C, Rest/binary>>) ->
+    ($a =< C andalso C =< $z) orelse has_lower(Rest);
+has_lower(<<>>) ->
+    false.
+
+-spec has_lower_word(non_neg_integer()) -> boolean().
+has_lower_word(W) ->
+    AsciiMask = (W band ?HIGHS56) bxor ?HIGHS56,
+    GeA = ((W bor ?HIGHS56) - (?ONES56 * $a)) band ?HIGHS56,
+    GeZ1 = ((W bor ?HIGHS56) - (?ONES56 * ($z + 1))) band ?HIGHS56,
+    (GeA band (bnot GeZ1) band AsciiMask) =/= 0.
+
 upper_byte(X) ->
     element(
         X + 1,
@@ -1146,6 +1178,14 @@ to_upper_chunk(<<>>, Acc) ->
 Returns provided name with case-insensitive characters in lowercase.
 """.
 -spec to_lower(dname()) -> dname().
+%% A name of at most 64 octets comes back as it is when it has nothing to lower, and as a heap
+%% binary otherwise. A longer one goes to the loop as it did: its result lives off the heap anyway,
+%% and scanning it first would only add to the time of one with something to lower.
+to_lower(Data) when is_binary(Data), byte_size(Data) =< ?HEAP_BINARY_MAX ->
+    case has_upper(Data) of
+        false -> Data;
+        true -> swap_small(Data, ?ONES56 * $A, ?ONES56 * ($Z + 1))
+    end;
 to_lower(Data) when is_binary(Data) ->
     to_lower_chunk(Data, <<>>).
 
@@ -1156,6 +1196,120 @@ to_lower_chunk(<<B, Rest/binary>>, Acc) ->
     to_lower_chunk(Rest, <<Acc/binary, (lower_byte(B))>>);
 to_lower_chunk(<<>>, Acc) ->
     Acc.
+
+%% The letters of one case in a name of at most 64 octets swapped to the other, as ?SWAP_WORD56
+%% does it, built in one construction: a heap binary. A loop's accumulator would be written into a
+%% buffer of 256 octets off the heap, however short the name. The name is matched as up to nine
+%% whole words and a tail of fewer than 7 octets. (Size * 37) bsr 8 is Size div 7 for every Size up
+%% to 64, without the division, which took about 10 ns a call on a Xeon Silver 4214.
+-spec swap_small(binary(), pos_integer(), pos_integer()) -> binary().
+swap_small(Name, Lo, Hi) ->
+    Size = byte_size(Name),
+    Words = (Size * 37) bsr 8,
+    TB = (Size - Words * 7) * 8,
+    swap_small(Name, Lo, Hi, TB, Words).
+
+-spec swap_small(binary(), pos_integer(), pos_integer(), 0..48, 0..9) -> binary().
+swap_small(Name, Lo, Hi, TB, 0) ->
+    <<T:TB/unsigned-little>> = Name,
+    <<(?SWAP_WORD56(T, Lo, Hi)):TB/unsigned-little>>;
+swap_small(Name, Lo, Hi, TB, 1) ->
+    <<W1:56/unsigned-little, T:TB/unsigned-little>> = Name,
+    <<(?SWAP_WORD56(W1, Lo, Hi)):56/unsigned-little, (?SWAP_WORD56(T, Lo, Hi)):TB/unsigned-little>>;
+swap_small(Name, Lo, Hi, TB, 2) ->
+    <<W1:56/unsigned-little, W2:56/unsigned-little, T:TB/unsigned-little>> = Name,
+    <<
+        (?SWAP_WORD56(W1, Lo, Hi)):56/unsigned-little,
+        (?SWAP_WORD56(W2, Lo, Hi)):56/unsigned-little,
+        (?SWAP_WORD56(T, Lo, Hi)):TB/unsigned-little
+    >>;
+swap_small(Name, Lo, Hi, TB, 3) ->
+    <<W1:56/unsigned-little, W2:56/unsigned-little, W3:56/unsigned-little, T:TB/unsigned-little>> =
+        Name,
+    <<
+        (?SWAP_WORD56(W1, Lo, Hi)):56/unsigned-little,
+        (?SWAP_WORD56(W2, Lo, Hi)):56/unsigned-little,
+        (?SWAP_WORD56(W3, Lo, Hi)):56/unsigned-little,
+        (?SWAP_WORD56(T, Lo, Hi)):TB/unsigned-little
+    >>;
+swap_small(Name, Lo, Hi, TB, 4) ->
+    <<W1:56/unsigned-little, W2:56/unsigned-little, W3:56/unsigned-little, W4:56/unsigned-little,
+        T:TB/unsigned-little>> = Name,
+    <<
+        (?SWAP_WORD56(W1, Lo, Hi)):56/unsigned-little,
+        (?SWAP_WORD56(W2, Lo, Hi)):56/unsigned-little,
+        (?SWAP_WORD56(W3, Lo, Hi)):56/unsigned-little,
+        (?SWAP_WORD56(W4, Lo, Hi)):56/unsigned-little,
+        (?SWAP_WORD56(T, Lo, Hi)):TB/unsigned-little
+    >>;
+swap_small(Name, Lo, Hi, TB, 5) ->
+    <<W1:56/unsigned-little, W2:56/unsigned-little, W3:56/unsigned-little, W4:56/unsigned-little,
+        W5:56/unsigned-little, T:TB/unsigned-little>> = Name,
+    <<
+        (?SWAP_WORD56(W1, Lo, Hi)):56/unsigned-little,
+        (?SWAP_WORD56(W2, Lo, Hi)):56/unsigned-little,
+        (?SWAP_WORD56(W3, Lo, Hi)):56/unsigned-little,
+        (?SWAP_WORD56(W4, Lo, Hi)):56/unsigned-little,
+        (?SWAP_WORD56(W5, Lo, Hi)):56/unsigned-little,
+        (?SWAP_WORD56(T, Lo, Hi)):TB/unsigned-little
+    >>;
+swap_small(Name, Lo, Hi, TB, 6) ->
+    <<W1:56/unsigned-little, W2:56/unsigned-little, W3:56/unsigned-little, W4:56/unsigned-little,
+        W5:56/unsigned-little, W6:56/unsigned-little, T:TB/unsigned-little>> = Name,
+    <<
+        (?SWAP_WORD56(W1, Lo, Hi)):56/unsigned-little,
+        (?SWAP_WORD56(W2, Lo, Hi)):56/unsigned-little,
+        (?SWAP_WORD56(W3, Lo, Hi)):56/unsigned-little,
+        (?SWAP_WORD56(W4, Lo, Hi)):56/unsigned-little,
+        (?SWAP_WORD56(W5, Lo, Hi)):56/unsigned-little,
+        (?SWAP_WORD56(W6, Lo, Hi)):56/unsigned-little,
+        (?SWAP_WORD56(T, Lo, Hi)):TB/unsigned-little
+    >>;
+swap_small(Name, Lo, Hi, TB, 7) ->
+    <<W1:56/unsigned-little, W2:56/unsigned-little, W3:56/unsigned-little, W4:56/unsigned-little,
+        W5:56/unsigned-little, W6:56/unsigned-little, W7:56/unsigned-little,
+        T:TB/unsigned-little>> = Name,
+    <<
+        (?SWAP_WORD56(W1, Lo, Hi)):56/unsigned-little,
+        (?SWAP_WORD56(W2, Lo, Hi)):56/unsigned-little,
+        (?SWAP_WORD56(W3, Lo, Hi)):56/unsigned-little,
+        (?SWAP_WORD56(W4, Lo, Hi)):56/unsigned-little,
+        (?SWAP_WORD56(W5, Lo, Hi)):56/unsigned-little,
+        (?SWAP_WORD56(W6, Lo, Hi)):56/unsigned-little,
+        (?SWAP_WORD56(W7, Lo, Hi)):56/unsigned-little,
+        (?SWAP_WORD56(T, Lo, Hi)):TB/unsigned-little
+    >>;
+swap_small(Name, Lo, Hi, TB, 8) ->
+    <<W1:56/unsigned-little, W2:56/unsigned-little, W3:56/unsigned-little, W4:56/unsigned-little,
+        W5:56/unsigned-little, W6:56/unsigned-little, W7:56/unsigned-little, W8:56/unsigned-little,
+        T:TB/unsigned-little>> = Name,
+    <<
+        (?SWAP_WORD56(W1, Lo, Hi)):56/unsigned-little,
+        (?SWAP_WORD56(W2, Lo, Hi)):56/unsigned-little,
+        (?SWAP_WORD56(W3, Lo, Hi)):56/unsigned-little,
+        (?SWAP_WORD56(W4, Lo, Hi)):56/unsigned-little,
+        (?SWAP_WORD56(W5, Lo, Hi)):56/unsigned-little,
+        (?SWAP_WORD56(W6, Lo, Hi)):56/unsigned-little,
+        (?SWAP_WORD56(W7, Lo, Hi)):56/unsigned-little,
+        (?SWAP_WORD56(W8, Lo, Hi)):56/unsigned-little,
+        (?SWAP_WORD56(T, Lo, Hi)):TB/unsigned-little
+    >>;
+swap_small(Name, Lo, Hi, TB, 9) ->
+    <<W1:56/unsigned-little, W2:56/unsigned-little, W3:56/unsigned-little, W4:56/unsigned-little,
+        W5:56/unsigned-little, W6:56/unsigned-little, W7:56/unsigned-little, W8:56/unsigned-little,
+        W9:56/unsigned-little, T:TB/unsigned-little>> = Name,
+    <<
+        (?SWAP_WORD56(W1, Lo, Hi)):56/unsigned-little,
+        (?SWAP_WORD56(W2, Lo, Hi)):56/unsigned-little,
+        (?SWAP_WORD56(W3, Lo, Hi)):56/unsigned-little,
+        (?SWAP_WORD56(W4, Lo, Hi)):56/unsigned-little,
+        (?SWAP_WORD56(W5, Lo, Hi)):56/unsigned-little,
+        (?SWAP_WORD56(W6, Lo, Hi)):56/unsigned-little,
+        (?SWAP_WORD56(W7, Lo, Hi)):56/unsigned-little,
+        (?SWAP_WORD56(W8, Lo, Hi)):56/unsigned-little,
+        (?SWAP_WORD56(W9, Lo, Hi)):56/unsigned-little,
+        (?SWAP_WORD56(T, Lo, Hi)):TB/unsigned-little
+    >>.
 
 %% ============================================================================
 %% Comparison Functions
