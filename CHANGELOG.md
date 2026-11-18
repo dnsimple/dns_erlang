@@ -5,7 +5,9 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
-## main
+## v6.0.0
+
+6.0.0 renames `dnssec` to `dns_sec`, holds DNSSEC keys as bytes, keeps `$INCLUDE` to the zone file's directory, and refuses zone files, JSON and RRSIGs that 5.x took: see the migration guide under Changed.
 
 ### Added
 
@@ -16,15 +18,15 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 - `dnssec` is now `dns_sec`, as every other module of this library starts with `dns`.
 - DNSKEY and CDNSKEY: `public_key` is always the RDATA's key field, a `binary()`; RSA and DSA keys no longer decode to `[E, M]` and `[P, Q, G, Y]`, nor encode from them.
+- DNSKEY and CDNSKEY: `dns_sec:verify_rrsig/4`, `dns_json:to_map/1` and `dns_zone`'s writer raise `{badarg, public_key_not_binary}` for a key that is not a binary, `[E, M]` and `[P, Q, G, Y]` included.
 - JSON: an RSA or DSA DNSKEY's or CDNSKEY's `public_key` is base64 of its key field, where it was base64 of each number behind a 32-bit length; convert stored ones, which start `AAAA`.
+- DNSSEC: RSA and DSA private keys are big-endian bytes, where RSA keys could be integers and DSA keys had to be; integers raise `{badarg, number_not_bytes}`.
+- Zone files: `$INCLUDE` reads only files at or under the zone file's directory, not through an absolute path, `..` or a symbolic link that leads out, and `parse_string/1,2` and `include => false` refuse it, where it read any file the process could.
 - JSON and zone files: a DNSKEY or CDNSKEY whose RSA or DSA key RFC 3110, RFC 5702 or RFC 2536 rules out is refused when loaded, stored 5.x JSON among them.
 - DNSSEC: `verify_rrsig/4` verifies with no RSA or DSA key that RFC 3110, RFC 5702 or RFC 2536 rules out, where it verified with RSA moduli under 512 or over 4096 bits, or under 1024 for RSA/SHA-512, and with DSA keys off the wire whose T is wider than their P needs.
-- DNSKEY and CDNSKEY: `dns_sec:verify_rrsig/4`, `dns_json:to_map/1` and `dns_zone`'s writer raise `{badarg, public_key_not_binary}` for a key that is not a binary, `[E, M]` and `[P, Q, G, Y]` included.
-- DNSSEC: RSA and DSA private keys are big-endian bytes, where RSA keys could be integers and DSA keys had to be; integers raise `{badarg, number_not_bytes}`.
 - DNSSEC: `verify_rrsig/4` verifies only with zone keys of the RRSIG's class and key tag (RFC 4035 §5.3.1), where it tried every DNSKEY of its algorithm and signer.
 - DNSSEC: `verify_rrsig/4` verifies only RRsets whose every record has the RRSIG's owner, class and covered type, and whose owner has at least the labels the RRSIG's labels field counts (RFC 4035 §5.3.1), where it never read the RRSIG's owner, type covered or labels field, and took only the RDATA of the records after the first.
 - DNSSEC: `verify_rrsig/4` verifies only RRsets whose zone the signer can be (RFC 4035 §5.3.1), NS, SOA and DNSKEY at the signer, NSEC3 one label under it, DS under it and any other at or under it, with a labels field counting at least the signer's labels, where any signer's key verified any RRset.
-- Zone files: `$INCLUDE` reads only files at or under the zone file's directory, not through an absolute path, `..` or a symbolic link that leads out, and `parse_string/1,2` and `include => false` refuse it; the `base_dir` option is gone. It read any file the process could.
 - Zone files: an SVCB or HTTPS key written as `keyNNNNN` takes its value as its wire format (RFC 9460 §2.1), as BIND reads it: `key3=\001\187` is port 443, and `key3=443` and `key1=h2`, which read as port 443 and alpn `h2`, are refused.
 - Zone files: a line that does not start with a blank takes a first field that reads as a TTL for its owner (RFC 1035 §5.1), as BIND does: `1 IN PTR host.` was a PTR at the owner before it with a TTL of 1, and `1 3600 IN PTR host.`, as `dns_zone` writes reverse zones, was refused.
 - DNSSEC: a DSA key whose G is not 1 < G < P, or whose Y is not 2 ≤ Y ≤ P − 2, is refused when loaded or laid out and verifies nothing, where a G and Y of 1 verified the signature R = S = 1 over any data.
@@ -32,6 +34,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - DNSSEC: signing with an RSA key whose modulus or exponent RFC 3110 or RFC 5702 rules out raises `{badarg, {rsa_modulus_bits, Bits}}` or `{badarg, {rsa_exponent_bits, Bits}}`, and with one of other than 3 or 8 numbers `{badarg, key_shape}`, where it signed, or raised crypto's errors.
 - Zone files: RDATA of a known type in RFC 3597's generic form, as `A \# 4 C0000201`, is read as that type's record, where it was kept as its octets; octets that are no RDATA of the type, or hold a compression pointer, are refused, as BIND refuses them.
 - DNSSEC: `sign_rrset` raises `{badarg, outside_signer_zone}` for an RRset its signer's zone cannot hold, such as a delegation's NS RRset or one above the signer, and `sign_rr` leaves it out, where both signed what `verify_rrsig/4` refuses.
+
+#### Migration guide
+
+Every function of `dnssec` is in `dns_sec` under the same name and arity, so replace `dnssec:` with `dns_sec:`.
+
+An RSA or DSA DNSKEY's or CDNSKEY's `public_key` is its RDATA's key field. Make it with `dns_sec:dnskey_public_key/2` from the key's numbers as bytes, where 5.x took the list itself:
+
+```erl
+% 5.x
+#dns_rrdata_dnskey{alg = ?DNS_ALG_RSASHA256, public_key = [E, M], ...}
+% 6.0, with E and M as binary:encode_unsigned/1 gives them
+#dns_rrdata_dnskey{alg = ?DNS_ALG_RSASHA256, public_key = dns_sec:dnskey_public_key(?DNS_ALG_RSASHA256, [E, M]), ...}
+```
+
+Code that read `[E, M]` from a decoded RSA key splits the field as RFC 3110 §2 lays it out:
+
+```erl
+rsa_numbers(<<0, Len:16, E:Len/binary, M/binary>>) -> [E, M];
+rsa_numbers(<<Len, E:Len/binary, M/binary>>) -> [E, M].
+```
+
+Stored JSON whose RSA or DSA DNSKEY or CDNSKEY `public_key` starts `AAAA` is in 5.x's form, which `dns_json:from_map/1` refuses. Convert it with the record's `alg`; ECDSA, EdDSA and ML-DSA-44 keys are stored as before:
+
+```erl
+Numbers = [N || <<Len:32, N:Len/binary>> <= base64:decode(PublicKey)],
+base64:encode(dns_sec:dnskey_public_key(Alg, Numbers))
+```
+
+RSA and DSA private keys are lists of big-endian bytes, as `crypto:generate_key/2` gives an RSA key's. Convert a key of integers:
+
+```erl
+[binary:encode_unsigned(N) || N <- Key]
+```
+
+`$INCLUDE` names a file relative to the directory of the file it is in, and reads it only at or under the zone file's directory. Drop the `base_dir` option, keep included files under the zone file's directory, and parse a zone that includes files with `dns_zone:parse_file/1,2`.
+
+The rest of this release needs no change to code, but `verify_rrsig/4`, zone files and JSON refuse some input 5.x took, as listed above.
+
+### Removed
+
+- Zone files: the `base_dir` option, as `$INCLUDE` reads only from the zone file's directory and under it.
 
 ### Updated
 
