@@ -27,6 +27,7 @@
     ~"3596" => ~"DNS Extensions to Support IP Version 6",
     ~"1183" => ~"New DNS RR Definitions",
     ~"1876" => ~"A Means for Expressing Location Information in the Domain Name System",
+    ~"1982" => ~"Serial Number Arithmetic",
     ~"2230" => ~"Key Exchange Delegation Record for the DNS",
     ~"2782" => ~"A DNS RR for specifying the location of services (DNS SRV)",
     ~"3403" =>

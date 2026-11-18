@@ -34,6 +34,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 - DNSSEC: signing with an RSA key whose modulus or exponent RFC 3110 or RFC 5702 rules out raises `{badarg, {rsa_modulus_bits, Bits}}` or `{badarg, {rsa_exponent_bits, Bits}}`, and with one of other than 3 or 8 numbers `{badarg, key_shape}`, where it signed, or raised crypto's errors.
 - Zone files: RDATA of a known type in RFC 3597's generic form, as `A \# 4 C0000201`, is read as that type's record, where it was kept as its octets; octets that are no RDATA of the type, or hold a compression pointer, are refused, as BIND refuses them.
 - DNSSEC: `sign_rrset` raises `{badarg, outside_signer_zone}` for an RRset its signer's zone cannot hold, such as a delegation's NS RRset or one above the signer, and `sign_rr` leaves it out, where both signed what `verify_rrsig/4` refuses.
+- DNSSEC: `sign_rr` and `sign_rrset` raise `{badarg, expiration_before_inception}` for a validity period that no RRSIG verifies with (RFC 4034 §3.1.5), 2^31 seconds or more included, where they signed it.
 
 #### Migration guide
 
@@ -70,7 +71,7 @@ RSA and DSA private keys are lists of big-endian bytes, as `crypto:generate_key/
 
 `$INCLUDE` names a file relative to the directory of the file it is in, and reads it only at or under the zone file's directory. Drop the `base_dir` option, keep included files under the zone file's directory, and parse a zone that includes files with `dns_zone:parse_file/1,2`.
 
-The rest of this release needs no change to code, but `verify_rrsig/4`, zone files and JSON refuse some input 5.x took, as listed above.
+The rest of this release needs no change to code, but signing, `verify_rrsig/4`, zone files and JSON refuse some input 5.x took, as listed above.
 
 ### Removed
 
