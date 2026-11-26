@@ -5,6 +5,10 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v6.0.1
+
+- Upgraded `base32`
+
 ## v6.0.0
 
 6.0.0 renames `dnssec` to `dns_sec`, holds DNSSEC keys as bytes, keeps `$INCLUDE` to the zone file's directory, and refuses zone files, JSON and RRSIGs that 5.x took: see the migration guide under Changed.
