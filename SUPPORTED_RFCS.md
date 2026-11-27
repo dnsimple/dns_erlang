@@ -19,6 +19,7 @@ functionality such as socket handling or query resolution.
 - **[RFC 2845](https://tools.ietf.org/html/rfc2845)**: Secret Key Transaction Authentication for DNS (TSIG)
 - **[RFC 2931](https://tools.ietf.org/html/rfc2931)**: DNS Request and Transaction Signatures ( SIG(0)s )
 - **[RFC 3110](https://tools.ietf.org/html/rfc3110)**: RSA/SHA-1 SIGs and RSA KEYs in the Domain Name System (DNS)
+- **[RFC 3225](https://tools.ietf.org/html/rfc3225)**: Indicating Resolver Support of DNSSEC
 - **[RFC 3403](https://tools.ietf.org/html/rfc3403)**: Dynamic Delegation Discovery System (DDDS) Part Three: The Domain Name System (DNS) Database
 - **[RFC 3596](https://tools.ietf.org/html/rfc3596)**: DNS Extensions to Support IP Version 6
 - **[RFC 3597](https://tools.ietf.org/html/rfc3597)**: Handling of Unknown DNS Resource Record (RR) Types
@@ -66,5 +67,6 @@ functionality such as socket handling or query resolution.
 - **[RFC 9563](https://tools.ietf.org/html/rfc9563)**: SM2 Digital Signature Algorithm for DNSSEC
 - **[RFC 9606](https://tools.ietf.org/html/rfc9606)**: DNS Resolver Information
 - **[RFC 9619](https://tools.ietf.org/html/rfc9619)**: In the DNS, QDCOUNT Is (Usually) One
+- **[RFC 9824](https://tools.ietf.org/html/rfc9824)**: Compact Denial of Existence in DNSSEC
 - **[RFC 9859](https://tools.ietf.org/html/rfc9859)**: Generalized DNS Notifications
 - **[RFC 9886](https://tools.ietf.org/html/rfc9886)**: DRIP Entity Tags (DETs) in the Domain Name System

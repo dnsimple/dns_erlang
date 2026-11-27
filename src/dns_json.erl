@@ -461,6 +461,9 @@ from_map_field(dns_message, additional, Value) when is_list(Value) ->
     [from_map(V) || V <- Value];
 from_map_field(dns_optrr, data, Value) when is_list(Value) ->
     [from_map(V) || V <- Value];
+%% Added in 6.1.0: an OPT map written before then has no CO flag.
+from_map_field(dns_optrr, compact_answers, undefined) ->
+    false;
 %% RFC6742§2.2: a Locator32 is spelled as an A record's address
 from_map_field(Tag, Field, Value) when
     is_binary(Value) andalso

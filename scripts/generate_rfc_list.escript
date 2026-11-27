@@ -86,6 +86,8 @@
     ~"7477" => ~"Child-to-Parent Synchronization in DNS",
     ~"9859" => ~"Generalized DNS Notifications",
     ~"6891" => ~"Extension Mechanisms for DNS (EDNS(0))",
+    ~"9824" => ~"Compact Denial of Existence in DNSSEC",
+    ~"3225" => ~"Indicating Resolver Support of DNSSEC",
     ~"8976" => ~"Message Digest for DNS Zones",
     ~"8659" => ~"DNS Certification Authority Authorization (CAA) Resource Record",
     ~"5001" => ~"DNS Name Server Identifier (NSID) Option",

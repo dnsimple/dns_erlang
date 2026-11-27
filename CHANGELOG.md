@@ -5,6 +5,17 @@ All notable changes to this project will be documented in this file.
 The format is based on [Keep a Changelog](https://keepachangelog.com/en/1.1.0/),
 and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0.html).
 
+## v6.1.0
+
+### Added
+
+- EDNS: the CO flag (Compact Answers OK, RFC 9824 §5.1) decodes into and encodes from the new `compact_answers` field of `#dns_optrr{}`, where the decoder dropped it and the encoder always sent 0.
+- JSON: an OPT map carries `compact_answers`; one without it, as written before this release, loads with `false`.
+
+### Changed
+
+- `#dns_optrr{}` has a new field, `compact_answers`, between `dnssec` and `data`: recompile code that includes `dns_records.hrl`, and build or match OPT RRs with record syntax, not as tuples.
+
 ## v6.0.1
 
 - Upgraded `base32`

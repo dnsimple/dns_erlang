@@ -452,6 +452,8 @@ test_optrr_records(_Config) ->
             additional = [
                 #dns_optrr{
                     udp_payload_size = 4096,
+                    dnssec = true,
+                    compact_answers = true,
                     data = [
                         #dns_opt_nsid{data = <<222, 175>>}
                     ]
@@ -1219,11 +1221,22 @@ test_records_that_do_not_fit_rejected(_Config) ->
     ?assertMatch(#dns_message{id = 65535}, dns_json:from_map(MsgWith(~"id", 65535))),
     ?assertMatch(#dns_query{}, dns_json:from_map(Query(65535))),
     ?assertMatch(#dns_optrr{}, dns_json:from_map(OptWith(~"data", [UL((1 bsl 32) - 1)]))),
+    ?assertMatch(
+        #dns_optrr{compact_answers = true},
+        dns_json:from_map(OptWith(~"compact_answers", true))
+    ),
+    %% An OPT map from before the CO flag loads without it
+    #{~"OPT" := OptFields} = Opt,
+    ?assertMatch(
+        #dns_optrr{compact_answers = false},
+        dns_json:from_map(#{~"OPT" => maps:remove(~"compact_answers", OptFields)})
+    ),
     [
         ?assertError({invalid_record, _}, dns_json:from_map(M), M)
      || M <- [
             OptWith(~"udp_payload_size", 65536),
             OptWith(~"ext_rcode", 256),
+            OptWith(~"compact_answers", 1),
             OptWith(~"data", [UL(-1)]),
             UL(1 bsl 32),
             Query(65536),

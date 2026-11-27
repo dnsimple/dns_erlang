@@ -794,6 +794,7 @@ optrr_must_fit(_) ->
     Fits = [
         OptRR,
         OptRR#dns_optrr{udp_payload_size = 65535, ext_rcode = 255, version = 255},
+        OptRR#dns_optrr{dnssec = true, compact_answers = true},
         OptRR#dns_optrr{data = [#dns_opt_nsid{data = binary:copy(<<0>>, 65531)}]}
     ],
     DoNotFit = [
@@ -801,6 +802,7 @@ optrr_must_fit(_) ->
         OptRR#dns_optrr{ext_rcode = 256},
         OptRR#dns_optrr{version = -1},
         OptRR#dns_optrr{dnssec = 1},
+        OptRR#dns_optrr{compact_answers = 1},
         OptRR#dns_optrr{data = [#dns_opt_ul{lease = 1 bsl 32}]},
         %% Each option is 4 bytes of code and length before its data, and together
         %% they are the RDATA, which RDLENGTH limits to 65535 bytes

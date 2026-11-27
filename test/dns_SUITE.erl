@@ -70,6 +70,7 @@ groups() ->
             optrr_too_large,
             bad_optrr_too_large,
             optrr_must_be_root_named_and_singular,
+            optrr_flags,
             optrr_honoured_anywhere_in_additional,
             encode_rejects_second_optrr,
             dnskey_key_kept_as_rdata_bytes,
@@ -1718,6 +1719,38 @@ empty_rdata_rejected_for_known_types(_) ->
         #dns_rrdata_a{ip = {192, 0, 2, 1}},
         dns_decode:decode_rrdata(<<>>, ?DNS_CLASS_IN, ?DNS_TYPE_A, <<192, 0, 2, 1>>)
     ).
+
+%% The EDNS flags are DO (RFC 3225) and CO (RFC 9824 §5.1), then 14 bits that
+%% are zero when sent and ignored when received (RFC 6891 §6.1.4).
+optrr_flags(_) ->
+    Header = <<16#1234:16, 0:16, 0:16, 0:16, 0:16, 1:16>>,
+    Opt = fun(Flags) -> <<0, ?DNS_TYPE_OPT:16, 1232:16, 0:8, 0:8, Flags:16, 0:16>> end,
+    Decode = fun(Flags) ->
+        #dns_message{additional = [OptRR]} = dns:decode_message(
+            <<Header/binary, (Opt(Flags))/binary>>
+        ),
+        OptRR
+    end,
+    ?assertMatch(#dns_optrr{dnssec = false, compact_answers = false}, Decode(16#0000)),
+    ?assertMatch(#dns_optrr{dnssec = true, compact_answers = false}, Decode(16#8000)),
+    ?assertMatch(#dns_optrr{dnssec = false, compact_answers = true}, Decode(16#4000)),
+    ?assertMatch(#dns_optrr{dnssec = true, compact_answers = true}, Decode(16#C000)),
+    ?assertMatch(#dns_optrr{dnssec = false, compact_answers = false}, Decode(16#3FFF)),
+    ?assertMatch(#dns_optrr{dnssec = true, compact_answers = true}, Decode(16#FFFF)),
+    Encode = fun(OptRR) ->
+        Msg = #dns_message{id = 16#1234, adc = 1, additional = [OptRR]},
+        <<_:12/binary, OptBin/binary>> = dns:encode_message(Msg),
+        OptBin
+    end,
+    Flags = fun(DO, CO) ->
+        #dns_optrr{udp_payload_size = 1232, dnssec = DO, compact_answers = CO}
+    end,
+    ?assertEqual(Opt(16#0000), Encode(Flags(false, false))),
+    ?assertEqual(Opt(16#8000), Encode(Flags(true, false))),
+    ?assertEqual(Opt(16#4000), Encode(Flags(false, true))),
+    ?assertEqual(Opt(16#C000), Encode(Flags(true, true))),
+    %% A query's ignored bits are not sent back
+    ?assertEqual(Opt(16#C000), Encode(Decode(16#FFFF))).
 
 %% RFC6891§6.1.1: an OPT RR's owner name MUST be root, and a message with more
 %% than one OPT RR MUST be answered with FORMERR. A non-root OPT used to fall
