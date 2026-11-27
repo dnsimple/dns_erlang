@@ -1225,12 +1225,16 @@ test_records_that_do_not_fit_rejected(_Config) ->
         #dns_optrr{compact_answers = true},
         dns_json:from_map(OptWith(~"compact_answers", true))
     ),
-    %% An OPT map from before the CO flag loads without it
+    %% An OPT map from before the CO flag loads without it, as does one that holds it as null
     #{~"OPT" := OptFields} = Opt,
-    ?assertMatch(
-        #dns_optrr{compact_answers = false},
-        dns_json:from_map(#{~"OPT" => maps:remove(~"compact_answers", OptFields)})
-    ),
+    [
+        ?assertMatch(#dns_optrr{compact_answers = false}, dns_json:from_map(M), M)
+     || M <- [
+            #{~"OPT" => maps:remove(~"compact_answers", OptFields)},
+            OptWith(~"compact_answers", null),
+            OptWith(~"compact_answers", nil)
+        ]
+    ],
     [
         ?assertError({invalid_record, _}, dns_json:from_map(M), M)
      || M <- [

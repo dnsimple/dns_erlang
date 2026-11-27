@@ -10,7 +10,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Added
 
 - EDNS: the CO flag (Compact Answers OK, RFC 9824 §5.1) decodes into and encodes from the new `compact_answers` field of `#dns_optrr{}`, where the decoder dropped it and the encoder always sent 0.
-- JSON: an OPT map carries `compact_answers`; one without it, as written before this release, loads with `false`.
+- JSON: an OPT map carries `compact_answers`; one without it, as written before this release, or with it null, loads with `false`.
 
 ### Changed
 
