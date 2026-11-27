@@ -15,6 +15,7 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 ### Changed
 
 - `#dns_optrr{}` has a new field, `compact_answers`, between `dnssec` and `data`: recompile code that includes `dns_records.hrl`, and build or match OPT RRs with record syntax, not as tuples.
+- EDNS: a response OPT RR copied from the query's now carries its CO flag, which decoding used to drop: set `compact_answers` to `false` unless the server restores NXDOMAIN as RFC 9824 §5.1 has it.
 
 ## v6.0.1
 
