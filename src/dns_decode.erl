@@ -371,8 +371,8 @@ do_decode_message_additional(MsgBin, DataBin, Count, RRs, SeenOptRR) ->
     try
         case dns_domain:from_wire(MsgBin, DataBin) of
             {Name,
-                <<?DNS_TYPE_OPT:16/unsigned, UPS:16/unsigned, ExtRcode:8, Version:8, DNSSEC:1,
-                    _Z:15, EDataLen:16, EDataBin:EDataLen/binary, RemBin/binary>>} ->
+                <<?DNS_TYPE_OPT:16/unsigned, UPS:16/unsigned, ExtRcode:8, Version:8, DNSSEC:1, CO:1,
+                    _Z:14, EDataLen:16, EDataBin:EDataLen/binary, RemBin/binary>>} ->
                 ok = check_optrr(Name, SeenOptRR),
                 {
                     #dns_optrr{
@@ -380,6 +380,7 @@ do_decode_message_additional(MsgBin, DataBin, Count, RRs, SeenOptRR) ->
                         ext_rcode = ExtRcode,
                         version = Version,
                         dnssec = decode_bool(DNSSEC),
+                        compact_answers = decode_bool(CO),
                         data = decode_optrrdata(EDataBin)
                     },
                     RemBin

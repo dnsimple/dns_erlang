@@ -82,10 +82,16 @@ rrdata(Class, Data) ->
 %% and version, then its options, which together are its RDATA
 -spec optrr(dns:optrr()) -> boolean().
 optrr(#dns_optrr{
-    udp_payload_size = Size, ext_rcode = ExtRcode, version = Version, dnssec = DNSSEC, data = Opts
+    udp_payload_size = Size,
+    ext_rcode = ExtRcode,
+    version = Version,
+    dnssec = DNSSEC,
+    compact_answers = CO,
+    data = Opts
 }) ->
     ?IS_UINT(16, Size) andalso ?IS_UINT(8, ExtRcode) andalso ?IS_UINT(8, Version) andalso
-        is_boolean(DNSSEC) andalso is_list(Opts) andalso lists:all(fun opt/1, Opts) andalso
+        is_boolean(DNSSEC) andalso is_boolean(CO) andalso is_list(Opts) andalso
+        lists:all(fun opt/1, Opts) andalso
         lists:sum([4 + opt_size(Opt) || Opt <- Opts]) =< ?MAX_RDLENGTH.
 
 -spec opt(dns:optrr_elem()) -> boolean().

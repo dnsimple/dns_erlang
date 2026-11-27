@@ -610,14 +610,16 @@ encode_optrr(Acc, #dns_optrr{
     ext_rcode = ExtRcode0,
     version = Version0,
     dnssec = DNSSEC,
+    compact_answers = CO,
     data = Data
 }) ->
     %% TODO: if returning BADVERS, we want to avoid returning any answer in the top #dns_message{}
     {Version, ExtRcode} = ensure_edns_version(Version0, ExtRcode0),
     DNSSECBit = encode_bool(DNSSEC),
+    COBit = encode_bool(CO),
     RRBin = encode_optrrdata(Data),
     RRBinSize = byte_size(RRBin),
-    <<Acc/binary, 0, ?DNS_TYPE_OPT:16, UPS:16, ExtRcode:8, Version:8, DNSSECBit:1, 0:15,
+    <<Acc/binary, 0, ?DNS_TYPE_OPT:16, UPS:16, ExtRcode:8, Version:8, DNSSECBit:1, COBit:1, 0:14,
         RRBinSize:16, RRBin/binary>>.
 
 ensure_edns_version(Version, ExtRcode) when

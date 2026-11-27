@@ -509,7 +509,10 @@
     udp_payload_size = 4096 :: dns:uint16(),
     ext_rcode = ?DNS_ERCODE_NOERROR :: dns:uint8(),
     version = 0 :: dns:uint8(),
+    %% DO flag, RFC 3225
     dnssec = false :: boolean(),
+    %% CO flag, RFC 9824: §5.1
+    compact_answers = false :: boolean(),
     data = [] :: [dns:optrr_elem()]
 }).
 

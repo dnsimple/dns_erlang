@@ -1723,6 +1723,7 @@ Non-RR records (message, query, OPT records) use a two-level nested map format:
 - `ext_rcode` (`t:dns:uint8/0`): Direct value
 - `version` (`t:dns:uint8/0`): Direct value
 - `dnssec` (`t:boolean/0`): Direct value
+- `compact_answers` (`t:boolean/0`): Direct value
 - `data` ([`t:dns:optrr_elem/0`]): Direct value
 
 **Example:**
@@ -1734,6 +1735,7 @@ Non-RR records (message, query, OPT records) use a two-level nested map format:
     "ext_rcode": "value",
     "version": "value",
     "dnssec": "value",
+    "compact_answers": "value",
     "data": []
   }
 }
